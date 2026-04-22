@@ -1,4 +1,5 @@
 import {
+  BookCopy,
   Gem,
   Gauge,
   HardDriveDownload,
@@ -17,7 +18,8 @@ const navigation = [
   { label: "Overview", to: "/", icon: LayoutGrid },
   { label: "Drivers", to: "/drivers", icon: HardDriveDownload },
   { label: "Performance", to: "/performance", icon: Gauge },
-  { label: "Profiles", to: "/profiles", icon: SlidersHorizontal },
+  { label: "Tuning", to: "/tuning", icon: SlidersHorizontal },
+  { label: "Profiles", to: "/profiles", icon: BookCopy },
   { label: "Settings", to: "/settings", icon: Settings2 },
 ] as const;
 
