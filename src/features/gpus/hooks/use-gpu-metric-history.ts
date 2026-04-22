@@ -1,6 +1,15 @@
-import { useEffect, useState } from "react";
+import {
+  createElement,
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from "react";
 
 import type { GpuPerformanceDevice } from "@/features/gpus/types";
+import { useGpuPerformance } from "./use-gpu-performance";
 
 export const GPU_HISTORY_KEYS = [
   "powerDrawWatts",
@@ -23,14 +32,33 @@ export type GpuMetricHistory = Record<GpuHistoryKey, MetricHistorySeries>;
 
 export const GPU_METRIC_HISTORY_LIMIT = 120;
 
-export function useGpuMetricHistory(gpus: GpuPerformanceDevice[]) {
+const GpuMetricHistoryContext = createContext<Record<string, GpuMetricHistory>>(
+  {},
+);
+
+export function GpuMetricHistoryProvider({ children }: PropsWithChildren) {
+  const query = useGpuPerformance();
   const [historyByGpuId, setHistoryByGpuId] = useState<Record<string, GpuMetricHistory>>({});
+  const lastProcessedUpdateAtRef = useRef(0);
 
   useEffect(() => {
-    setHistoryByGpuId((current) => appendGpuSamples(current, gpus));
-  }, [gpus]);
+    if (!query.data || query.dataUpdatedAt === lastProcessedUpdateAtRef.current) {
+      return;
+    }
 
-  return historyByGpuId;
+    lastProcessedUpdateAtRef.current = query.dataUpdatedAt;
+    setHistoryByGpuId((current) => appendGpuSamples(current, query.data.gpus));
+  }, [query.data, query.dataUpdatedAt]);
+
+  return createElement(
+    GpuMetricHistoryContext.Provider,
+    { value: historyByGpuId },
+    children,
+  );
+}
+
+export function useGpuMetricHistory() {
+  return useContext(GpuMetricHistoryContext);
 }
 
 export function appendGpuSamples(

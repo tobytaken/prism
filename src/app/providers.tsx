@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PropsWithChildren } from "react";
 
+import { GpuMetricHistoryProvider } from "@/features/gpus/hooks/use-gpu-metric-history";
 import { AppearanceProvider } from "@/features/settings/lib/appearance-provider";
 
 const queryClient = new QueryClient({
@@ -16,7 +17,9 @@ const queryClient = new QueryClient({
 export function AppProviders({ children }: PropsWithChildren) {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppearanceProvider>{children}</AppearanceProvider>
+      <GpuMetricHistoryProvider>
+        <AppearanceProvider>{children}</AppearanceProvider>
+      </GpuMetricHistoryProvider>
     </QueryClientProvider>
   );
 }

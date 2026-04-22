@@ -34,7 +34,7 @@ export function GpuPerformanceScreen({
 }: GpuPerformanceScreenProps) {
   const gpus = inventory?.gpus ?? EMPTY_PERFORMANCE_GPUS;
   const warnings = inventory?.warnings ?? EMPTY_WARNINGS;
-  const historyByGpuId = useGpuMetricHistory(gpus);
+  const historyByGpuId = useGpuMetricHistory();
 
   return (
     <div className="space-y-6">
