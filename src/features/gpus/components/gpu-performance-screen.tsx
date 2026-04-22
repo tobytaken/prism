@@ -20,6 +20,14 @@ import type {
 
 const EMPTY_PERFORMANCE_GPUS: GpuPerformanceDevice[] = [];
 const EMPTY_WARNINGS: string[] = [];
+const SPARKLINE_WIDTH = 240;
+const SPARKLINE_HEIGHT = 76.8;
+const SPARKLINE_INSETS = {
+  top: 5,
+  right: 3,
+  bottom: 5,
+  left: 3,
+};
 
 type GpuPerformanceScreenProps = {
   inventory?: GpuPerformanceResponse;
@@ -158,6 +166,7 @@ function TelemetryPanel({
           subtitle="Board power draw"
           history={history?.powerDrawWatts}
           accentColor="var(--color-chart-1)"
+          formatHistoryValue={formatWatts}
         />
         <TelemetryMetricCard
           label="Core Clock"
@@ -165,6 +174,7 @@ function TelemetryPanel({
           subtitle="Graphics domain clock"
           history={history?.coreClockMHz}
           accentColor="var(--color-chart-2)"
+          formatHistoryValue={formatMegahertz}
         />
         <TelemetryMetricCard
           label="Memory Clock"
@@ -172,6 +182,7 @@ function TelemetryPanel({
           subtitle="Current memory clock"
           history={history?.memoryClockMHz}
           accentColor="var(--color-chart-3)"
+          formatHistoryValue={formatMegahertz}
         />
         <TelemetryMetricCard
           label="Fan Speed"
@@ -183,6 +194,7 @@ function TelemetryPanel({
           }
           history={history?.fanSpeedPercent}
           accentColor="var(--color-chart-4)"
+          formatHistoryValue={formatPercentValue}
         />
         <TelemetryMetricCard
           label="Temperature"
@@ -190,6 +202,7 @@ function TelemetryPanel({
           subtitle="GPU die temperature"
           history={history?.temperatureC}
           accentColor="var(--color-chart-5)"
+          formatHistoryValue={formatCelsius}
         />
         <TelemetryMetricCard
           label="GPU Utilization"
@@ -197,6 +210,7 @@ function TelemetryPanel({
           subtitle="Active compute time"
           history={history?.gpuUtilizationPercent}
           accentColor="var(--primary)"
+          formatHistoryValue={formatPercentValue}
         />
         <TelemetryMetricCard
           label="VRAM Used"
@@ -204,6 +218,7 @@ function TelemetryPanel({
           subtitle={totalMemoryLabel}
           history={history?.memoryUsedMiB}
           accentColor="var(--color-chart-2)"
+          formatHistoryValue={formatMebibytes}
         />
         <TelemetryStatusCard
           label="Voltage"
@@ -227,12 +242,14 @@ function TelemetryMetricCard({
   subtitle,
   history,
   accentColor,
+  formatHistoryValue,
 }: {
   label: string;
   value: string;
   subtitle: string;
   history: MetricHistorySeries | undefined;
   accentColor: string;
+  formatHistoryValue: (value: number) => string;
 }) {
   const style = {
     "--telemetry-accent": accentColor,
@@ -259,7 +276,11 @@ function TelemetryMetricCard({
       </div>
       <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
       <div className="mt-4">
-        <MetricSparkline series={history} accentColor={accentColor} />
+        <MetricSparkline
+          series={history}
+          accentColor={accentColor}
+          formatValue={formatHistoryValue}
+        />
       </div>
     </div>
   );
@@ -297,55 +318,89 @@ function TelemetryStatusCard({
 function MetricSparkline({
   series,
   accentColor,
+  formatValue,
 }: {
   series: MetricHistorySeries | undefined;
   accentColor: string;
+  formatValue: (value: number) => string;
 }) {
   if (!series?.hasData) {
     return (
-      <div className="flex h-16 items-center justify-center rounded-lg border border-dashed border-border/70 bg-background/35 text-xs text-muted-foreground">
+      <div
+        className="flex items-center justify-center rounded-lg border border-dashed border-border/70 bg-background/35 text-xs text-muted-foreground"
+        style={{ height: SPARKLINE_HEIGHT }}
+      >
         Unavailable
       </div>
     );
   }
 
-  const width = 240;
-  const height = 64;
-  const padding = 6;
-  const path = buildSparklinePath(series.samples, width, height, padding);
-  const lastPoint = findLastSparklinePoint(series.samples, width, height, padding);
+  const bounds = calculateSparklineBounds(series.samples);
+  if (!bounds) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-lg border border-dashed border-border/70 bg-background/35 text-xs text-muted-foreground"
+        style={{ height: SPARKLINE_HEIGHT }}
+      >
+        Unavailable
+      </div>
+    );
+  }
+
+  const path = buildSparklinePath(
+    series.samples,
+    SPARKLINE_WIDTH,
+    SPARKLINE_HEIGHT,
+    SPARKLINE_INSETS,
+  );
+  const lastPoint = findLastSparklinePoint(
+    series.samples,
+    SPARKLINE_WIDTH,
+    SPARKLINE_HEIGHT,
+    SPARKLINE_INSETS,
+  );
 
   return (
-    <div className="rounded-lg border border-border/70 bg-background/35 px-2 py-2">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="h-16 w-full"
-        aria-hidden="true"
-      >
-        <path
-          d={`M ${padding} ${height - padding} H ${width - padding}`}
-          stroke="color-mix(in srgb, var(--border) 75%, transparent)"
-          strokeWidth="1"
-        />
-        <path
-          d={path}
-          fill="none"
-          stroke={accentColor}
-          strokeWidth="2.25"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {lastPoint && (
-          <circle
-            cx={lastPoint.x}
-            cy={lastPoint.y}
-            r="3"
-            fill={accentColor}
-            stroke="var(--card)"
-            strokeWidth="1.5"
+    <div className="rounded-lg border border-border/70 bg-background/35 px-1.5 py-2">
+      <div className="flex items-stretch gap-2">
+        <div
+          className="flex shrink-0 flex-col items-end justify-between text-right text-[11px] leading-none font-medium tabular-nums text-muted-foreground"
+          style={{ height: SPARKLINE_HEIGHT }}
+        >
+          <span className="whitespace-nowrap">{formatValue(bounds.max)}</span>
+          <span className="whitespace-nowrap">{formatValue(bounds.min)}</span>
+        </div>
+        <svg
+          viewBox={`0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`}
+          className="min-w-0 flex-1"
+          style={{ height: SPARKLINE_HEIGHT }}
+          aria-hidden="true"
+        >
+          <path
+            d={`M ${SPARKLINE_INSETS.left} ${SPARKLINE_HEIGHT - SPARKLINE_INSETS.bottom} H ${SPARKLINE_WIDTH - SPARKLINE_INSETS.right}`}
+            stroke="color-mix(in srgb, var(--border) 75%, transparent)"
+            strokeWidth="1"
           />
-        )}
-      </svg>
+          <path
+            d={path}
+            fill="none"
+            stroke={accentColor}
+            strokeWidth="2.25"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          {lastPoint && (
+            <circle
+              cx={lastPoint.x}
+              cy={lastPoint.y}
+              r="3"
+              fill={accentColor}
+              stroke="var(--card)"
+              strokeWidth="1.5"
+            />
+          )}
+        </svg>
+      </div>
     </div>
   );
 }
@@ -378,6 +433,26 @@ function formatPercent(value: number | null) {
   return value == null ? "Unavailable" : `${value}%`;
 }
 
+function formatWatts(value: number) {
+  return formatNumber(value, "W");
+}
+
+function formatMegahertz(value: number) {
+  return formatNumber(value, "MHz");
+}
+
+function formatCelsius(value: number) {
+  return formatNumber(value, "°C");
+}
+
+function formatMebibytes(value: number) {
+  return formatNumber(value, "MiB");
+}
+
+function formatPercentValue(value: number) {
+  return `${value}%`;
+}
+
 function formatVoltage(value: number | null) {
   if (value == null) {
     return "Unavailable";
@@ -392,11 +467,11 @@ function buildSparklinePath(
   samples: Array<number | null>,
   width: number,
   height: number,
-  padding: number,
+  insets: SparklineInsets,
 ) {
-  const points = calculateSparklinePoints(samples, width, height, padding);
+  const points = calculateSparklinePoints(samples, width, height, insets);
   if (points.length === 0) {
-    return `M ${padding} ${height - padding}`;
+    return `M ${insets.left} ${height - insets.bottom}`;
   }
 
   return points
@@ -408,28 +483,33 @@ function findLastSparklinePoint(
   samples: Array<number | null>,
   width: number,
   height: number,
-  padding: number,
+  insets: SparklineInsets,
 ) {
-  const points = calculateSparklinePoints(samples, width, height, padding);
+  const points = calculateSparklinePoints(samples, width, height, insets);
   return points.at(-1);
 }
+
+type SparklineInsets = {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+};
 
 function calculateSparklinePoints(
   samples: Array<number | null>,
   width: number,
   height: number,
-  padding: number,
+  insets: SparklineInsets,
 ) {
-  const values = samples.filter((value): value is number => value != null);
-  if (values.length === 0) {
+  const bounds = calculateSparklineBounds(samples);
+  if (!bounds) {
     return [];
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const horizontalSpan = Math.max(width - padding * 2, 1);
-  const verticalSpan = Math.max(height - padding * 2, 1);
+  const range = bounds.max - bounds.min || 1;
+  const horizontalSpan = Math.max(width - insets.left - insets.right, 1);
+  const verticalSpan = Math.max(height - insets.top - insets.bottom, 1);
 
   return samples.flatMap((value, index) => {
     if (value == null) {
@@ -437,11 +517,23 @@ function calculateSparklinePoints(
     }
 
     const x =
-      padding +
+      insets.left +
       (samples.length === 1 ? 0 : (horizontalSpan * index) / (samples.length - 1));
-    const normalized = (value - min) / range;
-    const y = height - padding - normalized * verticalSpan;
+    const normalized = (value - bounds.min) / range;
+    const y = height - insets.bottom - normalized * verticalSpan;
 
     return [{ x, y }];
   });
+}
+
+function calculateSparklineBounds(samples: Array<number | null>) {
+  const values = samples.filter((value): value is number => value != null);
+  if (values.length === 0) {
+    return null;
+  }
+
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
 }

@@ -1,7 +1,24 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  useGpuMetricHistory,
+  type GpuMetricHistory,
+} from "@/features/gpus/hooks/use-gpu-metric-history";
 import { GpuPerformanceScreen } from "./gpu-performance-screen";
+
+vi.mock("@/features/gpus/hooks/use-gpu-metric-history", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/features/gpus/hooks/use-gpu-metric-history")
+  >("@/features/gpus/hooks/use-gpu-metric-history");
+
+  return {
+    ...actual,
+    useGpuMetricHistory: vi.fn(),
+  };
+});
+
+const mockedUseGpuMetricHistory = vi.mocked(useGpuMetricHistory);
 
 const sampleInventory = {
   gpus: [
@@ -71,6 +88,10 @@ const sampleInventory = {
 };
 
 describe("GpuPerformanceScreen", () => {
+  beforeEach(() => {
+    mockedUseGpuMetricHistory.mockReturnValue({});
+  });
+
   it("renders a loading skeleton", () => {
     render(
       <GpuPerformanceScreen
@@ -110,4 +131,46 @@ describe("GpuPerformanceScreen", () => {
     expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
     expect(screen.queryByText("Clock Offsets")).not.toBeInTheDocument();
   });
+
+  it("renders chart min and max labels from the recorded history", () => {
+    mockedUseGpuMetricHistory.mockReturnValue({
+      "GPU-123": buildMetricHistory({
+        powerDrawWatts: [300, 318, 325],
+      }),
+    });
+
+    render(
+      <GpuPerformanceScreen
+        inventory={sampleInventory}
+        isLoading={false}
+        errorMessage={null}
+      />,
+    );
+
+    expect(screen.getByText("325 W")).toBeInTheDocument();
+    expect(screen.getByText("300 W")).toBeInTheDocument();
+  });
 });
+
+function buildMetricHistory(
+  overrides: Partial<Record<keyof GpuMetricHistory, Array<number | null>>>,
+): GpuMetricHistory {
+  return {
+    powerDrawWatts: buildSeries(overrides.powerDrawWatts),
+    coreClockMHz: buildSeries(overrides.coreClockMHz),
+    memoryClockMHz: buildSeries(overrides.memoryClockMHz),
+    fanSpeedPercent: buildSeries(overrides.fanSpeedPercent),
+    temperatureC: buildSeries(overrides.temperatureC),
+    gpuUtilizationPercent: buildSeries(overrides.gpuUtilizationPercent),
+    memoryUsedMiB: buildSeries(overrides.memoryUsedMiB),
+  };
+}
+
+function buildSeries(samples: Array<number | null> | undefined) {
+  const nextSamples = samples ?? [];
+
+  return {
+    samples: nextSamples,
+    hasData: nextSamples.some((value) => value != null),
+  };
+}
