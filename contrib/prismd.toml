@@ -1,0 +1,7 @@
+# The Unix socket is owned by root and this group.
+# Members of this group can connect to prismd and submit privileged GPU changes.
+admin_group = "wheel"
+
+# Optional explicit user allowlist for setups where group-based socket access is not practical,
+# such as Flatpak-host integration.
+# admin_user = "your-username"

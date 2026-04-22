@@ -1,0 +1,9 @@
+node_modules
+.vite
+out
+dist
+maker-temp
+coverage
+rust/target
+artifacts
+*.log

@@ -1,0 +1,60 @@
+[package]
+name = "prism-rust"
+version = "0.1.0"
+description = "Rust sidecar and daemon for Prism Electron"
+authors = ["Tobias Steinhaeusler"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "prism_rust"
+path = "src/lib.rs"
+
+[[bin]]
+name = "prism_backend"
+path = "src/bin/prism_backend.rs"
+
+[[bin]]
+name = "prismd"
+path = "src/bin/prismd.rs"
+
+[dependencies]
+libc = "0.2.177"
+nvml-wrapper = "0.12.1"
+once_cell = "1.21.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0.18"
+toml = "0.9.8"
+users = "0.11.0"
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[package.metadata.deb]
+depends = "$auto"
+section = "utils"
+priority = "optional"
+
+[package.metadata.deb.variants.prismd]
+name = "prismd"
+maintainer = "Tobias Steinhaeusler"
+assets = [
+  ["target/release/prismd", "usr/bin/prismd", "755"],
+  ["../contrib/systemd/prismd.service", "lib/systemd/system/prismd.service", "644"],
+  ["../contrib/prismd.toml", "etc/prism/prismd.toml", "644"],
+  ["../README.md", "usr/share/doc/prism-electron/README.md", "644"]
+]
+
+[package.metadata.generate-rpm]
+auto-req = "no"
+
+[package.metadata.generate-rpm.variants.prismd]
+name = "prismd"
+summary = "Privileged daemon for Prism Electron"
+assets = [
+  { source = "target/release/prismd", dest = "/usr/bin/prismd", mode = "755" },
+  { source = "../contrib/systemd/prismd.service", dest = "/lib/systemd/system/prismd.service", mode = "644" },
+  { source = "../contrib/prismd.toml", dest = "/etc/prism/prismd.toml", mode = "644", config = "noreplace" },
+  { source = "../README.md", dest = "/usr/share/doc/prism-electron/README.md", mode = "644", doc = true }
+]

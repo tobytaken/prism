@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  renderer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+      - run: bun run typecheck
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path rust/Cargo.toml
+
+  package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y dpkg fakeroot rpm flatpak flatpak-builder elfutils
+      - run: flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - run: bun install --frozen-lockfile
+      - run: bun run build:sidecar:release
+      - run: bun run package:gui:deb
+      - run: bun run package:gui:rpm
+      - run: bun run package:gui:flatpak
+      - run: bun run package:daemon:deb
+      - run: bun run package:daemon:rpm

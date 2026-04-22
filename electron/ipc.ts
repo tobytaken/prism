@@ -1,0 +1,379 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import path from "node:path";
+import readline from "node:readline";
+
+import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
+
+type MainWindowGetter = () => BrowserWindow | null;
+
+type SidecarRequest = {
+  id: number;
+  method: string;
+  params?: unknown;
+};
+
+type SidecarError = {
+  code: string;
+  message: string;
+};
+
+type SidecarResponse = {
+  id: number;
+  result?: unknown;
+  error?: SidecarError;
+};
+
+type PendingRequest = {
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+  timeout: NodeJS.Timeout;
+};
+
+type MutationActionPayload =
+  | { gpuId: string; limitWatts: number }
+  | { gpuId: string }
+  | { gpuId: string; fanIndex: number; speedPercent: number }
+  | { gpuId: string; fanIndex: number }
+  | {
+      gpuId: string;
+      graphicsOffsetMHz: number | null;
+      memoryOffsetMHz: number | null;
+    }
+  | Record<string, unknown>;
+
+class RustBackendClient {
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private reader: readline.Interface | null = null;
+  private nextId = 0;
+  private pending = new Map<number, PendingRequest>();
+
+  async invoke<T>(method: string, params?: unknown): Promise<T> {
+    this.ensureStarted();
+
+    const child = this.child;
+    if (!child) {
+      throw new Error("Prism backend failed to start");
+    }
+
+    const id = ++this.nextId;
+    const payload: SidecarRequest = { id, method, params };
+
+    return new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Timed out waiting for Prism backend method ${method}`));
+      }, 5_000);
+
+      this.pending.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        timeout,
+      });
+      child.stdin.write(`${JSON.stringify(payload)}\n`);
+    });
+  }
+
+  dispose() {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("Prism backend stopped"));
+    }
+    this.pending.clear();
+    this.reader?.close();
+    this.reader = null;
+    this.child?.kill();
+    this.child = null;
+  }
+
+  private ensureStarted() {
+    if (this.child && this.child.exitCode === null && !this.child.killed) {
+      return;
+    }
+
+    const backend = this.spawnBackend();
+    this.child = backend;
+
+    this.reader = readline.createInterface({ input: backend.stdout });
+    this.reader.on("line", (line) => this.handleLine(line));
+
+    backend.stderr.on("data", (chunk) => {
+      process.stderr.write(`[prism_backend] ${chunk}`);
+    });
+
+    backend.on("exit", (code, signal) => {
+      const reason = new Error(
+        `Prism backend exited unexpectedly (code=${code ?? "null"} signal=${signal ?? "null"})`,
+      );
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timeout);
+        pending.reject(reason);
+      }
+      this.pending.clear();
+      this.reader?.close();
+      this.reader = null;
+      this.child = null;
+    });
+  }
+
+  private spawnBackend() {
+    const isFlatpak = Boolean(process.env.FLATPAK_ID);
+
+    if (app.isPackaged) {
+      const binaryPath = path.join(process.resourcesPath, "prism_backend");
+      return spawn(binaryPath, [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          ...(isFlatpak ? { PRISM_BACKEND_REQUIRE_DAEMON: "1" } : {}),
+        },
+      });
+    }
+
+    const projectRoot = path.resolve(__dirname, "..", "..");
+    return spawn(
+      "cargo",
+      ["run", "--manifest-path", path.join(projectRoot, "rust/Cargo.toml"), "--bin", "prism_backend"],
+      {
+        cwd: projectRoot,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          ...(isFlatpak ? { PRISM_BACKEND_REQUIRE_DAEMON: "1" } : {}),
+        },
+      },
+    );
+  }
+
+  private handleLine(line: string) {
+    if (!line.trim()) {
+      return;
+    }
+
+    let response: SidecarResponse;
+    try {
+      response = JSON.parse(line) as SidecarResponse;
+    } catch (error) {
+      process.stderr.write(`[prism_backend] invalid JSON response: ${String(error)}\n`);
+      return;
+    }
+
+    const pending = this.pending.get(response.id);
+    if (!pending) {
+      return;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pending.delete(response.id);
+
+    if (response.error) {
+      pending.reject(new Error(response.error.message));
+      return;
+    }
+
+    pending.resolve(response.result);
+  }
+}
+
+function assertTrustedSender(event: IpcMainInvokeEvent, getMainWindow: MainWindowGetter) {
+  const window = getMainWindow();
+  if (!window) {
+    throw new Error("Main window is not available");
+  }
+
+  if (event.sender.id !== window.webContents.id) {
+    throw new Error("Untrusted IPC sender");
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || isNumber(value);
+}
+
+function validateGpuTarget(payload: unknown): payload is { gpuId: string } {
+  return isObject(payload) && isString(payload.gpuId);
+}
+
+function validatePowerLimitPayload(
+  payload: unknown,
+): payload is Extract<MutationActionPayload, { gpuId: string; limitWatts: number }> {
+  return isObject(payload) && isString(payload.gpuId) && isNumber(payload.limitWatts);
+}
+
+function validateFanSpeedPayload(
+  payload: unknown,
+): payload is Extract<MutationActionPayload, { gpuId: string; fanIndex: number; speedPercent: number }> {
+  return (
+    isObject(payload) &&
+    isString(payload.gpuId) &&
+    isNumber(payload.fanIndex) &&
+    isNumber(payload.speedPercent)
+  );
+}
+
+function validateFanModePayload(
+  payload: unknown,
+): payload is Extract<MutationActionPayload, { gpuId: string; fanIndex: number }> {
+  return isObject(payload) && isString(payload.gpuId) && isNumber(payload.fanIndex);
+}
+
+function validateClockOffsetPayload(
+  payload: unknown,
+): payload is Extract<
+  MutationActionPayload,
+  { gpuId: string; graphicsOffsetMHz: number | null; memoryOffsetMHz: number | null }
+> {
+  return (
+    isObject(payload) &&
+    isString(payload.gpuId) &&
+    isNullableNumber(payload.graphicsOffsetMHz) &&
+    isNullableNumber(payload.memoryOffsetMHz)
+  );
+}
+
+function validateApplyConfigPayload(payload: unknown) {
+  if (!isObject(payload)) {
+    return false;
+  }
+
+  return (
+    (payload.gpuId === undefined || isString(payload.gpuId)) &&
+    (payload.powerLimitWatts === undefined || isNumber(payload.powerLimitWatts)) &&
+    (payload.graphicsOffsetMHz === undefined || isNumber(payload.graphicsOffsetMHz)) &&
+    (payload.memoryOffsetMHz === undefined || isNumber(payload.memoryOffsetMHz)) &&
+    (payload.reapplySaved === undefined || typeof payload.reapplySaved === "boolean")
+  );
+}
+
+function isAllowedExternalUrl(url: string) {
+  return url.startsWith("https://") || url.startsWith("mailto:");
+}
+
+export function registerIpc(getMainWindow: MainWindowGetter) {
+  const backend = new RustBackendClient();
+
+  ipcMain.handle("prism:gpu:getInventory", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    return backend.invoke("gpu.getInventory");
+  });
+
+  ipcMain.handle("prism:gpu:getPerformance", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    return backend.invoke("gpu.getPerformance");
+  });
+
+  ipcMain.handle("prism:gpu:getDaemonStatus", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    return backend.invoke("gpu.getDaemonStatus");
+  });
+
+  ipcMain.handle("prism:gpu:applyConfig", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateApplyConfigPayload(payload)) {
+      throw new Error("Invalid applyConfig payload");
+    }
+    return backend.invoke("gpu.applyConfig", payload);
+  });
+
+  ipcMain.handle("prism:gpu:resetConfig", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateGpuTarget(payload)) {
+      throw new Error("Invalid resetConfig payload");
+    }
+    return backend.invoke("gpu.resetConfig", payload);
+  });
+
+  ipcMain.handle("prism:gpu:setPowerLimit", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validatePowerLimitPayload(payload)) {
+      throw new Error("Invalid setPowerLimit payload");
+    }
+    return backend.invoke("gpu.setPowerLimit", payload);
+  });
+
+  ipcMain.handle("prism:gpu:resetPowerLimit", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateGpuTarget(payload)) {
+      throw new Error("Invalid resetPowerLimit payload");
+    }
+    return backend.invoke("gpu.resetPowerLimit", payload);
+  });
+
+  ipcMain.handle("prism:gpu:setFanSpeed", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateFanSpeedPayload(payload)) {
+      throw new Error("Invalid setFanSpeed payload");
+    }
+    return backend.invoke("gpu.setFanSpeed", payload);
+  });
+
+  ipcMain.handle("prism:gpu:setFanModeAuto", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateFanModePayload(payload)) {
+      throw new Error("Invalid setFanModeAuto payload");
+    }
+    return backend.invoke("gpu.setFanModeAuto", payload);
+  });
+
+  ipcMain.handle("prism:gpu:setClockOffsets", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateClockOffsetPayload(payload)) {
+      throw new Error("Invalid setClockOffsets payload");
+    }
+    return backend.invoke("gpu.setClockOffsets", payload);
+  });
+
+  ipcMain.handle("prism:gpu:resetClockOffsets", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateGpuTarget(payload)) {
+      throw new Error("Invalid resetClockOffsets payload");
+    }
+    return backend.invoke("gpu.resetClockOffsets", payload);
+  });
+
+  ipcMain.handle("prism:window:minimize", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    getMainWindow()?.minimize();
+  });
+
+  ipcMain.handle("prism:window:maximize", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    getMainWindow()?.maximize();
+  });
+
+  ipcMain.handle("prism:window:unmaximize", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    getMainWindow()?.unmaximize();
+  });
+
+  ipcMain.handle("prism:window:close", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    getMainWindow()?.close();
+  });
+
+  ipcMain.handle("prism:window:isMaximized", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    return getMainWindow()?.isMaximized() ?? false;
+  });
+
+  ipcMain.handle("prism:shell:openExternal", async (event, url: unknown) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!isString(url) || !isAllowedExternalUrl(url)) {
+      throw new Error("Blocked external URL");
+    }
+    await shell.openExternal(url);
+  });
+
+  return () => backend.dispose();
+}

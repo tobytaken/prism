@@ -1,0 +1,16 @@
+[Unit]
+Description=Prism GPU control daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/prismd
+Restart=on-failure
+RuntimeDirectory=prism
+StateDirectory=prism
+ConfigurationDirectory=prism
+
+[Install]
+WantedBy=multi-user.target
