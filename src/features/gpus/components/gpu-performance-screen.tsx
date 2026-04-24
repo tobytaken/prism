@@ -1,5 +1,5 @@
 import { type CSSProperties } from "react";
-import { AlertTriangle, Cpu } from "lucide-react";
+import { AlertTriangle, ChevronDown, Cpu } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -127,102 +127,139 @@ function GpuTelemetrySurface({
   ];
 
   return (
-    <section className="relative overflow-hidden border-y border-border/80 py-7">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/70 to-transparent" />
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,0.76fr)_minmax(620px,1.5fr)]">
-        <header className="space-y-6">
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <VendorBadge vendor={gpu.vendor} />
-              {gpu.architecture && (
-                <Badge
-                  className="rounded-md border-border/70 bg-transparent"
-                  variant="outline"
-                >
-                  {gpu.architecture}
-                </Badge>
-              )}
+    <details
+      className="group/gpu overflow-hidden rounded-lg border border-border/80 bg-card/55 shadow-sm shadow-black/10"
+      open
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 border-b border-border/70 px-5 py-4 transition-colors hover:bg-muted/25 [&::-webkit-details-marker]:hidden">
+        <div className="min-w-0 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <VendorBadge vendor={gpu.vendor} />
+            {gpu.architecture && (
               <Badge
-                className="rounded-md border-primary/40 bg-primary/10 text-primary"
+                className="rounded-md border-border/70 bg-transparent"
                 variant="outline"
               >
-                500 ms
+                {gpu.architecture}
               </Badge>
-            </div>
+            )}
+            <Badge
+              className="rounded-md border-primary/40 bg-primary/10 text-primary"
+              variant="outline"
+            >
+              500 ms
+            </Badge>
+          </div>
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="truncate text-lg font-semibold tracking-tight">
+              {gpu.name}
+            </h2>
+            {gpu.busId && (
+              <span className="font-mono text-xs text-muted-foreground">
+                {gpu.busId}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-4">
+          <div className="hidden items-center divide-x divide-border/70 border-x border-border/70 md:flex">
+            {headlineMetrics.map((metric) => (
+              <div key={metric.label} className="px-4 py-1.5">
+                <p className="text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
+                  {metric.label}
+                </p>
+                <p className="mt-0.5 text-sm font-semibold tabular-nums">
+                  {metric.value}
+                </p>
+              </div>
+            ))}
+          </div>
+          <ChevronDown className="size-4 text-muted-foreground transition-transform group-open/gpu:rotate-180" />
+        </div>
+      </summary>
+
+      <section className="relative overflow-hidden px-5 py-7">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/70 to-transparent" />
+        <div className="grid gap-8 xl:grid-cols-[minmax(0,0.76fr)_minmax(620px,1.5fr)]">
+          <header className="space-y-6">
             <div className="space-y-2">
-              <h2 className="text-2xl font-semibold tracking-tight text-balance">
-                {gpu.name}
-              </h2>
+              <p className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+                Device
+              </p>
+              <h3 className="text-2xl font-semibold tracking-tight text-balance">
+                Board telemetry
+              </h3>
               {gpu.busId && (
                 <p className="font-mono text-xs text-muted-foreground">
                   {gpu.busId}
                 </p>
               )}
             </div>
-          </div>
 
-          <div className="grid grid-cols-3 divide-x divide-border/70 border-y border-border/70">
-            {headlineMetrics.map((metric) => (
-              <div key={metric.label} className="px-3 py-4 first:pl-0 last:pr-0">
-                <div className="mb-3 h-1 w-8" style={{ backgroundColor: metric.color }} />
-                <p className="text-[11px] font-medium tracking-[0.2em] text-muted-foreground uppercase">
-                  {metric.label}
-                </p>
-                <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">
-                  {metric.value}
+            <div className="grid grid-cols-3 divide-x divide-border/70 border-y border-border/70">
+              {headlineMetrics.map((metric) => (
+                <div key={metric.label} className="px-3 py-4 first:pl-0 last:pr-0">
+                  <div className="mb-3 h-1 w-8" style={{ backgroundColor: metric.color }} />
+                  <p className="text-[11px] font-medium tracking-[0.2em] text-muted-foreground uppercase">
+                    {metric.label}
+                  </p>
+                  <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">
+                    {metric.value}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+              <TelemetryFact
+                label="Volts"
+                value={formatVoltage(gpu.telemetry.voltageMillivolts)}
+              />
+              <TelemetryFact
+                label="Perf State"
+                value={gpu.telemetry.performanceState ?? "Unavailable"}
+              />
+              <TelemetryFact
+                label="VRAM"
+                value={formatMemoryRatio(
+                  gpu.telemetry.memoryUsedMiB,
+                  gpu.telemetry.memoryTotalMiB,
+                )}
+              />
+              <TelemetryFact
+                label="Fan Setup"
+                value={
+                  gpu.cooling.fanCount > 1
+                    ? `${gpu.cooling.fanCount} fans`
+                    : "Single fan"
+                }
+              />
+            </div>
+          </header>
+
+          <div
+            data-testid="gpu-performance-telemetry"
+            className="min-w-0 space-y-7"
+          >
+            <div className="flex items-end justify-between gap-4 border-b border-border/70 pb-3">
+              <div>
+                <h3 className="text-sm font-medium tracking-[0.24em] text-foreground/80 uppercase">
+                  Live Telemetry
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Rolling 60 second signal history
                 </p>
               </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
-            <TelemetryFact
-              label="Volts"
-              value={formatVoltage(gpu.telemetry.voltageMillivolts)}
-            />
-            <TelemetryFact
-              label="Perf State"
-              value={gpu.telemetry.performanceState ?? "Unavailable"}
-            />
-            <TelemetryFact
-              label="VRAM"
-              value={formatMemoryRatio(
-                gpu.telemetry.memoryUsedMiB,
-                gpu.telemetry.memoryTotalMiB,
-              )}
-            />
-            <TelemetryFact
-              label="Fan Setup"
-              value={
-                gpu.cooling.fanCount > 1
-                  ? `${gpu.cooling.fanCount} fans`
-                  : "Single fan"
-              }
-            />
-          </div>
-        </header>
-
-        <div
-          data-testid="gpu-performance-telemetry"
-          className="min-w-0 space-y-7"
-        >
-          <div className="flex items-end justify-between gap-4 border-b border-border/70 pb-3">
-            <div>
-              <h3 className="text-sm font-medium tracking-[0.24em] text-foreground/80 uppercase">
-                Live Telemetry
-              </h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Rolling 60 second signal history
-              </p>
+              <Badge className="rounded-md border-border/70 bg-transparent" variant="outline">
+                60 s
+              </Badge>
             </div>
-            <Badge className="rounded-md border-border/70 bg-transparent" variant="outline">
-              60 s
-            </Badge>
+            <TelemetryPanel gpu={gpu} history={history} />
           </div>
-          <TelemetryPanel gpu={gpu} history={history} />
         </div>
-      </div>
-    </section>
+      </section>
+    </details>
   );
 }
 
