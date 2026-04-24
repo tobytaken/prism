@@ -269,7 +269,7 @@ function GpuTelemetrySurface({
 
       <section className="relative overflow-hidden px-5 py-7">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/70 to-transparent" />
-        <div className="grid gap-8 xl:grid-cols-[minmax(340px,0.9fr)_minmax(680px,1.8fr)]">
+        <div className="flex flex-col gap-8 xl:flex-row">
           <OcControlRail
             gpu={gpu}
             controlsDisabled={controlsDisabled}
@@ -279,7 +279,7 @@ function GpuTelemetrySurface({
 
           <div
             data-testid="gpu-performance-telemetry"
-            className="min-w-0 space-y-7"
+            className="min-w-0 flex-1 space-y-7"
           >
             <TelemetryPanel gpu={gpu} history={history} />
           </div>
@@ -321,37 +321,63 @@ function OcControlRail({
   }, []);
 
   return (
-    <details
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-      className="group/oc min-w-0 border-y border-border/70"
+    <aside
+      className={cn(
+        "min-w-0 shrink-0 overflow-hidden border-y border-border/70 transition-[width] duration-200 ease-out xl:border-r xl:border-y-0 xl:pr-5",
+        open ? "w-full xl:w-[360px]" : "w-full xl:w-12",
+      )}
     >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-3 transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-        <div className="flex items-center gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className={cn(
+          "flex w-full items-center justify-between gap-3 py-3 text-left transition-colors hover:text-foreground",
+          !open && "xl:h-full xl:min-h-80 xl:flex-col xl:justify-start xl:px-0",
+        )}
+      >
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            !open && "xl:flex-col xl:gap-3",
+          )}
+        >
           <Gauge className="size-4 text-primary" />
-          <span className="text-sm font-semibold tracking-[0.18em] uppercase">
+          <span
+            className={cn(
+              "text-sm font-semibold tracking-[0.18em] uppercase",
+              !open && "xl:[writing-mode:vertical-rl]",
+            )}
+          >
             OC Controls
           </span>
         </div>
-        <ChevronDown className="size-4 text-muted-foreground transition-transform group-open/oc:rotate-180" />
-      </summary>
-
-      <fieldset
-        disabled={controlsDisabled || !onMutationAction}
-        aria-disabled={controlsDisabled || !onMutationAction}
-        className={cn(
-          "pb-5 transition-opacity",
-          (controlsDisabled || !onMutationAction) &&
-            "pointer-events-none opacity-45 saturate-50",
-        )}
-      >
-        <GpuTuningControls
-          gpu={gpu}
-          pendingAction={pendingAction}
-          onMutationAction={onMutationAction ?? (() => undefined)}
+        <ChevronDown
+          className={cn(
+            "size-4 text-muted-foreground transition-transform",
+            open ? "rotate-90" : "-rotate-90 xl:rotate-0",
+          )}
         />
-      </fieldset>
-    </details>
+      </button>
+
+      {open && (
+        <fieldset
+          disabled={controlsDisabled || !onMutationAction}
+          aria-disabled={controlsDisabled || !onMutationAction}
+          className={cn(
+            "pb-5 transition-opacity xl:pb-0",
+            (controlsDisabled || !onMutationAction) &&
+              "pointer-events-none opacity-45 saturate-50",
+          )}
+        >
+          <GpuTuningControls
+            gpu={gpu}
+            pendingAction={pendingAction}
+            onMutationAction={onMutationAction ?? (() => undefined)}
+          />
+        </fieldset>
+      )}
+    </aside>
   );
 }
 
@@ -620,7 +646,7 @@ function MetricSparkline({
 function GpuPerformanceSkeleton() {
   return (
     <div data-testid="gpu-performance-skeleton" className="border-y border-border/80 py-7">
-      <div className="grid gap-8 xl:grid-cols-[minmax(340px,0.9fr)_minmax(680px,1.8fr)]">
+      <div className="flex flex-col gap-8 xl:flex-row">
         <div className="space-y-6">
           <Skeleton className="h-11 w-full rounded-none" />
           <div className="space-y-5">
