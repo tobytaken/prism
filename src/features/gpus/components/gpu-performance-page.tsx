@@ -1,7 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
-  applyGpuConfig,
   resetGpuClockOffsets,
   resetGpuPowerLimit,
   setGpuClockOffsets,
@@ -25,16 +24,6 @@ export function GpuPerformancePage() {
       await queryClient.invalidateQueries({ queryKey: ["gpu-performance"] });
     },
   });
-  const reapplyMutation = useMutation({
-    mutationFn: () => applyGpuConfig({ reapplySaved: true }),
-    onSettled: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["gpu-performance"] }),
-        queryClient.invalidateQueries({ queryKey: ["gpu-daemon-status"] }),
-        queryClient.invalidateQueries({ queryKey: ["gpu-inventory"] }),
-      ]);
-    },
-  });
 
   return (
     <GpuPerformanceScreen
@@ -43,16 +32,7 @@ export function GpuPerformancePage() {
       isLoading={query.isPending}
       errorMessage={query.error instanceof Error ? query.error.message : null}
       mutationErrorMessage={mutation.error?.message ?? null}
-      reapplyPending={reapplyMutation.isPending}
-      reapplyErrorMessage={
-        reapplyMutation.error instanceof Error
-          ? reapplyMutation.error.message
-          : reapplyMutation.data?.error?.message ?? null
-      }
       pendingAction={mutation.isPending ? mutation.variables : null}
-      onReapplySavedSettings={() => {
-        reapplyMutation.mutate();
-      }}
       onMutationAction={(action) => {
         mutation.mutate(action);
       }}

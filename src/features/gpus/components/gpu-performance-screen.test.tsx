@@ -117,9 +117,7 @@ describe("GpuPerformanceScreen", () => {
         daemonStatus={connectedDaemon}
         isLoading={false}
         errorMessage={null}
-        reapplyPending={false}
         pendingAction={null}
-        onReapplySavedSettings={() => undefined}
         onMutationAction={() => undefined}
       />,
     );
@@ -127,9 +125,10 @@ describe("GpuPerformanceScreen", () => {
     expect(screen.getByText("NVIDIA GeForce RTX 5090")).toBeInTheDocument();
     expect(screen.getByTestId("gpu-performance-telemetry")).toBeInTheDocument();
     expect(screen.getByTestId("gpu-tuning-controls")).toBeInTheDocument();
+    expect(screen.queryByText("Signal Monitor")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Reapply Saved Settings" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Reapply Saved Settings" }),
+    ).not.toBeInTheDocument();
     expect(screen.getAllByText("312 W").length).toBeGreaterThan(0);
     expect(screen.getByText("2,550 MHz")).toBeInTheDocument();
     expect(screen.getByText("14,001 MHz")).toBeInTheDocument();

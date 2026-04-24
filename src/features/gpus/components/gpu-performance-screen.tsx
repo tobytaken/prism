@@ -4,14 +4,11 @@ import {
   ChevronDown,
   Cpu,
   Gauge,
-  LoaderCircle,
-  RefreshCw,
   ShieldAlert,
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
 import {
@@ -48,10 +45,7 @@ type GpuPerformanceScreenProps = {
   isLoading: boolean;
   errorMessage: string | null;
   mutationErrorMessage?: string | null;
-  reapplyPending?: boolean;
-  reapplyErrorMessage?: string | null;
   pendingAction?: PerformanceMutationAction | null;
-  onReapplySavedSettings?: () => void;
   onMutationAction?: (action: PerformanceMutationAction) => void;
 };
 
@@ -61,17 +55,13 @@ export function GpuPerformanceScreen({
   isLoading,
   errorMessage,
   mutationErrorMessage = null,
-  reapplyPending = false,
-  reapplyErrorMessage = null,
   pendingAction = null,
-  onReapplySavedSettings,
   onMutationAction,
 }: GpuPerformanceScreenProps) {
   const gpus = inventory?.gpus ?? EMPTY_PERFORMANCE_GPUS;
   const warnings = inventory?.warnings ?? EMPTY_WARNINGS;
   const historyByGpuId = useGpuMetricHistory();
   const daemonDisconnected = daemonStatus?.reachable === false;
-  const daemonConnected = daemonStatus?.reachable === true;
   const daemonMessage =
     daemonStatus?.message ??
     "Privileged GPU controls require prismd to be installed and reachable.";
@@ -80,27 +70,8 @@ export function GpuPerformanceScreen({
     <div className="space-y-8">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="max-w-3xl space-y-2">
-          <p className="text-xs font-medium tracking-[0.26em] text-primary uppercase">
-            Signal Monitor
-          </p>
           <h1 className="text-3xl font-semibold tracking-tight">Performance</h1>
         </div>
-        {daemonConnected && onReapplySavedSettings && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={reapplyPending}
-            onClick={onReapplySavedSettings}
-          >
-            {reapplyPending ? (
-              <LoaderCircle className="animate-spin" />
-            ) : (
-              <RefreshCw />
-            )}
-            Reapply Saved Settings
-          </Button>
-        )}
       </div>
 
       {daemonDisconnected && daemonStatus && (
@@ -140,14 +111,6 @@ export function GpuPerformanceScreen({
           <AlertDescription>{mutationErrorMessage}</AlertDescription>
         </Alert>
       )}
-      {reapplyErrorMessage && (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertTitle>Failed to reapply saved settings</AlertTitle>
-          <AlertDescription>{reapplyErrorMessage}</AlertDescription>
-        </Alert>
-      )}
-
       {warnings.length > 0 && (
         <Alert>
           <AlertTriangle className="text-primary" />
@@ -324,7 +287,7 @@ function OcControlRail({
     <aside
       className={cn(
         "min-w-0 shrink-0 overflow-hidden border-y border-border/70 transition-[width] duration-200 ease-out xl:border-r xl:border-y-0 xl:pr-5",
-        open ? "w-full xl:w-[360px]" : "w-full xl:w-12",
+        open ? "w-full xl:w-[560px]" : "w-full xl:w-12",
       )}
     >
       <button
@@ -332,7 +295,7 @@ function OcControlRail({
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          "flex w-full items-center justify-between gap-3 py-3 text-left transition-colors hover:text-foreground",
+          "flex w-full items-center justify-between gap-3 pt-1.5 pb-3 text-left transition-colors hover:text-foreground",
           !open && "xl:h-full xl:min-h-80 xl:flex-col xl:justify-start xl:px-0",
         )}
       >
@@ -345,11 +308,11 @@ function OcControlRail({
           <Gauge className="size-4 text-primary" />
           <span
             className={cn(
-              "text-sm font-semibold tracking-[0.18em] uppercase",
+              "text-lg font-semibold tracking-tight",
               !open && "xl:[writing-mode:vertical-rl]",
             )}
           >
-            OC Controls
+            Overclocking
           </span>
         </div>
         <ChevronDown
@@ -372,6 +335,7 @@ function OcControlRail({
         >
           <GpuTuningControls
             gpu={gpu}
+            layout="rail"
             pendingAction={pendingAction}
             onMutationAction={onMutationAction ?? (() => undefined)}
           />

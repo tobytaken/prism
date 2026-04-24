@@ -224,11 +224,13 @@ export function GpuTuningScreen({
 export function GpuTuningControls({
   gpu,
   showIdentity = false,
+  layout = "stack",
   pendingAction,
   onMutationAction,
 }: {
   gpu: GpuPerformanceDevice;
   showIdentity?: boolean;
+  layout?: "stack" | "rail";
   pendingAction: PerformanceMutationAction | null;
   onMutationAction: (action: PerformanceMutationAction) => void;
 }) {
@@ -300,113 +302,142 @@ export function GpuTuningControls({
     (gpu.clocks.memory.isSupported &&
       normalizedMemoryDraft !== (gpu.clocks.memory.currentOffsetMHz ?? 0));
 
+  const identity = showIdentity ? (
+    <div className="flex flex-wrap items-center gap-2">
+      <VendorBadge vendor={gpu.vendor} />
+      {gpu.architecture && <Badge variant="outline">{gpu.architecture}</Badge>}
+      {gpu.busId && (
+        <span className="font-mono text-xs text-muted-foreground">
+          {gpu.busId}
+        </span>
+      )}
+    </div>
+  ) : null;
+
+  const powerSection = (
+    <PerformanceSection title="Power" icon={Zap}>
+      <CapabilitySummary
+        supported={gpu.power.isSupported}
+        reason={gpu.power.unsupportedReason}
+      />
+      <PowerSectionContent
+        power={gpu.power}
+        draft={powerDraft}
+        layout={layout}
+        busy={powerBusy}
+        onDraftChange={setPowerDraft}
+        onApply={() =>
+          onMutationAction({
+            kind: "setPowerLimit",
+            gpuId: gpu.id,
+            limitWatts: normalizedPowerDraft,
+          })
+        }
+        onReset={() =>
+          onMutationAction({
+            kind: "resetPowerLimit",
+            gpuId: gpu.id,
+          })
+        }
+      />
+    </PerformanceSection>
+  );
+
+  const coolingSection = (
+    <PerformanceSection title="Cooling" icon={Wind}>
+      <CapabilitySummary
+        supported={gpu.cooling.isSupported}
+        reason={gpu.cooling.unsupportedReason}
+      />
+      <CoolingSectionContent
+        gpuId={gpu.id}
+        cooling={gpu.cooling}
+        drafts={fanDrafts}
+        layout={layout}
+        pendingAction={pendingAction}
+        onDraftChange={(fanIndex, value) =>
+          setFanDrafts((current) => ({
+            ...current,
+            [fanIndex]: value,
+          }))
+        }
+        onSetManual={(fanIndex, speedPercent) =>
+          onMutationAction({
+            kind: "setFanSpeed",
+            gpuId: gpu.id,
+            fanIndex,
+            speedPercent,
+          })
+        }
+        onSetAuto={(fanIndex) =>
+          onMutationAction({
+            kind: "setFanModeAuto",
+            gpuId: gpu.id,
+            fanIndex,
+          })
+        }
+      />
+    </PerformanceSection>
+  );
+
+  const clockSection = (
+    <PerformanceSection title="Clock Offsets" icon={Clock3}>
+      <CapabilitySummary
+        supported={gpu.clocks.isSupported}
+        reason={gpu.clocks.unsupportedReason}
+      />
+      <ClockSectionContent
+        clocks={gpu.clocks}
+        graphicsDraft={graphicsDraft}
+        memoryDraft={memoryDraft}
+        layout={layout}
+        busy={clocksBusy}
+        hasChanges={hasClockChanges}
+        onGraphicsDraftChange={setGraphicsDraft}
+        onMemoryDraftChange={setMemoryDraft}
+        onApply={() =>
+          onMutationAction({
+            kind: "setClockOffsets",
+            gpuId: gpu.id,
+            graphicsOffsetMHz: gpu.clocks.graphics.isSupported
+              ? normalizedGraphicsDraft
+              : null,
+            memoryOffsetMHz: gpu.clocks.memory.isSupported
+              ? normalizedMemoryDraft
+              : null,
+          })
+        }
+        onReset={() =>
+          onMutationAction({
+            kind: "resetClockOffsets",
+            gpuId: gpu.id,
+          })
+        }
+      />
+    </PerformanceSection>
+  );
+
+  if (layout === "rail") {
+    return (
+      <div data-testid="gpu-tuning-controls" className="space-y-5">
+        {identity}
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-6">
+            {powerSection}
+            {clockSection}
+          </div>
+          {coolingSection}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div data-testid="gpu-tuning-controls" className="space-y-6">
-      {showIdentity && (
-        <div className="flex flex-wrap items-center gap-2">
-          <VendorBadge vendor={gpu.vendor} />
-          {gpu.architecture && <Badge variant="outline">{gpu.architecture}</Badge>}
-          {gpu.busId && (
-            <span className="font-mono text-xs text-muted-foreground">
-              {gpu.busId}
-            </span>
-          )}
-        </div>
-      )}
-
-      <PerformanceSection title="Power" icon={Gauge}>
-        <CapabilitySummary
-          supported={gpu.power.isSupported}
-          reason={gpu.power.unsupportedReason}
-        />
-        <PowerSectionContent
-          power={gpu.power}
-          draft={powerDraft}
-          busy={powerBusy}
-          onDraftChange={setPowerDraft}
-          onApply={() =>
-            onMutationAction({
-              kind: "setPowerLimit",
-              gpuId: gpu.id,
-              limitWatts: normalizedPowerDraft,
-            })
-          }
-          onReset={() =>
-            onMutationAction({
-              kind: "resetPowerLimit",
-              gpuId: gpu.id,
-            })
-          }
-        />
-      </PerformanceSection>
-
-      <PerformanceSection title="Cooling" icon={Wind}>
-        <CapabilitySummary
-          supported={gpu.cooling.isSupported}
-          reason={gpu.cooling.unsupportedReason}
-        />
-        <CoolingSectionContent
-          gpuId={gpu.id}
-          cooling={gpu.cooling}
-          drafts={fanDrafts}
-          pendingAction={pendingAction}
-          onDraftChange={(fanIndex, value) =>
-            setFanDrafts((current) => ({
-              ...current,
-              [fanIndex]: value,
-            }))
-          }
-          onSetManual={(fanIndex, speedPercent) =>
-            onMutationAction({
-              kind: "setFanSpeed",
-              gpuId: gpu.id,
-              fanIndex,
-              speedPercent,
-            })
-          }
-          onSetAuto={(fanIndex) =>
-            onMutationAction({
-              kind: "setFanModeAuto",
-              gpuId: gpu.id,
-              fanIndex,
-            })
-          }
-        />
-      </PerformanceSection>
-
-      <PerformanceSection title="Clock Offsets" icon={Clock3}>
-        <CapabilitySummary
-          supported={gpu.clocks.isSupported}
-          reason={gpu.clocks.unsupportedReason}
-        />
-        <ClockSectionContent
-          clocks={gpu.clocks}
-          graphicsDraft={graphicsDraft}
-          memoryDraft={memoryDraft}
-          busy={clocksBusy}
-          hasChanges={hasClockChanges}
-          onGraphicsDraftChange={setGraphicsDraft}
-          onMemoryDraftChange={setMemoryDraft}
-          onApply={() =>
-            onMutationAction({
-              kind: "setClockOffsets",
-              gpuId: gpu.id,
-              graphicsOffsetMHz: gpu.clocks.graphics.isSupported
-                ? normalizedGraphicsDraft
-                : null,
-              memoryOffsetMHz: gpu.clocks.memory.isSupported
-                ? normalizedMemoryDraft
-                : null,
-            })
-          }
-          onReset={() =>
-            onMutationAction({
-              kind: "resetClockOffsets",
-              gpuId: gpu.id,
-            })
-          }
-        />
-      </PerformanceSection>
+      {identity}
+      {powerSection}
+      {coolingSection}
+      {clockSection}
     </div>
   );
 }
@@ -414,6 +445,7 @@ export function GpuTuningControls({
 function PowerSectionContent({
   power,
   draft,
+  layout,
   busy,
   onDraftChange,
   onApply,
@@ -421,6 +453,7 @@ function PowerSectionContent({
 }: {
   power: PowerControlInfo;
   draft: number;
+  layout: "stack" | "rail";
   busy: boolean;
   onDraftChange: (value: number) => void;
   onApply: () => void;
@@ -440,7 +473,7 @@ function PowerSectionContent({
     normalizedDraft !== (power.currentLimitWatts ?? normalizedDraft);
 
   return (
-    <div className="space-y-4">
+    <div className={cn("space-y-4", layout === "rail" && "text-sm")}>
       <div className="space-y-3 border-t border-border/70 pt-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -515,6 +548,7 @@ function CoolingSectionContent({
   gpuId,
   cooling,
   drafts,
+  layout,
   pendingAction,
   onDraftChange,
   onSetManual,
@@ -523,6 +557,7 @@ function CoolingSectionContent({
   gpuId: string;
   cooling: CoolingInfo;
   drafts: Record<number, number>;
+  layout: "stack" | "rail";
   pendingAction: PerformanceMutationAction | null;
   onDraftChange: (fanIndex: number, value: number) => void;
   onSetManual: (fanIndex: number, speedPercent: number) => void;
@@ -533,7 +568,13 @@ function CoolingSectionContent({
   }
 
   return (
-    <div className="space-y-5">
+    <div
+      className={cn(
+        layout === "rail"
+          ? "grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))]"
+          : "space-y-5",
+      )}
+    >
       {cooling.fans.map((fan) => {
         const min = fan.minSpeedPercent ?? 0;
         const max = fan.maxSpeedPercent ?? 100;
@@ -573,6 +614,7 @@ function ClockSectionContent({
   clocks,
   graphicsDraft,
   memoryDraft,
+  layout,
   busy,
   hasChanges,
   onGraphicsDraftChange,
@@ -583,6 +625,7 @@ function ClockSectionContent({
   clocks: GpuPerformanceDevice["clocks"];
   graphicsDraft: number;
   memoryDraft: number;
+  layout: "stack" | "rail";
   busy: boolean;
   hasChanges: boolean;
   onGraphicsDraftChange: (value: number) => void;
@@ -592,22 +635,30 @@ function ClockSectionContent({
 }) {
   return (
     <div className="space-y-5">
-      <ClockOffsetEditor
-        title="Graphics"
-        icon={Zap}
-        info={clocks.graphics}
-        draft={graphicsDraft}
-        onDraftChange={onGraphicsDraftChange}
-        disabled={!clocks.graphics.isSupported || busy}
-      />
-      <ClockOffsetEditor
-        title="Memory"
-        icon={Clock3}
-        info={clocks.memory}
-        draft={memoryDraft}
-        onDraftChange={onMemoryDraftChange}
-        disabled={!clocks.memory.isSupported || busy}
-      />
+      <div
+        className={cn(
+          layout === "rail"
+            ? "grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))]"
+            : "space-y-5",
+        )}
+      >
+        <ClockOffsetEditor
+          title="Graphics"
+          icon={Zap}
+          info={clocks.graphics}
+          draft={graphicsDraft}
+          onDraftChange={onGraphicsDraftChange}
+          disabled={!clocks.graphics.isSupported || busy}
+        />
+        <ClockOffsetEditor
+          title="Memory"
+          icon={Clock3}
+          info={clocks.memory}
+          draft={memoryDraft}
+          onDraftChange={onMemoryDraftChange}
+          disabled={!clocks.memory.isSupported || busy}
+        />
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         <Button
