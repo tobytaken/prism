@@ -114,7 +114,6 @@ describe("GpuPerformanceScreen", () => {
 
     expect(screen.getByText("NVIDIA GeForce RTX 5090")).toBeInTheDocument();
     expect(screen.getByTestId("gpu-performance-telemetry")).toBeInTheDocument();
-    expect(screen.getByText("Live Telemetry")).toBeInTheDocument();
     expect(screen.queryByTestId("gpu-tuning-controls")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Reapply Saved Settings" }),

@@ -49,10 +49,6 @@ export function GpuPerformanceScreen({
           Signal Monitor
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">Performance</h1>
-        <p className="text-sm leading-6 text-muted-foreground">
-          A rolling 60 second view of board power, clocks, thermals, fan speed,
-          utilization, and memory pressure.
-        </p>
       </div>
 
       {errorMessage && (
@@ -143,12 +139,6 @@ function GpuTelemetrySurface({
                 {gpu.architecture}
               </Badge>
             )}
-            <Badge
-              className="rounded-md border-primary/40 bg-primary/10 text-primary"
-              variant="outline"
-            >
-              500 ms
-            </Badge>
           </div>
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
             <h2 className="truncate text-lg font-semibold tracking-tight">
@@ -183,20 +173,6 @@ function GpuTelemetrySurface({
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/70 to-transparent" />
         <div className="grid gap-8 xl:grid-cols-[minmax(0,0.76fr)_minmax(620px,1.5fr)]">
           <header className="space-y-6">
-            <div className="space-y-2">
-              <p className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-                Device
-              </p>
-              <h3 className="text-2xl font-semibold tracking-tight text-balance">
-                Board telemetry
-              </h3>
-              {gpu.busId && (
-                <p className="font-mono text-xs text-muted-foreground">
-                  {gpu.busId}
-                </p>
-              )}
-            </div>
-
             <div className="grid grid-cols-3 divide-x divide-border/70 border-y border-border/70">
               {headlineMetrics.map((metric) => (
                 <div key={metric.label} className="px-3 py-4 first:pl-0 last:pr-0">
@@ -242,15 +218,7 @@ function GpuTelemetrySurface({
             data-testid="gpu-performance-telemetry"
             className="min-w-0 space-y-7"
           >
-            <div className="flex items-end justify-between gap-4 border-b border-border/70 pb-3">
-              <div>
-                <h3 className="text-sm font-medium tracking-[0.24em] text-foreground/80 uppercase">
-                  Live Telemetry
-                </h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Rolling 60 second signal history
-                </p>
-              </div>
+            <div className="flex justify-end border-b border-border/70 pb-3">
               <Badge className="rounded-md border-border/70 bg-transparent" variant="outline">
                 60 s
               </Badge>
