@@ -3,8 +3,6 @@ import { AlertTriangle, Cpu } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
 import {
@@ -45,9 +43,16 @@ export function GpuPerformanceScreen({
   const historyByGpuId = useGpuMetricHistory();
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Performance</h1>
+    <div className="space-y-8">
+      <div className="max-w-3xl space-y-2">
+        <p className="text-xs font-medium tracking-[0.26em] text-primary uppercase">
+          Signal Monitor
+        </p>
+        <h1 className="text-3xl font-semibold tracking-tight">Performance</h1>
+        <p className="text-sm leading-6 text-muted-foreground">
+          A rolling 60 second view of board power, clocks, thermals, fan speed,
+          utilization, and memory pressure.
+        </p>
       </div>
 
       {errorMessage && (
@@ -73,7 +78,7 @@ export function GpuPerformanceScreen({
       {isLoading && <GpuPerformanceSkeleton />}
 
       {!isLoading && gpus.length === 0 && !errorMessage && (
-        <div className="rounded-xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+        <div className="border-y border-dashed border-border/80 bg-muted/10 px-6 py-16 text-center">
           <Cpu className="mx-auto size-8 text-muted-foreground" />
           <p className="mt-4 text-sm font-medium">No supported GPUs detected</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -86,7 +91,7 @@ export function GpuPerformanceScreen({
       {!isLoading &&
         gpus.length > 0 &&
         gpus.map((gpu) => (
-          <GpuTelemetryCard
+          <GpuTelemetrySurface
             key={gpu.id}
             gpu={gpu}
             history={historyByGpuId[gpu.id]}
@@ -96,37 +101,128 @@ export function GpuPerformanceScreen({
   );
 }
 
-function GpuTelemetryCard({
+function GpuTelemetrySurface({
   gpu,
   history,
 }: {
   gpu: GpuPerformanceDevice;
   history?: GpuMetricHistory;
 }) {
-  return (
-    <Card className="border-border/80 bg-card/80 py-0">
-      <CardHeader className="border-b border-border/80 py-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <VendorBadge vendor={gpu.vendor} />
-          {gpu.architecture && <Badge variant="outline">{gpu.architecture}</Badge>}
-          {gpu.busId && (
-            <span className="font-mono text-xs text-muted-foreground">
-              {gpu.busId}
-            </span>
-          )}
-        </div>
-        <div className="space-y-1">
-          <CardTitle>{gpu.name}</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Live telemetry updates every 500 ms with a rolling 60 second view.
-          </p>
-        </div>
-      </CardHeader>
+  const headlineMetrics = [
+    {
+      label: "Power",
+      value: formatNumber(gpu.telemetry.powerDrawWatts, "W"),
+      color: "var(--color-chart-1)",
+    },
+    {
+      label: "GPU",
+      value: formatCompactPercent(gpu.telemetry.gpuUtilizationPercent),
+      color: "var(--primary)",
+    },
+    {
+      label: "Temp",
+      value: formatCompactCelsius(gpu.telemetry.temperatureC),
+      color: "var(--color-chart-5)",
+    },
+  ];
 
-      <CardContent className="py-6">
-        <TelemetryPanel gpu={gpu} history={history} />
-      </CardContent>
-    </Card>
+  return (
+    <section className="relative overflow-hidden border-y border-border/80 py-7">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/70 to-transparent" />
+      <div className="grid gap-8 xl:grid-cols-[minmax(0,0.76fr)_minmax(620px,1.5fr)]">
+        <header className="space-y-6">
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <VendorBadge vendor={gpu.vendor} />
+              {gpu.architecture && (
+                <Badge
+                  className="rounded-md border-border/70 bg-transparent"
+                  variant="outline"
+                >
+                  {gpu.architecture}
+                </Badge>
+              )}
+              <Badge
+                className="rounded-md border-primary/40 bg-primary/10 text-primary"
+                variant="outline"
+              >
+                500 ms
+              </Badge>
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-semibold tracking-tight text-balance">
+                {gpu.name}
+              </h2>
+              {gpu.busId && (
+                <p className="font-mono text-xs text-muted-foreground">
+                  {gpu.busId}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 divide-x divide-border/70 border-y border-border/70">
+            {headlineMetrics.map((metric) => (
+              <div key={metric.label} className="px-3 py-4 first:pl-0 last:pr-0">
+                <div className="mb-3 h-1 w-8" style={{ backgroundColor: metric.color }} />
+                <p className="text-[11px] font-medium tracking-[0.2em] text-muted-foreground uppercase">
+                  {metric.label}
+                </p>
+                <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">
+                  {metric.value}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+            <TelemetryFact
+              label="Volts"
+              value={formatVoltage(gpu.telemetry.voltageMillivolts)}
+            />
+            <TelemetryFact
+              label="Perf State"
+              value={gpu.telemetry.performanceState ?? "Unavailable"}
+            />
+            <TelemetryFact
+              label="VRAM"
+              value={formatMemoryRatio(
+                gpu.telemetry.memoryUsedMiB,
+                gpu.telemetry.memoryTotalMiB,
+              )}
+            />
+            <TelemetryFact
+              label="Fan Setup"
+              value={
+                gpu.cooling.fanCount > 1
+                  ? `${gpu.cooling.fanCount} fans`
+                  : "Single fan"
+              }
+            />
+          </div>
+        </header>
+
+        <div
+          data-testid="gpu-performance-telemetry"
+          className="min-w-0 space-y-7"
+        >
+          <div className="flex items-end justify-between gap-4 border-b border-border/70 pb-3">
+            <div>
+              <h3 className="text-sm font-medium tracking-[0.24em] text-foreground/80 uppercase">
+                Live Telemetry
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Rolling 60 second signal history
+              </p>
+            </div>
+            <Badge className="rounded-md border-border/70 bg-transparent" variant="outline">
+              60 s
+            </Badge>
+          </div>
+          <TelemetryPanel gpu={gpu} history={history} />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -143,23 +239,7 @@ function TelemetryPanel({
       : "Frame buffer usage";
 
   return (
-    <section
-      data-testid="gpu-performance-telemetry"
-      className="space-y-4 rounded-xl border border-border bg-background/45 p-4"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <CardTitle className="text-sm uppercase tracking-[0.18em] text-foreground/85">
-            Live Telemetry
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Compact history for the metrics that matter while tuning this GPU.
-          </p>
-        </div>
-        <Badge variant="outline">60 s</Badge>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+      <div className="grid gap-x-7 gap-y-6 md:grid-cols-2 2xl:grid-cols-3">
         <TelemetryMetricCard
           label="Power"
           value={formatNumber(gpu.telemetry.powerDrawWatts, "W")}
@@ -232,7 +312,6 @@ function TelemetryPanel({
           badge={gpu.telemetry.performanceState ?? undefined}
         />
       </div>
-    </section>
   );
 }
 
@@ -258,19 +337,19 @@ function TelemetryMetricCard({
   return (
     <div
       style={style}
-      className="rounded-xl border border-border bg-card/65 p-4 shadow-sm shadow-black/10"
+      className="group min-w-0 border-b border-border/70 pb-5 transition-colors hover:border-foreground/35"
     >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
             {label}
           </p>
-          <p className="mt-2 text-xl font-semibold tabular-nums tracking-tight">
+          <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">
             {value}
           </p>
         </div>
         <span
-          className="mt-1 block size-2 rounded-full"
+          className="mt-1 block h-8 w-px opacity-80 transition-opacity group-hover:opacity-100"
           style={{ backgroundColor: accentColor }}
         />
       </div>
@@ -298,19 +377,34 @@ function TelemetryStatusCard({
   badge?: string;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card/65 p-4 shadow-sm shadow-black/10">
+    <div className="min-w-0 border-b border-border/70 pb-5">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
             {label}
           </p>
-          <p className="mt-2 text-xl font-semibold tabular-nums tracking-tight">
+          <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">
             {value}
           </p>
         </div>
-        {badge && <Badge variant="outline">{badge}</Badge>}
+        {badge && (
+          <Badge className="rounded-md border-border/70 bg-transparent" variant="outline">
+            {badge}
+          </Badge>
+        )}
       </div>
       <p className="mt-4 text-xs text-muted-foreground">{subtitle}</p>
+    </div>
+  );
+}
+
+function TelemetryFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border-t border-border/70 pt-3">
+      <p className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
+        {label}
+      </p>
+      <p className="mt-1 truncate text-sm font-medium tabular-nums">{value}</p>
     </div>
   );
 }
@@ -327,7 +421,7 @@ function MetricSparkline({
   if (!series?.hasData) {
     return (
       <div
-        className="flex items-center justify-center rounded-lg border border-dashed border-border/70 bg-background/35 text-xs text-muted-foreground"
+        className="flex items-center justify-center border border-dashed border-border/70 bg-muted/10 text-xs text-muted-foreground"
         style={{ height: SPARKLINE_HEIGHT }}
       >
         Unavailable
@@ -339,7 +433,7 @@ function MetricSparkline({
   if (!bounds) {
     return (
       <div
-        className="flex items-center justify-center rounded-lg border border-dashed border-border/70 bg-background/35 text-xs text-muted-foreground"
+        className="flex items-center justify-center border border-dashed border-border/70 bg-muted/10 text-xs text-muted-foreground"
         style={{ height: SPARKLINE_HEIGHT }}
       >
         Unavailable
@@ -361,7 +455,7 @@ function MetricSparkline({
   );
 
   return (
-    <div className="rounded-lg border border-border/70 bg-background/35 px-1.5 py-2">
+    <div className="border border-border/70 bg-muted/10 px-1.5 py-2">
       <div className="flex items-stretch gap-2">
         <div
           className="flex shrink-0 flex-col items-end justify-between text-right text-[11px] leading-none font-medium tabular-nums text-muted-foreground"
@@ -407,22 +501,31 @@ function MetricSparkline({
 
 function GpuPerformanceSkeleton() {
   return (
-    <div
-      data-testid="gpu-performance-skeleton"
-      className="overflow-hidden rounded-xl border border-border/80 bg-card/80"
-    >
-      <div className="space-y-3 p-6">
-        <Skeleton className="h-5 w-24 rounded-md" />
-        <Skeleton className="h-8 w-80 rounded-md" />
-        <Skeleton className="h-4 w-80 rounded-md" />
-      </div>
-      <Separator />
-      <div className="space-y-4 p-6">
-        <Skeleton className="h-5 w-32 rounded-md" />
-        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          {Array.from({ length: 9 }).map((_, index) => (
-            <Skeleton key={index} className="h-40 rounded-xl" />
-          ))}
+    <div data-testid="gpu-performance-skeleton" className="border-y border-border/80 py-7">
+      <div className="grid gap-8 xl:grid-cols-[minmax(0,0.76fr)_minmax(620px,1.5fr)]">
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <Skeleton className="h-5 w-24 rounded-md" />
+            <Skeleton className="h-8 w-80 rounded-md" />
+            <Skeleton className="h-4 w-64 rounded-md" />
+          </div>
+          <div className="grid grid-cols-3 divide-x divide-border/70 border-y border-border/70">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="px-3 py-4 first:pl-0 last:pr-0">
+                <Skeleton className="mb-3 h-1 w-8 rounded-none" />
+                <Skeleton className="h-3 w-12" />
+                <Skeleton className="mt-2 h-7 w-16" />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-7">
+          <Skeleton className="h-10 w-full rounded-none" />
+          <div className="grid gap-x-7 gap-y-6 md:grid-cols-2 2xl:grid-cols-3">
+            {Array.from({ length: 9 }).map((_, index) => (
+              <Skeleton key={index} className="h-36 rounded-none" />
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -431,6 +534,14 @@ function GpuPerformanceSkeleton() {
 
 function formatPercent(value: number | null) {
   return value == null ? "Unavailable" : `${value}%`;
+}
+
+function formatCompactPercent(value: number | null) {
+  return value == null ? "N/A" : `${value} %`;
+}
+
+function formatCompactCelsius(value: number | null) {
+  return value == null ? "N/A" : `${value}C`;
 }
 
 function formatWatts(value: number) {
@@ -461,6 +572,18 @@ function formatVoltage(value: number | null) {
   return `${new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 3,
   }).format(value / 1000)} V`;
+}
+
+function formatMemoryRatio(used: number | null, total: number | null) {
+  if (used == null) {
+    return "Unavailable";
+  }
+
+  if (total == null) {
+    return formatNumber(used, "MiB");
+  }
+
+  return `${formatNumber(used, "MiB")} / ${formatNumber(total, "MiB")}`;
 }
 
 function buildSparklinePath(
