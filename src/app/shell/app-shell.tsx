@@ -5,7 +5,6 @@ import {
   HardDriveDownload,
   LayoutGrid,
   Settings2,
-  SlidersHorizontal,
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -18,7 +17,6 @@ const navigation = [
   { label: "Overview", to: "/", icon: LayoutGrid },
   { label: "Drivers", to: "/drivers", icon: HardDriveDownload },
   { label: "Performance", to: "/performance", icon: Gauge },
-  { label: "Tuning", to: "/tuning", icon: SlidersHorizontal },
   { label: "Profiles", to: "/profiles", icon: BookCopy },
   { label: "Settings", to: "/settings", icon: Settings2 },
 ] as const;
@@ -109,7 +107,7 @@ export function AppShell() {
           </aside>
 
           <div className="flex-1 overflow-y-auto">
-            <main className="mx-auto max-w-6xl p-5 md:p-6">
+            <main className="mx-auto max-w-7xl p-5 md:p-6">
               <Outlet />
             </main>
           </div>

@@ -87,6 +87,13 @@ const sampleInventory = {
   warnings: [],
 };
 
+const connectedDaemon = {
+  reachable: true,
+  managedByDaemon: true,
+  socketPath: "/run/prism/prismd.sock",
+  message: null,
+};
+
 describe("GpuPerformanceScreen", () => {
   beforeEach(() => {
     mockedUseGpuMetricHistory.mockReturnValue({});
@@ -103,21 +110,26 @@ describe("GpuPerformanceScreen", () => {
     expect(screen.getByTestId("gpu-performance-skeleton")).toBeInTheDocument();
   });
 
-  it("renders telemetry without the tuning controls", () => {
+  it("renders telemetry with the tuning controls", () => {
     render(
       <GpuPerformanceScreen
         inventory={sampleInventory}
+        daemonStatus={connectedDaemon}
         isLoading={false}
         errorMessage={null}
+        reapplyPending={false}
+        pendingAction={null}
+        onReapplySavedSettings={() => undefined}
+        onMutationAction={() => undefined}
       />,
     );
 
     expect(screen.getByText("NVIDIA GeForce RTX 5090")).toBeInTheDocument();
     expect(screen.getByTestId("gpu-performance-telemetry")).toBeInTheDocument();
-    expect(screen.queryByTestId("gpu-tuning-controls")).not.toBeInTheDocument();
+    expect(screen.getByTestId("gpu-tuning-controls")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Reapply Saved Settings" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Reapply Saved Settings" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("312 W").length).toBeGreaterThan(0);
     expect(screen.getByText("2,550 MHz")).toBeInTheDocument();
     expect(screen.getByText("14,001 MHz")).toBeInTheDocument();
@@ -128,7 +140,7 @@ describe("GpuPerformanceScreen", () => {
     expect(screen.getAllByText("P0").length).toBeGreaterThan(0);
     expect(screen.getByText("Voltage")).toBeInTheDocument();
     expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Clock Offsets")).not.toBeInTheDocument();
+    expect(screen.getByText("Clock Offsets")).toBeInTheDocument();
   });
 
   it("renders chart min and max labels from the recorded history", () => {

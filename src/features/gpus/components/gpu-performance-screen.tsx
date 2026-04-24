@@ -1,8 +1,17 @@
-import { type CSSProperties } from "react";
-import { AlertTriangle, ChevronDown, Cpu } from "lucide-react";
+import { useEffect, useState, type CSSProperties } from "react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  Cpu,
+  Gauge,
+  LoaderCircle,
+  RefreshCw,
+  ShieldAlert,
+} from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
 import {
@@ -11,7 +20,13 @@ import {
   useGpuMetricHistory,
 } from "@/features/gpus/hooks/use-gpu-metric-history";
 import { formatNumber } from "@/features/gpus/lib/formatters";
+import { cn } from "@/lib/utils";
+import {
+  GpuTuningControls,
+  type PerformanceMutationAction,
+} from "./gpu-tuning-screen";
 import type {
+  GpuDaemonStatus,
   GpuPerformanceDevice,
   GpuPerformanceResponse,
 } from "@/features/gpus/types";
@@ -29,33 +44,107 @@ const SPARKLINE_INSETS = {
 
 type GpuPerformanceScreenProps = {
   inventory?: GpuPerformanceResponse;
+  daemonStatus?: GpuDaemonStatus;
   isLoading: boolean;
   errorMessage: string | null;
+  mutationErrorMessage?: string | null;
+  reapplyPending?: boolean;
+  reapplyErrorMessage?: string | null;
+  pendingAction?: PerformanceMutationAction | null;
+  onReapplySavedSettings?: () => void;
+  onMutationAction?: (action: PerformanceMutationAction) => void;
 };
 
 export function GpuPerformanceScreen({
   inventory,
+  daemonStatus,
   isLoading,
   errorMessage,
+  mutationErrorMessage = null,
+  reapplyPending = false,
+  reapplyErrorMessage = null,
+  pendingAction = null,
+  onReapplySavedSettings,
+  onMutationAction,
 }: GpuPerformanceScreenProps) {
   const gpus = inventory?.gpus ?? EMPTY_PERFORMANCE_GPUS;
   const warnings = inventory?.warnings ?? EMPTY_WARNINGS;
   const historyByGpuId = useGpuMetricHistory();
+  const daemonDisconnected = daemonStatus?.reachable === false;
+  const daemonConnected = daemonStatus?.reachable === true;
+  const daemonMessage =
+    daemonStatus?.message ??
+    "Privileged GPU controls require prismd to be installed and reachable.";
 
   return (
     <div className="space-y-8">
-      <div className="max-w-3xl space-y-2">
-        <p className="text-xs font-medium tracking-[0.26em] text-primary uppercase">
-          Signal Monitor
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight">Performance</h1>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="max-w-3xl space-y-2">
+          <p className="text-xs font-medium tracking-[0.26em] text-primary uppercase">
+            Signal Monitor
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight">Performance</h1>
+        </div>
+        {daemonConnected && onReapplySavedSettings && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={reapplyPending}
+            onClick={onReapplySavedSettings}
+          >
+            {reapplyPending ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <RefreshCw />
+            )}
+            Reapply Saved Settings
+          </Button>
+        )}
       </div>
+
+      {daemonDisconnected && daemonStatus && (
+        <Alert
+          variant="destructive"
+          className="border-destructive/50 bg-destructive/12"
+        >
+          <ShieldAlert className="text-destructive" />
+          <AlertTitle>Privileged GPU controls are unavailable</AlertTitle>
+          <AlertDescription className="text-destructive/90">
+            <div className="space-y-1">
+              <p>{daemonMessage}</p>
+              <p>
+                Controls stay visible so you can inspect what the driver exposes
+                on this system, but changes stay locked until prismd is
+                reachable.
+              </p>
+              <p className="font-mono text-xs text-destructive/80">
+                {daemonStatus.socketPath}
+              </p>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {errorMessage && (
         <Alert variant="destructive">
           <AlertTriangle />
           <AlertTitle>Failed to load performance telemetry</AlertTitle>
           <AlertDescription>{errorMessage}</AlertDescription>
+        </Alert>
+      )}
+      {mutationErrorMessage && (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>Failed to apply change</AlertTitle>
+          <AlertDescription>{mutationErrorMessage}</AlertDescription>
+        </Alert>
+      )}
+      {reapplyErrorMessage && (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>Failed to reapply saved settings</AlertTitle>
+          <AlertDescription>{reapplyErrorMessage}</AlertDescription>
         </Alert>
       )}
 
@@ -91,6 +180,9 @@ export function GpuPerformanceScreen({
             key={gpu.id}
             gpu={gpu}
             history={historyByGpuId[gpu.id]}
+            controlsDisabled={daemonDisconnected}
+            pendingAction={pendingAction}
+            onMutationAction={onMutationAction}
           />
         ))}
     </div>
@@ -100,9 +192,15 @@ export function GpuPerformanceScreen({
 function GpuTelemetrySurface({
   gpu,
   history,
+  controlsDisabled,
+  pendingAction,
+  onMutationAction,
 }: {
   gpu: GpuPerformanceDevice;
   history?: GpuMetricHistory;
+  controlsDisabled: boolean;
+  pendingAction: PerformanceMutationAction | null;
+  onMutationAction?: (action: PerformanceMutationAction) => void;
 }) {
   const headlineMetrics = [
     {
@@ -171,48 +269,13 @@ function GpuTelemetrySurface({
 
       <section className="relative overflow-hidden px-5 py-7">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/70 to-transparent" />
-        <div className="grid gap-8 xl:grid-cols-[minmax(0,0.76fr)_minmax(620px,1.5fr)]">
-          <header className="space-y-6">
-            <div className="grid grid-cols-3 divide-x divide-border/70 border-y border-border/70">
-              {headlineMetrics.map((metric) => (
-                <div key={metric.label} className="px-3 py-4 first:pl-0 last:pr-0">
-                  <div className="mb-3 h-1 w-8" style={{ backgroundColor: metric.color }} />
-                  <p className="text-[11px] font-medium tracking-[0.2em] text-muted-foreground uppercase">
-                    {metric.label}
-                  </p>
-                  <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">
-                    {metric.value}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
-              <TelemetryFact
-                label="Volts"
-                value={formatVoltage(gpu.telemetry.voltageMillivolts)}
-              />
-              <TelemetryFact
-                label="Perf State"
-                value={gpu.telemetry.performanceState ?? "Unavailable"}
-              />
-              <TelemetryFact
-                label="VRAM"
-                value={formatMemoryRatio(
-                  gpu.telemetry.memoryUsedMiB,
-                  gpu.telemetry.memoryTotalMiB,
-                )}
-              />
-              <TelemetryFact
-                label="Fan Setup"
-                value={
-                  gpu.cooling.fanCount > 1
-                    ? `${gpu.cooling.fanCount} fans`
-                    : "Single fan"
-                }
-              />
-            </div>
-          </header>
+        <div className="grid gap-8 xl:grid-cols-[minmax(340px,0.9fr)_minmax(680px,1.8fr)]">
+          <OcControlRail
+            gpu={gpu}
+            controlsDisabled={controlsDisabled}
+            pendingAction={pendingAction}
+            onMutationAction={onMutationAction}
+          />
 
           <div
             data-testid="gpu-performance-telemetry"
@@ -227,6 +290,72 @@ function GpuTelemetrySurface({
           </div>
         </div>
       </section>
+    </details>
+  );
+}
+
+function OcControlRail({
+  gpu,
+  controlsDisabled,
+  pendingAction,
+  onMutationAction,
+}: {
+  gpu: GpuPerformanceDevice;
+  controlsDisabled: boolean;
+  pendingAction: PerformanceMutationAction | null;
+  onMutationAction?: (action: PerformanceMutationAction) => void;
+}) {
+  const [open, setOpen] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return true;
+    }
+
+    return window.matchMedia("(min-width: 1280px)").matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const query = window.matchMedia("(min-width: 1280px)");
+    const handleChange = () => setOpen(query.matches);
+    query.addEventListener("change", handleChange);
+
+    return () => query.removeEventListener("change", handleChange);
+  }, []);
+
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="group/oc min-w-0 border-y border-border/70"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-3 transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <div className="flex items-center gap-2">
+          <Gauge className="size-4 text-primary" />
+          <span className="text-sm font-semibold tracking-[0.18em] uppercase">
+            OC Controls
+          </span>
+        </div>
+        <ChevronDown className="size-4 text-muted-foreground transition-transform group-open/oc:rotate-180" />
+      </summary>
+
+      <fieldset
+        disabled={controlsDisabled || !onMutationAction}
+        aria-disabled={controlsDisabled || !onMutationAction}
+        className={cn(
+          "pb-5 transition-opacity",
+          (controlsDisabled || !onMutationAction) &&
+            "pointer-events-none opacity-45 saturate-50",
+        )}
+      >
+        <GpuTuningControls
+          gpu={gpu}
+          pendingAction={pendingAction}
+          onMutationAction={onMutationAction ?? (() => undefined)}
+        />
+      </fieldset>
     </details>
   );
 }
@@ -403,17 +532,6 @@ function TelemetryStatusCard({
   );
 }
 
-function TelemetryFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border-t border-border/70 pt-3">
-      <p className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
-        {label}
-      </p>
-      <p className="mt-1 truncate text-sm font-medium tabular-nums">{value}</p>
-    </div>
-  );
-}
-
 function MetricSparkline({
   series,
   accentColor,
@@ -507,20 +625,12 @@ function MetricSparkline({
 function GpuPerformanceSkeleton() {
   return (
     <div data-testid="gpu-performance-skeleton" className="border-y border-border/80 py-7">
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,0.76fr)_minmax(620px,1.5fr)]">
+      <div className="grid gap-8 xl:grid-cols-[minmax(340px,0.9fr)_minmax(680px,1.8fr)]">
         <div className="space-y-6">
-          <div className="space-y-3">
-            <Skeleton className="h-5 w-24 rounded-md" />
-            <Skeleton className="h-8 w-80 rounded-md" />
-            <Skeleton className="h-4 w-64 rounded-md" />
-          </div>
-          <div className="grid grid-cols-3 divide-x divide-border/70 border-y border-border/70">
+          <Skeleton className="h-11 w-full rounded-none" />
+          <div className="space-y-5">
             {Array.from({ length: 3 }).map((_, index) => (
-              <div key={index} className="px-3 py-4 first:pl-0 last:pr-0">
-                <Skeleton className="mb-3 h-1 w-8 rounded-none" />
-                <Skeleton className="h-3 w-12" />
-                <Skeleton className="mt-2 h-7 w-16" />
-              </div>
+              <Skeleton key={index} className="h-48 rounded-none" />
             ))}
           </div>
         </div>
@@ -577,18 +687,6 @@ function formatVoltage(value: number | null) {
   return `${new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 3,
   }).format(value / 1000)} V`;
-}
-
-function formatMemoryRatio(used: number | null, total: number | null) {
-  if (used == null) {
-    return "Unavailable";
-  }
-
-  if (total == null) {
-    return formatNumber(used, "MiB");
-  }
-
-  return `${formatNumber(used, "MiB")} / ${formatNumber(total, "MiB")}`;
 }
 
 function buildSparklinePath(

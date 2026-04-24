@@ -15,7 +15,6 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
@@ -200,12 +199,22 @@ export function GpuTuningScreen({
           )}
         >
           {gpus.map((gpu) => (
-            <GpuTuningCard
-              key={gpu.id}
-              gpu={gpu}
-              pendingAction={pendingAction}
-              onMutationAction={onMutationAction}
-            />
+            <div key={gpu.id} className="standalone space-y-5 border-y border-border/80 py-6">
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold tracking-tight">
+                  {gpu.name}
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Adjust power, cooling, and clock offsets for this GPU.
+                </p>
+              </div>
+              <GpuTuningControls
+                gpu={gpu}
+                showIdentity
+                pendingAction={pendingAction}
+                onMutationAction={onMutationAction}
+              />
+            </div>
           ))}
         </fieldset>
       )}
@@ -213,12 +222,14 @@ export function GpuTuningScreen({
   );
 }
 
-function GpuTuningCard({
+export function GpuTuningControls({
   gpu,
+  showIdentity = false,
   pendingAction,
   onMutationAction,
 }: {
   gpu: GpuPerformanceDevice;
+  showIdentity?: boolean;
   pendingAction: PerformanceMutationAction | null;
   onMutationAction: (action: PerformanceMutationAction) => void;
 }) {
@@ -291,8 +302,8 @@ function GpuTuningCard({
       normalizedMemoryDraft !== (gpu.clocks.memory.currentOffsetMHz ?? 0));
 
   return (
-    <Card className="border-border/80 bg-card/80 py-0">
-      <CardHeader className="border-b border-border/80 py-5">
+    <div data-testid="gpu-tuning-controls" className="space-y-5">
+      {showIdentity && (
         <div className="flex flex-wrap items-center gap-2">
           <VendorBadge vendor={gpu.vendor} />
           {gpu.architecture && <Badge variant="outline">{gpu.architecture}</Badge>}
@@ -302,112 +313,102 @@ function GpuTuningCard({
             </span>
           )}
         </div>
-        <div className="space-y-1">
-          <CardTitle>{gpu.name}</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Adjust power, cooling, and clock offsets for this GPU.
-          </p>
-        </div>
-      </CardHeader>
+      )}
 
-      <CardContent className="py-6">
-        <div data-testid="gpu-tuning-controls" className="space-y-4">
-          <PerformanceSection title="Power" icon={Gauge}>
-            <CapabilitySummary
-              supported={gpu.power.isSupported}
-              reason={gpu.power.unsupportedReason}
-            />
-            <PowerSectionContent
-              power={gpu.power}
-              draft={powerDraft}
-              busy={powerBusy}
-              onDraftChange={setPowerDraft}
-              onApply={() =>
-                onMutationAction({
-                  kind: "setPowerLimit",
-                  gpuId: gpu.id,
-                  limitWatts: normalizedPowerDraft,
-                })
-              }
-              onReset={() =>
-                onMutationAction({
-                  kind: "resetPowerLimit",
-                  gpuId: gpu.id,
-                })
-              }
-            />
-          </PerformanceSection>
+      <PerformanceSection title="Power" icon={Gauge}>
+        <CapabilitySummary
+          supported={gpu.power.isSupported}
+          reason={gpu.power.unsupportedReason}
+        />
+        <PowerSectionContent
+          power={gpu.power}
+          draft={powerDraft}
+          busy={powerBusy}
+          onDraftChange={setPowerDraft}
+          onApply={() =>
+            onMutationAction({
+              kind: "setPowerLimit",
+              gpuId: gpu.id,
+              limitWatts: normalizedPowerDraft,
+            })
+          }
+          onReset={() =>
+            onMutationAction({
+              kind: "resetPowerLimit",
+              gpuId: gpu.id,
+            })
+          }
+        />
+      </PerformanceSection>
 
-          <PerformanceSection title="Cooling" icon={Wind}>
-            <CapabilitySummary
-              supported={gpu.cooling.isSupported}
-              reason={gpu.cooling.unsupportedReason}
-            />
-            <CoolingSectionContent
-              gpuId={gpu.id}
-              cooling={gpu.cooling}
-              drafts={fanDrafts}
-              pendingAction={pendingAction}
-              onDraftChange={(fanIndex, value) =>
-                setFanDrafts((current) => ({
-                  ...current,
-                  [fanIndex]: value,
-                }))
-              }
-              onSetManual={(fanIndex, speedPercent) =>
-                onMutationAction({
-                  kind: "setFanSpeed",
-                  gpuId: gpu.id,
-                  fanIndex,
-                  speedPercent,
-                })
-              }
-              onSetAuto={(fanIndex) =>
-                onMutationAction({
-                  kind: "setFanModeAuto",
-                  gpuId: gpu.id,
-                  fanIndex,
-                })
-              }
-            />
-          </PerformanceSection>
+      <PerformanceSection title="Cooling" icon={Wind}>
+        <CapabilitySummary
+          supported={gpu.cooling.isSupported}
+          reason={gpu.cooling.unsupportedReason}
+        />
+        <CoolingSectionContent
+          gpuId={gpu.id}
+          cooling={gpu.cooling}
+          drafts={fanDrafts}
+          pendingAction={pendingAction}
+          onDraftChange={(fanIndex, value) =>
+            setFanDrafts((current) => ({
+              ...current,
+              [fanIndex]: value,
+            }))
+          }
+          onSetManual={(fanIndex, speedPercent) =>
+            onMutationAction({
+              kind: "setFanSpeed",
+              gpuId: gpu.id,
+              fanIndex,
+              speedPercent,
+            })
+          }
+          onSetAuto={(fanIndex) =>
+            onMutationAction({
+              kind: "setFanModeAuto",
+              gpuId: gpu.id,
+              fanIndex,
+            })
+          }
+        />
+      </PerformanceSection>
 
-          <PerformanceSection title="Clock Offsets" icon={Clock3}>
-            <CapabilitySummary
-              supported={gpu.clocks.isSupported}
-              reason={gpu.clocks.unsupportedReason}
-            />
-            <ClockSectionContent
-              clocks={gpu.clocks}
-              graphicsDraft={graphicsDraft}
-              memoryDraft={memoryDraft}
-              busy={clocksBusy}
-              hasChanges={hasClockChanges}
-              onGraphicsDraftChange={setGraphicsDraft}
-              onMemoryDraftChange={setMemoryDraft}
-              onApply={() =>
-                onMutationAction({
-                  kind: "setClockOffsets",
-                  gpuId: gpu.id,
-                  graphicsOffsetMHz: gpu.clocks.graphics.isSupported
-                    ? normalizedGraphicsDraft
-                    : null,
-                  memoryOffsetMHz: gpu.clocks.memory.isSupported
-                    ? normalizedMemoryDraft
-                    : null,
-                })
-              }
-              onReset={() =>
-                onMutationAction({
-                  kind: "resetClockOffsets",
-                  gpuId: gpu.id,
-                })
-              }
-            />
-          </PerformanceSection>
-        </div>
-      </CardContent>
-    </Card>
+      <PerformanceSection title="Clock Offsets" icon={Clock3}>
+        <CapabilitySummary
+          supported={gpu.clocks.isSupported}
+          reason={gpu.clocks.unsupportedReason}
+        />
+        <ClockSectionContent
+          clocks={gpu.clocks}
+          graphicsDraft={graphicsDraft}
+          memoryDraft={memoryDraft}
+          busy={clocksBusy}
+          hasChanges={hasClockChanges}
+          onGraphicsDraftChange={setGraphicsDraft}
+          onMemoryDraftChange={setMemoryDraft}
+          onApply={() =>
+            onMutationAction({
+              kind: "setClockOffsets",
+              gpuId: gpu.id,
+              graphicsOffsetMHz: gpu.clocks.graphics.isSupported
+                ? normalizedGraphicsDraft
+                : null,
+              memoryOffsetMHz: gpu.clocks.memory.isSupported
+                ? normalizedMemoryDraft
+                : null,
+            })
+          }
+          onReset={() =>
+            onMutationAction({
+              kind: "resetClockOffsets",
+              gpuId: gpu.id,
+            })
+          }
+        />
+      </PerformanceSection>
+    </div>
   );
 }
 
@@ -660,9 +661,9 @@ function PerformanceSection({
     >
       <div className="flex items-center gap-2">
         <Icon className="size-4 text-primary" />
-        <CardTitle className="text-sm uppercase tracking-[0.18em] text-foreground/85">
+        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-foreground/85">
           {title}
-        </CardTitle>
+        </p>
       </div>
       {children}
     </section>
