@@ -18,7 +18,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
-import { formatNumber } from "@/features/gpus/lib/formatters";
 import { cn } from "@/lib/utils";
 import type {
   ClockOffsetInfo,
@@ -302,7 +301,7 @@ export function GpuTuningControls({
       normalizedMemoryDraft !== (gpu.clocks.memory.currentOffsetMHz ?? 0));
 
   return (
-    <div data-testid="gpu-tuning-controls" className="space-y-5">
+    <div data-testid="gpu-tuning-controls" className="space-y-6">
       {showIdentity && (
         <div className="flex flex-wrap items-center gap-2">
           <VendorBadge vendor={gpu.vendor} />
@@ -442,33 +441,25 @@ function PowerSectionContent({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <InlineMetric
-          label="Current"
-          value={formatNumber(power.currentDrawWatts, "W")}
-        />
-        <InlineMetric
-          label="Default"
-          value={formatNumber(power.defaultLimitWatts, "W")}
-        />
-        <InlineMetric
-          label="Enforced"
-          value={formatNumber(power.enforcedLimitWatts, "W")}
-        />
-        <InlineMetric
-          label="Range"
-          value={
-            power.minLimitWatts != null && power.maxLimitWatts != null
-              ? `${power.minLimitWatts}-${power.maxLimitWatts} W`
-              : "Unavailable"
-          }
-        />
-      </div>
-
-      <div className="space-y-3">
-        <label className="block text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
-          Target limit
-        </label>
+      <div className="space-y-3 border-t border-border/70 pt-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <label className="block text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              Target Limit
+            </label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {power.minLimitWatts != null && power.maxLimitWatts != null
+                ? `${power.minLimitWatts}-${power.maxLimitWatts} W allowed`
+                : "Limit range unavailable"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Current limit {formatWatts(power.currentLimitWatts)}
+            </p>
+          </div>
+          <p className="text-sm font-semibold tabular-nums">
+            {normalizedDraft} W
+          </p>
+        </div>
         <input
           type="range"
           className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
@@ -481,6 +472,7 @@ function PowerSectionContent({
         />
         <Input
           type="number"
+          className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
           min={power.minLimitWatts ?? undefined}
           max={power.maxLimitWatts ?? undefined}
           step={1}
@@ -495,10 +487,10 @@ function PowerSectionContent({
         />
       </div>
 
-      <div className="flex gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="flex-1"
+          className="rounded-none"
           onClick={onApply}
           disabled={!canEdit || !hasChanges || busy}
         >
@@ -507,7 +499,7 @@ function PowerSectionContent({
         <Button
           size="sm"
           variant="outline"
-          className="flex-1"
+          className="rounded-none"
           onClick={onReset}
           disabled={!power.isSupported || busy}
         >
@@ -541,7 +533,7 @@ function CoolingSectionContent({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {cooling.fans.map((fan) => {
         const min = fan.minSpeedPercent ?? 0;
         const max = fan.maxSpeedPercent ?? 100;
@@ -599,7 +591,7 @@ function ClockSectionContent({
   onReset: () => void;
 }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <ClockOffsetEditor
         title="Graphics"
         icon={Zap}
@@ -617,10 +609,10 @@ function ClockSectionContent({
         disabled={!clocks.memory.isSupported || busy}
       />
 
-      <div className="flex gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="flex-1"
+          className="rounded-none"
           onClick={onApply}
           disabled={!clocks.isSupported || !hasChanges || busy}
         >
@@ -629,7 +621,7 @@ function ClockSectionContent({
         <Button
           size="sm"
           variant="outline"
-          className="flex-1"
+          className="rounded-none"
           onClick={onReset}
           disabled={!clocks.isSupported || busy}
         >
@@ -655,7 +647,7 @@ function PerformanceSection({
   return (
     <section
       className={cn(
-        "min-w-0 space-y-4 rounded-xl border border-border bg-background/45 p-4",
+        "min-w-0 space-y-4 border-b border-border/70 pb-6 last:border-b-0 last:pb-0",
         className,
       )}
     >
@@ -682,7 +674,7 @@ function CapabilitySummary({
   }
 
   return (
-    <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+    <div className="border-l border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
       {reason ?? "Unavailable on this system."}
     </div>
   );
@@ -713,20 +705,26 @@ function FanEditor({
     fan.mode === "manual" ? "Manual" : fan.mode === "auto" ? "Auto" : "Unknown";
 
   return (
-    <div className="rounded-lg border border-border bg-background/60 p-3">
+    <div className="space-y-3 border-t border-border/70 pt-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-medium">Fan {fan.index + 1}</p>
+          <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+            Fan {fan.index + 1}
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Current {formatPercent(fan.currentSpeedPercent)} · Mode {currentMode}
+            {currentMode} mode
           </p>
         </div>
-        <Badge variant="outline">
+        <p className="text-xs font-medium text-muted-foreground tabular-nums">
           {min}-{max}%
-        </Badge>
+        </p>
       </div>
 
-      <div className="mt-3 space-y-3">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">Manual target</span>
+          <span className="text-sm font-semibold tabular-nums">{draft}%</span>
+        </div>
         <input
           type="range"
           className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
@@ -739,6 +737,7 @@ function FanEditor({
         />
         <Input
           type="number"
+          className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
           min={min}
           max={max}
           step={1}
@@ -753,10 +752,10 @@ function FanEditor({
         />
       </div>
 
-      <div className="mt-3 flex gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="flex-1"
+          className="rounded-none"
           onClick={onSetManual}
           disabled={busy || draft === current}
         >
@@ -765,7 +764,7 @@ function FanEditor({
         <Button
           size="sm"
           variant="outline"
-          className="flex-1"
+          className="rounded-none"
           onClick={onSetAuto}
           disabled={busy || fan.mode === "auto"}
         >
@@ -798,22 +797,28 @@ function ClockOffsetEditor({
   );
 
   return (
-    <div className="rounded-lg border border-border bg-background/60 p-3">
-      <div className="flex items-center gap-2">
-        <Icon className="size-4 text-primary" />
+    <div className="space-y-3 border-t border-border/70 pt-4">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-medium">{title}</p>
+          <div className="flex items-center gap-2">
+            <Icon className="size-4 text-primary" />
+            <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              {title}
+            </p>
+          </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Current {formatOffset(info.currentOffsetMHz)} · Range{" "}
             {info.minOffsetMHz != null && info.maxOffsetMHz != null
               ? `${formatOffset(info.minOffsetMHz)} to ${formatOffset(info.maxOffsetMHz)}`
-              : "Unavailable"}
+              : "Offset range unavailable"}
           </p>
         </div>
+        <p className="text-sm font-semibold tabular-nums">
+          {formatOffset(normalizedDraft)}
+        </p>
       </div>
 
       {info.isSupported ? (
-        <div className="mt-3 space-y-3">
+        <div className="space-y-3">
           <input
             type="range"
             className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
@@ -828,6 +833,7 @@ function ClockOffsetEditor({
           />
           <Input
             type="number"
+            className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
             min={info.minOffsetMHz ?? undefined}
             max={info.maxOffsetMHz ?? undefined}
             step={1}
@@ -842,21 +848,10 @@ function ClockOffsetEditor({
           />
         </div>
       ) : (
-        <p className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+        <p className="border-l border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
           {info.unsupportedReason ?? "Unavailable on this system."}
         </p>
       )}
-    </div>
-  );
-}
-
-function InlineMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-background/60 p-3">
-      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-2 text-sm font-medium tabular-nums">{value}</p>
     </div>
   );
 }
@@ -895,14 +890,14 @@ function normalizeDraft(value: number, min: number | null, max: number | null) {
   return value;
 }
 
-function formatPercent(value: number | null) {
-  return value == null ? "Unavailable" : `${value}%`;
-}
-
 function formatOffset(value: number | null) {
   if (value == null) {
     return "Unavailable";
   }
 
   return `${value >= 0 ? "+" : ""}${value} MHz`;
+}
+
+function formatWatts(value: number | null) {
+  return value == null ? "Unavailable" : `${value} W`;
 }

@@ -281,11 +281,6 @@ function GpuTelemetrySurface({
             data-testid="gpu-performance-telemetry"
             className="min-w-0 space-y-7"
           >
-            <div className="flex justify-end border-b border-border/70 pb-3">
-              <Badge className="rounded-md border-border/70 bg-transparent" variant="outline">
-                60 s
-              </Badge>
-            </div>
             <TelemetryPanel gpu={gpu} history={history} />
           </div>
         </div>
