@@ -307,7 +307,8 @@ function OcControlRail({
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          "flex w-full items-center justify-between gap-3 pt-1.5 pb-3 text-left transition-colors hover:text-foreground",
+          "flex w-full items-center justify-between gap-3 pb-3 text-left transition-colors hover:text-foreground",
+          open ? "-mt-1.5 pt-0" : "pt-0",
           !open && "xl:h-full xl:min-h-80 xl:flex-col xl:justify-start xl:px-0",
         )}
       >
@@ -415,6 +416,7 @@ function TelemetryMetricCard({
   return (
     <Link
       aria-label={`Open ${metric.label} details for ${gpu.name}`}
+      draggable={false}
       style={style}
       to={to}
       className="group min-w-0 border-b border-border/70 pb-5 outline-none transition-colors hover:border-foreground/35 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/50"
