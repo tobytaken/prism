@@ -17,7 +17,7 @@ export function TitleBar({ isMaximized }: TitleBarProps) {
       <button
         onClick={() => void window.prism.window.minimize()}
         className={cn(
-          "app-region-no-drag flex h-7 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors",
+          "app-region-no-drag flex h-7 w-8 items-center justify-center rounded-sm text-muted-foreground transition-colors",
           "hover:bg-muted hover:text-foreground",
         )}
         tabIndex={-1}
@@ -31,7 +31,7 @@ export function TitleBar({ isMaximized }: TitleBarProps) {
             : window.prism.window.maximize())
         }
         className={cn(
-          "app-region-no-drag flex h-7 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors",
+          "app-region-no-drag flex h-7 w-8 items-center justify-center rounded-sm text-muted-foreground transition-colors",
           "hover:bg-muted hover:text-foreground",
         )}
         tabIndex={-1}
@@ -41,7 +41,7 @@ export function TitleBar({ isMaximized }: TitleBarProps) {
       <button
         onClick={() => void window.prism.window.close()}
         className={cn(
-          "app-region-no-drag flex h-7 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors",
+          "app-region-no-drag flex h-7 w-8 items-center justify-center rounded-sm text-muted-foreground transition-colors",
           "transition-colors hover:bg-red-500/80 hover:text-white",
         )}
         tabIndex={-1}

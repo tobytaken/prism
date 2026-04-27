@@ -283,7 +283,9 @@ fn format_gpu_error_code(code: GpuCommandErrorCode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{backend_requires_daemon, handle_request, BridgeRequest};
+    use super::{backend_requires_daemon, handle_request, BridgeError, BridgeRequest};
+    use crate::gpu::{GpuCommandError, GpuCommandErrorCode};
+    use serde_json::json;
 
     #[test]
     fn unknown_method_returns_error() {
@@ -295,6 +297,64 @@ mod tests {
 
         assert!(response.result.is_none());
         assert_eq!(response.error.expect("error").code, "not_found");
+    }
+
+    #[test]
+    fn mutation_methods_require_params() {
+        let response = handle_request(BridgeRequest {
+            id: 8,
+            method: "gpu.applyConfig".into(),
+            params: None,
+        });
+
+        assert!(response.result.is_none());
+        assert_eq!(response.error.expect("error").code, "invalid_request");
+    }
+
+    #[test]
+    fn mutation_methods_reject_malformed_params() {
+        let response = handle_request(BridgeRequest {
+            id: 9,
+            method: "gpu.setPowerLimit".into(),
+            params: Some(json!({ "gpuId": "GPU-123", "limitWatts": "450" })),
+        });
+
+        assert!(response.result.is_none());
+        assert_eq!(response.error.expect("error").code, "invalid_request");
+    }
+
+    #[test]
+    fn reapply_saved_config_returns_mutation_response_when_daemon_is_unavailable() {
+        std::env::set_var(
+            "PRISM_SOCKET_PATH",
+            "/tmp/prism-bridge-test-missing/prismd.sock",
+        );
+
+        let response = handle_request(BridgeRequest {
+            id: 10,
+            method: "gpu.applyConfig".into(),
+            params: Some(json!({ "reapplySaved": true })),
+        });
+
+        std::env::remove_var("PRISM_SOCKET_PATH");
+
+        let result = response.result.expect("result");
+        assert!(response.error.is_none());
+        assert_eq!(result["success"], false);
+        assert_eq!(result["inventory"], serde_json::Value::Null);
+        assert_eq!(result["error"]["code"], "daemonUnavailable");
+    }
+
+    #[test]
+    fn gpu_error_codes_convert_to_bridge_error_codes() {
+        let error: BridgeError = GpuCommandError::new(
+            GpuCommandErrorCode::NoPermission,
+            "permission denied",
+        )
+        .into();
+
+        assert_eq!(error.code, "no_permission");
+        assert_eq!(error.message, "permission denied");
     }
 
     #[test]

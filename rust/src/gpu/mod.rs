@@ -733,10 +733,10 @@ mod tests {
     use super::{
         ApplyGpuConfigRequest, ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo,
         ClockRangeInput, ComputeApi, ComputeInfo, CoolingInfo, FanControlInfo, FanControlMode,
-        GpuApplyRecord, GpuCommandErrorCode, GpuControlInfo, GpuDaemonStatus, GpuDevice,
-        GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse, GpuSupportedFeatures,
-        GpuTelemetryInfo, GpuVendor, MemoryInfo, OffsetControl, PcieInfo, PersistedGpuState,
-        PowerControlInfo, PowerInfo, PowerLimitControl,
+        DesiredGpuConfig, GpuApplyRecord, GpuCommandErrorCode, GpuControlInfo, GpuDaemonStatus,
+        GpuDevice, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
+        GpuSupportedFeatures, GpuTelemetryInfo, GpuVendor, MemoryInfo, OffsetControl, PcieInfo,
+        PersistedGpuState, PowerControlInfo, PowerInfo, PowerLimitControl,
     };
 
     #[test]
@@ -768,11 +768,103 @@ mod tests {
     }
 
     #[test]
+    fn apply_request_rejects_reapply_with_per_gpu_settings() {
+        let error = ApplyGpuConfigRequest {
+            reapply_saved: true,
+            gpu_id: Some("GPU-123".into()),
+            power_limit_watts: Some(250),
+            ..Default::default()
+        }
+        .validate()
+        .expect_err("validation should fail");
+
+        assert_eq!(error.code, GpuCommandErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn apply_request_requires_at_least_one_setting() {
+        let error = ApplyGpuConfigRequest {
+            gpu_id: Some("GPU-123".into()),
+            ..Default::default()
+        }
+        .validate()
+        .expect_err("validation should fail");
+
+        assert_eq!(error.code, GpuCommandErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn desired_config_reports_non_empty_for_each_setting() {
+        assert!(!DesiredGpuConfig {
+            power_limit_watts: Some(250),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!DesiredGpuConfig {
+            gpu_clock_lock: Some(ClockRangeInput {
+                min_mhz: 1800,
+                max_mhz: 2200,
+            }),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!DesiredGpuConfig {
+            memory_clock_lock: Some(ClockRangeInput {
+                min_mhz: 1000,
+                max_mhz: 1200,
+            }),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!DesiredGpuConfig {
+            graphics_offset_mhz: Some(100),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!DesiredGpuConfig {
+            memory_offset_mhz: Some(500),
+            ..Default::default()
+        }
+        .is_empty());
+    }
+
+    #[test]
     fn persisted_state_removes_empty_desired_config() {
         let mut state = PersistedGpuState::default();
         state.upsert_desired("GPU-123", Default::default());
 
         assert!(state.gpus.is_empty());
+    }
+
+    #[test]
+    fn persisted_state_clear_removes_existing_record() {
+        let mut state = PersistedGpuState::default();
+        state.upsert_desired(
+            "GPU-123",
+            DesiredGpuConfig {
+                power_limit_watts: Some(250),
+                ..Default::default()
+            },
+        );
+
+        state.clear("GPU-123");
+
+        assert!(state.gpus.is_empty());
+    }
+
+    #[test]
+    fn mutation_failure_serializes_error_without_inventory() {
+        let response = super::GpuMutationResponse::failure(super::GpuCommandError::new(
+            GpuCommandErrorCode::Internal,
+            "boom",
+        ));
+
+        let value = serde_json::to_value(response).expect("serialize response");
+
+        assert_eq!(value["success"], false);
+        assert_eq!(value["inventory"], serde_json::Value::Null);
+        assert_eq!(value["error"]["code"], "internal");
+        assert_eq!(value["error"]["message"], "boom");
     }
 
     #[test]

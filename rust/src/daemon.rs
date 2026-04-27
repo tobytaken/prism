@@ -622,11 +622,14 @@ mod tests {
         SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
     };
     use crate::protocol::{DaemonRequest, DaemonResponse};
+    use std::cell::RefCell;
     use std::path::PathBuf;
 
     struct MockBackend {
         should_fail_apply: bool,
+        should_fail_reset: bool,
         command_error: Option<String>,
+        applied_requests: RefCell<Vec<ApplyGpuConfigRequest>>,
     }
 
     impl DaemonBackend for MockBackend {
@@ -653,7 +656,9 @@ mod tests {
             }
         }
 
-        fn apply(&self, _request: &ApplyGpuConfigRequest) -> Result<(), GpuCommandError> {
+        fn apply(&self, request: &ApplyGpuConfigRequest) -> Result<(), GpuCommandError> {
+            self.applied_requests.borrow_mut().push(request.clone());
+
             if self.should_fail_apply {
                 Err(GpuCommandError::new(
                     GpuCommandErrorCode::Internal,
@@ -665,7 +670,14 @@ mod tests {
         }
 
         fn reset(&self, _gpu_id: &str) -> Result<(), GpuCommandError> {
-            Ok(())
+            if self.should_fail_reset {
+                Err(GpuCommandError::new(
+                    GpuCommandErrorCode::Internal,
+                    "mock reset failed",
+                ))
+            } else {
+                Ok(())
+            }
         }
 
         fn set_power_limit(&self, _request: SetGpuPowerLimitRequest) -> Result<(), String> {
@@ -694,6 +706,15 @@ mod tests {
     }
 
     impl MockBackend {
+        fn new() -> Self {
+            Self {
+                should_fail_apply: false,
+                should_fail_reset: false,
+                command_error: None,
+                applied_requests: RefCell::new(vec![]),
+            }
+        }
+
         fn command_result(&self) -> Result<(), String> {
             self.command_error.clone().map_or(Ok(()), Err)
         }
@@ -709,10 +730,7 @@ mod tests {
 
     #[test]
     fn apply_request_updates_saved_state() {
-        let backend = MockBackend {
-            should_fail_apply: false,
-            command_error: None,
-        };
+        let backend = MockBackend::new();
         let mut state = PersistedGpuState::default();
 
         let response = handle_request(
@@ -752,7 +770,7 @@ mod tests {
     fn failed_apply_keeps_existing_desired_state_and_records_error() {
         let backend = MockBackend {
             should_fail_apply: true,
-            command_error: None,
+            ..MockBackend::new()
         };
         let mut state = PersistedGpuState::default();
         state.gpus.insert(
@@ -794,10 +812,7 @@ mod tests {
 
     #[test]
     fn get_daemon_status_returns_connected_socket_info() {
-        let backend = MockBackend {
-            should_fail_apply: false,
-            command_error: None,
-        };
+        let backend = MockBackend::new();
         let mut state = PersistedGpuState::default();
 
         let response = handle_request(
@@ -819,8 +834,8 @@ mod tests {
     #[test]
     fn power_limit_commands_return_command_responses_without_mutating_state() {
         let backend = MockBackend {
-            should_fail_apply: false,
             command_error: Some("mock permission denied".into()),
+            ..MockBackend::new()
         };
         let mut state = PersistedGpuState::default();
 
@@ -841,5 +856,168 @@ mod tests {
         assert!(!response.success);
         assert_eq!(response.error.as_deref(), Some("mock permission denied"));
         assert!(state.gpus.is_empty());
+    }
+
+    #[test]
+    fn reset_request_clears_saved_state() {
+        let backend = MockBackend::new();
+        let mut state = PersistedGpuState::default();
+        state.upsert_desired(
+            "GPU-123",
+            DesiredGpuConfig {
+                power_limit_watts: Some(225),
+                ..Default::default()
+            },
+        );
+
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::ResetConfig(crate::gpu::ResetGpuConfigRequest {
+                gpu_id: "GPU-123".into(),
+            }),
+        );
+
+        let DaemonResponse::Mutation(response) = response else {
+            panic!("expected mutation response");
+        };
+
+        assert!(response.success);
+        assert!(state.gpus.is_empty());
+    }
+
+    #[test]
+    fn failed_reset_preserves_saved_state_and_records_error() {
+        let backend = MockBackend {
+            should_fail_reset: true,
+            ..MockBackend::new()
+        };
+        let mut state = PersistedGpuState::default();
+        state.upsert_desired(
+            "GPU-123",
+            DesiredGpuConfig {
+                power_limit_watts: Some(225),
+                ..Default::default()
+            },
+        );
+
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::ResetConfig(crate::gpu::ResetGpuConfigRequest {
+                gpu_id: "GPU-123".into(),
+            }),
+        );
+
+        let DaemonResponse::Mutation(response) = response else {
+            panic!("expected mutation response");
+        };
+
+        assert!(!response.success);
+        assert_eq!(state.gpus["GPU-123"].desired.power_limit_watts, Some(225));
+        assert_eq!(
+            state.gpus["GPU-123"]
+                .last_apply
+                .as_ref()
+                .and_then(|record| record.message.as_deref()),
+            Some("mock reset failed")
+        );
+    }
+
+    #[test]
+    fn apply_request_without_gpu_id_returns_invalid_argument_without_saving_state() {
+        let backend = MockBackend::new();
+        let mut state = PersistedGpuState::default();
+
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::ApplyConfig(ApplyGpuConfigRequest {
+                power_limit_watts: Some(250),
+                ..Default::default()
+            }),
+        );
+
+        let DaemonResponse::Mutation(response) = response else {
+            panic!("expected mutation response");
+        };
+
+        assert!(!response.success);
+        assert_eq!(
+            response.error.expect("error").code,
+            GpuCommandErrorCode::InvalidArgument
+        );
+        assert!(state.gpus.is_empty());
+        assert!(backend.applied_requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn reapply_saved_config_applies_non_empty_saved_configs() {
+        let backend = MockBackend::new();
+        let mut state = PersistedGpuState::default();
+        state.upsert_desired(
+            "GPU-123",
+            DesiredGpuConfig {
+                power_limit_watts: Some(225),
+                ..Default::default()
+            },
+        );
+        state.gpus.insert(
+            "GPU-empty".into(),
+            PersistedGpuConfig {
+                desired: DesiredGpuConfig::default(),
+                last_apply: Some(crate::gpu::GpuApplyRecord::failure("old failure")),
+            },
+        );
+
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::ReapplySavedConfig,
+        );
+
+        let DaemonResponse::Mutation(response) = response else {
+            panic!("expected mutation response");
+        };
+
+        assert!(response.success);
+        let applied = backend.applied_requests.borrow();
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].gpu_id.as_deref(), Some("GPU-123"));
+        assert_eq!(applied[0].power_limit_watts, Some(225));
+        assert_eq!(
+            state.gpus["GPU-123"]
+                .last_apply
+                .as_ref()
+                .map(|record| record.success),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn command_success_returns_success_response() {
+        let backend = MockBackend::new();
+        let mut state = PersistedGpuState::default();
+
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::SetPowerLimit(SetGpuPowerLimitRequest {
+                gpu_id: "GPU-123".into(),
+                limit_watts: 250,
+            }),
+        );
+
+        let DaemonResponse::Command(response) = response else {
+            panic!("expected command response");
+        };
+
+        assert!(response.success);
+        assert!(response.error.is_none());
     }
 }

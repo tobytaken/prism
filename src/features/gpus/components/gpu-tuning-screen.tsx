@@ -15,11 +15,9 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
-import { formatNumber } from "@/features/gpus/lib/formatters";
 import { cn } from "@/lib/utils";
 import type {
   ClockOffsetInfo,
@@ -200,12 +198,22 @@ export function GpuTuningScreen({
           )}
         >
           {gpus.map((gpu) => (
-            <GpuTuningCard
-              key={gpu.id}
-              gpu={gpu}
-              pendingAction={pendingAction}
-              onMutationAction={onMutationAction}
-            />
+            <div key={gpu.id} className="standalone space-y-5 border-y border-border/80 py-6">
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold tracking-tight">
+                  {gpu.name}
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Adjust power, cooling, and clock offsets for this GPU.
+                </p>
+              </div>
+              <GpuTuningControls
+                gpu={gpu}
+                showIdentity
+                pendingAction={pendingAction}
+                onMutationAction={onMutationAction}
+              />
+            </div>
           ))}
         </fieldset>
       )}
@@ -213,12 +221,16 @@ export function GpuTuningScreen({
   );
 }
 
-function GpuTuningCard({
+export function GpuTuningControls({
   gpu,
+  showIdentity = false,
+  layout = "stack",
   pendingAction,
   onMutationAction,
 }: {
   gpu: GpuPerformanceDevice;
+  showIdentity?: boolean;
+  layout?: "stack" | "rail";
   pendingAction: PerformanceMutationAction | null;
   onMutationAction: (action: PerformanceMutationAction) => void;
 }) {
@@ -290,130 +302,150 @@ function GpuTuningCard({
     (gpu.clocks.memory.isSupported &&
       normalizedMemoryDraft !== (gpu.clocks.memory.currentOffsetMHz ?? 0));
 
+  const identity = showIdentity ? (
+    <div className="flex flex-wrap items-center gap-2">
+      <VendorBadge vendor={gpu.vendor} />
+      {gpu.architecture && <Badge variant="outline">{gpu.architecture}</Badge>}
+      {gpu.busId && (
+        <span className="font-mono text-xs text-muted-foreground">
+          {gpu.busId}
+        </span>
+      )}
+    </div>
+  ) : null;
+
+  const powerSection = (
+    <PerformanceSection title="Power" icon={Zap}>
+      <CapabilitySummary
+        supported={gpu.power.isSupported}
+        reason={gpu.power.unsupportedReason}
+      />
+      <PowerSectionContent
+        power={gpu.power}
+        draft={powerDraft}
+        layout={layout}
+        busy={powerBusy}
+        onDraftChange={setPowerDraft}
+        onApply={() =>
+          onMutationAction({
+            kind: "setPowerLimit",
+            gpuId: gpu.id,
+            limitWatts: normalizedPowerDraft,
+          })
+        }
+        onReset={() =>
+          onMutationAction({
+            kind: "resetPowerLimit",
+            gpuId: gpu.id,
+          })
+        }
+      />
+    </PerformanceSection>
+  );
+
+  const coolingSection = (
+    <PerformanceSection title="Cooling" icon={Wind}>
+      <CapabilitySummary
+        supported={gpu.cooling.isSupported}
+        reason={gpu.cooling.unsupportedReason}
+      />
+      <CoolingSectionContent
+        gpuId={gpu.id}
+        cooling={gpu.cooling}
+        drafts={fanDrafts}
+        layout={layout}
+        pendingAction={pendingAction}
+        onDraftChange={(fanIndex, value) =>
+          setFanDrafts((current) => ({
+            ...current,
+            [fanIndex]: value,
+          }))
+        }
+        onSetManual={(fanIndex, speedPercent) =>
+          onMutationAction({
+            kind: "setFanSpeed",
+            gpuId: gpu.id,
+            fanIndex,
+            speedPercent,
+          })
+        }
+        onSetAuto={(fanIndex) =>
+          onMutationAction({
+            kind: "setFanModeAuto",
+            gpuId: gpu.id,
+            fanIndex,
+          })
+        }
+      />
+    </PerformanceSection>
+  );
+
+  const clockSection = (
+    <PerformanceSection title="Clock Offsets" icon={Clock3}>
+      <CapabilitySummary
+        supported={gpu.clocks.isSupported}
+        reason={gpu.clocks.unsupportedReason}
+      />
+      <ClockSectionContent
+        clocks={gpu.clocks}
+        graphicsDraft={graphicsDraft}
+        memoryDraft={memoryDraft}
+        layout={layout}
+        busy={clocksBusy}
+        hasChanges={hasClockChanges}
+        onGraphicsDraftChange={setGraphicsDraft}
+        onMemoryDraftChange={setMemoryDraft}
+        onApply={() =>
+          onMutationAction({
+            kind: "setClockOffsets",
+            gpuId: gpu.id,
+            graphicsOffsetMHz: gpu.clocks.graphics.isSupported
+              ? normalizedGraphicsDraft
+              : null,
+            memoryOffsetMHz: gpu.clocks.memory.isSupported
+              ? normalizedMemoryDraft
+              : null,
+          })
+        }
+        onReset={() =>
+          onMutationAction({
+            kind: "resetClockOffsets",
+            gpuId: gpu.id,
+          })
+        }
+      />
+    </PerformanceSection>
+  );
+
+  if (layout === "rail") {
+    return (
+      <div data-testid="gpu-tuning-controls" className="space-y-5">
+        {identity}
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-6">
+            {powerSection}
+            {clockSection}
+          </div>
+          {coolingSection}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <Card className="border-border/80 bg-card/80 py-0">
-      <CardHeader className="border-b border-border/80 py-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <VendorBadge vendor={gpu.vendor} />
-          {gpu.architecture && <Badge variant="outline">{gpu.architecture}</Badge>}
-          {gpu.busId && (
-            <span className="font-mono text-xs text-muted-foreground">
-              {gpu.busId}
-            </span>
-          )}
-        </div>
-        <div className="space-y-1">
-          <CardTitle>{gpu.name}</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Adjust power, cooling, and clock offsets for this GPU.
-          </p>
-        </div>
-      </CardHeader>
-
-      <CardContent className="py-6">
-        <div data-testid="gpu-tuning-controls" className="space-y-4">
-          <PerformanceSection title="Power" icon={Gauge}>
-            <CapabilitySummary
-              supported={gpu.power.isSupported}
-              reason={gpu.power.unsupportedReason}
-            />
-            <PowerSectionContent
-              power={gpu.power}
-              draft={powerDraft}
-              busy={powerBusy}
-              onDraftChange={setPowerDraft}
-              onApply={() =>
-                onMutationAction({
-                  kind: "setPowerLimit",
-                  gpuId: gpu.id,
-                  limitWatts: normalizedPowerDraft,
-                })
-              }
-              onReset={() =>
-                onMutationAction({
-                  kind: "resetPowerLimit",
-                  gpuId: gpu.id,
-                })
-              }
-            />
-          </PerformanceSection>
-
-          <PerformanceSection title="Cooling" icon={Wind}>
-            <CapabilitySummary
-              supported={gpu.cooling.isSupported}
-              reason={gpu.cooling.unsupportedReason}
-            />
-            <CoolingSectionContent
-              gpuId={gpu.id}
-              cooling={gpu.cooling}
-              drafts={fanDrafts}
-              pendingAction={pendingAction}
-              onDraftChange={(fanIndex, value) =>
-                setFanDrafts((current) => ({
-                  ...current,
-                  [fanIndex]: value,
-                }))
-              }
-              onSetManual={(fanIndex, speedPercent) =>
-                onMutationAction({
-                  kind: "setFanSpeed",
-                  gpuId: gpu.id,
-                  fanIndex,
-                  speedPercent,
-                })
-              }
-              onSetAuto={(fanIndex) =>
-                onMutationAction({
-                  kind: "setFanModeAuto",
-                  gpuId: gpu.id,
-                  fanIndex,
-                })
-              }
-            />
-          </PerformanceSection>
-
-          <PerformanceSection title="Clock Offsets" icon={Clock3}>
-            <CapabilitySummary
-              supported={gpu.clocks.isSupported}
-              reason={gpu.clocks.unsupportedReason}
-            />
-            <ClockSectionContent
-              clocks={gpu.clocks}
-              graphicsDraft={graphicsDraft}
-              memoryDraft={memoryDraft}
-              busy={clocksBusy}
-              hasChanges={hasClockChanges}
-              onGraphicsDraftChange={setGraphicsDraft}
-              onMemoryDraftChange={setMemoryDraft}
-              onApply={() =>
-                onMutationAction({
-                  kind: "setClockOffsets",
-                  gpuId: gpu.id,
-                  graphicsOffsetMHz: gpu.clocks.graphics.isSupported
-                    ? normalizedGraphicsDraft
-                    : null,
-                  memoryOffsetMHz: gpu.clocks.memory.isSupported
-                    ? normalizedMemoryDraft
-                    : null,
-                })
-              }
-              onReset={() =>
-                onMutationAction({
-                  kind: "resetClockOffsets",
-                  gpuId: gpu.id,
-                })
-              }
-            />
-          </PerformanceSection>
-        </div>
-      </CardContent>
-    </Card>
+    <div data-testid="gpu-tuning-controls" className="space-y-6">
+      {identity}
+      {powerSection}
+      {coolingSection}
+      {clockSection}
+    </div>
   );
 }
 
 function PowerSectionContent({
   power,
   draft,
+  layout,
   busy,
   onDraftChange,
   onApply,
@@ -421,6 +453,7 @@ function PowerSectionContent({
 }: {
   power: PowerControlInfo;
   draft: number;
+  layout: "stack" | "rail";
   busy: boolean;
   onDraftChange: (value: number) => void;
   onApply: () => void;
@@ -440,34 +473,26 @@ function PowerSectionContent({
     normalizedDraft !== (power.currentLimitWatts ?? normalizedDraft);
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <InlineMetric
-          label="Current"
-          value={formatNumber(power.currentDrawWatts, "W")}
-        />
-        <InlineMetric
-          label="Default"
-          value={formatNumber(power.defaultLimitWatts, "W")}
-        />
-        <InlineMetric
-          label="Enforced"
-          value={formatNumber(power.enforcedLimitWatts, "W")}
-        />
-        <InlineMetric
-          label="Range"
-          value={
-            power.minLimitWatts != null && power.maxLimitWatts != null
-              ? `${power.minLimitWatts}-${power.maxLimitWatts} W`
-              : "Unavailable"
-          }
-        />
-      </div>
-
-      <div className="space-y-3">
-        <label className="block text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
-          Target limit
-        </label>
+    <div className={cn("space-y-4", layout === "rail" && "text-sm")}>
+      <div className="space-y-3 border-t border-border/70 pt-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <label className="block text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              Target Limit
+            </label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {power.minLimitWatts != null && power.maxLimitWatts != null
+                ? `${power.minLimitWatts}-${power.maxLimitWatts} W allowed`
+                : "Limit range unavailable"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Current limit {formatWatts(power.currentLimitWatts)}
+            </p>
+          </div>
+          <p className="text-sm font-semibold tabular-nums">
+            {normalizedDraft} W
+          </p>
+        </div>
         <input
           type="range"
           className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
@@ -480,6 +505,7 @@ function PowerSectionContent({
         />
         <Input
           type="number"
+          className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
           min={power.minLimitWatts ?? undefined}
           max={power.maxLimitWatts ?? undefined}
           step={1}
@@ -494,10 +520,9 @@ function PowerSectionContent({
         />
       </div>
 
-      <div className="flex gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="flex-1"
           onClick={onApply}
           disabled={!canEdit || !hasChanges || busy}
         >
@@ -506,7 +531,6 @@ function PowerSectionContent({
         <Button
           size="sm"
           variant="outline"
-          className="flex-1"
           onClick={onReset}
           disabled={!power.isSupported || busy}
         >
@@ -522,6 +546,7 @@ function CoolingSectionContent({
   gpuId,
   cooling,
   drafts,
+  layout,
   pendingAction,
   onDraftChange,
   onSetManual,
@@ -530,6 +555,7 @@ function CoolingSectionContent({
   gpuId: string;
   cooling: CoolingInfo;
   drafts: Record<number, number>;
+  layout: "stack" | "rail";
   pendingAction: PerformanceMutationAction | null;
   onDraftChange: (fanIndex: number, value: number) => void;
   onSetManual: (fanIndex: number, speedPercent: number) => void;
@@ -540,7 +566,13 @@ function CoolingSectionContent({
   }
 
   return (
-    <div className="space-y-4">
+    <div
+      className={cn(
+        layout === "rail"
+          ? "grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))]"
+          : "space-y-5",
+      )}
+    >
       {cooling.fans.map((fan) => {
         const min = fan.minSpeedPercent ?? 0;
         const max = fan.maxSpeedPercent ?? 100;
@@ -580,6 +612,7 @@ function ClockSectionContent({
   clocks,
   graphicsDraft,
   memoryDraft,
+  layout,
   busy,
   hasChanges,
   onGraphicsDraftChange,
@@ -590,6 +623,7 @@ function ClockSectionContent({
   clocks: GpuPerformanceDevice["clocks"];
   graphicsDraft: number;
   memoryDraft: number;
+  layout: "stack" | "rail";
   busy: boolean;
   hasChanges: boolean;
   onGraphicsDraftChange: (value: number) => void;
@@ -598,28 +632,35 @@ function ClockSectionContent({
   onReset: () => void;
 }) {
   return (
-    <div className="space-y-4">
-      <ClockOffsetEditor
-        title="Graphics"
-        icon={Zap}
-        info={clocks.graphics}
-        draft={graphicsDraft}
-        onDraftChange={onGraphicsDraftChange}
-        disabled={!clocks.graphics.isSupported || busy}
-      />
-      <ClockOffsetEditor
-        title="Memory"
-        icon={Clock3}
-        info={clocks.memory}
-        draft={memoryDraft}
-        onDraftChange={onMemoryDraftChange}
-        disabled={!clocks.memory.isSupported || busy}
-      />
+    <div className="space-y-5">
+      <div
+        className={cn(
+          layout === "rail"
+            ? "grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))]"
+            : "space-y-5",
+        )}
+      >
+        <ClockOffsetEditor
+          title="Graphics"
+          icon={Zap}
+          info={clocks.graphics}
+          draft={graphicsDraft}
+          onDraftChange={onGraphicsDraftChange}
+          disabled={!clocks.graphics.isSupported || busy}
+        />
+        <ClockOffsetEditor
+          title="Memory"
+          icon={Clock3}
+          info={clocks.memory}
+          draft={memoryDraft}
+          onDraftChange={onMemoryDraftChange}
+          disabled={!clocks.memory.isSupported || busy}
+        />
+      </div>
 
-      <div className="flex gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="flex-1"
           onClick={onApply}
           disabled={!clocks.isSupported || !hasChanges || busy}
         >
@@ -628,7 +669,6 @@ function ClockSectionContent({
         <Button
           size="sm"
           variant="outline"
-          className="flex-1"
           onClick={onReset}
           disabled={!clocks.isSupported || busy}
         >
@@ -654,15 +694,15 @@ function PerformanceSection({
   return (
     <section
       className={cn(
-        "min-w-0 space-y-4 rounded-xl border border-border bg-background/45 p-4",
+        "min-w-0 space-y-4 border-b border-border/70 pb-6 last:border-b-0 last:pb-0",
         className,
       )}
     >
       <div className="flex items-center gap-2">
         <Icon className="size-4 text-primary" />
-        <CardTitle className="text-sm uppercase tracking-[0.18em] text-foreground/85">
+        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-foreground/85">
           {title}
-        </CardTitle>
+        </p>
       </div>
       {children}
     </section>
@@ -681,7 +721,7 @@ function CapabilitySummary({
   }
 
   return (
-    <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+    <div className="border-l border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
       {reason ?? "Unavailable on this system."}
     </div>
   );
@@ -712,20 +752,26 @@ function FanEditor({
     fan.mode === "manual" ? "Manual" : fan.mode === "auto" ? "Auto" : "Unknown";
 
   return (
-    <div className="rounded-lg border border-border bg-background/60 p-3">
+    <div className="space-y-3 border-t border-border/70 pt-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-medium">Fan {fan.index + 1}</p>
+          <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+            Fan {fan.index + 1}
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Current {formatPercent(fan.currentSpeedPercent)} · Mode {currentMode}
+            {currentMode} mode
           </p>
         </div>
-        <Badge variant="outline">
+        <p className="text-xs font-medium text-muted-foreground tabular-nums">
           {min}-{max}%
-        </Badge>
+        </p>
       </div>
 
-      <div className="mt-3 space-y-3">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">Manual target</span>
+          <span className="text-sm font-semibold tabular-nums">{draft}%</span>
+        </div>
         <input
           type="range"
           className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
@@ -738,6 +784,7 @@ function FanEditor({
         />
         <Input
           type="number"
+          className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
           min={min}
           max={max}
           step={1}
@@ -752,10 +799,9 @@ function FanEditor({
         />
       </div>
 
-      <div className="mt-3 flex gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="flex-1"
           onClick={onSetManual}
           disabled={busy || draft === current}
         >
@@ -764,7 +810,6 @@ function FanEditor({
         <Button
           size="sm"
           variant="outline"
-          className="flex-1"
           onClick={onSetAuto}
           disabled={busy || fan.mode === "auto"}
         >
@@ -797,22 +842,28 @@ function ClockOffsetEditor({
   );
 
   return (
-    <div className="rounded-lg border border-border bg-background/60 p-3">
-      <div className="flex items-center gap-2">
-        <Icon className="size-4 text-primary" />
+    <div className="space-y-3 border-t border-border/70 pt-4">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-medium">{title}</p>
+          <div className="flex items-center gap-2">
+            <Icon className="size-4 text-primary" />
+            <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              {title}
+            </p>
+          </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Current {formatOffset(info.currentOffsetMHz)} · Range{" "}
             {info.minOffsetMHz != null && info.maxOffsetMHz != null
               ? `${formatOffset(info.minOffsetMHz)} to ${formatOffset(info.maxOffsetMHz)}`
-              : "Unavailable"}
+              : "Offset range unavailable"}
           </p>
         </div>
+        <p className="text-sm font-semibold tabular-nums">
+          {formatOffset(normalizedDraft)}
+        </p>
       </div>
 
       {info.isSupported ? (
-        <div className="mt-3 space-y-3">
+        <div className="space-y-3">
           <input
             type="range"
             className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
@@ -827,6 +878,7 @@ function ClockOffsetEditor({
           />
           <Input
             type="number"
+            className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
             min={info.minOffsetMHz ?? undefined}
             max={info.maxOffsetMHz ?? undefined}
             step={1}
@@ -841,21 +893,10 @@ function ClockOffsetEditor({
           />
         </div>
       ) : (
-        <p className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+        <p className="border-l border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
           {info.unsupportedReason ?? "Unavailable on this system."}
         </p>
       )}
-    </div>
-  );
-}
-
-function InlineMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-background/60 p-3">
-      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-2 text-sm font-medium tabular-nums">{value}</p>
     </div>
   );
 }
@@ -894,14 +935,14 @@ function normalizeDraft(value: number, min: number | null, max: number | null) {
   return value;
 }
 
-function formatPercent(value: number | null) {
-  return value == null ? "Unavailable" : `${value}%`;
-}
-
 function formatOffset(value: number | null) {
   if (value == null) {
     return "Unavailable";
   }
 
   return `${value >= 0 ? "+" : ""}${value} MHz`;
+}
+
+function formatWatts(value: number | null) {
+  return value == null ? "Unavailable" : `${value} W`;
 }
