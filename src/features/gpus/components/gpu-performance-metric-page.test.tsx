@@ -146,6 +146,24 @@ describe("GpuPerformanceMetricScreen", () => {
       "Unavailable",
     );
   });
+
+  it("renders x-axis labels in ten second increments", () => {
+    renderScreen(
+      <GpuPerformanceMetricScreen
+        gpu={sampleGpu}
+        metricKey="powerDrawWatts"
+        history={buildMetricHistory({
+          powerDrawWatts: Array.from({ length: 41 }, (_, index) => 300 + index),
+        })}
+        isLoading={false}
+        errorMessage={null}
+      />,
+    );
+
+    expect(screen.getByText("0s")).toBeInTheDocument();
+    expect(screen.getByText("10s")).toBeInTheDocument();
+    expect(screen.getByText("20s")).toBeInTheDocument();
+  });
 });
 
 function renderScreen(ui: React.ReactNode) {

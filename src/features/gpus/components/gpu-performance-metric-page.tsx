@@ -23,13 +23,17 @@ import {
 import type { GpuPerformanceDevice } from "@/features/gpus/types";
 
 const DETAIL_CHART_WIDTH = 720;
-const DETAIL_CHART_HEIGHT = 220;
+const DETAIL_CHART_PLOT_HEIGHT = 220;
+const DETAIL_CHART_AXIS_HEIGHT = 30;
+const DETAIL_CHART_HEIGHT = DETAIL_CHART_PLOT_HEIGHT + DETAIL_CHART_AXIS_HEIGHT;
 const DETAIL_CHART_INSETS = {
   top: 12,
   right: 0,
-  bottom: 16,
-  left: 0,
+  bottom: DETAIL_CHART_AXIS_HEIGHT,
+  left: 48,
 };
+const DETAIL_SAMPLE_INTERVAL_SECONDS = 0.5;
+const DETAIL_AXIS_TICK_SECONDS = 10;
 
 export function GpuPerformanceMetricPage() {
   const { gpuId, metricKey } = useParams();
@@ -211,7 +215,7 @@ function MetricDetailChart({
     return (
       <div
         data-testid="gpu-performance-metric-chart-empty"
-        className="flex aspect-[720/220] items-center justify-center rounded-md border border-dashed border-border/70 bg-muted/10 text-sm text-muted-foreground"
+        className="flex aspect-[720/250] items-center justify-center rounded-md border border-dashed border-border/70 bg-muted/10 text-sm text-muted-foreground"
       >
         Unavailable
       </div>
@@ -223,7 +227,7 @@ function MetricDetailChart({
     return (
       <div
         data-testid="gpu-performance-metric-chart-empty"
-        className="flex aspect-[720/220] items-center justify-center rounded-md border border-dashed border-border/70 bg-muted/10 text-sm text-muted-foreground"
+        className="flex aspect-[720/250] items-center justify-center rounded-md border border-dashed border-border/70 bg-muted/10 text-sm text-muted-foreground"
       >
         Unavailable
       </div>
@@ -231,6 +235,8 @@ function MetricDetailChart({
   }
 
   const plottedSamples = samples.filter((value): value is number => value != null);
+  const xTicks = buildXAxisTicks(plottedSamples.length);
+  const yTicks = buildYAxisTicks();
   const path = buildSparklinePath(
     plottedSamples,
     DETAIL_CHART_WIDTH,
@@ -246,21 +252,47 @@ function MetricDetailChart({
 
   return (
     <div className="rounded-md border border-border/70 bg-muted/10 px-3 py-4">
-      <div className="flex items-stretch gap-3">
-        <div
-          className="flex shrink-0 flex-col items-end justify-between self-stretch text-right text-xs leading-none font-medium tabular-nums text-muted-foreground"
-        >
-          <span className="whitespace-nowrap">{metric.formatValue(bounds.max)}</span>
-          <span className="whitespace-nowrap">{metric.formatValue(bounds.min)}</span>
-        </div>
+      <div>
         <svg
           viewBox={`0 0 ${DETAIL_CHART_WIDTH} ${DETAIL_CHART_HEIGHT}`}
-          className="aspect-[720/220] min-w-0 flex-1 overflow-visible"
+          className="aspect-[720/250] w-full overflow-visible"
           aria-label={`${metric.label} history chart`}
           role="img"
         >
+          <text
+            x="0"
+            y={DETAIL_CHART_INSETS.top}
+            dominantBaseline="hanging"
+            className="fill-muted-foreground text-[9px] font-medium tabular-nums"
+          >
+            {metric.formatValue(bounds.max)}
+          </text>
+          <text
+            x="0"
+            y={DETAIL_CHART_PLOT_HEIGHT}
+            dominantBaseline="alphabetic"
+            className="fill-muted-foreground text-[9px] font-medium tabular-nums"
+          >
+            {metric.formatValue(bounds.min)}
+          </text>
+          {yTicks.map((tick) => (
+            <path
+              key={`y-${tick}`}
+              d={`M ${DETAIL_CHART_INSETS.left} ${tick} H ${DETAIL_CHART_WIDTH - DETAIL_CHART_INSETS.right}`}
+              stroke="color-mix(in srgb, var(--border) 48%, transparent)"
+              strokeWidth="1"
+            />
+          ))}
+          {xTicks.map((tick) => (
+            <path
+              key={`x-grid-${tick.seconds}`}
+              d={`M ${tick.x} ${DETAIL_CHART_INSETS.top} V ${DETAIL_CHART_PLOT_HEIGHT}`}
+              stroke="color-mix(in srgb, var(--border) 42%, transparent)"
+              strokeWidth="1"
+            />
+          ))}
           <path
-            d={`M ${DETAIL_CHART_INSETS.left} ${DETAIL_CHART_HEIGHT - DETAIL_CHART_INSETS.bottom} H ${DETAIL_CHART_WIDTH - DETAIL_CHART_INSETS.right}`}
+            d={`M ${DETAIL_CHART_INSETS.left} ${DETAIL_CHART_PLOT_HEIGHT} H ${DETAIL_CHART_WIDTH - DETAIL_CHART_INSETS.right}`}
             stroke="color-mix(in srgb, var(--border) 75%, transparent)"
             strokeWidth="1"
           />
@@ -282,6 +314,17 @@ function MetricDetailChart({
               strokeWidth="1.5"
             />
           )}
+          {xTicks.map((tick) => (
+            <text
+              key={`x-label-${tick.seconds}`}
+              x={tick.x}
+              y={DETAIL_CHART_HEIGHT - 14}
+              textAnchor={tick.textAnchor}
+              className="fill-muted-foreground text-[9px] font-medium tabular-nums"
+            >
+              {tick.seconds}s
+            </text>
+          ))}
         </svg>
       </div>
     </div>
@@ -312,4 +355,48 @@ function formatStat(
   metric: PerformanceMetricDefinition,
 ) {
   return value == null ? "Unavailable" : metric.formatValue(value);
+}
+
+function buildXAxisTicks(sampleCount: number) {
+  const durationSeconds = Math.max(
+    Math.ceil(((sampleCount - 1) * DETAIL_SAMPLE_INTERVAL_SECONDS) / DETAIL_AXIS_TICK_SECONDS) *
+      DETAIL_AXIS_TICK_SECONDS,
+    0,
+  );
+  const horizontalSpan = Math.max(
+    DETAIL_CHART_WIDTH - DETAIL_CHART_INSETS.left - DETAIL_CHART_INSETS.right,
+    1,
+  );
+
+  return Array.from(
+    { length: Math.floor(durationSeconds / DETAIL_AXIS_TICK_SECONDS) + 1 },
+    (_, index) => {
+      const seconds = index * DETAIL_AXIS_TICK_SECONDS;
+      const ratio = durationSeconds === 0 ? 0 : seconds / durationSeconds;
+      const x = DETAIL_CHART_INSETS.left + horizontalSpan * ratio;
+
+      return {
+        seconds,
+        x,
+        textAnchor:
+          index === 0
+            ? "start"
+            : seconds === durationSeconds
+              ? "end"
+              : "middle",
+      } as const;
+    },
+  );
+}
+
+function buildYAxisTicks() {
+  const verticalSpan = Math.max(
+    DETAIL_CHART_HEIGHT - DETAIL_CHART_INSETS.top - DETAIL_CHART_INSETS.bottom,
+    1,
+  );
+
+  return Array.from({ length: 5 }, (_, index) => {
+    const ratio = index / 4;
+    return DETAIL_CHART_HEIGHT - DETAIL_CHART_INSETS.bottom - ratio * verticalSpan;
+  });
 }
