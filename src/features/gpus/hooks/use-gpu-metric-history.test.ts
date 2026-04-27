@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 
 describe("appendGpuSamples", () => {
-  it("trims metric history to the last 120 samples", () => {
+  it("trims metric history to the configured sample limit", () => {
     let history: Record<string, GpuMetricHistory> = {};
 
     for (let sample = 1; sample <= GPU_METRIC_HISTORY_LIMIT + 10; sample += 1) {
@@ -39,7 +39,7 @@ describe("appendGpuSamples", () => {
       history["GPU-1"].powerDrawWatts.samples[
         history["GPU-1"].powerDrawWatts.samples.length - 1
       ],
-    ).toBe(130);
+    ).toBe(GPU_METRIC_HISTORY_LIMIT + 10);
   });
 
   it("keeps history isolated per GPU id", () => {

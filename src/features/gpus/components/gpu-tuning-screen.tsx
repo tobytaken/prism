@@ -523,7 +523,6 @@ function PowerSectionContent({
       <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="rounded-none"
           onClick={onApply}
           disabled={!canEdit || !hasChanges || busy}
         >
@@ -532,7 +531,6 @@ function PowerSectionContent({
         <Button
           size="sm"
           variant="outline"
-          className="rounded-none"
           onClick={onReset}
           disabled={!power.isSupported || busy}
         >
@@ -663,7 +661,6 @@ function ClockSectionContent({
       <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="rounded-none"
           onClick={onApply}
           disabled={!clocks.isSupported || !hasChanges || busy}
         >
@@ -672,7 +669,6 @@ function ClockSectionContent({
         <Button
           size="sm"
           variant="outline"
-          className="rounded-none"
           onClick={onReset}
           disabled={!clocks.isSupported || busy}
         >
@@ -806,7 +802,6 @@ function FanEditor({
       <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
-          className="rounded-none"
           onClick={onSetManual}
           disabled={busy || draft === current}
         >
@@ -815,7 +810,6 @@ function FanEditor({
         <Button
           size="sm"
           variant="outline"
-          className="rounded-none"
           onClick={onSetAuto}
           disabled={busy || fan.mode === "auto"}
         >

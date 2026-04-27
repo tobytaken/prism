@@ -30,7 +30,7 @@ export interface MetricHistorySeries {
 
 export type GpuMetricHistory = Record<GpuHistoryKey, MetricHistorySeries>;
 
-export const GPU_METRIC_HISTORY_LIMIT = 120;
+export const GPU_METRIC_HISTORY_LIMIT = 240;
 
 const GpuMetricHistoryContext = createContext<Record<string, GpuMetricHistory>>(
   {},

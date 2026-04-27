@@ -82,7 +82,7 @@ export function AppShell() {
                     end={item.to === "/"}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                        "flex items-center gap-3 rounded-sm px-3 py-2 text-sm font-medium transition-colors",
                         isActive
                           ? "bg-muted text-foreground"
                           : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",

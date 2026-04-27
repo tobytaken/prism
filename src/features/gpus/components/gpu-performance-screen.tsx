@@ -1,11 +1,13 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   AlertTriangle,
+  ArrowUpRight,
   ChevronDown,
   Cpu,
   Gauge,
   ShieldAlert,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +19,15 @@ import {
   useGpuMetricHistory,
 } from "@/features/gpus/hooks/use-gpu-metric-history";
 import { formatNumber } from "@/features/gpus/lib/formatters";
+import {
+  buildSparklinePath,
+  calculateSparklineBounds,
+  findLastSparklinePoint,
+} from "@/features/gpus/lib/performance-chart";
+import {
+  PERFORMANCE_METRICS,
+  type PerformanceMetricDefinition,
+} from "@/features/gpus/lib/performance-metrics";
 import { cn } from "@/lib/utils";
 import {
   GpuTuningControls,
@@ -32,6 +43,7 @@ const EMPTY_PERFORMANCE_GPUS: GpuPerformanceDevice[] = [];
 const EMPTY_WARNINGS: string[] = [];
 const SPARKLINE_WIDTH = 240;
 const SPARKLINE_HEIGHT = 76.8;
+const OVERVIEW_SPARKLINE_SAMPLE_LIMIT = 120;
 const SPARKLINE_INSETS = {
   top: 5,
   right: 3,
@@ -358,130 +370,98 @@ function TelemetryPanel({
       : "Frame buffer usage";
 
   return (
-      <div className="grid gap-x-7 gap-y-6 md:grid-cols-2 2xl:grid-cols-3">
+    <div className="grid gap-x-7 gap-y-6 md:grid-cols-2 2xl:grid-cols-3">
+      {PERFORMANCE_METRICS.map((metric) => (
         <TelemetryMetricCard
-          label="Power"
-          value={formatNumber(gpu.telemetry.powerDrawWatts, "W")}
-          subtitle="Board power draw"
-          history={history?.powerDrawWatts}
-          accentColor="var(--color-chart-1)"
-          formatHistoryValue={formatWatts}
+          key={metric.key}
+          gpu={gpu}
+          metric={metric}
+          subtitle={getMetricSubtitle(metric, gpu, totalMemoryLabel)}
+          history={metric.getHistory(history)}
         />
-        <TelemetryMetricCard
-          label="Core Clock"
-          value={formatNumber(gpu.telemetry.coreClockMHz, "MHz")}
-          subtitle="Graphics domain clock"
-          history={history?.coreClockMHz}
-          accentColor="var(--color-chart-2)"
-          formatHistoryValue={formatMegahertz}
-        />
-        <TelemetryMetricCard
-          label="Memory Clock"
-          value={formatNumber(gpu.telemetry.memoryClockMHz, "MHz")}
-          subtitle="Current memory clock"
-          history={history?.memoryClockMHz}
-          accentColor="var(--color-chart-3)"
-          formatHistoryValue={formatMegahertz}
-        />
-        <TelemetryMetricCard
-          label="Fan Speed"
-          value={formatPercent(gpu.telemetry.fanSpeedPercent)}
-          subtitle={
-            gpu.cooling.fanCount > 1
-              ? `${gpu.cooling.fanCount} fans averaged`
-              : "Current programmable fan speed"
-          }
-          history={history?.fanSpeedPercent}
-          accentColor="var(--color-chart-4)"
-          formatHistoryValue={formatPercentValue}
-        />
-        <TelemetryMetricCard
-          label="Temperature"
-          value={formatNumber(gpu.telemetry.temperatureC, "°C")}
-          subtitle="GPU die temperature"
-          history={history?.temperatureC}
-          accentColor="var(--color-chart-5)"
-          formatHistoryValue={formatCelsius}
-        />
-        <TelemetryMetricCard
-          label="GPU Utilization"
-          value={formatPercent(gpu.telemetry.gpuUtilizationPercent)}
-          subtitle="Active compute time"
-          history={history?.gpuUtilizationPercent}
-          accentColor="var(--primary)"
-          formatHistoryValue={formatPercentValue}
-        />
-        <TelemetryMetricCard
-          label="VRAM Used"
-          value={formatNumber(gpu.telemetry.memoryUsedMiB, "MiB")}
-          subtitle={totalMemoryLabel}
-          history={history?.memoryUsedMiB}
-          accentColor="var(--color-chart-2)"
-          formatHistoryValue={formatMebibytes}
-        />
-        <TelemetryStatusCard
-          label="Voltage"
-          value={formatVoltage(gpu.telemetry.voltageMillivolts)}
-          subtitle="Best-effort driver reading"
-        />
-        <TelemetryStatusCard
-          label="Performance State"
-          value={gpu.telemetry.performanceState ?? "Unavailable"}
-          subtitle="P0 is the highest performance state"
-          badge={gpu.telemetry.performanceState ?? undefined}
-        />
-      </div>
+      ))}
+      <TelemetryStatusCard
+        label="Voltage"
+        value={formatVoltage(gpu.telemetry.voltageMillivolts)}
+        subtitle="Best-effort driver reading"
+      />
+      <TelemetryStatusCard
+        label="Performance State"
+        value={gpu.telemetry.performanceState ?? "Unavailable"}
+        subtitle="P0 is the highest performance state"
+        badge={gpu.telemetry.performanceState ?? undefined}
+      />
+    </div>
   );
 }
 
 function TelemetryMetricCard({
-  label,
-  value,
+  gpu,
+  metric,
   subtitle,
   history,
-  accentColor,
-  formatHistoryValue,
 }: {
-  label: string;
-  value: string;
+  gpu: GpuPerformanceDevice;
+  metric: PerformanceMetricDefinition;
   subtitle: string;
   history: MetricHistorySeries | undefined;
-  accentColor: string;
-  formatHistoryValue: (value: number) => string;
 }) {
   const style = {
-    "--telemetry-accent": accentColor,
+    "--telemetry-accent": metric.accentColor,
   } as CSSProperties;
+  const value = metric.formatCurrentValue(metric.getValue(gpu));
+  const to = `/performance/${encodeURIComponent(gpu.id)}/${metric.key}`;
 
   return (
-    <div
+    <Link
+      aria-label={`Open ${metric.label} details for ${gpu.name}`}
       style={style}
-      className="group min-w-0 border-b border-border/70 pb-5 transition-colors hover:border-foreground/35"
+      to={to}
+      className="group min-w-0 border-b border-border/70 pb-5 outline-none transition-colors hover:border-foreground/35 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/50"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-            {label}
+            {metric.label}
           </p>
           <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">
             {value}
           </p>
         </div>
-        <span
-          className="mt-1 block h-8 w-px opacity-80 transition-opacity group-hover:opacity-100"
-          style={{ backgroundColor: accentColor }}
-        />
+        <div className="mt-1 flex items-start gap-2">
+          <ArrowUpRight className="size-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+          <span
+            className="block h-8 w-px opacity-80 transition-opacity group-hover:opacity-100"
+            style={{ backgroundColor: metric.accentColor }}
+          />
+        </div>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
       <div className="mt-4">
         <MetricSparkline
           series={history}
-          accentColor={accentColor}
-          formatValue={formatHistoryValue}
+          accentColor={metric.accentColor}
+          formatValue={metric.formatValue}
         />
       </div>
-    </div>
+    </Link>
   );
+}
+
+function getMetricSubtitle(
+  metric: PerformanceMetricDefinition,
+  gpu: GpuPerformanceDevice,
+  totalMemoryLabel: string,
+) {
+  if (metric.key === "fanSpeedPercent" && gpu.cooling.fanCount > 1) {
+    return `${gpu.cooling.fanCount} fans averaged`;
+  }
+
+  if (metric.key === "memoryUsedMiB") {
+    return totalMemoryLabel;
+  }
+
+  return metric.subtitle;
 }
 
 function TelemetryStatusCard({
@@ -526,7 +506,10 @@ function MetricSparkline({
   accentColor: string;
   formatValue: (value: number) => string;
 }) {
-  if (!series?.hasData) {
+  const samples = series?.samples.slice(-OVERVIEW_SPARKLINE_SAMPLE_LIMIT);
+  const hasData = samples?.some((value) => value != null) ?? false;
+
+  if (!hasData || !samples) {
     return (
       <div
         className="flex items-center justify-center border border-dashed border-border/70 bg-muted/10 text-xs text-muted-foreground"
@@ -537,7 +520,7 @@ function MetricSparkline({
     );
   }
 
-  const bounds = calculateSparklineBounds(series.samples);
+  const bounds = calculateSparklineBounds(samples);
   if (!bounds) {
     return (
       <div
@@ -550,13 +533,13 @@ function MetricSparkline({
   }
 
   const path = buildSparklinePath(
-    series.samples,
+    samples,
     SPARKLINE_WIDTH,
     SPARKLINE_HEIGHT,
     SPARKLINE_INSETS,
   );
   const lastPoint = findLastSparklinePoint(
-    series.samples,
+    samples,
     SPARKLINE_WIDTH,
     SPARKLINE_HEIGHT,
     SPARKLINE_INSETS,
@@ -632,36 +615,12 @@ function GpuPerformanceSkeleton() {
   );
 }
 
-function formatPercent(value: number | null) {
-  return value == null ? "Unavailable" : `${value}%`;
-}
-
 function formatCompactPercent(value: number | null) {
   return value == null ? "N/A" : `${value} %`;
 }
 
 function formatCompactCelsius(value: number | null) {
   return value == null ? "N/A" : `${value}C`;
-}
-
-function formatWatts(value: number) {
-  return formatNumber(value, "W");
-}
-
-function formatMegahertz(value: number) {
-  return formatNumber(value, "MHz");
-}
-
-function formatCelsius(value: number) {
-  return formatNumber(value, "°C");
-}
-
-function formatMebibytes(value: number) {
-  return formatNumber(value, "MiB");
-}
-
-function formatPercentValue(value: number) {
-  return `${value}%`;
 }
 
 function formatVoltage(value: number | null) {
@@ -672,79 +631,4 @@ function formatVoltage(value: number | null) {
   return `${new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 3,
   }).format(value / 1000)} V`;
-}
-
-function buildSparklinePath(
-  samples: Array<number | null>,
-  width: number,
-  height: number,
-  insets: SparklineInsets,
-) {
-  const points = calculateSparklinePoints(samples, width, height, insets);
-  if (points.length === 0) {
-    return `M ${insets.left} ${height - insets.bottom}`;
-  }
-
-  return points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-    .join(" ");
-}
-
-function findLastSparklinePoint(
-  samples: Array<number | null>,
-  width: number,
-  height: number,
-  insets: SparklineInsets,
-) {
-  const points = calculateSparklinePoints(samples, width, height, insets);
-  return points.at(-1);
-}
-
-type SparklineInsets = {
-  top: number;
-  right: number;
-  bottom: number;
-  left: number;
-};
-
-function calculateSparklinePoints(
-  samples: Array<number | null>,
-  width: number,
-  height: number,
-  insets: SparklineInsets,
-) {
-  const bounds = calculateSparklineBounds(samples);
-  if (!bounds) {
-    return [];
-  }
-
-  const range = bounds.max - bounds.min || 1;
-  const horizontalSpan = Math.max(width - insets.left - insets.right, 1);
-  const verticalSpan = Math.max(height - insets.top - insets.bottom, 1);
-
-  return samples.flatMap((value, index) => {
-    if (value == null) {
-      return [];
-    }
-
-    const x =
-      insets.left +
-      (samples.length === 1 ? 0 : (horizontalSpan * index) / (samples.length - 1));
-    const normalized = (value - bounds.min) / range;
-    const y = height - insets.bottom - normalized * verticalSpan;
-
-    return [{ x, y }];
-  });
-}
-
-function calculateSparklineBounds(samples: Array<number | null>) {
-  const values = samples.filter((value): value is number => value != null);
-  if (values.length === 0) {
-    return null;
-  }
-
-  return {
-    min: Math.min(...values),
-    max: Math.max(...values),
-  };
 }

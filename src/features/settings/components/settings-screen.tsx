@@ -83,7 +83,7 @@ export function SettingsScreen({
                   id={`tab-${tab.id}`}
                   onClick={() => setActiveTab(tab.id)}
                   className={cn(
-                    "flex items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    "flex items-center gap-3 whitespace-nowrap rounded-sm px-3 py-2 text-sm font-medium transition-colors",
                     isActive
                       ? "bg-secondary text-secondary-foreground"
                       : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
@@ -199,7 +199,7 @@ function AppearancePanel({
               aria-checked={accentPreference === option.id}
               onClick={() => onAccentPreferenceChange(option.id)}
               className={cn(
-                "group relative flex flex-col items-center gap-3 rounded-xl border p-4 text-center transition-all hover:bg-secondary/40",
+                "group relative flex flex-col items-center gap-3 rounded-sm border p-4 text-center transition-all hover:bg-secondary/40",
                 accentPreference === option.id
                   ? "border-primary bg-secondary/20 shadow-sm"
                   : "border-border/60",
