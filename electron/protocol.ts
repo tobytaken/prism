@@ -25,8 +25,9 @@ export function registerAppProtocol(rendererName: string) {
       __dirname,
       `../renderer/${rendererName}`,
     );
+    const decodedPath = decodePath(requestUrl.pathname);
     const relativePath =
-      requestUrl.pathname === "/" ? "index.html" : requestUrl.pathname.replace(/^\/+/, "");
+      decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");
     const resolvedPath = path.resolve(rendererRoot, relativePath);
 
     if (!resolvedPath.startsWith(rendererRoot)) {
@@ -35,4 +36,18 @@ export function registerAppProtocol(rendererName: string) {
 
     return net.fetch(pathToFileURL(resolvedPath).toString());
   });
+}
+
+function decodePath(pathname: string) {
+  let decodedPath = pathname;
+
+  for (let index = 0; index < 4; index += 1) {
+    const nextPath = decodeURIComponent(decodedPath);
+    if (nextPath === decodedPath) {
+      return decodedPath;
+    }
+    decodedPath = nextPath;
+  }
+
+  return decodedPath;
 }

@@ -14,8 +14,9 @@ jobs:
         with:
           node-version: 20
       - run: bun install --frozen-lockfile
-      - run: bun run test
+      - run: bun run lint
       - run: bun run typecheck
+      - run: bun run test
 
   rust:
     runs-on: ubuntu-latest

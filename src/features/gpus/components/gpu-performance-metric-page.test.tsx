@@ -3,70 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import type { GpuMetricHistory } from "@/features/gpus/hooks/use-gpu-metric-history";
-import type { GpuPerformanceDevice } from "@/features/gpus/types";
+import { createPerformanceGpu } from "@/test/gpu-fixtures";
 import { GpuPerformanceMetricScreen } from "./gpu-performance-metric-page";
 
-const sampleGpu: GpuPerformanceDevice = {
-  id: "GPU-123",
-  vendor: "nvidia",
-  name: "NVIDIA GeForce RTX 5090",
-  architecture: "Blackwell",
-  busId: "0000:01:00.0",
-  power: {
-    isSupported: true,
-    unsupportedReason: null,
-    currentDrawWatts: 312,
-    currentLimitWatts: 475,
-    defaultLimitWatts: 575,
-    enforcedLimitWatts: 475,
-    minLimitWatts: 400,
-    maxLimitWatts: 600,
-  },
-  cooling: {
-    isSupported: true,
-    unsupportedReason: null,
-    fanCount: 1,
-    fans: [
-      {
-        index: 0,
-        currentSpeedPercent: 42,
-        minSpeedPercent: 30,
-        maxSpeedPercent: 100,
-        mode: "auto",
-      },
-    ],
-  },
-  clocks: {
-    isSupported: true,
-    unsupportedReason: null,
-    graphics: {
-      isSupported: true,
-      unsupportedReason: null,
-      currentOffsetMHz: 120,
-      minOffsetMHz: -200,
-      maxOffsetMHz: 200,
-    },
-    memory: {
-      isSupported: false,
-      unsupportedReason: "The memory clock offset is not supported on this GPU.",
-      currentOffsetMHz: null,
-      minOffsetMHz: null,
-      maxOffsetMHz: null,
-    },
-  },
-  telemetry: {
-    powerDrawWatts: 312,
-    coreClockMHz: 2550,
-    memoryClockMHz: 14001,
-    fanSpeedPercent: 42,
-    voltageMillivolts: null,
-    temperatureC: 71,
-    gpuUtilizationPercent: 96,
-    memoryUsedMiB: 12288,
-    memoryTotalMiB: 32768,
-    performanceState: "P0",
-  },
-};
+const sampleGpu = createPerformanceGpu();
 
 describe("GpuPerformanceMetricScreen", () => {
   it("renders a loading skeleton", () => {

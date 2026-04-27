@@ -2,88 +2,18 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  connectedDaemonStatus,
+  createPerformanceResponse,
+} from "@/test/gpu-fixtures";
 import { GpuTuningScreen } from "./gpu-tuning-screen";
-
-const sampleInventory = {
-  gpus: [
-    {
-      id: "GPU-123",
-      vendor: "nvidia" as const,
-      name: "NVIDIA GeForce RTX 5090",
-      architecture: "Blackwell",
-      busId: "0000:01:00.0",
-      power: {
-        isSupported: true,
-        unsupportedReason: null,
-        currentDrawWatts: 312,
-        currentLimitWatts: 475,
-        defaultLimitWatts: 575,
-        enforcedLimitWatts: 475,
-        minLimitWatts: 400,
-        maxLimitWatts: 600,
-      },
-      cooling: {
-        isSupported: true,
-        unsupportedReason: null,
-        fanCount: 1,
-        fans: [
-          {
-            index: 0,
-            currentSpeedPercent: 42,
-            minSpeedPercent: 30,
-            maxSpeedPercent: 100,
-            mode: "auto" as const,
-          },
-        ],
-      },
-      clocks: {
-        isSupported: true,
-        unsupportedReason: null,
-        graphics: {
-          isSupported: true,
-          unsupportedReason: null,
-          currentOffsetMHz: 120,
-          minOffsetMHz: -200,
-          maxOffsetMHz: 200,
-        },
-        memory: {
-          isSupported: false,
-          unsupportedReason: "The memory clock offset is not supported on this GPU.",
-          currentOffsetMHz: null,
-          minOffsetMHz: null,
-          maxOffsetMHz: null,
-        },
-      },
-      telemetry: {
-        powerDrawWatts: 312,
-        coreClockMHz: 2550,
-        memoryClockMHz: 14001,
-        fanSpeedPercent: 42,
-        voltageMillivolts: null,
-        temperatureC: 71,
-        gpuUtilizationPercent: 96,
-        memoryUsedMiB: 12288,
-        memoryTotalMiB: 32768,
-        performanceState: "P0",
-      },
-    },
-  ],
-  warnings: [],
-};
-
-const connectedDaemon = {
-  reachable: true,
-  managedByDaemon: true,
-  socketPath: "/run/prism/prismd.sock",
-  message: null,
-};
 
 describe("GpuTuningScreen", () => {
   it("renders a loading skeleton", () => {
     render(
       <GpuTuningScreen
         isLoading
-        daemonStatus={connectedDaemon}
+        daemonStatus={connectedDaemonStatus}
         errorMessage={null}
         mutationErrorMessage={null}
         reapplyPending={false}
@@ -100,9 +30,9 @@ describe("GpuTuningScreen", () => {
   it("renders the control rail without the telemetry panel", () => {
     render(
       <GpuTuningScreen
-        inventory={sampleInventory}
+        inventory={createPerformanceResponse()}
         isLoading={false}
-        daemonStatus={connectedDaemon}
+        daemonStatus={connectedDaemonStatus}
         errorMessage={null}
         mutationErrorMessage={null}
         reapplyPending={false}
@@ -137,9 +67,9 @@ describe("GpuTuningScreen", () => {
 
     render(
       <GpuTuningScreen
-        inventory={sampleInventory}
+        inventory={createPerformanceResponse()}
         isLoading={false}
-        daemonStatus={connectedDaemon}
+        daemonStatus={connectedDaemonStatus}
         errorMessage={null}
         mutationErrorMessage={null}
         reapplyPending={false}
@@ -168,9 +98,9 @@ describe("GpuTuningScreen", () => {
 
     render(
       <GpuTuningScreen
-        inventory={sampleInventory}
+        inventory={createPerformanceResponse()}
         isLoading={false}
-        daemonStatus={connectedDaemon}
+        daemonStatus={connectedDaemonStatus}
         errorMessage={null}
         mutationErrorMessage={null}
         reapplyPending={false}
@@ -193,10 +123,10 @@ describe("GpuTuningScreen", () => {
 
     render(
       <GpuTuningScreen
-        inventory={sampleInventory}
+        inventory={createPerformanceResponse()}
         isLoading={false}
         daemonStatus={{
-          ...connectedDaemon,
+          ...connectedDaemonStatus,
           reachable: false,
         }}
         errorMessage={null}

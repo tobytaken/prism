@@ -12,6 +12,7 @@ import {
 import { useGpuPerformance } from "./use-gpu-performance";
 
 import type { GpuPerformanceDevice } from "@/features/gpus/types";
+import { createPerformanceGpu } from "@/test/gpu-fixtures";
 
 vi.mock("./use-gpu-performance", () => ({
   useGpuPerformance: vi.fn(),
@@ -116,67 +117,15 @@ function createGpuDevice(
   id: string,
   powerDrawWatts: number | null,
 ): GpuPerformanceDevice {
-  return {
+  return createPerformanceGpu({
     id,
-    vendor: "nvidia",
     name: `GPU ${id}`,
-    architecture: "Blackwell",
     busId: `0000:${id}:00.0`,
-    power: {
-      isSupported: true,
-      unsupportedReason: null,
-      currentDrawWatts: powerDrawWatts,
-      currentLimitWatts: 450,
-      defaultLimitWatts: 450,
-      enforcedLimitWatts: 450,
-      minLimitWatts: 300,
-      maxLimitWatts: 600,
-    },
-    cooling: {
-      isSupported: true,
-      unsupportedReason: null,
-      fanCount: 1,
-      fans: [
-        {
-          index: 0,
-          currentSpeedPercent: 42,
-          minSpeedPercent: 30,
-          maxSpeedPercent: 100,
-          mode: "auto",
-        },
-      ],
-    },
-    clocks: {
-      isSupported: true,
-      unsupportedReason: null,
-      graphics: {
-        isSupported: true,
-        unsupportedReason: null,
-        currentOffsetMHz: 50,
-        minOffsetMHz: -200,
-        maxOffsetMHz: 200,
-      },
-      memory: {
-        isSupported: true,
-        unsupportedReason: null,
-        currentOffsetMHz: 100,
-        minOffsetMHz: -500,
-        maxOffsetMHz: 500,
-      },
-    },
+    power: { currentDrawWatts: powerDrawWatts },
     telemetry: {
       powerDrawWatts,
-      coreClockMHz: 2550,
-      memoryClockMHz: 14001,
-      fanSpeedPercent: 42,
-      voltageMillivolts: null,
-      temperatureC: 71,
-      gpuUtilizationPercent: 95,
-      memoryUsedMiB: 12288,
-      memoryTotalMiB: 32768,
-      performanceState: "P0",
     },
-  };
+  });
 }
 
 function createPerformanceQueryResult(
