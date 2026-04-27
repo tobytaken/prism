@@ -152,7 +152,7 @@ export function GpuPerformanceMetricScreen({
         <div className="grid gap-4 md:grid-cols-3">
           <MetricStat label="Minimum" value={formatStat(stats?.min, metric)} />
           <MetricStat label="Maximum" value={formatStat(stats?.max, metric)} />
-          <MetricStat label="Average" value={formatStat(stats?.average, metric)} />
+          <MetricStat label="Average" value={formatStat(stats?.average, metric, true)} />
         </div>
 
         <MetricDetailChart metric={metric} samples={samples} hasData={series?.hasData} />
@@ -353,8 +353,9 @@ function GpuPerformanceMetricSkeleton() {
 function formatStat(
   value: number | undefined,
   metric: PerformanceMetricDefinition,
+  shouldRound = false,
 ) {
-  return value == null ? "Unavailable" : metric.formatValue(value);
+  return value == null ? "Unavailable" : metric.formatValue(shouldRound ? Math.round(value) : value);
 }
 
 function buildXAxisTicks(sampleCount: number) {

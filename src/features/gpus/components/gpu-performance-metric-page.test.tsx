@@ -105,6 +105,21 @@ describe("GpuPerformanceMetricScreen", () => {
     expect(screen.getByRole("link", { name: /back to performance/i })).toBeInTheDocument();
   });
 
+  it("rounds the average stat to a whole number", () => {
+    renderScreen(
+      <GpuPerformanceMetricScreen
+        gpu={sampleGpu}
+        metricKey="powerDrawWatts"
+        history={buildMetricHistory({ powerDrawWatts: [300, 301, 302, 304] })}
+        isLoading={false}
+        errorMessage={null}
+      />,
+    );
+
+    expect(screen.getByText("Average")).toBeInTheDocument();
+    expect(screen.getByText("302 W")).toBeInTheDocument();
+  });
+
   it("renders a missing gpu state", () => {
     renderScreen(
       <GpuPerformanceMetricScreen
