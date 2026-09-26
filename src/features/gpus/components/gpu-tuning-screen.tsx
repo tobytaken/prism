@@ -1,4 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
+import {
+  inTuningRange,
+  retryTuningAction,
+} from "@/features/gpus/lib/tuning-intentions";
+import { unavailableTuningReadback } from "@/features/gpus/lib/tuning-readback";
+import type { TuningMutationHandler } from "@/features/gpus/lib/tuning-mutation";
+import { type ReactNode } from "react";
 import {
   AlertTriangle,
   Clock3,
@@ -18,6 +25,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
+import {
+  useTuningEdits,
+  type TuningEditStore,
+} from "@/features/gpus/hooks/use-tuning-edits";
 import { cn } from "@/lib/utils";
 import type {
   ClockOffsetInfo,
@@ -75,7 +86,7 @@ type GpuTuningScreenProps = {
   reapplyErrorMessage: string | null;
   pendingAction: PerformanceMutationAction | null;
   onReapplySavedSettings: () => void;
-  onMutationAction: (action: PerformanceMutationAction) => void;
+  onMutationAction: TuningMutationHandler;
 };
 
 export function GpuTuningScreen({
@@ -90,6 +101,7 @@ export function GpuTuningScreen({
   onReapplySavedSettings,
   onMutationAction,
 }: GpuTuningScreenProps) {
+  const editStore = useTuningEdits();
   const gpus = inventory?.gpus ?? EMPTY_PERFORMANCE_GPUS;
   const warnings = inventory?.warnings ?? EMPTY_WARNINGS;
   const daemonDisconnected = daemonStatus?.reachable === false;
@@ -176,6 +188,8 @@ export function GpuTuningScreen({
         </Alert>
       )}
 
+      <UnavailableGpuEdits devices={editStore.devices} gpus={gpus} />
+
       {isLoading && <GpuTuningSkeleton />}
 
       {!isLoading && gpus.length === 0 && !errorMessage && (
@@ -212,8 +226,13 @@ export function GpuTuningScreen({
                 </p>
               </div>
               <GpuTuningControls
-                gpu={gpu}
+                gpu={
+                  errorMessage
+                    ? unavailableTuningReadback(gpu, errorMessage)
+                    : gpu
+                }
                 showIdentity
+                editStore={editStore}
                 pendingAction={pendingAction}
                 onMutationAction={onMutationAction}
               />
@@ -229,79 +248,132 @@ export function GpuTuningControls({
   gpu,
   showIdentity = false,
   layout = "stack",
+  editStore: suppliedEditStore,
   pendingAction,
-  onMutationAction,
+  onMutationAction: performMutation,
 }: {
   gpu: GpuPerformanceDevice;
+  editStore?: TuningEditStore;
   showIdentity?: boolean;
   layout?: "stack" | "rail";
   pendingAction: PerformanceMutationAction | null;
-  onMutationAction: (action: PerformanceMutationAction) => void;
+  onMutationAction: TuningMutationHandler;
 }) {
-  const [powerDraft, setPowerDraft] = useState(gpu.power.currentLimitWatts);
-  const [fanDrafts, setFanDrafts] = useState<Record<number, number>>({});
-  const [graphicsDraft, setGraphicsDraft] = useState(
-    gpu.clocks.graphics.currentOffsetMHz,
+  const localEditStore = useTuningEdits();
+  const editStore = suppliedEditStore ?? localEditStore;
+  const edits = editStore.devices[gpu.id]?.edits ?? {};
+  const outcomes = editStore.devices[gpu.id]?.outcomes ?? {};
+  const onMutationAction = (action: PerformanceMutationAction) => {
+    void editStore.apply(action, gpu, performMutation);
+  };
+  const powerDraft =
+    "power" in edits
+      ? typeof edits.power === "number"
+        ? edits.power
+        : edits.power === "default"
+          ? gpu.power.defaultLimitWatts
+          : null
+      : gpu.power.currentLimitWatts;
+  const graphicsDraft =
+    "graphics" in edits
+      ? typeof edits.graphics === "number"
+        ? edits.graphics
+        : null
+      : gpu.clocks.graphics.currentOffsetMHz;
+  const memoryDraft =
+    "memory" in edits
+      ? typeof edits.memory === "number"
+        ? edits.memory
+        : null
+      : gpu.clocks.memory.currentOffsetMHz;
+  const fanDrafts = Object.fromEntries(
+    gpu.cooling.fans.map((fan) => [
+      fan.index,
+      typeof edits[`fan:${fan.index}`] === "number"
+        ? Number(edits[`fan:${fan.index}`])
+        : (fan.currentSpeedPercent ?? null),
+    ]),
   );
-  const [memoryDraft, setMemoryDraft] = useState(
-    gpu.clocks.memory.currentOffsetMHz,
+  const setPowerDraft = (value: number | null) =>
+    editStore.change(gpu.id, "power", value);
+  const setGraphicsDraft = (value: number | null) =>
+    editStore.change(gpu.id, "graphics", value);
+  const setMemoryDraft = (value: number | null) =>
+    editStore.change(gpu.id, "memory", value);
+  const changeSummary = (
+    <div className="space-y-2" aria-live="polite">
+      {Object.keys(edits).length > 0 && (
+        <Badge variant="outline">Unapplied changes</Badge>
+      )}
+      {Object.entries(outcomes).map(
+        ([setting, outcome]) =>
+          outcome && (
+            <p key={setting}>
+              {settingLabel(setting)}:{" "}
+              {outcome.status === "succeeded"
+                ? "Applied"
+                : outcome.status === "failed"
+                  ? "Failed"
+                  : outcome.status === "unattempted"
+                    ? "Not attempted"
+                    : "Outcome unknown"}
+              {outcome.error ? ` — ${outcome.error}` : ""}
+            </p>
+          ),
+      )}
+      {Object.keys(edits).map((key) => {
+        const setting = key as keyof typeof edits;
+        const label = settingLabel(setting).toLowerCase();
+        const retry = retryTuningAction(gpu, setting, edits[setting]);
+        return (
+          <div key={setting} className="flex gap-2">
+            {outcomes[setting] && (
+              <Button
+                size="sm"
+                disabled={pendingAction != null || !retry}
+                onClick={() => retry && onMutationAction(retry)}
+              >
+                Retry {label} change
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pendingAction != null}
+              onClick={() => editStore.discard(gpu.id, setting)}
+            >
+              Discard {label} change
+            </Button>
+          </div>
+        );
+      })}
+    </div>
   );
 
-  useEffect(() => {
-    setPowerDraft(gpu.power.currentLimitWatts);
-  }, [gpu.id, gpu.power.currentLimitWatts]);
+  const powerBusy = pendingAction != null;
+  const clocksBusy = pendingAction != null;
 
-  useEffect(() => {
-    setFanDrafts(
-      Object.fromEntries(
-        gpu.cooling.fans.map((fan) => [
-          fan.index,
-          fan.currentSpeedPercent ?? fan.minSpeedPercent ?? 0,
-        ]),
-      ),
-    );
-  }, [gpu.cooling.fans, gpu.id]);
-
-  useEffect(() => {
-    setGraphicsDraft(gpu.clocks.graphics.currentOffsetMHz);
-    setMemoryDraft(gpu.clocks.memory.currentOffsetMHz);
-  }, [
-    gpu.clocks.graphics.currentOffsetMHz,
-    gpu.clocks.memory.currentOffsetMHz,
-    gpu.id,
-  ]);
-
-  const powerBusy =
-    pendingAction?.gpuId === gpu.id &&
-    (pendingAction.kind === "setPowerLimit" ||
-      pendingAction.kind === "resetPowerLimit");
-  const clocksBusy =
-    pendingAction?.gpuId === gpu.id &&
-    (pendingAction.kind === "setClockOffsets" ||
-      pendingAction.kind === "resetClockOffsets");
-
-  const normalizedPowerDraft = normalizeDraft(
-    powerDraft,
-    gpu.power.minLimitWatts,
-    gpu.power.maxLimitWatts,
-  );
-  const normalizedGraphicsDraft = normalizeDraft(
-    graphicsDraft,
-    gpu.clocks.graphics.minOffsetMHz,
-    gpu.clocks.graphics.maxOffsetMHz,
-  );
-  const normalizedMemoryDraft = normalizeDraft(
-    memoryDraft,
-    gpu.clocks.memory.minOffsetMHz,
-    gpu.clocks.memory.maxOffsetMHz,
-  );
-  const hasClockChanges =
-    (canEditOffset(gpu.clocks.graphics) &&
-      normalizedGraphicsDraft != null &&
-      normalizedGraphicsDraft !== gpu.clocks.graphics.currentOffsetMHz) ||
-    (canEditOffset(gpu.clocks.memory) &&
-      normalizedMemoryDraft != null &&
-      normalizedMemoryDraft !== gpu.clocks.memory.currentOffsetMHz);
+  const graphicsToApply =
+    "graphics" in edits &&
+    canEditOffset(gpu.clocks.graphics) &&
+    inTuningRange(
+      graphicsDraft,
+      gpu.clocks.graphics.minOffsetMHz,
+      gpu.clocks.graphics.maxOffsetMHz,
+    )
+      ? graphicsDraft
+      : null;
+  const memoryToApply =
+    "memory" in edits &&
+    canEditOffset(gpu.clocks.memory) &&
+    inTuningRange(
+      memoryDraft,
+      gpu.clocks.memory.minOffsetMHz,
+      gpu.clocks.memory.maxOffsetMHz,
+    )
+      ? memoryDraft
+      : null;
+  const hasClockChanges = graphicsToApply != null || memoryToApply != null;
 
   const identity = showIdentity ? (
     <div className="flex flex-wrap items-center gap-2">
@@ -328,13 +400,14 @@ export function GpuTuningControls({
         draft={powerDraft}
         layout={layout}
         busy={powerBusy}
+        hasChanges={"power" in edits}
         onDraftChange={setPowerDraft}
         onApply={() =>
-          normalizedPowerDraft != null &&
+          powerDraft != null &&
           onMutationAction({
             kind: "setPowerLimit",
             gpuId: gpu.id,
-            limitWatts: normalizedPowerDraft,
+            limitWatts: powerDraft,
           })
         }
         onReset={() =>
@@ -354,16 +427,12 @@ export function GpuTuningControls({
         reason={gpu.cooling.unsupportedReason}
       />
       <CoolingSectionContent
-        gpuId={gpu.id}
         cooling={gpu.cooling}
         drafts={fanDrafts}
         layout={layout}
         pendingAction={pendingAction}
         onDraftChange={(fanIndex, value) =>
-          setFanDrafts((current) => ({
-            ...current,
-            [fanIndex]: value,
-          }))
+          editStore.change(gpu.id, `fan:${fanIndex}`, value)
         }
         onSetManual={(fanIndex, speedPercent) =>
           onMutationAction({
@@ -399,12 +468,8 @@ export function GpuTuningControls({
           onMutationAction({
             kind: "setClockOffsets",
             gpuId: gpu.id,
-            graphicsOffsetMHz: canEditOffset(gpu.clocks.graphics)
-              ? normalizedGraphicsDraft
-              : null,
-            memoryOffsetMHz: canEditOffset(gpu.clocks.memory)
-              ? normalizedMemoryDraft
-              : null,
+            graphicsOffsetMHz: graphicsToApply,
+            memoryOffsetMHz: memoryToApply,
           })
         }
         onReset={() =>
@@ -421,6 +486,7 @@ export function GpuTuningControls({
     return (
       <div data-testid="gpu-tuning-controls" className="space-y-5">
         {identity}
+        {changeSummary}
         <div className="grid gap-5 sm:grid-cols-2">
           <div className="space-y-6">
             {powerSection}
@@ -435,6 +501,7 @@ export function GpuTuningControls({
   return (
     <div data-testid="gpu-tuning-controls" className="space-y-6">
       {identity}
+      {changeSummary}
       {powerSection}
       {coolingSection}
       {clockSection}
@@ -450,8 +517,10 @@ function PowerSectionContent({
   onDraftChange,
   onApply,
   onReset,
+  hasChanges,
 }: {
   power: PowerControlInfo;
+  hasChanges: boolean;
   draft: number | null;
   layout: "stack" | "rail";
   busy: boolean;
@@ -464,13 +533,6 @@ function PowerSectionContent({
     power.minLimitWatts != null &&
     power.maxLimitWatts != null &&
     power.currentLimitWatts != null;
-  const normalizedDraft = normalizeDraft(
-    draft,
-    power.minLimitWatts,
-    power.maxLimitWatts,
-  );
-  const hasChanges =
-    normalizedDraft != null && normalizedDraft !== power.currentLimitWatts;
 
   return (
     <div className={cn("space-y-4", layout === "rail" && "text-sm")}>
@@ -490,12 +552,10 @@ function PowerSectionContent({
             </p>
           </div>
           <p className="text-sm font-semibold tabular-nums">
-            {formatWatts(
-              power.currentLimitWatts == null ? null : normalizedDraft,
-            )}
+            {formatWatts(power.currentLimitWatts == null ? null : draft)}
           </p>
         </div>
-        {canEdit && normalizedDraft != null && (
+        {canEdit && draft != null && (
           <input
             aria-label="Power limit slider"
             type="range"
@@ -503,7 +563,7 @@ function PowerSectionContent({
             min={power.minLimitWatts ?? 0}
             max={power.maxLimitWatts ?? 0}
             step={1}
-            value={normalizedDraft}
+            value={draft}
             onChange={(event) =>
               onDraftChange(event.currentTarget.valueAsNumber)
             }
@@ -517,7 +577,7 @@ function PowerSectionContent({
           min={power.minLimitWatts ?? undefined}
           max={power.maxLimitWatts ?? undefined}
           step={1}
-          value={normalizedDraft ?? ""}
+          value={draft ?? ""}
           onChange={(event) => {
             const nextValue = event.currentTarget.valueAsNumber;
             if (event.currentTarget.value === "") {
@@ -534,7 +594,12 @@ function PowerSectionContent({
         <Button
           size="sm"
           onClick={onApply}
-          disabled={!canEdit || !hasChanges || busy}
+          disabled={
+            !canEdit ||
+            !hasChanges ||
+            !inTuningRange(draft, power.minLimitWatts, power.maxLimitWatts) ||
+            busy
+          }
         >
           Apply
         </Button>
@@ -557,7 +622,6 @@ function PowerSectionContent({
 }
 
 function CoolingSectionContent({
-  gpuId,
   cooling,
   drafts,
   layout,
@@ -566,9 +630,8 @@ function CoolingSectionContent({
   onSetManual,
   onSetAuto,
 }: {
-  gpuId: string;
   cooling: CoolingInfo;
-  drafts: Record<number, number>;
+  drafts: Record<number, number | null>;
   layout: "stack" | "rail";
   pendingAction: PerformanceMutationAction | null;
   onDraftChange: (fanIndex: number, value: number) => void;
@@ -590,18 +653,9 @@ function CoolingSectionContent({
       {cooling.fans.map((fan) => {
         const min = fan.minSpeedPercent ?? 0;
         const max = fan.maxSpeedPercent ?? 100;
-        const draft = normalizeDraft(
-          drafts[fan.index] ?? fan.currentSpeedPercent ?? min,
-          min,
-          max,
-        );
-        const current = fan.currentSpeedPercent ?? draft;
-        const busy =
-          pendingAction?.gpuId === gpuId &&
-          ((pendingAction.kind === "setFanSpeed" &&
-            pendingAction.fanIndex === fan.index) ||
-            (pendingAction.kind === "setFanModeAuto" &&
-              pendingAction.fanIndex === fan.index));
+        const draft = drafts[fan.index] ?? null;
+        const current = fan.currentSpeedPercent;
+        const busy = pendingAction != null;
 
         return (
           <FanEditor
@@ -610,7 +664,7 @@ function CoolingSectionContent({
             draft={draft}
             busy={busy}
             onDraftChange={(value) => onDraftChange(fan.index, value)}
-            onSetManual={() => onSetManual(fan.index, draft)}
+            onSetManual={() => draft != null && onSetManual(fan.index, draft)}
             onSetAuto={() => onSetAuto(fan.index)}
             current={current}
             min={min}
@@ -755,8 +809,8 @@ function FanEditor({
   onSetAuto,
 }: {
   fan: FanControlInfo;
-  current: number;
-  draft: number;
+  current: number | null;
+  draft: number | null;
   min: number;
   max: number;
   busy: boolean;
@@ -783,6 +837,9 @@ function FanEditor({
         </p>
       </div>
 
+      <p className="text-xs text-muted-foreground">
+        Current speed {current == null ? "Unavailable" : `${current}%`}
+      </p>
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs text-muted-foreground">Manual target</span>
@@ -794,20 +851,23 @@ function FanEditor({
           min={min}
           max={max}
           step={1}
-          value={draft}
+          value={draft ?? ""}
           onChange={(event) => onDraftChange(event.currentTarget.valueAsNumber)}
           disabled={busy}
         />
         <Input
           type="number"
+          aria-label={`Fan ${fan.index + 1} manual target`}
           className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
           min={min}
           max={max}
           step={1}
-          value={draft}
+          value={draft ?? ""}
           onChange={(event) => {
             const nextValue = event.currentTarget.valueAsNumber;
-            if (Number.isFinite(nextValue)) {
+            if (event.currentTarget.value === "") {
+              onDraftChange(0);
+            } else if (Number.isFinite(nextValue)) {
               onDraftChange(nextValue);
             }
           }}
@@ -819,7 +879,11 @@ function FanEditor({
         <Button
           size="sm"
           onClick={onSetManual}
-          disabled={busy || draft === current}
+          disabled={
+            busy ||
+            !inTuningRange(draft, min, max) ||
+            (draft === current && fan.mode === "manual")
+          }
         >
           Set Manual
         </Button>
@@ -851,12 +915,6 @@ function ClockOffsetEditor({
   disabled: boolean;
   onDraftChange: (value: number | null) => void;
 }) {
-  const normalizedDraft = normalizeDraft(
-    draft,
-    info.minOffsetMHz,
-    info.maxOffsetMHz,
-  );
-
   return (
     <div className="space-y-3 border-t border-border/70 pt-4">
       <div className="flex items-start justify-between gap-3">
@@ -874,10 +932,13 @@ function ClockOffsetEditor({
           </p>
         </div>
         <p className="text-sm font-semibold tabular-nums">
-          {formatOffset(normalizedDraft)}
+          {formatOffset(draft)}
         </p>
       </div>
 
+      <p className="text-xs text-muted-foreground">
+        Current offset {formatOffset(info.currentOffsetMHz)}
+      </p>
       <TuningAvailability
         support={info.support}
         reason={info.reason}
@@ -886,7 +947,7 @@ function ClockOffsetEditor({
       />
       {info.support === "supported" && (
         <div className="space-y-3">
-          {canEditOffset(info) && normalizedDraft != null && (
+          {canEditOffset(info) && draft != null && (
             <input
               aria-label={`${title} clock offset slider`}
               type="range"
@@ -894,7 +955,7 @@ function ClockOffsetEditor({
               min={info.minOffsetMHz ?? 0}
               max={info.maxOffsetMHz ?? 0}
               step={1}
-              value={normalizedDraft}
+              value={draft}
               onChange={(event) =>
                 onDraftChange(event.currentTarget.valueAsNumber)
               }
@@ -908,7 +969,7 @@ function ClockOffsetEditor({
             min={info.minOffsetMHz ?? undefined}
             max={info.maxOffsetMHz ?? undefined}
             step={1}
-            value={normalizedDraft ?? ""}
+            value={draft ?? ""}
             onChange={(event) => {
               const nextValue = event.currentTarget.valueAsNumber;
               if (event.currentTarget.value === "") {
@@ -941,37 +1002,6 @@ function GpuTuningSkeleton() {
       ))}
     </div>
   );
-}
-
-function normalizeDraft(
-  value: number,
-  min: number | null,
-  max: number | null,
-): number;
-function normalizeDraft(
-  value: number | null,
-  min: number | null,
-  max: number | null,
-): number | null;
-function normalizeDraft(
-  value: number | null,
-  min: number | null,
-  max: number | null,
-) {
-  if (value == null) return null;
-  if (!Number.isFinite(value)) {
-    return min ?? max ?? 0;
-  }
-
-  if (min != null && value < min) {
-    return min;
-  }
-
-  if (max != null && value > max) {
-    return max;
-  }
-
-  return value;
 }
 
 function formatOffset(value: number | null) {
@@ -1020,4 +1050,14 @@ function TuningAvailability({
       {currentValueError && <p>{currentValueError}</p>}
     </div>
   );
+}
+
+function settingLabel(setting: string) {
+  return setting === "power"
+    ? "Power limit"
+    : setting === "graphics"
+      ? "Graphics clock offset"
+      : setting === "memory"
+        ? "Memory clock offset"
+        : `Fan ${Number(setting.slice(4)) + 1}`;
 }

@@ -14,15 +14,18 @@ use users::{get_group_by_gid, get_group_by_name, get_user_by_uid, get_user_group
 
 use crate::drivers::{request_host_reboot, DriverService};
 use crate::gpu::{
-    apply_gpu_config, collect_inventory_with_context, collect_performance, reset_gpu_clock_offsets,
-    reset_gpu_config, reset_gpu_power_limit, set_gpu_clock_offsets, set_gpu_fan_mode_auto,
-    set_gpu_fan_speed, set_gpu_power_limit, ApplyGpuConfigRequest, GpuApplyRecord, GpuCommandError,
+    apply_gpu_config, collect_inventory_with_context, collect_performance, reset_gpu_config,
+    reset_gpu_power_limit, set_gpu_clock_offsets, set_gpu_fan_mode_auto, set_gpu_fan_speed,
+    set_gpu_power_limit, ApplyGpuConfigRequest, GpuApplyRecord, GpuCommandError,
     GpuCommandErrorCode, GpuDaemonStatus, GpuInventoryResponse, GpuMutationResponse,
     GpuPerformanceResponse, GpuTargetRequest, InventoryContext, PersistedGpuState,
     ResetGpuConfigRequest, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
-use crate::protocol::{DaemonCommandResponse, DaemonRequest, DaemonResponse};
+use crate::protocol::{
+    ClockOffsetResponse, DaemonCommandResponse, DaemonRequest, DaemonResponse, TuningOutcome,
+    TuningOutcomeStatus,
+};
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/prism/prismd.sock";
 pub const DEFAULT_STATE_PATH: &str = "/var/lib/prism/state.json";
@@ -77,7 +80,6 @@ trait DaemonBackend {
     fn set_fan_speed(&self, request: SetGpuFanSpeedRequest) -> Result<(), String>;
     fn set_fan_mode_auto(&self, request: SetGpuFanModeAutoRequest) -> Result<(), String>;
     fn set_clock_offsets(&self, request: SetGpuClockOffsetsRequest) -> Result<(), String>;
-    fn reset_clock_offsets(&self, request: GpuTargetRequest) -> Result<(), String>;
 }
 
 struct RealDaemonBackend;
@@ -122,10 +124,6 @@ impl DaemonBackend for RealDaemonBackend {
 
     fn set_clock_offsets(&self, request: SetGpuClockOffsetsRequest) -> Result<(), String> {
         set_gpu_clock_offsets(request)
-    }
-
-    fn reset_clock_offsets(&self, request: GpuTargetRequest) -> Result<(), String> {
-        reset_gpu_clock_offsets(request)
     }
 }
 
@@ -301,10 +299,10 @@ fn handle_request_with_driver_service<B: DaemonBackend>(
             DaemonResponse::Command(command_result(backend.set_fan_mode_auto(request)))
         }
         DaemonRequest::SetClockOffsets(request) => {
-            DaemonResponse::Command(command_result(backend.set_clock_offsets(request)))
+            DaemonResponse::ClockOffsets(apply_live_offsets(backend, request))
         }
         DaemonRequest::ResetClockOffsets(request) => {
-            DaemonResponse::Command(command_result(backend.reset_clock_offsets(request)))
+            DaemonResponse::ClockOffsets(reset_live_offsets(backend, request))
         }
         DaemonRequest::GetDriverStatus => DaemonResponse::DriverStatus(driver_service.status()),
         DaemonRequest::StartDriverAction(request) => match driver_service.start_action(request) {
@@ -323,6 +321,86 @@ fn handle_request_with_driver_service<B: DaemonBackend>(
             request_host_reboot().map_err(|error| error.message),
         )),
     }
+}
+
+// Split the existing live command so a later failure cannot hide an earlier write.
+// These commands deliberately never touch PersistedGpuState.
+fn apply_live_offsets<B: DaemonBackend>(
+    backend: &B,
+    request: SetGpuClockOffsetsRequest,
+) -> ClockOffsetResponse {
+    let mut failed = false;
+    let mut apply = |graphics: bool, value: Option<i32>| {
+        value.map(|value| {
+            if failed {
+                return TuningOutcome {
+                    status: TuningOutcomeStatus::Unattempted,
+                    error: Some("An earlier clock offset failed".into()),
+                };
+            }
+            let result = backend.set_clock_offsets(SetGpuClockOffsetsRequest {
+                gpu_id: request.gpu_id.clone(),
+                graphics_offset_mhz: if graphics { Some(value) } else { None },
+                memory_offset_mhz: if graphics { None } else { Some(value) },
+            });
+            match result {
+                Ok(()) => TuningOutcome {
+                    status: TuningOutcomeStatus::Succeeded,
+                    error: None,
+                },
+                Err(error) => {
+                    failed = true;
+                    TuningOutcome {
+                        status: TuningOutcomeStatus::Failed,
+                        error: Some(error),
+                    }
+                }
+            }
+        })
+    };
+    ClockOffsetResponse {
+        graphics: apply(true, request.graphics_offset_mhz),
+        memory: apply(false, request.memory_offset_mhz),
+    }
+}
+
+fn reset_live_offsets<B: DaemonBackend>(
+    backend: &B,
+    request: GpuTargetRequest,
+) -> ClockOffsetResponse {
+    use crate::gpu::ControlSupport;
+    let performance = backend.performance();
+    let gpu = performance.gpus.iter().find(|gpu| gpu.id == request.gpu_id);
+    let unavailable = |message: &str| {
+        Some(TuningOutcome {
+            status: TuningOutcomeStatus::Unattempted,
+            error: Some(message.into()),
+        })
+    };
+    let Some(gpu) = gpu else {
+        return ClockOffsetResponse {
+            graphics: unavailable("GPU unavailable"),
+            memory: unavailable("GPU unavailable"),
+        };
+    };
+    if gpu.clocks.graphics.support == ControlSupport::Unknown
+        || gpu.clocks.memory.support == ControlSupport::Unknown
+    {
+        return ClockOffsetResponse {
+            graphics: unavailable("Clock offset support is unknown"),
+            memory: unavailable("Clock offset support is unknown"),
+        };
+    }
+    apply_live_offsets(
+        backend,
+        SetGpuClockOffsetsRequest {
+            gpu_id: request.gpu_id,
+            graphics_offset_mhz: (gpu.clocks.graphics.support == ControlSupport::Supported)
+                .then_some(0),
+            memory_offset_mhz: (gpu.clocks.memory.support == ControlSupport::Supported)
+                .then_some(0),
+        },
+    )
 }
 
 fn apply_single_config<B: DaemonBackend>(
@@ -674,6 +752,7 @@ mod tests {
         should_fail_apply: bool,
         should_fail_reset: bool,
         command_error: Option<String>,
+        memory_offset_error: Option<String>,
         applied_requests: RefCell<Vec<ApplyGpuConfigRequest>>,
         performance: RefCell<GpuPerformanceResponse>,
     }
@@ -739,12 +818,24 @@ mod tests {
             self.command_result()
         }
 
-        fn set_clock_offsets(&self, _request: SetGpuClockOffsetsRequest) -> Result<(), String> {
-            self.command_result()
-        }
-
-        fn reset_clock_offsets(&self, _request: GpuTargetRequest) -> Result<(), String> {
-            self.command_result()
+        fn set_clock_offsets(&self, request: SetGpuClockOffsetsRequest) -> Result<(), String> {
+            self.command_result()?;
+            let mut performance = self.performance.borrow_mut();
+            let gpu = performance
+                .gpus
+                .iter_mut()
+                .find(|gpu| gpu.id == request.gpu_id)
+                .unwrap();
+            if let Some(value) = request.graphics_offset_mhz {
+                gpu.clocks.graphics.current_offset_mhz = Some(value);
+            }
+            if let Some(value) = request.memory_offset_mhz {
+                if let Some(error) = &self.memory_offset_error {
+                    return Err(error.clone());
+                }
+                gpu.clocks.memory.current_offset_mhz = Some(value);
+            }
+            Ok(())
         }
     }
 
@@ -754,6 +845,7 @@ mod tests {
                 should_fail_apply: false,
                 should_fail_reset: false,
                 command_error: None,
+                memory_offset_error: None,
                 applied_requests: RefCell::new(vec![]),
                 performance: RefCell::new(GpuPerformanceResponse {
                     gpus: vec![],
@@ -774,6 +866,151 @@ mod tests {
             driver_jobs_path: PathBuf::from("/tmp/prismd-test-driver-jobs.json"),
             config_path: PathBuf::from("/tmp/prismd-test.toml"),
         }
+    }
+
+    #[test]
+    fn live_offsets_report_partial_success_without_replacing_saved_configuration() {
+        let mut backend = MockBackend::new();
+        *backend.performance.borrow_mut() = serde_json::from_str(include_str!(
+            "../../src/test/contracts/tuning-observations.json"
+        ))
+        .unwrap();
+        backend.memory_offset_error = Some("Memory write failed".into());
+        let mut state = PersistedGpuState::default();
+        state.gpus.insert(
+            "GPU-123".into(),
+            PersistedGpuConfig {
+                desired: DesiredGpuConfig {
+                    power_limit_watts: Some(450),
+                    gpu_clock_lock: Some(ClockRangeInput {
+                        min_mhz: 1800,
+                        max_mhz: 2400,
+                    }),
+                    ..DesiredGpuConfig::default()
+                },
+                last_apply: None,
+            },
+        );
+        let saved = state.clone();
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+                gpu_id: "GPU-123".into(),
+                graphics_offset_mhz: Some(150),
+                memory_offset_mhz: Some(80),
+            }),
+        );
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["payload"]["graphics"]["status"], "succeeded");
+        assert_eq!(json["payload"]["memory"]["status"], "failed");
+        assert_eq!(json["payload"]["memory"]["error"], "Memory write failed");
+        let contract: serde_json::Value = serde_json::from_str(include_str!(
+            "../../src/test/contracts/tuning-outcomes.json"
+        ))
+        .unwrap();
+        assert_eq!(json["payload"], contract);
+        let roundtrip: DaemonResponse = serde_json::from_value(json).unwrap();
+        assert!(matches!(roundtrip, DaemonResponse::ClockOffsets(_)));
+        let DaemonResponse::Performance(actual) = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::GetPerformance,
+        ) else {
+            panic!("expected performance")
+        };
+        assert_eq!(actual.gpus[0].clocks.graphics.current_offset_mhz, Some(150));
+        assert_eq!(state, saved);
+    }
+
+    #[test]
+    fn live_offsets_stop_after_failure_and_leave_later_setting_unattempted() {
+        let mut backend = MockBackend::new();
+        *backend.performance.borrow_mut() = serde_json::from_str(include_str!(
+            "../../src/test/contracts/tuning-observations.json"
+        ))
+        .unwrap();
+        backend.command_error = Some("GPU unavailable".into());
+        let mut state = PersistedGpuState::default();
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+                gpu_id: "GPU-123".into(),
+                graphics_offset_mhz: Some(150),
+                memory_offset_mhz: Some(80),
+            }),
+        );
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["payload"]["graphics"]["status"], "failed");
+        assert_eq!(json["payload"]["memory"]["status"], "unattempted");
+        let DaemonResponse::Performance(actual) = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::GetPerformance,
+        ) else {
+            panic!("expected performance")
+        };
+        assert_eq!(actual.gpus[0].clocks.graphics.current_offset_mhz, None);
+        assert_eq!(actual.gpus[0].clocks.memory.current_offset_mhz, None);
+    }
+
+    #[test]
+    fn live_reset_reports_partial_outcomes_and_memory_only_retry_leaves_graphics_alone() {
+        let mut backend = MockBackend::new();
+        *backend.performance.borrow_mut() = serde_json::from_str(include_str!(
+            "../../src/test/contracts/tuning-observations.json"
+        ))
+        .unwrap();
+        {
+            let mut performance = backend.performance.borrow_mut();
+            let clocks = &mut performance.gpus[0].clocks;
+            clocks.graphics.support = crate::gpu::ControlSupport::Supported;
+            clocks.memory.support = crate::gpu::ControlSupport::Supported;
+            clocks.graphics.current_offset_mhz = Some(150);
+            clocks.memory.current_offset_mhz = Some(80);
+        }
+        backend.memory_offset_error = Some("Memory write failed".into());
+        let mut state = PersistedGpuState::default();
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::ResetClockOffsets(GpuTargetRequest {
+                gpu_id: "GPU-123".into(),
+            }),
+        );
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["payload"]["graphics"]["status"], "succeeded");
+        assert_eq!(json["payload"]["memory"]["status"], "failed");
+        backend.memory_offset_error = None;
+        let response = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+                gpu_id: "GPU-123".into(),
+                graphics_offset_mhz: None,
+                memory_offset_mhz: Some(0),
+            }),
+        );
+        let json = serde_json::to_value(response).unwrap();
+        assert!(json["payload"]["graphics"].is_null());
+        assert_eq!(json["payload"]["memory"]["status"], "succeeded");
+        let DaemonResponse::Performance(actual) = handle_request(
+            &backend,
+            &test_paths(),
+            &mut state,
+            DaemonRequest::GetPerformance,
+        ) else {
+            panic!("expected performance")
+        };
+        assert_eq!(actual.gpus[0].clocks.graphics.current_offset_mhz, Some(0));
+        assert_eq!(actual.gpus[0].clocks.memory.current_offset_mhz, Some(0));
     }
 
     #[test]

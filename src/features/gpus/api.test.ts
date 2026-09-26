@@ -22,14 +22,20 @@ describe("GPU API bridge", () => {
   });
 
   it("delegates read calls", async () => {
-    const getInventory = vi.spyOn(gpuApi, "getInventory").mockResolvedValue({ gpus: [], warnings: [] });
-    const getPerformance = vi.spyOn(gpuApi, "getPerformance").mockResolvedValue({ gpus: [], warnings: [] });
-    const getDaemonStatus = vi.spyOn(gpuApi, "getDaemonStatus").mockResolvedValue({
-      reachable: false,
-      managedByDaemon: false,
-      socketPath: "/run/prism/prismd.sock",
-      message: null,
-    });
+    const getInventory = vi
+      .spyOn(gpuApi, "getInventory")
+      .mockResolvedValue({ gpus: [], warnings: [] });
+    const getPerformance = vi
+      .spyOn(gpuApi, "getPerformance")
+      .mockResolvedValue({ gpus: [], warnings: [] });
+    const getDaemonStatus = vi
+      .spyOn(gpuApi, "getDaemonStatus")
+      .mockResolvedValue({
+        reachable: false,
+        managedByDaemon: false,
+        socketPath: "/run/prism/prismd.sock",
+        message: null,
+      });
 
     await getGpuInventory();
     await getGpuPerformance();
@@ -63,12 +69,30 @@ describe("GPU API bridge", () => {
   });
 
   it("delegates direct performance mutations", async () => {
-    const setPowerLimit = vi.spyOn(gpuApi, "setPowerLimit").mockResolvedValue(undefined);
-    const resetPowerLimit = vi.spyOn(gpuApi, "resetPowerLimit").mockResolvedValue(undefined);
-    const setFanSpeed = vi.spyOn(gpuApi, "setFanSpeed").mockResolvedValue(undefined);
-    const setFanModeAuto = vi.spyOn(gpuApi, "setFanModeAuto").mockResolvedValue(undefined);
-    const setClockOffsets = vi.spyOn(gpuApi, "setClockOffsets").mockResolvedValue(undefined);
-    const resetClockOffsets = vi.spyOn(gpuApi, "resetClockOffsets").mockResolvedValue(undefined);
+    const setPowerLimit = vi
+      .spyOn(gpuApi, "setPowerLimit")
+      .mockResolvedValue({ success: true, error: null });
+    const resetPowerLimit = vi
+      .spyOn(gpuApi, "resetPowerLimit")
+      .mockResolvedValue({ success: true, error: null });
+    const setFanSpeed = vi
+      .spyOn(gpuApi, "setFanSpeed")
+      .mockResolvedValue({ success: true, error: null });
+    const setFanModeAuto = vi
+      .spyOn(gpuApi, "setFanModeAuto")
+      .mockResolvedValue({ success: true, error: null });
+    const setClockOffsets = vi
+      .spyOn(gpuApi, "setClockOffsets")
+      .mockResolvedValue({
+        graphics: { status: "succeeded", error: null },
+        memory: null,
+      });
+    const resetClockOffsets = vi
+      .spyOn(gpuApi, "resetClockOffsets")
+      .mockResolvedValue({
+        graphics: { status: "succeeded", error: null },
+        memory: null,
+      });
 
     await setGpuPowerLimit("GPU-123", 450);
     await resetGpuPowerLimit("GPU-123");

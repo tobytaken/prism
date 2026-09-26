@@ -1,0 +1,4 @@
+{
+  "graphics": { "status": "succeeded", "error": null },
+  "memory": { "status": "failed", "error": "Memory write failed" }
+}

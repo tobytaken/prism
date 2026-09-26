@@ -1,5 +1,7 @@
 import type {
   ApplyGpuConfigRequest,
+  ClockOffsetResponse,
+  GpuCommandResponse,
   GpuDaemonStatus,
   GpuInventoryResponse,
   GpuMutationResponse,
@@ -19,20 +21,26 @@ export interface PrismDesktopApi {
     getDaemonStatus(): Promise<GpuDaemonStatus>;
     applyConfig(request: ApplyGpuConfigRequest): Promise<GpuMutationResponse>;
     resetConfig(request: ResetGpuConfigRequest): Promise<GpuMutationResponse>;
-    setPowerLimit(gpuId: string, limitWatts: number): Promise<void>;
-    resetPowerLimit(gpuId: string): Promise<void>;
+    setPowerLimit(
+      gpuId: string,
+      limitWatts: number,
+    ): Promise<GpuCommandResponse>;
+    resetPowerLimit(gpuId: string): Promise<GpuCommandResponse>;
     setFanSpeed(
       gpuId: string,
       fanIndex: number,
       speedPercent: number,
-    ): Promise<void>;
-    setFanModeAuto(gpuId: string, fanIndex: number): Promise<void>;
+    ): Promise<GpuCommandResponse>;
+    setFanModeAuto(
+      gpuId: string,
+      fanIndex: number,
+    ): Promise<GpuCommandResponse>;
     setClockOffsets(
       gpuId: string,
       graphicsOffsetMHz: number | null,
       memoryOffsetMHz: number | null,
-    ): Promise<void>;
-    resetClockOffsets(gpuId: string): Promise<void>;
+    ): Promise<ClockOffsetResponse>;
+    resetClockOffsets(gpuId: string): Promise<ClockOffsetResponse>;
   };
   drivers: {
     getStatus(): Promise<DriverStatusResponse>;

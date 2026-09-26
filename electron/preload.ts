@@ -7,6 +7,8 @@ import type {
 } from "@/features/drivers/types";
 import type {
   ApplyGpuConfigRequest,
+  ClockOffsetResponse,
+  GpuCommandResponse,
   GpuDaemonStatus,
   GpuInventoryResponse,
   GpuMutationResponse,
@@ -42,22 +44,22 @@ const prismApi = {
       ipcRenderer.invoke("prism:gpu:setPowerLimit", {
         gpuId,
         limitWatts,
-      }) as Promise<void>,
+      }) as Promise<GpuCommandResponse>,
     resetPowerLimit: (gpuId: string) =>
       ipcRenderer.invoke("prism:gpu:resetPowerLimit", {
         gpuId,
-      }) as Promise<void>,
+      }) as Promise<GpuCommandResponse>,
     setFanSpeed: (gpuId: string, fanIndex: number, speedPercent: number) =>
       ipcRenderer.invoke("prism:gpu:setFanSpeed", {
         gpuId,
         fanIndex,
         speedPercent,
-      }) as Promise<void>,
+      }) as Promise<GpuCommandResponse>,
     setFanModeAuto: (gpuId: string, fanIndex: number) =>
       ipcRenderer.invoke("prism:gpu:setFanModeAuto", {
         gpuId,
         fanIndex,
-      }) as Promise<void>,
+      }) as Promise<GpuCommandResponse>,
     setClockOffsets: (
       gpuId: string,
       graphicsOffsetMHz: number | null,
@@ -67,11 +69,11 @@ const prismApi = {
         gpuId,
         graphicsOffsetMHz,
         memoryOffsetMHz,
-      }) as Promise<void>,
+      }) as Promise<ClockOffsetResponse>,
     resetClockOffsets: (gpuId: string) =>
       ipcRenderer.invoke("prism:gpu:resetClockOffsets", {
         gpuId,
-      }) as Promise<void>,
+      }) as Promise<ClockOffsetResponse>,
   },
   drivers: {
     getStatus: () =>

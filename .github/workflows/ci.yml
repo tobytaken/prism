@@ -33,6 +33,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update
       - run: sudo apt-get install -y dpkg fakeroot rpm flatpak flatpak-builder elfutils
+      - name: Install daemon packaging tools
+        run: |
+          cargo install --locked cargo-deb --version 3.6.3
+          cargo install --locked cargo-generate-rpm --version 0.20.0
       - run: flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
       - run: bun install --frozen-lockfile
       - run: bun run build:sidecar:release
