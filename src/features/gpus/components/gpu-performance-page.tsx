@@ -1,13 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
-  resetGpuClockOffsets,
-  resetGpuPowerLimit,
-  setGpuClockOffsets,
-  setGpuFanModeAuto,
-  setGpuFanSpeed,
-  setGpuPowerLimit,
-} from "@/features/gpus/api";
+  runTuningMutation,
+  type TuningMutationResult,
+} from "@/features/gpus/lib/tuning-mutation";
 import { useGpuDaemonStatus } from "@/features/gpus/hooks/use-gpu-daemon-status";
 import { useGpuPerformance } from "@/features/gpus/hooks/use-gpu-performance";
 
@@ -18,9 +14,13 @@ export function GpuPerformancePage() {
   const queryClient = useQueryClient();
   const query = useGpuPerformance();
   const daemonStatusQuery = useGpuDaemonStatus();
-  const mutation = useMutation<void, Error, PerformanceMutationAction>({
-    mutationFn: runPerformanceMutation,
-    onSuccess: async () => {
+  const mutation = useMutation<
+    TuningMutationResult,
+    Error,
+    PerformanceMutationAction
+  >({
+    mutationFn: runTuningMutation,
+    onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: ["gpu-performance"] });
     },
   });
@@ -33,40 +33,7 @@ export function GpuPerformancePage() {
       errorMessage={query.error instanceof Error ? query.error.message : null}
       mutationErrorMessage={mutation.error?.message ?? null}
       pendingAction={mutation.isPending ? mutation.variables : null}
-      onMutationAction={(action) => {
-        mutation.mutate(action);
-      }}
+      onMutationAction={(action) => mutation.mutateAsync(action)}
     />
   );
-}
-
-async function runPerformanceMutation(action: PerformanceMutationAction) {
-  try {
-    switch (action.kind) {
-      case "setPowerLimit":
-        await setGpuPowerLimit(action.gpuId, action.limitWatts);
-        return;
-      case "resetPowerLimit":
-        await resetGpuPowerLimit(action.gpuId);
-        return;
-      case "setFanSpeed":
-        await setGpuFanSpeed(action.gpuId, action.fanIndex, action.speedPercent);
-        return;
-      case "setFanModeAuto":
-        await setGpuFanModeAuto(action.gpuId, action.fanIndex);
-        return;
-      case "setClockOffsets":
-        await setGpuClockOffsets(
-          action.gpuId,
-          action.graphicsOffsetMHz,
-          action.memoryOffsetMHz,
-        );
-        return;
-      case "resetClockOffsets":
-        await resetGpuClockOffsets(action.gpuId);
-        return;
-    }
-  } catch (error) {
-    throw error instanceof Error ? error : new Error(String(error));
-  }
 }

@@ -202,3 +202,18 @@ export interface ClockOffsetInfo {
   minOffsetMHz: number | null;
   maxOffsetMHz: number | null;
 }
+
+export interface TuningOutcome {
+  status: "succeeded" | "failed" | "unattempted" | "unknown";
+  error: string | null;
+}
+
+export interface ClockOffsetResponse {
+  graphics: TuningOutcome | null;
+  memory: TuningOutcome | null;
+}
+
+export interface GpuCommandResponse {
+  success: boolean;
+  error: string | null;
+}

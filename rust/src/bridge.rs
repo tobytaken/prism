@@ -57,32 +57,32 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
             "gpu.resetConfig",
             reset_gpu_config,
         ),
-        "gpu.setPowerLimit" => parse_and_execute::<SetGpuPowerLimitRequest, _>(
+        "gpu.setPowerLimit" => parse_and_serialize_result::<SetGpuPowerLimitRequest, _, _>(
             request.params,
             "gpu.setPowerLimit",
             set_gpu_power_limit,
         ),
-        "gpu.resetPowerLimit" => parse_and_execute::<GpuTargetRequest, _>(
+        "gpu.resetPowerLimit" => parse_and_serialize_result::<GpuTargetRequest, _, _>(
             request.params,
             "gpu.resetPowerLimit",
             reset_gpu_power_limit,
         ),
-        "gpu.setFanSpeed" => parse_and_execute::<SetGpuFanSpeedRequest, _>(
+        "gpu.setFanSpeed" => parse_and_serialize_result::<SetGpuFanSpeedRequest, _, _>(
             request.params,
             "gpu.setFanSpeed",
             set_gpu_fan_speed,
         ),
-        "gpu.setFanModeAuto" => parse_and_execute::<SetGpuFanModeAutoRequest, _>(
+        "gpu.setFanModeAuto" => parse_and_serialize_result::<SetGpuFanModeAutoRequest, _, _>(
             request.params,
             "gpu.setFanModeAuto",
             set_gpu_fan_mode_auto,
         ),
-        "gpu.setClockOffsets" => parse_and_execute::<SetGpuClockOffsetsRequest, _>(
+        "gpu.setClockOffsets" => parse_and_serialize_result::<SetGpuClockOffsetsRequest, _, _>(
             request.params,
             "gpu.setClockOffsets",
             set_gpu_clock_offsets,
         ),
-        "gpu.resetClockOffsets" => parse_and_execute::<GpuTargetRequest, _>(
+        "gpu.resetClockOffsets" => parse_and_serialize_result::<GpuTargetRequest, _, _>(
             request.params,
             "gpu.resetClockOffsets",
             reset_gpu_clock_offsets,
@@ -178,20 +178,6 @@ where
     })
 }
 
-fn parse_and_execute<T, F>(
-    params: Option<Value>,
-    method: &str,
-    handler: F,
-) -> Result<Value, BridgeError>
-where
-    T: DeserializeOwned,
-    F: FnOnce(T) -> Result<(), String>,
-{
-    let payload = parse_params(params, method)?;
-    handler(payload)?;
-    Ok(Value::Null)
-}
-
 fn serialize_result<T>(value: T) -> Result<Value, BridgeError>
 where
     T: Serialize,
@@ -256,28 +242,46 @@ fn reset_gpu_config(request: ResetGpuConfigRequest) -> GpuMutationResponse {
     daemon_client::reset_gpu_config(request)
 }
 
-fn set_gpu_power_limit(request: SetGpuPowerLimitRequest) -> Result<(), String> {
-    daemon_client::set_gpu_power_limit(request)
+fn set_gpu_power_limit(
+    request: SetGpuPowerLimitRequest,
+) -> Result<crate::protocol::DaemonCommandResponse, BridgeError> {
+    daemon_client::set_gpu_power_limit(request).map_err(BridgeError::from)
 }
 
-fn reset_gpu_power_limit(request: GpuTargetRequest) -> Result<(), String> {
-    daemon_client::reset_gpu_power_limit(request)
+fn reset_gpu_power_limit(
+    request: GpuTargetRequest,
+) -> Result<crate::protocol::DaemonCommandResponse, BridgeError> {
+    daemon_client::reset_gpu_power_limit(request).map_err(BridgeError::from)
 }
 
-fn set_gpu_fan_speed(request: SetGpuFanSpeedRequest) -> Result<(), String> {
-    daemon_client::set_gpu_fan_speed(request)
+fn set_gpu_fan_speed(
+    request: SetGpuFanSpeedRequest,
+) -> Result<crate::protocol::DaemonCommandResponse, BridgeError> {
+    daemon_client::set_gpu_fan_speed(request).map_err(BridgeError::from)
 }
 
-fn set_gpu_fan_mode_auto(request: SetGpuFanModeAutoRequest) -> Result<(), String> {
-    daemon_client::set_gpu_fan_mode_auto(request)
+fn set_gpu_fan_mode_auto(
+    request: SetGpuFanModeAutoRequest,
+) -> Result<crate::protocol::DaemonCommandResponse, BridgeError> {
+    daemon_client::set_gpu_fan_mode_auto(request).map_err(BridgeError::from)
 }
 
-fn set_gpu_clock_offsets(request: SetGpuClockOffsetsRequest) -> Result<(), String> {
-    daemon_client::set_gpu_clock_offsets(request)
+fn set_gpu_clock_offsets(
+    request: SetGpuClockOffsetsRequest,
+) -> Result<crate::protocol::ClockOffsetResponse, BridgeError> {
+    daemon_client::set_gpu_clock_offsets(request).map_err(|error| BridgeError {
+        code: "command_failed".into(),
+        message: error.message,
+    })
 }
 
-fn reset_gpu_clock_offsets(request: GpuTargetRequest) -> Result<(), String> {
-    daemon_client::reset_gpu_clock_offsets(request)
+fn reset_gpu_clock_offsets(
+    request: GpuTargetRequest,
+) -> Result<crate::protocol::ClockOffsetResponse, BridgeError> {
+    daemon_client::reset_gpu_clock_offsets(request).map_err(|error| BridgeError {
+        code: "command_failed".into(),
+        message: error.message,
+    })
 }
 
 fn get_driver_status() -> DriverStatusResponse {

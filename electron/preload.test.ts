@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 
 import type { PrismDesktopApi } from "@/types/global";
@@ -65,6 +66,29 @@ describe("preload bridge", () => {
       ],
       ["prism:gpu:resetClockOffsets", { gpuId: "GPU-123" }],
     ]);
+  });
+
+  it("preserves acknowledged power and fan failures separately from transport rejection", async () => {
+    const prism = await loadPrismApi();
+    const failure = { success: false, error: "Permission denied" };
+    mocks.invoke.mockResolvedValue(failure);
+    expect(await prism.gpu.setPowerLimit("GPU-123", 500)).toEqual(failure);
+    expect(await prism.gpu.setFanSpeed("GPU-123", 0, 65)).toEqual(failure);
+    mocks.invoke.mockRejectedValue(new Error("Connection lost"));
+    await expect(prism.gpu.setFanModeAuto("GPU-123", 0)).rejects.toThrow(
+      "Connection lost",
+    );
+  });
+
+  it("returns individual clock application outcomes without turning partial failure into success", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValue(tuningOutcomes);
+    expect(await prism.gpu.setClockOffsets("GPU-123", 150, 80)).toEqual(
+      tuningOutcomes,
+    );
+    expect(await prism.gpu.resetClockOffsets("GPU-123")).toEqual(
+      tuningOutcomes,
+    );
   });
 
   it("preserves tuning support states, null readings, and reasons across preload", async () => {

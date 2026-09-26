@@ -11,7 +11,7 @@ use crate::gpu::{
     ResetGpuConfigRequest, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
-use crate::protocol::{DaemonRequest, DaemonResponse};
+use crate::protocol::{ClockOffsetResponse, DaemonCommandResponse, DaemonRequest, DaemonResponse};
 
 pub fn get_inventory() -> Result<GpuInventoryResponse, GpuCommandError> {
     match send_request(DaemonRequest::GetInventory)? {
@@ -70,28 +70,40 @@ pub fn reapply_saved_gpu_config() -> GpuMutationResponse {
     }
 }
 
-pub fn set_gpu_power_limit(request: SetGpuPowerLimitRequest) -> Result<(), String> {
-    send_command_request(DaemonRequest::SetPowerLimit(request)).map_err(|error| error.message)
+pub fn set_gpu_power_limit(
+    request: SetGpuPowerLimitRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::SetPowerLimit(request))
 }
 
-pub fn reset_gpu_power_limit(request: GpuTargetRequest) -> Result<(), String> {
-    send_command_request(DaemonRequest::ResetPowerLimit(request)).map_err(|error| error.message)
+pub fn reset_gpu_power_limit(
+    request: GpuTargetRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::ResetPowerLimit(request))
 }
 
-pub fn set_gpu_fan_speed(request: SetGpuFanSpeedRequest) -> Result<(), String> {
-    send_command_request(DaemonRequest::SetFanSpeed(request)).map_err(|error| error.message)
+pub fn set_gpu_fan_speed(
+    request: SetGpuFanSpeedRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::SetFanSpeed(request))
 }
 
-pub fn set_gpu_fan_mode_auto(request: SetGpuFanModeAutoRequest) -> Result<(), String> {
-    send_command_request(DaemonRequest::SetFanModeAuto(request)).map_err(|error| error.message)
+pub fn set_gpu_fan_mode_auto(
+    request: SetGpuFanModeAutoRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::SetFanModeAuto(request))
 }
 
-pub fn set_gpu_clock_offsets(request: SetGpuClockOffsetsRequest) -> Result<(), String> {
-    send_command_request(DaemonRequest::SetClockOffsets(request)).map_err(|error| error.message)
+pub fn set_gpu_clock_offsets(
+    request: SetGpuClockOffsetsRequest,
+) -> Result<ClockOffsetResponse, GpuCommandError> {
+    send_offset_request(DaemonRequest::SetClockOffsets(request))
 }
 
-pub fn reset_gpu_clock_offsets(request: GpuTargetRequest) -> Result<(), String> {
-    send_command_request(DaemonRequest::ResetClockOffsets(request)).map_err(|error| error.message)
+pub fn reset_gpu_clock_offsets(
+    request: GpuTargetRequest,
+) -> Result<ClockOffsetResponse, GpuCommandError> {
+    send_offset_request(DaemonRequest::ResetClockOffsets(request))
 }
 
 pub fn get_driver_status() -> Result<DriverStatusResponse, GpuCommandError> {
@@ -198,4 +210,20 @@ fn unexpected_response_error(expected: &str) -> GpuCommandError {
         GpuCommandErrorCode::Internal,
         format!("Prism daemon returned an unexpected response for {expected}"),
     )
+}
+
+fn send_offset_request(request: DaemonRequest) -> Result<ClockOffsetResponse, GpuCommandError> {
+    match send_request(request)? {
+        DaemonResponse::ClockOffsets(response) => Ok(response),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("clock offsets")),
+    }
+}
+
+fn send_gpu_command(request: DaemonRequest) -> Result<DaemonCommandResponse, GpuCommandError> {
+    match send_request(request)? {
+        DaemonResponse::Command(response) => Ok(response),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("GPU command")),
+    }
 }

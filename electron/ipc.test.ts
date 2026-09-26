@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BrowserWindow } from "electron";
+import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 import { registerIpc } from "./ipc";
 
@@ -91,6 +92,38 @@ describe("registerIpc", () => {
     await expect(
       callHandler("prism:drivers:getJob", trustedEvent(), { jobId: 123 }),
     ).rejects.toThrow("Invalid getJob payload");
+  });
+
+  it("preserves an acknowledged GPU command failure from the sidecar", async () => {
+    const failure = { success: false, error: "Permission denied" };
+    mocks.spawn.mockReturnValue(createBackendChild(failure));
+    const dispose = registerIpc(getMainWindow);
+    try {
+      expect(
+        await callHandler("prism:gpu:setPowerLimit", trustedEvent(), {
+          gpuId: "GPU-123",
+          limitWatts: 500,
+        }),
+      ).toEqual(failure);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("preserves mixed clock outcomes through the sidecar transport", async () => {
+    mocks.spawn.mockReturnValue(createBackendChild(tuningOutcomes));
+    const dispose = registerIpc(getMainWindow);
+    try {
+      expect(
+        await callHandler("prism:gpu:setClockOffsets", trustedEvent(), {
+          gpuId: "GPU-123",
+          graphicsOffsetMHz: 150,
+          memoryOffsetMHz: 80,
+        }),
+      ).toEqual(tuningOutcomes);
+    } finally {
+      dispose();
+    }
   });
 
   it("preserves tuning observations from the sidecar response", async () => {

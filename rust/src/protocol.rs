@@ -16,6 +16,28 @@ pub struct DaemonCommandResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TuningOutcomeStatus {
+    Succeeded,
+    Failed,
+    Unattempted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TuningOutcome {
+    pub status: TuningOutcomeStatus,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClockOffsetResponse {
+    pub graphics: Option<TuningOutcome>,
+    pub memory: Option<TuningOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
     GetInventory,
@@ -45,6 +67,7 @@ pub enum DaemonResponse {
     DaemonStatus(GpuDaemonStatus),
     Mutation(GpuMutationResponse),
     Command(DaemonCommandResponse),
+    ClockOffsets(ClockOffsetResponse),
     DriverStatus(DriverStatusResponse),
     DriverJob(DriverJob),
     Error(GpuCommandError),

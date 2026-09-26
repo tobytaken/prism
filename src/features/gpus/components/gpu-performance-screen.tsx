@@ -1,3 +1,10 @@
+import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
+import {
+  useTuningEdits,
+  type TuningEditStore,
+} from "@/features/gpus/hooks/use-tuning-edits";
+import { unavailableTuningReadback } from "@/features/gpus/lib/tuning-readback";
+import type { TuningMutationHandler } from "@/features/gpus/lib/tuning-mutation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   AlertTriangle,
@@ -58,7 +65,7 @@ type GpuPerformanceScreenProps = {
   errorMessage: string | null;
   mutationErrorMessage?: string | null;
   pendingAction?: PerformanceMutationAction | null;
-  onMutationAction?: (action: PerformanceMutationAction) => void;
+  onMutationAction?: TuningMutationHandler;
 };
 
 export function GpuPerformanceScreen({
@@ -70,6 +77,7 @@ export function GpuPerformanceScreen({
   pendingAction = null,
   onMutationAction,
 }: GpuPerformanceScreenProps) {
+  const editStore = useTuningEdits();
   const gpus = inventory?.gpus ?? EMPTY_PERFORMANCE_GPUS;
   const warnings = inventory?.warnings ?? EMPTY_WARNINGS;
   const historyByGpuId = useGpuMetricHistory();
@@ -135,6 +143,8 @@ export function GpuPerformanceScreen({
         </Alert>
       )}
 
+      <UnavailableGpuEdits devices={editStore.devices} gpus={gpus} />
+
       {isLoading && <GpuPerformanceSkeleton />}
 
       {!isLoading && gpus.length === 0 && !errorMessage && (
@@ -153,7 +163,10 @@ export function GpuPerformanceScreen({
         gpus.map((gpu) => (
           <GpuTelemetrySurface
             key={gpu.id}
-            gpu={gpu}
+            gpu={
+              errorMessage ? unavailableTuningReadback(gpu, errorMessage) : gpu
+            }
+            editStore={editStore}
             history={historyByGpuId[gpu.id]}
             controlsDisabled={daemonDisconnected}
             pendingAction={pendingAction}
@@ -166,16 +179,18 @@ export function GpuPerformanceScreen({
 
 function GpuTelemetrySurface({
   gpu,
+  editStore,
   history,
   controlsDisabled,
   pendingAction,
   onMutationAction,
 }: {
   gpu: GpuPerformanceDevice;
+  editStore: TuningEditStore;
   history?: GpuMetricHistory;
   controlsDisabled: boolean;
   pendingAction: PerformanceMutationAction | null;
-  onMutationAction?: (action: PerformanceMutationAction) => void;
+  onMutationAction?: TuningMutationHandler;
 }) {
   const headlineMetrics = [
     {
@@ -247,6 +262,7 @@ function GpuTelemetrySurface({
         <div className="flex flex-col gap-8 xl:flex-row">
           <OcControlRail
             gpu={gpu}
+            editStore={editStore}
             controlsDisabled={controlsDisabled}
             pendingAction={pendingAction}
             onMutationAction={onMutationAction}
@@ -266,17 +282,22 @@ function GpuTelemetrySurface({
 
 function OcControlRail({
   gpu,
+  editStore,
   controlsDisabled,
   pendingAction,
   onMutationAction,
 }: {
   gpu: GpuPerformanceDevice;
+  editStore: TuningEditStore;
   controlsDisabled: boolean;
   pendingAction: PerformanceMutationAction | null;
-  onMutationAction?: (action: PerformanceMutationAction) => void;
+  onMutationAction?: TuningMutationHandler;
 }) {
   const [open, setOpen] = useState(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
       return true;
     }
 
@@ -284,7 +305,10 @@ function OcControlRail({
   });
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
       return;
     }
 
@@ -336,6 +360,10 @@ function OcControlRail({
         />
       </button>
 
+      {!open &&
+        Object.keys(editStore.devices[gpu.id]?.edits ?? {}).length > 0 && (
+          <Badge variant="outline">Unapplied changes</Badge>
+        )}
       {open && (
         <fieldset
           disabled={controlsDisabled || !onMutationAction}
@@ -348,6 +376,7 @@ function OcControlRail({
         >
           <GpuTuningControls
             gpu={gpu}
+            editStore={editStore}
             layout="rail"
             pendingAction={pendingAction}
             onMutationAction={onMutationAction ?? (() => undefined)}
@@ -489,7 +518,10 @@ function TelemetryStatusCard({
           </p>
         </div>
         {badge && (
-          <Badge className="rounded-md border-border/70 bg-transparent" variant="outline">
+          <Badge
+            className="rounded-md border-border/70 bg-transparent"
+            variant="outline"
+          >
             {badge}
           </Badge>
         )}
@@ -594,7 +626,10 @@ function MetricSparkline({
 
 function GpuPerformanceSkeleton() {
   return (
-    <div data-testid="gpu-performance-skeleton" className="border-y border-border/80 py-7">
+    <div
+      data-testid="gpu-performance-skeleton"
+      className="border-y border-border/80 py-7"
+    >
       <div className="flex flex-col gap-8 xl:flex-row">
         <div className="space-y-6">
           <Skeleton className="h-11 w-full rounded-none" />

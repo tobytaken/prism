@@ -14,12 +14,18 @@ const prismStub: PrismDesktopApi = {
     }),
     applyConfig: async () => ({ success: true, inventory: null, error: null }),
     resetConfig: async () => ({ success: true, inventory: null, error: null }),
-    setPowerLimit: async () => undefined,
-    resetPowerLimit: async () => undefined,
-    setFanSpeed: async () => undefined,
-    setFanModeAuto: async () => undefined,
-    setClockOffsets: async () => undefined,
-    resetClockOffsets: async () => undefined,
+    setPowerLimit: async () => ({ success: true, error: null }),
+    resetPowerLimit: async () => ({ success: true, error: null }),
+    setFanSpeed: async () => ({ success: true, error: null }),
+    setFanModeAuto: async () => ({ success: true, error: null }),
+    setClockOffsets: async () => ({
+      graphics: { status: "succeeded", error: null },
+      memory: null,
+    }),
+    resetClockOffsets: async () => ({
+      graphics: { status: "succeeded", error: null },
+      memory: null,
+    }),
   },
   drivers: {
     getStatus: async () => ({

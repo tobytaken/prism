@@ -6,7 +6,10 @@ import {
   connectedDaemonStatus,
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
-import { createTestQueryClient, renderWithQueryClient } from "@/test/query-client";
+import {
+  createTestQueryClient,
+  renderWithQueryClient,
+} from "@/test/query-client";
 import { GpuPerformancePage } from "./gpu-performance-page";
 
 const mocks = vi.hoisted(() => ({
@@ -65,17 +68,24 @@ describe("GpuPerformancePage", () => {
 
   it("runs performance mutations and invalidates performance data", async () => {
     const api = await import("@/features/gpus/api");
-    vi.mocked(api.setGpuPowerLimit).mockResolvedValue(undefined);
+    vi.mocked(api.setGpuPowerLimit).mockResolvedValue({
+      success: true,
+      error: null,
+    });
     const queryClient = createTestQueryClient();
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
 
     renderWithQueryClient(<GpuPerformancePage />, { queryClient });
 
-    await userEvent.click(screen.getByRole("button", { name: "mutate performance" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "mutate performance" }),
+    );
 
     await waitFor(() => {
       expect(api.setGpuPowerLimit).toHaveBeenCalledWith("GPU-123", 450);
-      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["gpu-performance"] });
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ["gpu-performance"],
+      });
     });
   });
 });
