@@ -6,6 +6,11 @@ import type {
   GpuPerformanceResponse,
   ResetGpuConfigRequest,
 } from "@/features/gpus/types";
+import type {
+  DriverAction,
+  DriverJob,
+  DriverStatusResponse,
+} from "@/features/drivers/types";
 
 export interface PrismDesktopApi {
   gpu: {
@@ -16,7 +21,11 @@ export interface PrismDesktopApi {
     resetConfig(request: ResetGpuConfigRequest): Promise<GpuMutationResponse>;
     setPowerLimit(gpuId: string, limitWatts: number): Promise<void>;
     resetPowerLimit(gpuId: string): Promise<void>;
-    setFanSpeed(gpuId: string, fanIndex: number, speedPercent: number): Promise<void>;
+    setFanSpeed(
+      gpuId: string,
+      fanIndex: number,
+      speedPercent: number,
+    ): Promise<void>;
     setFanModeAuto(gpuId: string, fanIndex: number): Promise<void>;
     setClockOffsets(
       gpuId: string,
@@ -24,6 +33,13 @@ export interface PrismDesktopApi {
       memoryOffsetMHz: number | null,
     ): Promise<void>;
     resetClockOffsets(gpuId: string): Promise<void>;
+  };
+  drivers: {
+    getStatus(): Promise<DriverStatusResponse>;
+    startAction(action: DriverAction): Promise<DriverJob>;
+    getJob(jobId: string): Promise<DriverJob>;
+    cancelJob(jobId: string): Promise<DriverJob>;
+    requestReboot(): Promise<void>;
   };
   window: {
     minimize(): Promise<void>;

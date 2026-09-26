@@ -52,7 +52,10 @@ describe("preload bridge", () => {
       ["prism:gpu:resetConfig", { gpuId: "GPU-123" }],
       ["prism:gpu:setPowerLimit", { gpuId: "GPU-123", limitWatts: 450 }],
       ["prism:gpu:resetPowerLimit", { gpuId: "GPU-123" }],
-      ["prism:gpu:setFanSpeed", { gpuId: "GPU-123", fanIndex: 0, speedPercent: 60 }],
+      [
+        "prism:gpu:setFanSpeed",
+        { gpuId: "GPU-123", fanIndex: 0, speedPercent: 60 },
+      ],
       ["prism:gpu:setFanModeAuto", { gpuId: "GPU-123", fanIndex: 0 }],
       [
         "prism:gpu:setClockOffsets",
@@ -80,7 +83,10 @@ describe("preload bridge", () => {
       ["prism:window:close"],
       ["prism:window:isMaximized"],
     ]);
-    expect(mocks.on).toHaveBeenCalledWith("prism:window:resized", expect.any(Function));
+    expect(mocks.on).toHaveBeenCalledWith(
+      "prism:window:resized",
+      expect.any(Function),
+    );
 
     const handler = mocks.on.mock.calls[0]?.[1] as (
       event: unknown,
@@ -90,7 +96,28 @@ describe("preload bridge", () => {
     expect(callback).toHaveBeenCalledWith(true);
 
     cleanup();
-    expect(mocks.removeListener).toHaveBeenCalledWith("prism:window:resized", handler);
+    expect(mocks.removeListener).toHaveBeenCalledWith(
+      "prism:window:resized",
+      handler,
+    );
+  });
+
+  it("exposes driver IPC methods with exact channels and payloads", async () => {
+    const prism = await loadPrismApi();
+
+    await prism.drivers.getStatus();
+    await prism.drivers.startAction("installRecommended");
+    await prism.drivers.getJob("driver-1");
+    await prism.drivers.cancelJob("driver-1");
+    await prism.drivers.requestReboot();
+
+    expect(mocks.invoke.mock.calls).toEqual([
+      ["prism:drivers:getStatus"],
+      ["prism:drivers:startAction", { action: "installRecommended" }],
+      ["prism:drivers:getJob", { jobId: "driver-1" }],
+      ["prism:drivers:cancelJob", { jobId: "driver-1" }],
+      ["prism:drivers:requestReboot"],
+    ]);
   });
 
   it("exposes shell IPC methods", async () => {
@@ -108,6 +135,9 @@ describe("preload bridge", () => {
 async function loadPrismApi() {
   await import("./preload");
 
-  expect(mocks.exposeInMainWorld).toHaveBeenCalledWith("prism", expect.any(Object));
+  expect(mocks.exposeInMainWorld).toHaveBeenCalledWith(
+    "prism",
+    expect.any(Object),
+  );
   return mocks.exposeInMainWorld.mock.calls[0]?.[1] as PrismDesktopApi;
 }

@@ -4,6 +4,7 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use crate::daemon::DEFAULT_SOCKET_PATH;
+use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
 use crate::gpu::{
     ApplyGpuConfigRequest, GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus,
     GpuInventoryResponse, GpuMutationResponse, GpuPerformanceResponse, GpuTargetRequest,
@@ -91,6 +92,44 @@ pub fn set_gpu_clock_offsets(request: SetGpuClockOffsetsRequest) -> Result<(), S
 
 pub fn reset_gpu_clock_offsets(request: GpuTargetRequest) -> Result<(), String> {
     send_command_request(DaemonRequest::ResetClockOffsets(request)).map_err(|error| error.message)
+}
+
+pub fn get_driver_status() -> Result<DriverStatusResponse, GpuCommandError> {
+    match send_request(DaemonRequest::GetDriverStatus)? {
+        DaemonResponse::DriverStatus(status) => Ok(status),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("driver status")),
+    }
+}
+
+pub fn start_driver_action(
+    request: StartDriverActionRequest,
+) -> Result<DriverJob, GpuCommandError> {
+    match send_request(DaemonRequest::StartDriverAction(request))? {
+        DaemonResponse::DriverJob(job) => Ok(job),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("driver job")),
+    }
+}
+
+pub fn get_driver_job(request: DriverJobRequest) -> Result<DriverJob, GpuCommandError> {
+    match send_request(DaemonRequest::GetDriverJob(request))? {
+        DaemonResponse::DriverJob(job) => Ok(job),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("driver job")),
+    }
+}
+
+pub fn cancel_driver_job(request: DriverJobRequest) -> Result<DriverJob, GpuCommandError> {
+    match send_request(DaemonRequest::CancelDriverJob(request))? {
+        DaemonResponse::DriverJob(job) => Ok(job),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("driver job")),
+    }
+}
+
+pub fn request_host_reboot() -> Result<(), String> {
+    send_command_request(DaemonRequest::RequestHostReboot).map_err(|error| error.message)
 }
 
 fn send_request(request: DaemonRequest) -> Result<DaemonResponse, GpuCommandError> {

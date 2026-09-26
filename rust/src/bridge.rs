@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::daemon_client;
+use crate::drivers::{
+    collect_driver_status, DriverJob, DriverJobRequest, DriverStatusResponse,
+    StartDriverActionRequest,
+};
 use crate::gpu::{
     collect_inventory, collect_performance, ApplyGpuConfigRequest, GpuCommandError,
     GpuCommandErrorCode, GpuDaemonStatus, GpuInventoryResponse, GpuMutationResponse,
@@ -83,6 +87,23 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
             "gpu.resetClockOffsets",
             reset_gpu_clock_offsets,
         ),
+        "drivers.getStatus" => serialize_result(get_driver_status()),
+        "drivers.startAction" => parse_and_serialize_result::<StartDriverActionRequest, _, _>(
+            request.params,
+            "drivers.startAction",
+            start_driver_action,
+        ),
+        "drivers.getJob" => parse_and_serialize_result::<DriverJobRequest, _, _>(
+            request.params,
+            "drivers.getJob",
+            get_driver_job,
+        ),
+        "drivers.cancelJob" => parse_and_serialize_result::<DriverJobRequest, _, _>(
+            request.params,
+            "drivers.cancelJob",
+            cancel_driver_job,
+        ),
+        "drivers.requestReboot" => request_host_reboot(),
         _ => Err(BridgeError {
             code: "not_found".into(),
             message: format!("Unknown Prism backend method {}", request.method),
@@ -126,6 +147,20 @@ where
 {
     let payload = parse_params(params, method)?;
     serialize_result(handler(payload))
+}
+
+fn parse_and_serialize_result<T, F, R>(
+    params: Option<Value>,
+    method: &str,
+    handler: F,
+) -> Result<Value, BridgeError>
+where
+    T: DeserializeOwned,
+    R: Serialize,
+    F: FnOnce(T) -> Result<R, BridgeError>,
+{
+    let payload = parse_params(params, method)?;
+    serialize_result(handler(payload)?)
 }
 
 fn parse_params<T>(params: Option<Value>, method: &str) -> Result<T, BridgeError>
@@ -245,6 +280,39 @@ fn reset_gpu_clock_offsets(request: GpuTargetRequest) -> Result<(), String> {
     daemon_client::reset_gpu_clock_offsets(request)
 }
 
+fn get_driver_status() -> DriverStatusResponse {
+    match daemon_client::get_driver_status() {
+        Ok(status) => status,
+        Err(error) => {
+            let mut status = collect_driver_status(None);
+            status.host.supported = false;
+            status.host.unsupported_reason =
+                Some(format!("Prism daemon is unavailable: {}", error.message));
+            status
+                .warnings
+                .push(format!("Prism daemon is unavailable: {}", error.message));
+            status
+        }
+    }
+}
+
+fn start_driver_action(request: StartDriverActionRequest) -> Result<DriverJob, BridgeError> {
+    daemon_client::start_driver_action(request).map_err(BridgeError::from)
+}
+
+fn get_driver_job(request: DriverJobRequest) -> Result<DriverJob, BridgeError> {
+    daemon_client::get_driver_job(request).map_err(BridgeError::from)
+}
+
+fn cancel_driver_job(request: DriverJobRequest) -> Result<DriverJob, BridgeError> {
+    daemon_client::cancel_driver_job(request).map_err(BridgeError::from)
+}
+
+fn request_host_reboot() -> Result<Value, BridgeError> {
+    daemon_client::request_host_reboot()?;
+    Ok(Value::Null)
+}
+
 fn backend_requires_daemon() -> bool {
     env::var_os("PRISM_BACKEND_REQUIRE_DAEMON").is_some() || env::var_os("FLATPAK_ID").is_some()
 }
@@ -347,11 +415,8 @@ mod tests {
 
     #[test]
     fn gpu_error_codes_convert_to_bridge_error_codes() {
-        let error: BridgeError = GpuCommandError::new(
-            GpuCommandErrorCode::NoPermission,
-            "permission denied",
-        )
-        .into();
+        let error: BridgeError =
+            GpuCommandError::new(GpuCommandErrorCode::NoPermission, "permission denied").into();
 
         assert_eq!(error.code, "no_permission");
         assert_eq!(error.message, "permission denied");

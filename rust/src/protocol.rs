@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
 use crate::gpu::{
     ApplyGpuConfigRequest, GpuCommandError, GpuDaemonStatus, GpuInventoryResponse,
     GpuMutationResponse, GpuPerformanceResponse, GpuTargetRequest, ResetGpuConfigRequest,
@@ -29,6 +30,11 @@ pub enum DaemonRequest {
     SetFanModeAuto(SetGpuFanModeAutoRequest),
     SetClockOffsets(SetGpuClockOffsetsRequest),
     ResetClockOffsets(GpuTargetRequest),
+    GetDriverStatus,
+    StartDriverAction(StartDriverActionRequest),
+    GetDriverJob(DriverJobRequest),
+    CancelDriverJob(DriverJobRequest),
+    RequestHostReboot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,5 +45,7 @@ pub enum DaemonResponse {
     DaemonStatus(GpuDaemonStatus),
     Mutation(GpuMutationResponse),
     Command(DaemonCommandResponse),
+    DriverStatus(DriverStatusResponse),
+    DriverJob(DriverJob),
     Error(GpuCommandError),
 }

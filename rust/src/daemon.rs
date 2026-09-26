@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use users::{get_group_by_gid, get_group_by_name, get_user_by_uid, get_user_groups};
 
+use crate::drivers::{request_host_reboot, DriverService};
 use crate::gpu::{
     apply_gpu_config, collect_inventory_with_context, collect_performance, reset_gpu_clock_offsets,
     reset_gpu_config, reset_gpu_power_limit, set_gpu_clock_offsets, set_gpu_fan_mode_auto,
@@ -25,12 +26,14 @@ use crate::protocol::{DaemonCommandResponse, DaemonRequest, DaemonResponse};
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/prism/prismd.sock";
 pub const DEFAULT_STATE_PATH: &str = "/var/lib/prism/state.json";
+pub const DEFAULT_DRIVER_JOBS_PATH: &str = "/var/lib/prism/driver-jobs.json";
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/prism/prismd.toml";
 
 #[derive(Debug, Clone)]
 struct DaemonPaths {
     socket_path: PathBuf,
     state_path: PathBuf,
+    driver_jobs_path: PathBuf,
     config_path: PathBuf,
 }
 
@@ -39,6 +42,7 @@ impl DaemonPaths {
         Self {
             socket_path: env_path("PRISM_SOCKET_PATH", DEFAULT_SOCKET_PATH),
             state_path: env_path("PRISM_STATE_PATH", DEFAULT_STATE_PATH),
+            driver_jobs_path: env_path("PRISM_DRIVER_JOBS_PATH", DEFAULT_DRIVER_JOBS_PATH),
             config_path: env_path("PRISM_CONFIG_PATH", DEFAULT_CONFIG_PATH),
         }
     }
@@ -130,6 +134,7 @@ pub fn run() -> Result<(), String> {
     let config = load_config(&paths).map_err(|error| error.to_string())?;
     let listener = bind_listener(&paths, &config).map_err(|error| error.to_string())?;
     let backend = RealDaemonBackend;
+    let driver_service = DriverService::new(paths.driver_jobs_path.clone());
     let mut persisted_state = load_state(&paths.state_path);
 
     let startup_result = reapply_saved_configs(&backend, &mut persisted_state);
@@ -146,9 +151,14 @@ pub fn run() -> Result<(), String> {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                if let Err(error) =
-                    handle_connection(&backend, &paths, &config, &mut persisted_state, &mut stream)
-                {
+                if let Err(error) = handle_connection(
+                    &backend,
+                    &driver_service,
+                    &paths,
+                    &config,
+                    &mut persisted_state,
+                    &mut stream,
+                ) {
                     eprintln!("failed to serve Prism daemon request: {error}");
                 }
             }
@@ -161,6 +171,7 @@ pub fn run() -> Result<(), String> {
 
 fn handle_connection<B: DaemonBackend>(
     backend: &B,
+    driver_service: &DriverService,
     paths: &DaemonPaths,
     config: &PrismDaemonConfig,
     persisted_state: &mut PersistedGpuState,
@@ -174,7 +185,13 @@ fn handle_connection<B: DaemonBackend>(
     let request: DaemonRequest =
         serde_json::from_slice(&request).map_err(|error| error.to_string())?;
     let response = match authorize_request(config, stream, &request) {
-        Ok(()) => handle_request(backend, paths, persisted_state, request),
+        Ok(()) => handle_request_with_driver_service(
+            backend,
+            driver_service,
+            paths,
+            persisted_state,
+            request,
+        ),
         Err(error) => DaemonResponse::Error(error),
     };
     let payload = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
@@ -187,8 +204,20 @@ fn handle_connection<B: DaemonBackend>(
     Ok(())
 }
 
+#[cfg(test)]
 fn handle_request<B: DaemonBackend>(
     backend: &B,
+    paths: &DaemonPaths,
+    persisted_state: &mut PersistedGpuState,
+    request: DaemonRequest,
+) -> DaemonResponse {
+    let driver_service = DriverService::new(paths.driver_jobs_path.clone());
+    handle_request_with_driver_service(backend, &driver_service, paths, persisted_state, request)
+}
+
+fn handle_request_with_driver_service<B: DaemonBackend>(
+    backend: &B,
+    driver_service: &DriverService,
     paths: &DaemonPaths,
     persisted_state: &mut PersistedGpuState,
     request: DaemonRequest,
@@ -277,6 +306,22 @@ fn handle_request<B: DaemonBackend>(
         DaemonRequest::ResetClockOffsets(request) => {
             DaemonResponse::Command(command_result(backend.reset_clock_offsets(request)))
         }
+        DaemonRequest::GetDriverStatus => DaemonResponse::DriverStatus(driver_service.status()),
+        DaemonRequest::StartDriverAction(request) => match driver_service.start_action(request) {
+            Ok(job) => DaemonResponse::DriverJob(job),
+            Err(error) => DaemonResponse::Error(error),
+        },
+        DaemonRequest::GetDriverJob(request) => match driver_service.job(request) {
+            Ok(job) => DaemonResponse::DriverJob(job),
+            Err(error) => DaemonResponse::Error(error),
+        },
+        DaemonRequest::CancelDriverJob(request) => match driver_service.cancel_job(request) {
+            Ok(job) => DaemonResponse::DriverJob(job),
+            Err(error) => DaemonResponse::Error(error),
+        },
+        DaemonRequest::RequestHostReboot => DaemonResponse::Command(command_result(
+            request_host_reboot().map_err(|error| error.message),
+        )),
     }
 }
 
@@ -724,6 +769,7 @@ mod tests {
         DaemonPaths {
             socket_path: PathBuf::from("/tmp/prismd-test.sock"),
             state_path: PathBuf::from("/tmp/prismd-test-state.json"),
+            driver_jobs_path: PathBuf::from("/tmp/prismd-test-driver-jobs.json"),
             config_path: PathBuf::from("/tmp/prismd-test.toml"),
         }
     }

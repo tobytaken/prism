@@ -2,7 +2,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
 
-import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  type IpcMainInvokeEvent,
+} from "electron";
 
 type MainWindowGetter = () => BrowserWindow | null;
 
@@ -41,6 +47,9 @@ type MutationActionPayload =
     }
   | Record<string, unknown>;
 
+type DriverActionPayload = { action: "installRecommended" | "updateInstalled" };
+type DriverJobPayload = { jobId: string };
+
 class RustBackendClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private reader: readline.Interface | null = null;
@@ -61,7 +70,9 @@ class RustBackendClient {
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Timed out waiting for Prism backend method ${method}`));
+        reject(
+          new Error(`Timed out waiting for Prism backend method ${method}`),
+        );
       }, 5_000);
 
       this.pending.set(id, {
@@ -132,7 +143,13 @@ class RustBackendClient {
     const projectRoot = path.resolve(__dirname, "..", "..");
     return spawn(
       "cargo",
-      ["run", "--manifest-path", path.join(projectRoot, "rust/Cargo.toml"), "--bin", "prism_backend"],
+      [
+        "run",
+        "--manifest-path",
+        path.join(projectRoot, "rust/Cargo.toml"),
+        "--bin",
+        "prism_backend",
+      ],
       {
         cwd: projectRoot,
         stdio: ["pipe", "pipe", "pipe"],
@@ -153,7 +170,9 @@ class RustBackendClient {
     try {
       response = JSON.parse(line) as SidecarResponse;
     } catch (error) {
-      process.stderr.write(`[prism_backend] invalid JSON response: ${String(error)}\n`);
+      process.stderr.write(
+        `[prism_backend] invalid JSON response: ${String(error)}\n`,
+      );
       return;
     }
 
@@ -174,7 +193,10 @@ class RustBackendClient {
   }
 }
 
-function assertTrustedSender(event: IpcMainInvokeEvent, getMainWindow: MainWindowGetter) {
+function assertTrustedSender(
+  event: IpcMainInvokeEvent,
+  getMainWindow: MainWindowGetter,
+) {
   const window = getMainWindow();
   if (!window) {
     throw new Error("Main window is not available");
@@ -207,13 +229,21 @@ function validateGpuTarget(payload: unknown): payload is { gpuId: string } {
 
 function validatePowerLimitPayload(
   payload: unknown,
-): payload is Extract<MutationActionPayload, { gpuId: string; limitWatts: number }> {
-  return isObject(payload) && isString(payload.gpuId) && isNumber(payload.limitWatts);
+): payload is Extract<
+  MutationActionPayload,
+  { gpuId: string; limitWatts: number }
+> {
+  return (
+    isObject(payload) && isString(payload.gpuId) && isNumber(payload.limitWatts)
+  );
 }
 
 function validateFanSpeedPayload(
   payload: unknown,
-): payload is Extract<MutationActionPayload, { gpuId: string; fanIndex: number; speedPercent: number }> {
+): payload is Extract<
+  MutationActionPayload,
+  { gpuId: string; fanIndex: number; speedPercent: number }
+> {
   return (
     isObject(payload) &&
     isString(payload.gpuId) &&
@@ -224,15 +254,22 @@ function validateFanSpeedPayload(
 
 function validateFanModePayload(
   payload: unknown,
-): payload is Extract<MutationActionPayload, { gpuId: string; fanIndex: number }> {
-  return isObject(payload) && isString(payload.gpuId) && isNumber(payload.fanIndex);
-}
-
-function validateClockOffsetPayload(
-  payload: unknown,
 ): payload is Extract<
   MutationActionPayload,
-  { gpuId: string; graphicsOffsetMHz: number | null; memoryOffsetMHz: number | null }
+  { gpuId: string; fanIndex: number }
+> {
+  return (
+    isObject(payload) && isString(payload.gpuId) && isNumber(payload.fanIndex)
+  );
+}
+
+function validateClockOffsetPayload(payload: unknown): payload is Extract<
+  MutationActionPayload,
+  {
+    gpuId: string;
+    graphicsOffsetMHz: number | null;
+    memoryOffsetMHz: number | null;
+  }
 > {
   return (
     isObject(payload) &&
@@ -249,11 +286,31 @@ function validateApplyConfigPayload(payload: unknown) {
 
   return (
     (payload.gpuId === undefined || isString(payload.gpuId)) &&
-    (payload.powerLimitWatts === undefined || isNumber(payload.powerLimitWatts)) &&
-    (payload.graphicsOffsetMHz === undefined || isNumber(payload.graphicsOffsetMHz)) &&
-    (payload.memoryOffsetMHz === undefined || isNumber(payload.memoryOffsetMHz)) &&
-    (payload.reapplySaved === undefined || typeof payload.reapplySaved === "boolean")
+    (payload.powerLimitWatts === undefined ||
+      isNumber(payload.powerLimitWatts)) &&
+    (payload.graphicsOffsetMHz === undefined ||
+      isNumber(payload.graphicsOffsetMHz)) &&
+    (payload.memoryOffsetMHz === undefined ||
+      isNumber(payload.memoryOffsetMHz)) &&
+    (payload.reapplySaved === undefined ||
+      typeof payload.reapplySaved === "boolean")
   );
+}
+
+function validateDriverActionPayload(
+  payload: unknown,
+): payload is DriverActionPayload {
+  return (
+    isObject(payload) &&
+    (payload.action === "installRecommended" ||
+      payload.action === "updateInstalled")
+  );
+}
+
+function validateDriverJobPayload(
+  payload: unknown,
+): payload is DriverJobPayload {
+  return isObject(payload) && isString(payload.jobId);
 }
 
 function isAllowedExternalUrl(url: string) {
@@ -340,6 +397,40 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       throw new Error("Invalid resetClockOffsets payload");
     }
     return backend.invoke("gpu.resetClockOffsets", payload);
+  });
+
+  ipcMain.handle("prism:drivers:getStatus", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    return backend.invoke("drivers.getStatus");
+  });
+
+  ipcMain.handle("prism:drivers:startAction", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateDriverActionPayload(payload)) {
+      throw new Error("Invalid startAction payload");
+    }
+    return backend.invoke("drivers.startAction", payload);
+  });
+
+  ipcMain.handle("prism:drivers:getJob", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateDriverJobPayload(payload)) {
+      throw new Error("Invalid getJob payload");
+    }
+    return backend.invoke("drivers.getJob", payload);
+  });
+
+  ipcMain.handle("prism:drivers:cancelJob", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateDriverJobPayload(payload)) {
+      throw new Error("Invalid cancelJob payload");
+    }
+    return backend.invoke("drivers.cancelJob", payload);
+  });
+
+  ipcMain.handle("prism:drivers:requestReboot", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    return backend.invoke("drivers.requestReboot");
   });
 
   ipcMain.handle("prism:window:minimize", async (event) => {

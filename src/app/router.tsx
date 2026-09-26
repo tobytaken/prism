@@ -1,6 +1,7 @@
 import { createHashRouter } from "react-router-dom";
 
 import { AppShell } from "@/app/shell/app-shell";
+import { DriversPage } from "@/features/drivers/components/drivers-page";
 import { GpuDetailPage } from "@/features/gpus/components/gpu-detail-page";
 import { GpuOverviewPage } from "@/features/gpus/components/gpu-overview-page";
 import { GpuPerformanceMetricPage } from "@/features/gpus/components/gpu-performance-metric-page";
@@ -15,9 +16,12 @@ export const appRouter = createHashRouter([
     children: [
       { index: true, element: <GpuOverviewPage /> },
       { path: "gpus/:gpuId", element: <GpuDetailPage /> },
-      { path: "drivers", element: <PlaceholderPage title="Drivers" /> },
+      { path: "drivers", element: <DriversPage /> },
       { path: "performance", element: <GpuPerformancePage /> },
-      { path: "performance/:gpuId/:metricKey", element: <GpuPerformanceMetricPage /> },
+      {
+        path: "performance/:gpuId/:metricKey",
+        element: <GpuPerformanceMetricPage />,
+      },
       { path: "profiles", element: <PlaceholderPage title="Profiles" /> },
       { path: "settings", element: <SettingsPage /> },
     ],

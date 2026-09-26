@@ -47,16 +47,18 @@ describe("registerIpc", () => {
   it("rejects untrusted senders", async () => {
     registerIpc(getMainWindow);
 
-    await expect(callHandler("prism:window:isMaximized", untrustedEvent())).rejects.toThrow(
-      "Untrusted IPC sender",
-    );
+    await expect(
+      callHandler("prism:window:isMaximized", untrustedEvent()),
+    ).rejects.toThrow("Untrusted IPC sender");
   });
 
   it("rejects invalid mutation payloads", async () => {
     registerIpc(getMainWindow);
 
     await expect(
-      callHandler("prism:gpu:setPowerLimit", trustedEvent(), { gpuId: "GPU-123" }),
+      callHandler("prism:gpu:setPowerLimit", trustedEvent(), {
+        gpuId: "GPU-123",
+      }),
     ).rejects.toThrow("Invalid setPowerLimit payload");
     await expect(
       callHandler("prism:gpu:setFanSpeed", trustedEvent(), {
@@ -76,8 +78,18 @@ describe("registerIpc", () => {
       callHandler("prism:gpu:resetConfig", trustedEvent(), { gpuId: 123 }),
     ).rejects.toThrow("Invalid resetConfig payload");
     await expect(
-      callHandler("prism:gpu:applyConfig", trustedEvent(), { powerLimitWatts: "450" }),
+      callHandler("prism:gpu:applyConfig", trustedEvent(), {
+        powerLimitWatts: "450",
+      }),
     ).rejects.toThrow("Invalid applyConfig payload");
+    await expect(
+      callHandler("prism:drivers:startAction", trustedEvent(), {
+        action: "removeEverything",
+      }),
+    ).rejects.toThrow("Invalid startAction payload");
+    await expect(
+      callHandler("prism:drivers:getJob", trustedEvent(), { jobId: 123 }),
+    ).rejects.toThrow("Invalid getJob payload");
   });
 
   it("passes valid GPU payloads to the backend", async () => {
@@ -101,17 +113,64 @@ describe("registerIpc", () => {
     expect(child.kill).toHaveBeenCalledTimes(1);
   });
 
+  it("passes valid driver payloads to the backend", async () => {
+    const child = createBackendChild();
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+
+    await callHandler("prism:drivers:startAction", trustedEvent(), {
+      action: "installRecommended",
+    });
+    await callHandler("prism:drivers:getJob", trustedEvent(), {
+      jobId: "driver-1",
+    });
+    await callHandler("prism:drivers:cancelJob", trustedEvent(), {
+      jobId: "driver-1",
+    });
+
+    expect(child.stdin.write).toHaveBeenCalledWith(
+      expect.stringContaining('"method":"drivers.startAction"'),
+    );
+    expect(child.stdin.write).toHaveBeenCalledWith(
+      expect.stringContaining('"action":"installRecommended"'),
+    );
+    expect(child.stdin.write).toHaveBeenCalledWith(
+      expect.stringContaining('"method":"drivers.getJob"'),
+    );
+    expect(child.stdin.write).toHaveBeenCalledWith(
+      expect.stringContaining('"method":"drivers.cancelJob"'),
+    );
+
+    dispose();
+  });
+
   it("allows only safe external URLs", async () => {
     registerIpc(getMainWindow);
 
-    await callHandler("prism:shell:openExternal", trustedEvent(), "https://example.com");
-    await callHandler("prism:shell:openExternal", trustedEvent(), "mailto:test@example.com");
+    await callHandler(
+      "prism:shell:openExternal",
+      trustedEvent(),
+      "https://example.com",
+    );
+    await callHandler(
+      "prism:shell:openExternal",
+      trustedEvent(),
+      "mailto:test@example.com",
+    );
 
     await expect(
-      callHandler("prism:shell:openExternal", trustedEvent(), "http://example.com"),
+      callHandler(
+        "prism:shell:openExternal",
+        trustedEvent(),
+        "http://example.com",
+      ),
     ).rejects.toThrow("Blocked external URL");
     await expect(
-      callHandler("prism:shell:openExternal", trustedEvent(), "file:///etc/passwd"),
+      callHandler(
+        "prism:shell:openExternal",
+        trustedEvent(),
+        "file:///etc/passwd",
+      ),
     ).rejects.toThrow("Blocked external URL");
 
     expect(mocks.openExternal).toHaveBeenCalledWith("https://example.com");
@@ -163,7 +222,9 @@ function createBackendChild() {
     write: vi.fn((payload: string) => {
       const request = JSON.parse(payload) as { id: number };
       queueMicrotask(() => {
-        child.stdout.write(`${JSON.stringify({ id: request.id, result: null })}\n`);
+        child.stdout.write(
+          `${JSON.stringify({ id: request.id, result: null })}\n`,
+        );
       });
       return true;
     }),

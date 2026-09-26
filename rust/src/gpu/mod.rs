@@ -732,8 +732,8 @@ fn unix_timestamp_ms() -> u64 {
 mod tests {
     use super::{
         ApplyGpuConfigRequest, ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo,
-        ClockRangeInput, ComputeApi, ComputeInfo, CoolingInfo, FanControlInfo, FanControlMode,
-        DesiredGpuConfig, GpuApplyRecord, GpuCommandErrorCode, GpuControlInfo, GpuDaemonStatus,
+        ClockRangeInput, ComputeApi, ComputeInfo, CoolingInfo, DesiredGpuConfig, FanControlInfo,
+        FanControlMode, GpuApplyRecord, GpuCommandErrorCode, GpuControlInfo, GpuDaemonStatus,
         GpuDevice, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
         GpuSupportedFeatures, GpuTelemetryInfo, GpuVendor, MemoryInfo, OffsetControl, PcieInfo,
         PersistedGpuState, PowerControlInfo, PowerInfo, PowerLimitControl,
