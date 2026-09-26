@@ -675,6 +675,7 @@ mod tests {
         should_fail_reset: bool,
         command_error: Option<String>,
         applied_requests: RefCell<Vec<ApplyGpuConfigRequest>>,
+        performance: RefCell<GpuPerformanceResponse>,
     }
 
     impl DaemonBackend for MockBackend {
@@ -695,10 +696,7 @@ mod tests {
         }
 
         fn performance(&self) -> GpuPerformanceResponse {
-            GpuPerformanceResponse {
-                gpus: vec![],
-                warnings: vec![],
-            }
+            self.performance.borrow().clone()
         }
 
         fn apply(&self, request: &ApplyGpuConfigRequest) -> Result<(), GpuCommandError> {
@@ -757,6 +755,10 @@ mod tests {
                 should_fail_reset: false,
                 command_error: None,
                 applied_requests: RefCell::new(vec![]),
+                performance: RefCell::new(GpuPerformanceResponse {
+                    gpus: vec![],
+                    warnings: vec![],
+                }),
             }
         }
 
@@ -772,6 +774,70 @@ mod tests {
             driver_jobs_path: PathBuf::from("/tmp/prismd-test-driver-jobs.json"),
             config_path: PathBuf::from("/tmp/prismd-test.toml"),
         }
+    }
+
+    #[test]
+    fn performance_reads_preserve_tuning_states_and_recover_without_changing_saved_configuration() {
+        let backend = MockBackend::new();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../src/test/contracts/tuning-observations.json"
+        ))
+        .unwrap();
+        *backend.performance.borrow_mut() = serde_json::from_value(fixture.clone()).unwrap();
+        let mut state = PersistedGpuState::default();
+        state.gpus.insert(
+            "GPU-123".into(),
+            PersistedGpuConfig {
+                desired: DesiredGpuConfig {
+                    power_limit_watts: Some(400),
+                    ..Default::default()
+                },
+                last_apply: None,
+            },
+        );
+        let original_state = state.clone();
+        let temp = tempfile::tempdir().unwrap();
+        let paths = DaemonPaths {
+            state_path: temp.path().join("state.json"),
+            ..test_paths()
+        };
+        let response = handle_request(&backend, &paths, &mut state, DaemonRequest::GetPerformance);
+        let wire = serde_json::to_value(&response).unwrap();
+        assert_eq!(wire["type"], "performance");
+        assert_eq!(wire["payload"], fixture);
+        assert_eq!(
+            serde_json::from_value::<DaemonResponse>(wire).unwrap(),
+            response
+        );
+
+        {
+            let mut performance = backend.performance.borrow_mut();
+            let gpu = &mut performance.gpus[0];
+            gpu.power.current_limit_watts = Some(450);
+            gpu.power.current_value_error = None;
+            gpu.clocks.graphics.support = crate::gpu::ControlSupport::Supported;
+            gpu.clocks.graphics.reason = None;
+            gpu.clocks.graphics.current_offset_mhz = Some(80);
+            gpu.clocks.graphics.min_offset_mhz = Some(-200);
+            gpu.clocks.graphics.max_offset_mhz = Some(200);
+        }
+        let response = handle_request(&backend, &paths, &mut state, DaemonRequest::GetPerformance);
+        let DaemonResponse::Performance(performance) = response else {
+            panic!("expected performance")
+        };
+        assert_eq!(performance.gpus[0].power.current_limit_watts, Some(450));
+        assert_eq!(performance.gpus[0].power.current_value_error, None);
+        assert_eq!(
+            performance.gpus[0].clocks.graphics.support,
+            crate::gpu::ControlSupport::Supported
+        );
+        assert_eq!(
+            performance.gpus[0].clocks.memory.support,
+            crate::gpu::ControlSupport::Unsupported
+        );
+        assert_eq!(state, original_state);
+        assert!(backend.applied_requests.borrow().is_empty());
+        assert!(!paths.state_path.exists());
     }
 
     #[test]

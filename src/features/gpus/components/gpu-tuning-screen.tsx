@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import type {
   ClockOffsetInfo,
   CoolingInfo,
+  ControlSupport,
   FanControlInfo,
   GpuDaemonStatus,
   GpuPerformanceDevice,
@@ -198,7 +199,10 @@ export function GpuTuningScreen({
           )}
         >
           {gpus.map((gpu) => (
-            <div key={gpu.id} className="standalone space-y-5 border-y border-border/80 py-6">
+            <div
+              key={gpu.id}
+              className="standalone space-y-5 border-y border-border/80 py-6"
+            >
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold tracking-tight">
                   {gpu.name}
@@ -234,22 +238,18 @@ export function GpuTuningControls({
   pendingAction: PerformanceMutationAction | null;
   onMutationAction: (action: PerformanceMutationAction) => void;
 }) {
-  const [powerDraft, setPowerDraft] = useState(
-    gpu.power.currentLimitWatts ?? gpu.power.defaultLimitWatts ?? 0,
-  );
+  const [powerDraft, setPowerDraft] = useState(gpu.power.currentLimitWatts);
   const [fanDrafts, setFanDrafts] = useState<Record<number, number>>({});
   const [graphicsDraft, setGraphicsDraft] = useState(
-    gpu.clocks.graphics.currentOffsetMHz ?? 0,
+    gpu.clocks.graphics.currentOffsetMHz,
   );
   const [memoryDraft, setMemoryDraft] = useState(
-    gpu.clocks.memory.currentOffsetMHz ?? 0,
+    gpu.clocks.memory.currentOffsetMHz,
   );
 
   useEffect(() => {
-    setPowerDraft(
-      gpu.power.currentLimitWatts ?? gpu.power.defaultLimitWatts ?? 0,
-    );
-  }, [gpu.id, gpu.power.currentLimitWatts, gpu.power.defaultLimitWatts]);
+    setPowerDraft(gpu.power.currentLimitWatts);
+  }, [gpu.id, gpu.power.currentLimitWatts]);
 
   useEffect(() => {
     setFanDrafts(
@@ -263,8 +263,8 @@ export function GpuTuningControls({
   }, [gpu.cooling.fans, gpu.id]);
 
   useEffect(() => {
-    setGraphicsDraft(gpu.clocks.graphics.currentOffsetMHz ?? 0);
-    setMemoryDraft(gpu.clocks.memory.currentOffsetMHz ?? 0);
+    setGraphicsDraft(gpu.clocks.graphics.currentOffsetMHz);
+    setMemoryDraft(gpu.clocks.memory.currentOffsetMHz);
   }, [
     gpu.clocks.graphics.currentOffsetMHz,
     gpu.clocks.memory.currentOffsetMHz,
@@ -296,11 +296,12 @@ export function GpuTuningControls({
     gpu.clocks.memory.maxOffsetMHz,
   );
   const hasClockChanges =
-    (gpu.clocks.graphics.isSupported &&
-      normalizedGraphicsDraft !==
-        (gpu.clocks.graphics.currentOffsetMHz ?? 0)) ||
-    (gpu.clocks.memory.isSupported &&
-      normalizedMemoryDraft !== (gpu.clocks.memory.currentOffsetMHz ?? 0));
+    (canEditOffset(gpu.clocks.graphics) &&
+      normalizedGraphicsDraft != null &&
+      normalizedGraphicsDraft !== gpu.clocks.graphics.currentOffsetMHz) ||
+    (canEditOffset(gpu.clocks.memory) &&
+      normalizedMemoryDraft != null &&
+      normalizedMemoryDraft !== gpu.clocks.memory.currentOffsetMHz);
 
   const identity = showIdentity ? (
     <div className="flex flex-wrap items-center gap-2">
@@ -316,9 +317,11 @@ export function GpuTuningControls({
 
   const powerSection = (
     <PerformanceSection title="Power" icon={Zap}>
-      <CapabilitySummary
-        supported={gpu.power.isSupported}
-        reason={gpu.power.unsupportedReason}
+      <TuningAvailability
+        support={gpu.power.support}
+        reason={gpu.power.reason}
+        currentValue={gpu.power.currentLimitWatts}
+        currentValueError={gpu.power.currentValueError}
       />
       <PowerSectionContent
         power={gpu.power}
@@ -327,6 +330,7 @@ export function GpuTuningControls({
         busy={powerBusy}
         onDraftChange={setPowerDraft}
         onApply={() =>
+          normalizedPowerDraft != null &&
           onMutationAction({
             kind: "setPowerLimit",
             gpuId: gpu.id,
@@ -382,10 +386,6 @@ export function GpuTuningControls({
 
   const clockSection = (
     <PerformanceSection title="Clock Offsets" icon={Clock3}>
-      <CapabilitySummary
-        supported={gpu.clocks.isSupported}
-        reason={gpu.clocks.unsupportedReason}
-      />
       <ClockSectionContent
         clocks={gpu.clocks}
         graphicsDraft={graphicsDraft}
@@ -399,10 +399,10 @@ export function GpuTuningControls({
           onMutationAction({
             kind: "setClockOffsets",
             gpuId: gpu.id,
-            graphicsOffsetMHz: gpu.clocks.graphics.isSupported
+            graphicsOffsetMHz: canEditOffset(gpu.clocks.graphics)
               ? normalizedGraphicsDraft
               : null,
-            memoryOffsetMHz: gpu.clocks.memory.isSupported
+            memoryOffsetMHz: canEditOffset(gpu.clocks.memory)
               ? normalizedMemoryDraft
               : null,
           })
@@ -452,15 +452,15 @@ function PowerSectionContent({
   onReset,
 }: {
   power: PowerControlInfo;
-  draft: number;
+  draft: number | null;
   layout: "stack" | "rail";
   busy: boolean;
-  onDraftChange: (value: number) => void;
+  onDraftChange: (value: number | null) => void;
   onApply: () => void;
   onReset: () => void;
 }) {
   const canEdit =
-    power.isSupported &&
+    power.support === "supported" &&
     power.minLimitWatts != null &&
     power.maxLimitWatts != null &&
     power.currentLimitWatts != null;
@@ -470,7 +470,7 @@ function PowerSectionContent({
     power.maxLimitWatts,
   );
   const hasChanges =
-    normalizedDraft !== (power.currentLimitWatts ?? normalizedDraft);
+    normalizedDraft != null && normalizedDraft !== power.currentLimitWatts;
 
   return (
     <div className={cn("space-y-4", layout === "rail" && "text-sm")}>
@@ -490,29 +490,39 @@ function PowerSectionContent({
             </p>
           </div>
           <p className="text-sm font-semibold tabular-nums">
-            {normalizedDraft} W
+            {formatWatts(
+              power.currentLimitWatts == null ? null : normalizedDraft,
+            )}
           </p>
         </div>
-        <input
-          type="range"
-          className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
-          min={power.minLimitWatts ?? 0}
-          max={power.maxLimitWatts ?? 0}
-          step={1}
-          value={normalizedDraft}
-          onChange={(event) => onDraftChange(event.currentTarget.valueAsNumber)}
-          disabled={!canEdit || busy}
-        />
+        {canEdit && normalizedDraft != null && (
+          <input
+            aria-label="Power limit slider"
+            type="range"
+            className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+            min={power.minLimitWatts ?? 0}
+            max={power.maxLimitWatts ?? 0}
+            step={1}
+            value={normalizedDraft}
+            onChange={(event) =>
+              onDraftChange(event.currentTarget.valueAsNumber)
+            }
+            disabled={!canEdit || busy}
+          />
+        )}
         <Input
           type="number"
+          aria-label="Power limit"
           className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
           min={power.minLimitWatts ?? undefined}
           max={power.maxLimitWatts ?? undefined}
           step={1}
-          value={normalizedDraft}
+          value={normalizedDraft ?? ""}
           onChange={(event) => {
             const nextValue = event.currentTarget.valueAsNumber;
-            if (Number.isFinite(nextValue)) {
+            if (event.currentTarget.value === "") {
+              onDraftChange(null);
+            } else if (Number.isFinite(nextValue)) {
               onDraftChange(nextValue);
             }
           }}
@@ -532,7 +542,11 @@ function PowerSectionContent({
           size="sm"
           variant="outline"
           onClick={onReset}
-          disabled={!power.isSupported || busy}
+          disabled={
+            power.support !== "supported" ||
+            power.defaultLimitWatts == null ||
+            busy
+          }
         >
           <RotateCcw className="mr-1 size-3.5" />
           Reset
@@ -621,13 +635,13 @@ function ClockSectionContent({
   onReset,
 }: {
   clocks: GpuPerformanceDevice["clocks"];
-  graphicsDraft: number;
-  memoryDraft: number;
+  graphicsDraft: number | null;
+  memoryDraft: number | null;
   layout: "stack" | "rail";
   busy: boolean;
   hasChanges: boolean;
-  onGraphicsDraftChange: (value: number) => void;
-  onMemoryDraftChange: (value: number) => void;
+  onGraphicsDraftChange: (value: number | null) => void;
+  onMemoryDraftChange: (value: number | null) => void;
   onApply: () => void;
   onReset: () => void;
 }) {
@@ -646,7 +660,7 @@ function ClockSectionContent({
           info={clocks.graphics}
           draft={graphicsDraft}
           onDraftChange={onGraphicsDraftChange}
-          disabled={!clocks.graphics.isSupported || busy}
+          disabled={!canEditOffset(clocks.graphics) || busy}
         />
         <ClockOffsetEditor
           title="Memory"
@@ -654,23 +668,25 @@ function ClockSectionContent({
           info={clocks.memory}
           draft={memoryDraft}
           onDraftChange={onMemoryDraftChange}
-          disabled={!clocks.memory.isSupported || busy}
+          disabled={!canEditOffset(clocks.memory) || busy}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <Button
-          size="sm"
-          onClick={onApply}
-          disabled={!clocks.isSupported || !hasChanges || busy}
-        >
+        <Button size="sm" onClick={onApply} disabled={!hasChanges || busy}>
           Apply
         </Button>
         <Button
           size="sm"
           variant="outline"
           onClick={onReset}
-          disabled={!clocks.isSupported || busy}
+          disabled={
+            (clocks.graphics.support !== "supported" &&
+              clocks.memory.support !== "supported") ||
+            clocks.graphics.support === "unknown" ||
+            clocks.memory.support === "unknown" ||
+            busy
+          }
         >
           <RotateCcw className="mr-1 size-3.5" />
           Reset
@@ -831,9 +847,9 @@ function ClockOffsetEditor({
   title: string;
   icon: typeof Gauge;
   info: ClockOffsetInfo;
-  draft: number;
+  draft: number | null;
   disabled: boolean;
-  onDraftChange: (value: number) => void;
+  onDraftChange: (value: number | null) => void;
 }) {
   const normalizedDraft = normalizeDraft(
     draft,
@@ -862,40 +878,48 @@ function ClockOffsetEditor({
         </p>
       </div>
 
-      {info.isSupported ? (
+      <TuningAvailability
+        support={info.support}
+        reason={info.reason}
+        currentValue={info.currentOffsetMHz}
+        currentValueError={info.currentValueError}
+      />
+      {info.support === "supported" && (
         <div className="space-y-3">
-          <input
-            type="range"
-            className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
-            min={info.minOffsetMHz ?? 0}
-            max={info.maxOffsetMHz ?? 0}
-            step={1}
-            value={normalizedDraft}
-            onChange={(event) =>
-              onDraftChange(event.currentTarget.valueAsNumber)
-            }
-            disabled={disabled}
-          />
+          {canEditOffset(info) && normalizedDraft != null && (
+            <input
+              aria-label={`${title} clock offset slider`}
+              type="range"
+              className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+              min={info.minOffsetMHz ?? 0}
+              max={info.maxOffsetMHz ?? 0}
+              step={1}
+              value={normalizedDraft}
+              onChange={(event) =>
+                onDraftChange(event.currentTarget.valueAsNumber)
+              }
+              disabled={disabled}
+            />
+          )}
           <Input
             type="number"
+            aria-label={`${title} clock offset`}
             className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
             min={info.minOffsetMHz ?? undefined}
             max={info.maxOffsetMHz ?? undefined}
             step={1}
-            value={normalizedDraft}
+            value={normalizedDraft ?? ""}
             onChange={(event) => {
               const nextValue = event.currentTarget.valueAsNumber;
-              if (Number.isFinite(nextValue)) {
+              if (event.currentTarget.value === "") {
+                onDraftChange(null);
+              } else if (Number.isFinite(nextValue)) {
                 onDraftChange(nextValue);
               }
             }}
             disabled={disabled}
           />
         </div>
-      ) : (
-        <p className="border-l border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-          {info.unsupportedReason ?? "Unavailable on this system."}
-        </p>
       )}
     </div>
   );
@@ -919,7 +943,22 @@ function GpuTuningSkeleton() {
   );
 }
 
-function normalizeDraft(value: number, min: number | null, max: number | null) {
+function normalizeDraft(
+  value: number,
+  min: number | null,
+  max: number | null,
+): number;
+function normalizeDraft(
+  value: number | null,
+  min: number | null,
+  max: number | null,
+): number | null;
+function normalizeDraft(
+  value: number | null,
+  min: number | null,
+  max: number | null,
+) {
+  if (value == null) return null;
   if (!Number.isFinite(value)) {
     return min ?? max ?? 0;
   }
@@ -945,4 +984,40 @@ function formatOffset(value: number | null) {
 
 function formatWatts(value: number | null) {
   return value == null ? "Unavailable" : `${value} W`;
+}
+
+function canEditOffset(info: ClockOffsetInfo) {
+  return (
+    info.support === "supported" &&
+    info.currentOffsetMHz != null &&
+    info.minOffsetMHz != null &&
+    info.maxOffsetMHz != null
+  );
+}
+
+function TuningAvailability({
+  support,
+  reason,
+  currentValue,
+  currentValueError,
+}: {
+  support: ControlSupport;
+  reason: string | null;
+  currentValue: number | null;
+  currentValueError: string | null;
+}) {
+  if (support === "supported" && currentValue != null) return null;
+  return (
+    <div className="border-l border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <p>
+        {support === "unsupported"
+          ? "Not supported"
+          : support === "supported"
+            ? "Supported · current value unavailable"
+            : "Support currently unknown"}
+      </p>
+      {reason && <p>{reason}</p>}
+      {currentValueError && <p>{currentValueError}</p>}
+    </div>
+  );
 }

@@ -28,7 +28,9 @@ export const disconnectedDaemonStatus: GpuDaemonStatus = {
   message: "Prism daemon is unavailable.",
 };
 
-export function createInventoryGpu(overrides: DeepPartial<GpuDevice> = {}): GpuDevice {
+export function createInventoryGpu(
+  overrides: DeepPartial<GpuDevice> = {},
+): GpuDevice {
   return mergeDeep(
     {
       id: "GPU-123",
@@ -131,8 +133,9 @@ export function createPerformanceGpu(
       architecture: "Blackwell",
       busId: "0000:01:00.0",
       power: {
-        isSupported: true,
-        unsupportedReason: null,
+        support: "supported",
+        reason: null,
+        currentValueError: null,
         currentDrawWatts: 312,
         currentLimitWatts: 475,
         defaultLimitWatts: 575,
@@ -155,18 +158,18 @@ export function createPerformanceGpu(
         ],
       },
       clocks: {
-        isSupported: true,
-        unsupportedReason: null,
         graphics: {
-          isSupported: true,
-          unsupportedReason: null,
+          support: "supported",
+          reason: null,
+          currentValueError: null,
           currentOffsetMHz: 120,
           minOffsetMHz: -200,
           maxOffsetMHz: 200,
         },
         memory: {
-          isSupported: false,
-          unsupportedReason: "The memory clock offset is not supported on this GPU.",
+          support: "unsupported",
+          currentValueError: null,
+          reason: "The memory clock offset is not supported on this GPU.",
           currentOffsetMHz: null,
           minOffsetMHz: null,
           maxOffsetMHz: null,

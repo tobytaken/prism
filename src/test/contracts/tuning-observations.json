@@ -1,0 +1,59 @@
+{
+  "gpus": [
+    {
+      "id": "GPU-123",
+      "vendor": "nvidia",
+      "name": "RTX Test",
+      "architecture": null,
+      "busId": null,
+      "power": {
+        "support": "supported",
+        "reason": null,
+        "currentValueError": "Unable to read configured power limit: GPU is lost",
+        "currentDrawWatts": 312,
+        "currentLimitWatts": null,
+        "defaultLimitWatts": 575,
+        "enforcedLimitWatts": 475,
+        "minLimitWatts": 300,
+        "maxLimitWatts": 600
+      },
+      "clocks": {
+        "graphics": {
+          "support": "unknown",
+          "reason": "Unable to query graphics clock offset: insufficient permission",
+          "currentValueError": null,
+          "currentOffsetMHz": null,
+          "minOffsetMHz": null,
+          "maxOffsetMHz": null
+        },
+        "memory": {
+          "support": "unsupported",
+          "reason": "Memory clock offset is not supported",
+          "currentValueError": null,
+          "currentOffsetMHz": null,
+          "minOffsetMHz": null,
+          "maxOffsetMHz": null
+        }
+      },
+      "cooling": {
+        "isSupported": false,
+        "unsupportedReason": "No fans",
+        "fanCount": 0,
+        "fans": []
+      },
+      "telemetry": {
+        "powerDrawWatts": 312,
+        "coreClockMHz": null,
+        "memoryClockMHz": null,
+        "fanSpeedPercent": null,
+        "voltageMillivolts": null,
+        "temperatureC": null,
+        "gpuUtilizationPercent": null,
+        "memoryUsedMiB": null,
+        "memoryTotalMiB": null,
+        "performanceState": null
+      }
+    }
+  ],
+  "warnings": []
+}

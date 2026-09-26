@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BrowserWindow } from "electron";
+import tuningObservations from "@/test/contracts/tuning-observations.json";
 import { registerIpc } from "./ipc";
 
 const mocks = vi.hoisted(() => ({
@@ -90,6 +91,18 @@ describe("registerIpc", () => {
     await expect(
       callHandler("prism:drivers:getJob", trustedEvent(), { jobId: 123 }),
     ).rejects.toThrow("Invalid getJob payload");
+  });
+
+  it("preserves tuning observations from the sidecar response", async () => {
+    mocks.spawn.mockReturnValue(createBackendChild(tuningObservations));
+    const dispose = registerIpc(getMainWindow);
+    try {
+      expect(
+        await callHandler("prism:gpu:getPerformance", trustedEvent()),
+      ).toEqual(tuningObservations);
+    } finally {
+      dispose();
+    }
   });
 
   it("passes valid GPU payloads to the backend", async () => {
@@ -204,7 +217,7 @@ function callHandler(channel: string, ...args: unknown[]) {
   return Promise.resolve(handler?.(...args));
 }
 
-function createBackendChild() {
+function createBackendChild(result: unknown = null) {
   const child = new EventEmitter() as EventEmitter & {
     stdin: { write: ReturnType<typeof vi.fn> };
     stdout: PassThrough;
@@ -222,9 +235,7 @@ function createBackendChild() {
     write: vi.fn((payload: string) => {
       const request = JSON.parse(payload) as { id: number };
       queueMicrotask(() => {
-        child.stdout.write(
-          `${JSON.stringify({ id: request.id, result: null })}\n`,
-        );
+        child.stdout.write(`${JSON.stringify({ id: request.id, result })}\n`);
       });
       return true;
     }),

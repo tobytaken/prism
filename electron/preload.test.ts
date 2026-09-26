@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import tuningObservations from "@/test/contracts/tuning-observations.json";
+
 import type { PrismDesktopApi } from "@/types/global";
 
 const mocks = vi.hoisted(() => ({
@@ -63,6 +65,13 @@ describe("preload bridge", () => {
       ],
       ["prism:gpu:resetClockOffsets", { gpuId: "GPU-123" }],
     ]);
+  });
+
+  it("preserves tuning support states, null readings, and reasons across preload", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValue(tuningObservations);
+    expect(await prism.gpu.getPerformance()).toEqual(tuningObservations);
+    expect(mocks.invoke).toHaveBeenCalledWith("prism:gpu:getPerformance");
   });
 
   it("exposes window IPC methods and resize cleanup", async () => {

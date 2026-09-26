@@ -116,11 +116,22 @@ pub struct GpuTelemetryInfo {
     pub performance_state: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ControlSupport {
+    Supported,
+    Unsupported,
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PowerControlInfo {
-    pub is_supported: bool,
-    pub unsupported_reason: Option<String>,
+    #[serde(default)]
+    pub support: ControlSupport,
+    pub reason: Option<String>,
+    pub current_value_error: Option<String>,
     pub current_draw_watts: Option<u32>,
     pub current_limit_watts: Option<u32>,
     pub default_limit_watts: Option<u32>,
@@ -158,8 +169,6 @@ pub enum FanControlMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClockOffsetsInfo {
-    pub is_supported: bool,
-    pub unsupported_reason: Option<String>,
     pub graphics: ClockOffsetInfo,
     pub memory: ClockOffsetInfo,
 }
@@ -167,8 +176,10 @@ pub struct ClockOffsetsInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClockOffsetInfo {
-    pub is_supported: bool,
-    pub unsupported_reason: Option<String>,
+    #[serde(default)]
+    pub support: ControlSupport,
+    pub reason: Option<String>,
+    pub current_value_error: Option<String>,
     #[serde(rename = "currentOffsetMHz")]
     pub current_offset_mhz: Option<i32>,
     #[serde(rename = "minOffsetMHz")]
@@ -732,11 +743,11 @@ fn unix_timestamp_ms() -> u64 {
 mod tests {
     use super::{
         ApplyGpuConfigRequest, ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo,
-        ClockRangeInput, ComputeApi, ComputeInfo, CoolingInfo, DesiredGpuConfig, FanControlInfo,
-        FanControlMode, GpuApplyRecord, GpuCommandErrorCode, GpuControlInfo, GpuDaemonStatus,
-        GpuDevice, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
-        GpuSupportedFeatures, GpuTelemetryInfo, GpuVendor, MemoryInfo, OffsetControl, PcieInfo,
-        PersistedGpuState, PowerControlInfo, PowerInfo, PowerLimitControl,
+        ClockRangeInput, ComputeApi, ComputeInfo, ControlSupport, CoolingInfo, DesiredGpuConfig,
+        FanControlInfo, FanControlMode, GpuApplyRecord, GpuCommandErrorCode, GpuControlInfo,
+        GpuDaemonStatus, GpuDevice, GpuInventoryResponse, GpuPerformanceDevice,
+        GpuPerformanceResponse, GpuSupportedFeatures, GpuTelemetryInfo, GpuVendor, MemoryInfo,
+        OffsetControl, PcieInfo, PersistedGpuState, PowerControlInfo, PowerInfo, PowerLimitControl,
     };
 
     #[test]
@@ -970,8 +981,9 @@ mod tests {
                 architecture: Some("Blackwell".into()),
                 bus_id: Some("0000:01:00.0".into()),
                 power: PowerControlInfo {
-                    is_supported: true,
-                    unsupported_reason: None,
+                    support: ControlSupport::Supported,
+                    reason: None,
+                    current_value_error: None,
                     current_draw_watts: Some(312),
                     current_limit_watts: Some(475),
                     default_limit_watts: Some(575),
@@ -992,18 +1004,18 @@ mod tests {
                     }],
                 },
                 clocks: ClockOffsetsInfo {
-                    is_supported: true,
-                    unsupported_reason: None,
                     graphics: ClockOffsetInfo {
-                        is_supported: true,
-                        unsupported_reason: None,
+                        support: ControlSupport::Supported,
+                        reason: None,
+                        current_value_error: None,
                         current_offset_mhz: Some(120),
                         min_offset_mhz: Some(-200),
                         max_offset_mhz: Some(200),
                     },
                     memory: ClockOffsetInfo {
-                        is_supported: true,
-                        unsupported_reason: None,
+                        support: ControlSupport::Supported,
+                        reason: None,
+                        current_value_error: None,
                         current_offset_mhz: Some(300),
                         min_offset_mhz: Some(-500),
                         max_offset_mhz: Some(500),
@@ -1027,6 +1039,11 @@ mod tests {
 
         let value = serde_json::to_value(response).expect("serialize response");
 
+        assert_eq!(value["gpus"][0]["power"]["support"], "supported");
+        assert_eq!(
+            value["gpus"][0]["clocks"]["graphics"]["support"],
+            "supported"
+        );
         assert_eq!(value["gpus"][0]["power"]["currentDrawWatts"], 312);
         assert_eq!(value["gpus"][0]["power"]["currentLimitWatts"], 475);
         assert_eq!(value["gpus"][0]["cooling"]["fans"][0]["mode"], "auto");

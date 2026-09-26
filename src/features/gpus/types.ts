@@ -158,9 +158,12 @@ export interface GpuTelemetryInfo {
   performanceState: string | null;
 }
 
+export type ControlSupport = "supported" | "unsupported" | "unknown";
+
 export interface PowerControlInfo {
-  isSupported: boolean;
-  unsupportedReason: string | null;
+  support: ControlSupport;
+  reason: string | null;
+  currentValueError: string | null;
   currentDrawWatts: number | null;
   currentLimitWatts: number | null;
   defaultLimitWatts: number | null;
@@ -187,15 +190,14 @@ export interface FanControlInfo {
 export type FanControlMode = "auto" | "manual";
 
 export interface ClockOffsetsInfo {
-  isSupported: boolean;
-  unsupportedReason: string | null;
   graphics: ClockOffsetInfo;
   memory: ClockOffsetInfo;
 }
 
 export interface ClockOffsetInfo {
-  isSupported: boolean;
-  unsupportedReason: string | null;
+  support: ControlSupport;
+  reason: string | null;
+  currentValueError: string | null;
   currentOffsetMHz: number | null;
   minOffsetMHz: number | null;
   maxOffsetMHz: number | null;

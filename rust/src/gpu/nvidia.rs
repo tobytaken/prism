@@ -10,9 +10,9 @@ use thiserror::Error;
 
 use super::{
     ApplyGpuConfigRequest, ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo,
-    ClockRangeInput, ComputeApi, ComputeInfo, CoolingInfo, FanControlInfo, FanControlMode,
-    GpuCommandError, GpuCommandErrorCode, GpuControlInfo, GpuControlProvider, GpuDevice,
-    GpuInventoryProvider, GpuPerformanceDevice, GpuSupportedFeatures, GpuTargetRequest,
+    ClockRangeInput, ComputeApi, ComputeInfo, ControlSupport, CoolingInfo, FanControlInfo,
+    FanControlMode, GpuCommandError, GpuCommandErrorCode, GpuControlInfo, GpuControlProvider,
+    GpuDevice, GpuInventoryProvider, GpuPerformanceDevice, GpuSupportedFeatures, GpuTargetRequest,
     GpuTelemetryInfo, GpuVendor, InventoryContext, MemoryInfo, OffsetControl, PcieInfo,
     PerformanceProviderOutput, PersistedGpuConfig, PowerControlInfo, PowerInfo, PowerLimitControl,
     ProviderOutput, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
@@ -418,65 +418,79 @@ fn query_power_controls(
     device_name: &str,
     warnings: &mut Vec<String>,
 ) -> PowerControlInfo {
-    match device.power_management_limit_constraints() {
-        Ok(constraints) => PowerControlInfo {
-            is_supported: true,
-            unsupported_reason: None,
-            current_draw_watts: query_optional_power_value(
-                device.power_usage(),
-                device_name,
-                "current power draw",
-                warnings,
-            ),
-            current_limit_watts: query_optional_power_value(
-                device.power_management_limit(),
-                device_name,
-                "requested power limit",
-                warnings,
-            ),
-            default_limit_watts: query_optional_power_value(
-                device.power_management_limit_default(),
-                device_name,
-                "default power limit",
-                warnings,
-            ),
-            enforced_limit_watts: query_optional_power_value(
-                device.enforced_power_limit(),
-                device_name,
-                "enforced power limit",
-                warnings,
-            ),
-            min_limit_watts: Some(milliwatts_to_watts(constraints.min_limit)),
-            max_limit_watts: Some(milliwatts_to_watts(constraints.max_limit)),
+    power_control_info(
+        PowerQueryResults {
+            constraints: device
+                .power_management_limit_constraints()
+                .map(|limits| (limits.min_limit, limits.max_limit)),
+            current: device.power_management_limit(),
+            default: device.power_management_limit_default(),
+            enforced: device.enforced_power_limit(),
+            draw: device.power_usage(),
         },
-        Err(NvmlError::NotSupported) => PowerControlInfo {
-            is_supported: false,
-            unsupported_reason: Some(
-                "Power limit controls are not supported by this GPU or driver.".into(),
-            ),
-            current_draw_watts: None,
-            current_limit_watts: None,
-            default_limit_watts: None,
-            enforced_limit_watts: None,
-            min_limit_watts: None,
-            max_limit_watts: None,
-        },
-        Err(error) => {
-            warnings.push(format!(
-                "{device_name}: unable to query power limit controls: {error}"
-            ));
+        device_name,
+        warnings,
+    )
+}
 
-            PowerControlInfo {
-                is_supported: false,
-                unsupported_reason: Some("Power limit controls are currently unavailable.".into()),
-                current_draw_watts: None,
-                current_limit_watts: None,
-                default_limit_watts: None,
-                enforced_limit_watts: None,
-                min_limit_watts: None,
-                max_limit_watts: None,
-            }
-        }
+struct PowerQueryResults {
+    constraints: Result<(u32, u32), NvmlError>,
+    current: Result<u32, NvmlError>,
+    default: Result<u32, NvmlError>,
+    enforced: Result<u32, NvmlError>,
+    draw: Result<u32, NvmlError>,
+}
+
+fn power_control_info(
+    results: PowerQueryResults,
+    device_name: &str,
+    warnings: &mut Vec<String>,
+) -> PowerControlInfo {
+    let support = control_support(&results.constraints);
+    let reason = results
+        .constraints
+        .as_ref()
+        .err()
+        .map(|error| format!("{device_name}: unable to query power limit controls: {error}"));
+    if support == ControlSupport::Unknown {
+        warnings.extend(reason.clone());
+    }
+    let current_value_error = results
+        .current
+        .as_ref()
+        .err()
+        .map(|error| format!("{device_name}: unable to read configured power limit: {error}"));
+    let limits = results.constraints.ok();
+    PowerControlInfo {
+        support,
+        reason,
+        current_value_error,
+        current_draw_watts: query_optional_power_value(
+            results.draw,
+            device_name,
+            "current power draw",
+            warnings,
+        ),
+        current_limit_watts: query_optional_power_value(
+            results.current,
+            device_name,
+            "configured power limit",
+            warnings,
+        ),
+        default_limit_watts: query_optional_power_value(
+            results.default,
+            device_name,
+            "default power limit",
+            warnings,
+        ),
+        enforced_limit_watts: query_optional_power_value(
+            results.enforced,
+            device_name,
+            "enforced power limit",
+            warnings,
+        ),
+        min_limit_watts: limits.map(|(min, _)| milliwatts_to_watts(min)),
+        max_limit_watts: limits.map(|(_, max)| milliwatts_to_watts(max)),
     }
 }
 
@@ -582,18 +596,7 @@ fn query_clock_offsets(
 ) -> ClockOffsetsInfo {
     let graphics = query_clock_offset(device, device_name, Clock::Graphics, "graphics", warnings);
     let memory = query_clock_offset(device, device_name, Clock::Memory, "memory", warnings);
-    let is_supported = graphics.is_supported || memory.is_supported;
-
-    ClockOffsetsInfo {
-        is_supported,
-        unsupported_reason: if is_supported {
-            None
-        } else {
-            Some("Clock offset controls are not supported by this GPU or driver.".into())
-        },
-        graphics,
-        memory,
-    }
+    ClockOffsetsInfo { graphics, memory }
 }
 
 fn query_clock_offset(
@@ -603,38 +606,43 @@ fn query_clock_offset(
     label: &str,
     warnings: &mut Vec<String>,
 ) -> ClockOffsetInfo {
-    match device.clock_offset(clock_type, OFFSET_POWER_STATE) {
-        Ok(offset) => ClockOffsetInfo {
-            is_supported: true,
-            unsupported_reason: None,
-            current_offset_mhz: Some(offset.clock_offset_mhz),
-            min_offset_mhz: Some(offset.min_clock_offset_mhz),
-            max_offset_mhz: Some(offset.max_clock_offset_mhz),
-        },
-        Err(NvmlError::NotSupported) => ClockOffsetInfo {
-            is_supported: false,
-            unsupported_reason: Some(format!(
-                "The {label} clock offset is not supported on this GPU."
-            )),
-            current_offset_mhz: None,
-            min_offset_mhz: None,
-            max_offset_mhz: None,
-        },
-        Err(error) => {
-            warnings.push(format!(
-                "{device_name}: unable to query {label} clock offset controls: {error}"
-            ));
+    clock_offset_info(
+        device.clock_offset(clock_type, OFFSET_POWER_STATE),
+        device_name,
+        label,
+        warnings,
+    )
+}
 
-            ClockOffsetInfo {
-                is_supported: false,
-                unsupported_reason: Some(format!(
-                    "The {label} clock offset is currently unavailable."
-                )),
-                current_offset_mhz: None,
-                min_offset_mhz: None,
-                max_offset_mhz: None,
-            }
-        }
+fn control_support<T>(result: &Result<T, NvmlError>) -> ControlSupport {
+    match result {
+        Ok(_) => ControlSupport::Supported,
+        Err(NvmlError::NotSupported) => ControlSupport::Unsupported,
+        Err(_) => ControlSupport::Unknown,
+    }
+}
+
+fn clock_offset_info(
+    result: Result<nvml_wrapper::struct_wrappers::device::ClockOffset, NvmlError>,
+    device_name: &str,
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> ClockOffsetInfo {
+    let support = control_support(&result);
+    let reason = result.as_ref().err().map(|error| {
+        format!("{device_name}: unable to query {label} clock offset controls: {error}")
+    });
+    if support == ControlSupport::Unknown {
+        warnings.extend(reason.clone());
+    }
+    let offset = result.ok();
+    ClockOffsetInfo {
+        support,
+        reason,
+        current_value_error: None,
+        current_offset_mhz: offset.as_ref().map(|value| value.clock_offset_mhz),
+        min_offset_mhz: offset.as_ref().map(|value| value.min_clock_offset_mhz),
+        max_offset_mhz: offset.as_ref().map(|value| value.max_clock_offset_mhz),
     }
 }
 
@@ -842,10 +850,7 @@ fn map_snapshot(
                     || memory_offset_supported,
             },
             power_limit: PowerLimitControl {
-                current_watts: snapshot
-                    .power_management_limit_mw
-                    .or(snapshot.enforced_power_limit_mw)
-                    .map(milliwatts_to_watts),
+                current_watts: snapshot.power_management_limit_mw.map(milliwatts_to_watts),
                 default_watts: snapshot.default_power_limit_mw.map(milliwatts_to_watts),
                 min_watts: snapshot.min_power_limit_mw.map(milliwatts_to_watts),
                 max_watts: snapshot.max_power_limit_mw.map(milliwatts_to_watts),
@@ -1229,9 +1234,9 @@ mod tests {
         validate_offset_range, ClockOffsetSnapshot, NvidiaSnapshot, TelemetryQueryResults,
     };
     use crate::gpu::{
-        ClockRangeInput, ComputeApi, CoolingInfo, DesiredGpuConfig, FanControlInfo, FanControlMode,
-        GpuApplyRecord, GpuCommandErrorCode, GpuVendor, InventoryContext, PersistedGpuConfig,
-        PersistedGpuState, PowerControlInfo,
+        ClockRangeInput, ComputeApi, ControlSupport, CoolingInfo, DesiredGpuConfig, FanControlInfo,
+        FanControlMode, GpuApplyRecord, GpuCommandErrorCode, GpuVendor, InventoryContext,
+        PersistedGpuConfig, PersistedGpuState, PowerControlInfo,
     };
     use nvml_wrapper::enum_wrappers::device::PerformanceState;
     use nvml_wrapper::error::NvmlError;
@@ -1366,8 +1371,9 @@ mod tests {
     #[test]
     fn telemetry_helper_nulls_only_failed_metric() {
         let power = PowerControlInfo {
-            is_supported: true,
-            unsupported_reason: None,
+            support: ControlSupport::Supported,
+            reason: None,
+            current_value_error: None,
             current_draw_watts: Some(312),
             current_limit_watts: Some(450),
             default_limit_watts: Some(450),
