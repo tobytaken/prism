@@ -1,4 +1,5 @@
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
+import { TuningOutcomes, tuningSettingLabel } from "./tuning-outcomes";
 import {
   inTuningRange,
   retryTuningAction,
@@ -206,7 +207,12 @@ export function GpuTuningScreen({
         </Alert>
       )}
 
-      <UnavailableGpuEdits devices={editStore.devices} gpus={gpus} />
+      <UnavailableGpuEdits
+        devices={editStore.devices}
+        gpus={gpus}
+        onDiscard={editStore.discard}
+        pending={busy}
+      />
 
       {isLoading && <GpuTuningSkeleton />}
 
@@ -323,25 +329,10 @@ export function GpuTuningControls({
       {Object.keys(edits).length > 0 && (
         <Badge variant="outline">Unapplied changes</Badge>
       )}
-      {Object.entries(outcomes).map(
-        ([setting, outcome]) =>
-          outcome && (
-            <p key={setting}>
-              {settingLabel(setting)}:{" "}
-              {outcome.status === "succeeded"
-                ? "Applied"
-                : outcome.status === "failed"
-                  ? "Failed"
-                  : outcome.status === "unattempted"
-                    ? "Not attempted"
-                    : "Outcome unknown"}
-              {outcome.error ? ` — ${outcome.error}` : ""}
-            </p>
-          ),
-      )}
+      <TuningOutcomes outcomes={outcomes} />
       {Object.keys(edits).map((key) => {
         const setting = key as keyof typeof edits;
-        const label = settingLabel(setting).toLowerCase();
+        const label = tuningSettingLabel(setting).toLowerCase();
         const retry = retryTuningAction(gpu, setting, edits[setting]);
         return (
           <div key={setting} className="flex gap-2">
@@ -1068,14 +1059,4 @@ function TuningAvailability({
       {currentValueError && <p>{currentValueError}</p>}
     </div>
   );
-}
-
-function settingLabel(setting: string) {
-  return setting === "power"
-    ? "Power limit"
-    : setting === "graphics"
-      ? "Graphics clock offset"
-      : setting === "memory"
-        ? "Memory clock offset"
-        : `Fan ${Number(setting.slice(4)) + 1}`;
 }

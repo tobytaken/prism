@@ -7,6 +7,7 @@ import {
   createPerformanceGpu,
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
+import type { TuningSetting } from "@/features/gpus/hooks/use-tuning-edits";
 import type {
   GpuPerformanceResponse,
   TuningOutcome,
@@ -75,7 +76,7 @@ describe("Apply all tuning changes", () => {
       ],
     });
     const fake = fakeDesktopGpuApi(response);
-    fake.failures.set("GPU-123:graphics", {
+    fake.fail("GPU-123", "graphics", {
       status: "failed",
       error: "Graphics denied",
     });
@@ -103,7 +104,7 @@ describe("Apply all tuning changes", () => {
       }),
     );
     expect(memory).toHaveValue(40);
-    fake.failures.clear();
+    fake.clearFailures();
     await user.click(screen.getByRole("button", { name: "Apply all" }));
     await screen.findByText("Graphics clock offset: Applied");
     expect(response.gpus[0].clocks.graphics.currentOffsetMHz).toBe(150);
@@ -115,7 +116,7 @@ describe("Apply all tuning changes", () => {
     const user = userEvent.setup();
     const response = createPerformanceResponse();
     const fake = fakeDesktopGpuApi(response);
-    fake.failures.set("GPU-123:fan:0", {
+    fake.fail("GPU-123", "fan:0", {
       status: "failed",
       error: "Fan denied",
     });
@@ -150,13 +151,13 @@ describe("Apply all tuning changes", () => {
     response.gpus[0].cooling.fans[0].currentSpeedPercent = 48;
     await screen.findByText("Current speed 48%");
     expect(fan).toHaveValue(65);
-    fake.failures.clear();
+    fake.clearFailures();
     await user.click(screen.getByRole("button", { name: "Apply all" }));
     await screen.findByText("Fan 1: Applied");
     expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
     expect(fake.setPower).toHaveBeenCalledTimes(1);
     expect(fake.setOffsets).toHaveBeenCalledTimes(1);
-    fake.failures.set("GPU-123:fan:0", {
+    fake.fail("GPU-123", "fan:0", {
       status: "failed",
       error: "Fan denied",
     });
@@ -279,6 +280,14 @@ describe("Apply all tuning changes", () => {
     await user.click(screen.getByRole("button", { name: "Apply all" }));
     await screen.findByText("Fan 2: Applied");
     expect(
+      screen.getByText("Power limit: Not attempted — GPU unavailable."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Discard power limit change for GPU-123",
+      }),
+    ).toBeEnabled();
+    expect(
       second.cooling.fans.find((fan) => fan.index === 1)!.currentSpeedPercent,
     ).toBe(70);
     expect(
@@ -300,6 +309,35 @@ describe("Apply all tuning changes", () => {
     expect(untouched.power.currentLimitWatts).toBe(475);
     expect(fake.setFan).toHaveBeenCalledTimes(1);
     expect(fake.applyConfig).not.toHaveBeenCalled();
+  });
+
+  it("can discard unattempted edits while their GPU remains absent", async () => {
+    const user = userEvent.setup();
+    const gpu = createPerformanceGpu();
+    const response = createPerformanceResponse({ gpus: [gpu] });
+    const fake = fakeDesktopGpuApi(response);
+    renderWithQueryClient(<GpuTuningPage />);
+    const power = await screen.findByRole("spinbutton", {
+      name: "Power limit",
+    });
+    await user.clear(power);
+    await user.type(power, "500");
+    response.gpus = [];
+    await screen.findByText("No supported GPUs detected");
+    await user.click(screen.getByRole("button", { name: "Apply all" }));
+    await screen.findByText("Power limit: Not attempted — GPU unavailable.");
+    await user.click(
+      screen.getByRole("button", {
+        name: "Discard power limit change for GPU-123",
+      }),
+    );
+    expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply all" })).toBeDisabled();
+    expect(fake.setPower).not.toHaveBeenCalled();
+    response.gpus = [gpu];
+    expect(
+      await screen.findByRole("spinbutton", { name: "Power limit" }),
+    ).toHaveValue(475);
   });
 
   it("keeps a lost acknowledgement unknown and continues applying independent edits", async () => {
@@ -440,5 +478,16 @@ function fakeDesktopGpuApi(response: GpuPerformanceResponse) {
       return { success: true, error: null };
     });
   const applyConfig = vi.spyOn(window.prism.gpu, "applyConfig");
-  return { failures, setPower, setOffsets, setFan, applyConfig };
+  return {
+    fail(gpuId: string, setting: TuningSetting, outcome: TuningOutcome) {
+      failures.set(`${gpuId}:${setting}`, outcome);
+    },
+    clearFailures() {
+      failures.clear();
+    },
+    setPower,
+    setOffsets,
+    setFan,
+    applyConfig,
+  };
 }
