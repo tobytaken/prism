@@ -230,9 +230,8 @@ export function GpuTuningScreen({
                   workflow={profiles}
                   edits={editStore.devices[gpu.id]?.edits ?? {}}
                   readError={errorMessage}
-                  tuningPending={
-                    pendingAction?.gpuId === gpu.id || reapplyPending
-                  }
+                  pendingAction={pendingAction}
+                  reapplyPending={reapplyPending}
                 />
               )}
               <fieldset

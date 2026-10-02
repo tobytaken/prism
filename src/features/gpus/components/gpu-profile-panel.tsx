@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import type { TuningEdits } from "@/features/gpus/hooks/use-tuning-edits";
+import type { PerformanceMutationAction } from "./gpu-tuning-screen";
 import {
   compareProfile,
   profileSaveBlocker,
@@ -20,13 +21,15 @@ export function GpuProfilePanel({
   workflow,
   edits,
   readError,
-  tuningPending,
+  pendingAction,
+  reapplyPending = false,
 }: {
   gpu: GpuPerformanceDevice;
   workflow: GpuProfileWorkflow;
   edits: TuningEdits;
   readError: string | null;
-  tuningPending: boolean;
+  pendingAction: PerformanceMutationAction | null;
+  reapplyPending?: boolean;
 }) {
   const id = useId();
   const [name, setName] = useState("");
@@ -36,7 +39,13 @@ export function GpuProfilePanel({
   const selected = profiles.find(
     (profile) => profile.id === workflow.selectedIds[gpu.stableId ?? ""],
   );
-  const comparison = selected ? compareProfile(gpu, selected) : null;
+  const comparison =
+    selected && !readError ? compareProfile(gpu, selected) : null;
+  const profileMutationPending =
+    reapplyPending ||
+    (pendingAction?.gpuId === gpu.id &&
+      pendingAction.kind !== "setFanSpeed" &&
+      pendingAction.kind !== "setFanModeAuto");
   const blocker =
     readError ??
     (["power", "graphics", "memory"].some((key) => key in edits)
@@ -45,7 +54,7 @@ export function GpuProfilePanel({
   const canSave =
     !!name.trim() &&
     !blocker &&
-    !tuningPending &&
+    !profileMutationPending &&
     !workflow.save.isPending &&
     !workflow.query.isPending &&
     !workflow.query.error;
@@ -128,12 +137,12 @@ export function GpuProfilePanel({
           ))}
         </div>
       )}
-      {comparison && (
+      {selected && (
         <div aria-live="polite" className="space-y-2">
-          {comparison.changed && (
+          {comparison?.changed && (
             <Badge variant="outline">Changes not saved to profile</Badge>
           )}
-          {(readError || comparison.unavailable) && (
+          {(readError || comparison?.unavailable) && (
             <p className="text-sm text-muted-foreground">
               Profile comparison is unavailable until current settings can be
               read.

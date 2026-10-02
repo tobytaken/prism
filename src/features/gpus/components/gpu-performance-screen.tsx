@@ -274,7 +274,7 @@ function GpuTelemetrySurface({
               workflow={profiles}
               edits={editStore.devices[gpu.id]?.edits ?? {}}
               readError={null}
-              tuningPending={pendingAction?.gpuId === gpu.id}
+              pendingAction={pendingAction}
             />
           </div>
         )}

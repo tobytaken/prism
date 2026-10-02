@@ -14,13 +14,19 @@ export function captureProfileSettings(
     );
   }
   const settings: GpuProfileSettings = {};
-  function capture(
-    key: keyof GpuProfileSettings,
-    label: string,
-    support: ControlSupport,
-    value: number | null,
-    error: string | null,
-  ) {
+  function capture({
+    key,
+    label,
+    support,
+    value,
+    error,
+  }: {
+    key: keyof GpuProfileSettings;
+    label: string;
+    support: ControlSupport;
+    value: number | null;
+    error: string | null;
+  }) {
     if (support === "unsupported") return;
     if (support !== "supported") {
       throw new Error(
@@ -34,27 +40,27 @@ export function captureProfileSettings(
     }
     settings[key] = { kind: "value", value };
   }
-  capture(
-    "powerLimitWatts",
-    "Power limit",
-    gpu.power.support,
-    gpu.power.currentLimitWatts,
-    gpu.power.currentValueError ?? gpu.power.reason,
-  );
-  capture(
-    "graphicsOffsetMHz",
-    "Graphics clock offset",
-    gpu.clocks.graphics.support,
-    gpu.clocks.graphics.currentOffsetMHz,
-    gpu.clocks.graphics.currentValueError ?? gpu.clocks.graphics.reason,
-  );
-  capture(
-    "memoryOffsetMHz",
-    "Memory clock offset",
-    gpu.clocks.memory.support,
-    gpu.clocks.memory.currentOffsetMHz,
-    gpu.clocks.memory.currentValueError ?? gpu.clocks.memory.reason,
-  );
+  capture({
+    key: "powerLimitWatts",
+    label: "Power limit",
+    support: gpu.power.support,
+    value: gpu.power.currentLimitWatts,
+    error: gpu.power.currentValueError ?? gpu.power.reason,
+  });
+  capture({
+    key: "graphicsOffsetMHz",
+    label: "Graphics clock offset",
+    support: gpu.clocks.graphics.support,
+    value: gpu.clocks.graphics.currentOffsetMHz,
+    error: gpu.clocks.graphics.currentValueError ?? gpu.clocks.graphics.reason,
+  });
+  capture({
+    key: "memoryOffsetMHz",
+    label: "Memory clock offset",
+    support: gpu.clocks.memory.support,
+    value: gpu.clocks.memory.currentOffsetMHz,
+    error: gpu.clocks.memory.currentValueError ?? gpu.clocks.memory.reason,
+  });
   if (Object.keys(settings).length === 0) {
     throw new Error(
       "This GPU has no supported profile settings (power limit or clock offsets).",

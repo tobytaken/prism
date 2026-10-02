@@ -234,6 +234,71 @@ describe("GPU tuning profiles", () => {
     expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
   });
 
+  it("allows saving known profile settings while a fan application is awaiting its outcome", async () => {
+    const user = userEvent.setup();
+    const response = createPerformanceResponse();
+    const profile: GpuTuningProfile = {
+      id: "quiet",
+      name: "Quiet",
+      gpuId: "GPU-123",
+      settings: {
+        powerLimitWatts: { kind: "value", value: 475 },
+        graphicsOffsetMHz: { kind: "value", value: 120 },
+      },
+    };
+    const profiles: GpuTuningProfile[] = [];
+    vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
+      structuredClone(response),
+    );
+    vi.spyOn(window.prism.gpu, "listProfiles").mockImplementation(async () =>
+      structuredClone(profiles),
+    );
+    const save = vi
+      .spyOn(window.prism.gpu, "saveProfile")
+      .mockImplementation(async () => {
+        profiles.push(profile);
+        return profile;
+      });
+    let finishFan!: (result: {
+      success: boolean;
+      error: string | null;
+    }) => void;
+    const fanResult = new Promise<{ success: boolean; error: string | null }>(
+      (resolve) => {
+        finishFan = resolve;
+      },
+    );
+    vi.spyOn(window.prism.gpu, "setFanSpeed").mockReturnValue(fanResult);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
+    await user.type(
+      await screen.findByRole("textbox", { name: "Profile name" }),
+      "Quiet",
+    );
+    const fan = screen.getByRole("spinbutton", { name: "Fan 1 manual target" });
+    await user.clear(fan);
+    await user.type(fan, "65");
+    await user.click(screen.getByRole("button", { name: "Set Manual" }));
+    try {
+      expect(screen.getByRole("button", { name: "Set Manual" })).toBeDisabled();
+      expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Save profile" }),
+      ).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: "Save profile" }));
+      await waitFor(() =>
+        expect(save).toHaveBeenCalledWith({ gpuId: "GPU-123", name: "Quiet" }),
+      );
+      expect(fan).toHaveValue(65);
+    } finally {
+      finishFan({ success: false, error: "Fan denied" });
+    }
+    await screen.findByText("Fan 1: Failed — Fan denied");
+  });
+
   it("keeps ownership separate for identical-model GPUs and retains absent GPU profiles as unavailable", async () => {
     const user = userEvent.setup();
     const first = createPerformanceGpu();
