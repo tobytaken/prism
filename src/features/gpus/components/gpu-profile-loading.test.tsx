@@ -9,6 +9,17 @@ import {
 import { renderWithQueryClient } from "@/test/query-client";
 import type { GpuTuningProfile } from "@/features/gpus/types";
 import { GpuTuningPage } from "./gpu-tuning-page";
+import { GpuPerformancePage } from "./gpu-performance-page";
+import { MemoryRouter, RouterProvider } from "react-router-dom";
+import { appRouter } from "@/app/router";
+
+function renderPerformancePage() {
+  return renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
+}
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -64,7 +75,8 @@ it("saves a profile, changes live values, and loads the selected profile without
     },
   );
   const savedConfig = vi.spyOn(window.prism.gpu, "applyConfig");
-  renderWithQueryClient(<GpuTuningPage />);
+  renderWithQueryClient(<RouterProvider router={appRouter} />);
+  await user.click(screen.getByRole("link", { name: "Performance" }));
   await user.type(
     await screen.findByRole("textbox", { name: "Profile name" }),
     "Quiet",
@@ -76,7 +88,11 @@ it("saves a profile, changes live values, and loads the selected profile without
   const power = screen.getByRole("spinbutton", { name: "Power limit" });
   await user.clear(power);
   await user.type(power, "500");
-  await user.click(screen.getByRole("button", { name: "Apply all" }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Power" })).getByRole("button", {
+      name: "Apply",
+    }),
+  );
   await screen.findByText("Changes not saved to profile");
   await user.click(screen.getByRole("button", { name: "Load profile" }));
   await waitFor(() => expect(power).toHaveValue(475));
@@ -154,7 +170,7 @@ it("keeps failed and unattempted profile instructions, retries through backend v
       };
     },
   );
-  renderWithQueryClient(<GpuTuningPage />);
+  renderPerformancePage();
   await screen.findByRole("option", { name: "Quiet" });
   await user.selectOptions(screen.getByRole("combobox"), "quiet");
   expect(screen.getByText("Changes not saved to profile")).toBeInTheDocument();
@@ -220,7 +236,7 @@ it.each(["power limit", "fan"])(
     vi.spyOn(window.prism.gpu, "getPerformance").mockResolvedValue(response);
     vi.spyOn(window.prism.gpu, "listProfiles").mockResolvedValue([profile]);
     const apply = vi.spyOn(window.prism.gpu, "applyProfile");
-    renderWithQueryClient(<GpuTuningPage />);
+    renderPerformancePage();
     await screen.findByRole("option", { name: "Quiet" });
     await user.selectOptions(screen.getByRole("combobox"), "quiet");
     const input = screen.getByRole("spinbutton", {
@@ -277,7 +293,7 @@ it.each([
     });
     const livePower = vi.spyOn(window.prism.gpu, "setPowerLimit");
     const liveClocks = vi.spyOn(window.prism.gpu, "setClockOffsets");
-    renderWithQueryClient(<GpuTuningPage />);
+    renderPerformancePage();
     await screen.findByRole("option", { name: "Quiet" });
     await user.selectOptions(screen.getByRole("combobox"), "quiet");
     await user.type(
@@ -331,7 +347,7 @@ it("loads only the stable owner after identical-model GPUs reorder, and retains 
       };
     },
   );
-  renderWithQueryClient(<GpuTuningPage />);
+  renderPerformancePage();
   const panel = await screen.findByRole("region", {
     name: /profiles \(GPU-123\)/,
   });
@@ -405,7 +421,7 @@ it("applies only included instructions even when omitted controls have unknown s
         memory: null,
       };
     });
-  renderWithQueryClient(<GpuTuningPage />);
+  renderPerformancePage();
   await screen.findByRole("option", { name: "Quiet" });
   await user.selectOptions(screen.getByRole("combobox"), "quiet");
   await user.click(screen.getByRole("button", { name: "Load profile" }));
@@ -438,7 +454,7 @@ it("keeps profile instructions and refreshes actual values when transport acknow
     response.gpus[0].power.currentLimitWatts = 450;
     throw new Error("Connection lost");
   });
-  renderWithQueryClient(<GpuTuningPage />);
+  renderPerformancePage();
   await screen.findByRole("option", { name: "Quiet" });
   await user.selectOptions(screen.getByRole("combobox"), "quiet");
   await user.click(screen.getByRole("button", { name: "Load profile" }));
@@ -485,18 +501,18 @@ it.each(["Apply", "Apply all"])(
         return { success: true, error: null };
       },
     );
-    renderWithQueryClient(<GpuTuningPage />);
+    if (button === "Apply all") renderWithQueryClient(<GpuTuningPage />);
+    else renderPerformancePage();
     await screen.findByRole("option", { name: "Quiet" });
     await user.selectOptions(screen.getByRole("combobox"), "quiet");
     await user.click(screen.getByRole("button", { name: "Load profile" }));
     await screen.findByText("Power limit: Not attempted — Power range changed");
     const action =
       button === "Apply"
-        ? within(
-            screen
-              .getByRole("spinbutton", { name: "Power limit" })
-              .closest("section")!,
-          ).getByRole("button", { name: "Apply" })
+        ? within(screen.getByRole("region", { name: "Power" })).getByRole(
+            "button",
+            { name: "Apply" },
+          )
         : screen.getByRole("button", { name: "Apply all" });
     await user.click(action);
     await waitFor(() =>
@@ -510,3 +526,43 @@ it.each(["Apply", "Apply all"])(
     ).toBeInTheDocument();
   },
 );
+
+it("retains unresolved profile instructions when the owner disappears and allows explicit discard", async () => {
+  const user = userEvent.setup();
+  const response = createPerformanceResponse();
+  const profile: GpuTuningProfile = {
+    id: "quiet",
+    name: "Quiet",
+    gpuId: "GPU-123",
+    settings: { powerLimitWatts: { kind: "value", value: 450 } },
+  };
+  vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
+    structuredClone(response),
+  );
+  vi.spyOn(window.prism.gpu, "listProfiles").mockResolvedValue([profile]);
+  vi.spyOn(window.prism.gpu, "applyProfile").mockResolvedValue({
+    power: { status: "failed", error: "GPU lost" },
+    graphics: null,
+    memory: null,
+  });
+  renderPerformancePage();
+  await screen.findByRole("option", { name: "Quiet" });
+  await user.selectOptions(screen.getByRole("combobox"), "quiet");
+  await user.click(screen.getByRole("button", { name: "Load profile" }));
+  await screen.findByText("Power limit: Failed — GPU lost");
+  response.gpus = [];
+  await screen.findByText(
+    "Edits for GPU-123 are retained while this GPU is unavailable.",
+  );
+  await user.click(
+    screen.getByRole("button", {
+      name: "Discard power limit change for GPU-123",
+    }),
+  );
+  expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Load profile" })).toBeDisabled();
+  expect(profile.settings.powerLimitWatts).toEqual({
+    kind: "value",
+    value: 450,
+  });
+});

@@ -808,6 +808,7 @@ function PerformanceSection({
 }) {
   return (
     <section
+      aria-label={title}
       className={cn(
         "min-w-0 space-y-4 border-b border-border/70 pb-6 last:border-b-0 last:pb-0",
         className,
