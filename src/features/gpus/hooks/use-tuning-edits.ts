@@ -7,6 +7,7 @@ import type {
 } from "@/features/gpus/lib/tuning-mutation";
 import type {
   GpuPerformanceDevice,
+  NumericProfileSettings,
   TuningOutcome,
 } from "@/features/gpus/types";
 
@@ -19,6 +20,7 @@ export type TuningEdits = {
 type DeviceEdits = {
   edits: TuningEdits;
   outcomes: Partial<Record<TuningSetting, TuningOutcome>>;
+  profileOwners?: Partial<Record<TuningSetting, string>>;
 };
 
 // Observations never acknowledge an intention: only a command outcome or discard does.
@@ -32,16 +34,66 @@ export function useTuningEdits() {
       [gpuId]: change(current[gpuId] ?? { edits: {}, outcomes: {} }),
     }));
   }
+  function retryAction(gpu: GpuPerformanceDevice, setting: TuningSetting) {
+    const device = devices[gpu.id];
+    const owner = device?.profileOwners?.[setting];
+    const value = device?.edits[setting];
+    if (owner) {
+      if (gpu.stableId !== owner || typeof value !== "number") return null;
+      const key = profileSettingKey(setting);
+      return key
+        ? {
+            kind: "applyProfile" as const,
+            gpuId: gpu.id,
+            stableId: owner,
+            settings: { [key]: value },
+          }
+        : null;
+    }
+    return retryTuningAction(gpu, setting, value);
+  }
   async function apply(
     action: PerformanceMutationAction,
     gpu: GpuPerformanceDevice,
     handler: TuningMutationHandler,
   ) {
     const intentions = actionIntentions(action, gpu);
-    update(gpu.id, (device) => ({
-      ...device,
-      edits: { ...device.edits, ...intentions },
-    }));
+    // Existing Apply buttons also retry retained profile instructions through validation.
+    if (action.kind !== "applyProfile") {
+      const owner = (Object.keys(intentions) as TuningSetting[])
+        .map((setting) => devices[gpu.id]?.profileOwners?.[setting])
+        .find((owner) => owner != null);
+      const settings: NumericProfileSettings = {};
+      if (
+        owner &&
+        Object.entries(intentions).every(([setting, value]) => {
+          const key = profileSettingKey(setting as TuningSetting);
+          if (!key || typeof value !== "number") return false;
+          settings[key] = value;
+          return true;
+        })
+      ) {
+        action = {
+          kind: "applyProfile",
+          gpuId: gpu.id,
+          stableId: owner,
+          settings,
+        };
+      }
+    }
+    update(gpu.id, (device) => {
+      const profileOwners = { ...device.profileOwners };
+      for (const setting of Object.keys(intentions) as TuningSetting[]) {
+        if (action.kind === "applyProfile")
+          profileOwners[setting] = action.stableId;
+        else delete profileOwners[setting];
+      }
+      return {
+        ...device,
+        profileOwners,
+        edits: { ...device.edits, ...intentions },
+      };
+    });
     let result: TuningMutationResult | void;
     try {
       result = await handler(action);
@@ -58,6 +110,7 @@ export function useTuningEdits() {
     update(gpu.id, (device) => {
       const edits = { ...device.edits };
       const outcomes = { ...device.outcomes };
+      const profileOwners = { ...device.profileOwners };
       for (const setting of Object.keys(intentions) as TuningSetting[]) {
         if (edits[setting] !== intentions[setting]) continue;
         const outcome = result?.[setting] ?? {
@@ -65,14 +118,18 @@ export function useTuningEdits() {
           error: "No application outcome received",
         };
         outcomes[setting] = outcome;
-        if (outcome.status === "succeeded") delete edits[setting];
+        if (outcome.status === "succeeded") {
+          delete edits[setting];
+          delete profileOwners[setting];
+        }
       }
-      return { edits, outcomes };
+      return { edits, outcomes, profileOwners };
     });
   }
 
   return {
     devices,
+    retryAction,
     applyAllPending,
     async applyAll(
       gpus: readonly GpuPerformanceDevice[],
@@ -86,8 +143,7 @@ export function useTuningEdits() {
           const gpu = gpus.find((gpu) => gpu.id === gpuId);
           const actions: PerformanceMutationAction[] = [];
           for (const setting of Object.keys(device.edits) as TuningSetting[]) {
-            const action =
-              gpu && retryTuningAction(gpu, setting, device.edits[setting]);
+            const action = gpu && retryAction(gpu, setting);
             if (!action) {
               update(gpuId, (current) => ({
                 ...current,
@@ -106,7 +162,15 @@ export function useTuningEdits() {
             const clocks = actions.find(
               (action) => action.kind === "setClockOffsets",
             );
-            if (action.kind === "setClockOffsets" && clocks) {
+            const profile = actions.find(
+              (action) => action.kind === "applyProfile",
+            );
+            if (
+              action.kind === "applyProfile" &&
+              profile?.kind === "applyProfile"
+            ) {
+              Object.assign(profile.settings, action.settings);
+            } else if (action.kind === "setClockOffsets" && clocks) {
               clocks.graphicsOffsetMHz ??= action.graphicsOffsetMHz;
               clocks.memoryOffsetMHz ??= action.memoryOffsetMHz;
             } else {
@@ -126,22 +190,31 @@ export function useTuningEdits() {
       setting: K,
       value: TuningEdits[K],
     ) {
-      update(gpuId, ({ edits, outcomes }) => {
+      update(gpuId, ({ edits, outcomes, profileOwners }) => {
         const nextOutcomes = { ...outcomes };
+        const nextOwners = { ...profileOwners };
+        delete nextOwners[setting];
         delete nextOutcomes[setting];
         return {
           edits: { ...edits, [setting]: value },
           outcomes: nextOutcomes,
+          profileOwners: nextOwners,
         };
       });
     },
     discard(gpuId: string, setting: TuningSetting) {
-      update(gpuId, ({ edits, outcomes }) => {
+      update(gpuId, ({ edits, outcomes, profileOwners }) => {
         const nextEdits = { ...edits };
         const nextOutcomes = { ...outcomes };
+        const nextOwners = { ...profileOwners };
         delete nextEdits[setting];
         delete nextOutcomes[setting];
-        return { edits: nextEdits, outcomes: nextOutcomes };
+        delete nextOwners[setting];
+        return {
+          edits: nextEdits,
+          outcomes: nextOutcomes,
+          profileOwners: nextOwners,
+        };
       });
     },
     apply,
@@ -149,11 +222,35 @@ export function useTuningEdits() {
 }
 export type TuningEditStore = ReturnType<typeof useTuningEdits>;
 
+function profileSettingKey(
+  setting: TuningSetting,
+): keyof NumericProfileSettings | null {
+  return setting === "power"
+    ? "powerLimitWatts"
+    : setting === "graphics"
+      ? "graphicsOffsetMHz"
+      : setting === "memory"
+        ? "memoryOffsetMHz"
+        : null;
+}
+
 function actionIntentions(
   action: PerformanceMutationAction,
   gpu: GpuPerformanceDevice,
 ): TuningEdits {
   switch (action.kind) {
+    case "applyProfile":
+      return {
+        ...(action.settings.powerLimitWatts != null && {
+          power: action.settings.powerLimitWatts,
+        }),
+        ...(action.settings.graphicsOffsetMHz != null && {
+          graphics: action.settings.graphicsOffsetMHz,
+        }),
+        ...(action.settings.memoryOffsetMHz != null && {
+          memory: action.settings.memoryOffsetMHz,
+        }),
+      };
     case "setPowerLimit":
       return { power: action.limitWatts };
     case "resetPowerLimit":

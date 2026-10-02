@@ -1,5 +1,6 @@
 import type {
   ApplyGpuConfigRequest,
+  ApplyGpuProfileRequest,
   GpuDaemonStatus,
   GpuInventoryResponse,
   GpuMutationResponse,
@@ -10,6 +11,10 @@ import type {
 
 export function listGpuProfiles() {
   return window.prism.gpu.listProfiles();
+}
+
+export function applyGpuProfile(request: ApplyGpuProfileRequest) {
+  return window.prism.gpu.applyProfile(request);
 }
 
 export function saveGpuProfile(request: SaveGpuProfileRequest) {

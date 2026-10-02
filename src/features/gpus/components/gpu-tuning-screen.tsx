@@ -2,10 +2,7 @@ import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
 import { GpuProfilePanel, GpuProfileAvailability } from "./gpu-profile-panel";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import { TuningOutcomes, tuningSettingLabel } from "./tuning-outcomes";
-import {
-  inTuningRange,
-  retryTuningAction,
-} from "@/features/gpus/lib/tuning-intentions";
+import { inTuningRange } from "@/features/gpus/lib/tuning-intentions";
 import { unavailableTuningReadback } from "@/features/gpus/lib/tuning-readback";
 import type { TuningMutationHandler } from "@/features/gpus/lib/tuning-mutation";
 import { type ReactNode } from "react";
@@ -42,9 +39,16 @@ import type {
   GpuPerformanceDevice,
   GpuPerformanceResponse,
   PowerControlInfo,
+  NumericProfileSettings,
 } from "@/features/gpus/types";
 
 export type PerformanceMutationAction =
+  | {
+      kind: "applyProfile";
+      gpuId: string;
+      stableId: string;
+      settings: NumericProfileSettings;
+    }
   | {
       kind: "setPowerLimit";
       gpuId: string;
@@ -256,6 +260,19 @@ export function GpuTuningScreen({
                   readError={errorMessage}
                   pendingAction={pendingAction}
                   reapplyPending={reapplyPending}
+                  loadDisabled={busy || !daemonConnected}
+                  onLoad={(profile, settings) => {
+                    void editStore.apply(
+                      {
+                        kind: "applyProfile",
+                        gpuId: gpu.id,
+                        stableId: profile.gpuId,
+                        settings,
+                      },
+                      gpu,
+                      onMutationAction,
+                    );
+                  }}
                 />
               )}
               <fieldset
@@ -352,7 +369,7 @@ export function GpuTuningControls({
       {Object.keys(edits).map((key) => {
         const setting = key as keyof typeof edits;
         const label = tuningSettingLabel(setting).toLowerCase();
-        const retry = retryTuningAction(gpu, setting, edits[setting]);
+        const retry = editStore.retryAction(gpu, setting);
         return (
           <div key={setting} className="flex gap-2">
             {outcomes[setting] && (

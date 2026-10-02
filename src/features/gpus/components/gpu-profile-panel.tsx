@@ -14,6 +14,8 @@ import {
 import type {
   GpuPerformanceDevice,
   GpuProfileSettings,
+  GpuTuningProfile,
+  NumericProfileSettings,
 } from "@/features/gpus/types";
 
 export function GpuProfilePanel({
@@ -23,6 +25,8 @@ export function GpuProfilePanel({
   readError,
   pendingAction,
   reapplyPending = false,
+  onLoad,
+  loadDisabled = false,
 }: {
   gpu: GpuPerformanceDevice;
   workflow: GpuProfileWorkflow;
@@ -30,6 +34,11 @@ export function GpuProfilePanel({
   readError: string | null;
   pendingAction: PerformanceMutationAction | null;
   reapplyPending?: boolean;
+  onLoad?: (
+    profile: GpuTuningProfile,
+    settings: NumericProfileSettings,
+  ) => void;
+  loadDisabled?: boolean;
 }) {
   const id = useId();
   const [name, setName] = useState("");
@@ -54,6 +63,25 @@ export function GpuProfilePanel({
   const canSave =
     !!name.trim() &&
     !blocker &&
+    !profileMutationPending &&
+    !workflow.save.isPending &&
+    !workflow.query.isPending &&
+    !workflow.query.error;
+  const loadBlocker =
+    Object.keys(edits).length > 0
+      ? "Apply or discard outstanding tuning changes before loading a profile."
+      : selected &&
+          Object.values(selected.settings).some(
+            (setting) => setting.kind === "default",
+          )
+        ? "This profile requests defaults. Loading currently requires numeric profile settings."
+        : null;
+  const canLoad =
+    !!selected &&
+    !!gpu.stableId &&
+    !readError &&
+    !loadBlocker &&
+    !loadDisabled &&
     !profileMutationPending &&
     !workflow.save.isPending &&
     !workflow.query.isPending &&
@@ -90,6 +118,25 @@ export function GpuProfilePanel({
               </option>
             ))}
           </select>
+          {onLoad && (
+            <Button
+              type="button"
+              disabled={!canLoad}
+              onClick={() => {
+                if (!canLoad || !selected) return;
+                const settings: NumericProfileSettings = {};
+                for (const key of Object.keys(
+                  selected.settings,
+                ) as (keyof GpuProfileSettings)[]) {
+                  const setting = selected.settings[key]!;
+                  if (setting.kind === "value") settings[key] = setting.value;
+                }
+                onLoad(selected, settings);
+              }}
+            >
+              Load profile
+            </Button>
+          )}
         </div>
         <form
           className="space-y-2"
@@ -121,6 +168,11 @@ export function GpuProfilePanel({
       {blocker && (
         <p className="text-sm text-muted-foreground" role="status">
           {blocker}
+        </p>
+      )}
+      {onLoad && selected && loadBlocker && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {loadBlocker}
         </p>
       )}
       {selected && (
@@ -199,6 +251,7 @@ export function GpuProfileAvailability({
               <span className="text-muted-foreground">
                 Owning GPU absent · {profile.gpuId}
               </span>
+              <Button disabled>Load profile</Button>
             </div>
           ))}
         </section>

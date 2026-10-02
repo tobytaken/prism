@@ -14,6 +14,17 @@ export async function runTuningMutation(
   action: PerformanceMutationAction,
 ): Promise<TuningMutationResult> {
   switch (action.kind) {
+    case "applyProfile": {
+      const result = await api.applyGpuProfile({
+        gpuId: action.stableId,
+        settings: action.settings,
+      });
+      return {
+        ...(result.power && { power: result.power }),
+        ...(result.graphics && { graphics: result.graphics }),
+        ...(result.memory && { memory: result.memory }),
+      };
+    }
     case "setPowerLimit":
       return {
         power: commandOutcome(

@@ -11,7 +11,20 @@ use crate::gpu::{
     ResetGpuConfigRequest, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
-use crate::protocol::{ClockOffsetResponse, DaemonCommandResponse, DaemonRequest, DaemonResponse};
+use crate::protocol::{
+    ApplyGpuProfileRequest, ClockOffsetResponse, DaemonCommandResponse, DaemonRequest,
+    DaemonResponse, ProfileApplicationResponse,
+};
+
+pub fn apply_gpu_profile(
+    request: ApplyGpuProfileRequest,
+) -> Result<ProfileApplicationResponse, GpuCommandError> {
+    match send_request(DaemonRequest::ApplyProfile(request))? {
+        DaemonResponse::ProfileApplication(response) => Ok(response),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("profile application")),
+    }
+}
 
 pub fn get_inventory() -> Result<GpuInventoryResponse, GpuCommandError> {
     match send_request(DaemonRequest::GetInventory)? {

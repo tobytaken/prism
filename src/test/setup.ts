@@ -5,6 +5,9 @@ import type { PrismDesktopApi } from "@/types/global";
 const prismStub: PrismDesktopApi = {
   gpu: {
     listProfiles: async () => [],
+    applyProfile: async () => {
+      throw new Error("Profile application is not configured in this test");
+    },
     saveProfile: async () => {
       throw new Error("Profile saving is not configured in this test");
     },

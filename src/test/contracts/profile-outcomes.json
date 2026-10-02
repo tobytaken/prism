@@ -1,0 +1,8 @@
+{
+  "power": { "status": "succeeded", "error": null },
+  "graphics": { "status": "failed", "error": "Graphics write denied" },
+  "memory": {
+    "status": "unattempted",
+    "error": "An earlier profile setting failed. Retry or discard this instruction."
+  }
+}

@@ -332,6 +332,30 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     return getProfileStore().list();
   });
 
+  ipcMain.handle("prism:gpu:applyProfile", async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow);
+    if (
+      !isObject(payload) ||
+      !isString(payload.gpuId) ||
+      !payload.gpuId.trim() ||
+      Object.keys(payload).some(
+        (key) => key !== "gpuId" && key !== "settings",
+      ) ||
+      !isObject(payload.settings) ||
+      Array.isArray(payload.settings) ||
+      Object.keys(payload.settings).length === 0 ||
+      Object.entries(payload.settings).some(
+        ([key, value]) =>
+          !["powerLimitWatts", "graphicsOffsetMHz", "memoryOffsetMHz"].includes(
+            key,
+          ) || !Number.isSafeInteger(value),
+      )
+    ) {
+      throw new Error("Invalid applyProfile payload");
+    }
+    return backend.invoke("gpu.applyProfile", payload);
+  });
+
   ipcMain.handle("prism:gpu:saveProfile", async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow);
     if (
