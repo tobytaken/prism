@@ -388,9 +388,9 @@ fn query_performance_device(
     index: u32,
     warnings: &mut Vec<String>,
 ) -> GpuPerformanceDevice {
-    let id = device
-        .uuid()
-        .ok()
+    let stable_id = device.uuid().ok().filter(|id| !id.trim().is_empty());
+    let id = stable_id
+        .clone()
         .unwrap_or_else(|| format!("nvidia-{index}"));
     let name = device
         .name()
@@ -402,6 +402,7 @@ fn query_performance_device(
 
     GpuPerformanceDevice {
         id,
+        stable_id,
         vendor: GpuVendor::Nvidia,
         name: name.clone(),
         architecture: device.architecture().ok().map(format_architecture),

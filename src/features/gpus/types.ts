@@ -135,6 +135,7 @@ export interface GpuDaemonStatus {
 
 export interface GpuPerformanceDevice {
   id: string;
+  stableId: string | null;
   vendor: GpuVendor;
   name: string;
   architecture: string | null;
@@ -216,4 +217,26 @@ export interface ClockOffsetResponse {
 export interface GpuCommandResponse {
   success: boolean;
   error: string | null;
+}
+
+export type ProfileSetting =
+  | { kind: "value"; value: number }
+  | { kind: "default" };
+
+export interface GpuProfileSettings {
+  powerLimitWatts?: ProfileSetting;
+  graphicsOffsetMHz?: ProfileSetting;
+  memoryOffsetMHz?: ProfileSetting;
+}
+
+export interface GpuTuningProfile {
+  id: string;
+  name: string;
+  gpuId: string;
+  settings: GpuProfileSettings;
+}
+
+export interface SaveGpuProfileRequest {
+  gpuId: string;
+  name: string;
 }

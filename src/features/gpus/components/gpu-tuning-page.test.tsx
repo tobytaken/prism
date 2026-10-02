@@ -6,7 +6,10 @@ import {
   connectedDaemonStatus,
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
-import { createTestQueryClient, renderWithQueryClient } from "@/test/query-client";
+import {
+  createTestQueryClient,
+  renderWithQueryClient,
+} from "@/test/query-client";
 import { GpuTuningPage } from "./gpu-tuning-page";
 
 const mocks = vi.hoisted(() => ({
@@ -29,6 +32,8 @@ vi.mock("@/features/gpus/hooks/use-gpu-daemon-status", () => ({
 }));
 
 vi.mock("@/features/gpus/api", () => ({
+  listGpuProfiles: vi.fn(async () => []),
+  saveGpuProfile: vi.fn(),
   applyGpuConfig: vi.fn(),
   resetGpuClockOffsets: vi.fn(),
   resetGpuPowerLimit: vi.fn(),
@@ -67,13 +72,21 @@ describe("GpuTuningPage", () => {
 
     renderWithQueryClient(<GpuTuningPage />, { queryClient });
 
-    await userEvent.click(screen.getByRole("button", { name: "reapply saved" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "reapply saved" }),
+    );
 
     await waitFor(() => {
       expect(api.applyGpuConfig).toHaveBeenCalledWith({ reapplySaved: true });
-      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["gpu-performance"] });
-      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["gpu-daemon-status"] });
-      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["gpu-inventory"] });
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ["gpu-performance"],
+      });
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ["gpu-daemon-status"],
+      });
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ["gpu-inventory"],
+      });
     });
   });
 });

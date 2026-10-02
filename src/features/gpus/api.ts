@@ -5,7 +5,16 @@ import type {
   GpuMutationResponse,
   GpuPerformanceResponse,
   ResetGpuConfigRequest,
+  SaveGpuProfileRequest,
 } from "@/features/gpus/types";
+
+export function listGpuProfiles() {
+  return window.prism.gpu.listProfiles();
+}
+
+export function saveGpuProfile(request: SaveGpuProfileRequest) {
+  return window.prism.gpu.saveProfile(request);
+}
 
 export function getGpuInventory() {
   return window.prism.gpu.getInventory() as Promise<GpuInventoryResponse>;
@@ -23,7 +32,11 @@ export function resetGpuPowerLimit(gpuId: string) {
   return window.prism.gpu.resetPowerLimit(gpuId);
 }
 
-export function setGpuFanSpeed(gpuId: string, fanIndex: number, speedPercent: number) {
+export function setGpuFanSpeed(
+  gpuId: string,
+  fanIndex: number,
+  speedPercent: number,
+) {
   return window.prism.gpu.setFanSpeed(gpuId, fanIndex, speedPercent);
 }
 
@@ -36,7 +49,11 @@ export function setGpuClockOffsets(
   graphicsOffsetMHz: number | null,
   memoryOffsetMHz: number | null,
 ) {
-  return window.prism.gpu.setClockOffsets(gpuId, graphicsOffsetMHz, memoryOffsetMHz);
+  return window.prism.gpu.setClockOffsets(
+    gpuId,
+    graphicsOffsetMHz,
+    memoryOffsetMHz,
+  );
 }
 
 export function resetGpuClockOffsets(gpuId: string) {

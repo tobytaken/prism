@@ -128,6 +128,7 @@ export function createPerformanceGpu(
   return mergeDeep(
     {
       id: "GPU-123",
+      stableId: "GPU-123",
       vendor: "nvidia",
       name: "NVIDIA GeForce RTX 5090",
       architecture: "Blackwell",

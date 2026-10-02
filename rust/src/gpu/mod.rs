@@ -89,6 +89,8 @@ pub struct GpuPerformanceResponse {
 #[serde(rename_all = "camelCase")]
 pub struct GpuPerformanceDevice {
     pub id: String,
+    #[serde(default)]
+    pub stable_id: Option<String>,
     pub vendor: GpuVendor,
     pub name: String,
     pub architecture: Option<String>,
@@ -976,6 +978,7 @@ mod tests {
         let response = GpuPerformanceResponse {
             gpus: vec![GpuPerformanceDevice {
                 id: "GPU-123".into(),
+                stable_id: Some("GPU-123".into()),
                 vendor: GpuVendor::Nvidia,
                 name: "RTX".into(),
                 architecture: Some("Blackwell".into()),
@@ -1040,6 +1043,7 @@ mod tests {
         let value = serde_json::to_value(response).expect("serialize response");
 
         assert_eq!(value["gpus"][0]["power"]["support"], "supported");
+        assert_eq!(value["gpus"][0]["stableId"], "GPU-123");
         assert_eq!(
             value["gpus"][0]["clocks"]["graphics"]["support"],
             "supported"
