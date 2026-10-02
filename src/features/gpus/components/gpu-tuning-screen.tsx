@@ -109,27 +109,45 @@ export function GpuTuningScreen({
   const daemonMessage =
     daemonStatus?.message ??
     "Privileged GPU controls require prismd to be installed and reachable.";
+  const busy =
+    editStore.applyAllPending || pendingAction != null || reapplyPending;
+  const hasEdits = Object.values(editStore.devices).some(
+    (device) => Object.keys(device.edits).length > 0,
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Tuning</h1>
-        {daemonConnected && (
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
-            variant="outline"
-            disabled={reapplyPending}
-            onClick={onReapplySavedSettings}
+            disabled={!daemonConnected || !hasEdits || busy || isLoading}
+            onClick={() => void editStore.applyAll(gpus, onMutationAction)}
           >
-            {reapplyPending ? (
+            {editStore.applyAllPending && (
               <LoaderCircle className="animate-spin" />
-            ) : (
-              <RefreshCw />
             )}
-            Reapply Saved Settings
+            Apply all
           </Button>
-        )}
+          {daemonConnected && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={onReapplySavedSettings}
+            >
+              {reapplyPending ? (
+                <LoaderCircle className="animate-spin" />
+              ) : (
+                <RefreshCw />
+              )}
+              Reapply Saved Settings
+            </Button>
+          )}
+        </div>
       </div>
 
       {daemonDisconnected && daemonStatus && (
@@ -205,8 +223,8 @@ export function GpuTuningScreen({
 
       {!isLoading && gpus.length > 0 && (
         <fieldset
-          disabled={daemonDisconnected}
-          aria-disabled={daemonDisconnected}
+          disabled={daemonDisconnected || busy}
+          aria-disabled={daemonDisconnected || busy}
           className={cn(
             "space-y-5 transition-opacity",
             daemonDisconnected && "pointer-events-none opacity-45 saturate-50",
