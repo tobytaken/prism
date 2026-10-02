@@ -44,6 +44,13 @@ pub struct BridgeError {
 
 pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
     let result = match request.method.as_str() {
+        "gpu.applyProfile" => {
+            parse_and_serialize_result::<crate::protocol::ApplyGpuProfileRequest, _, _>(
+                request.params,
+                "gpu.applyProfile",
+                |request| daemon_client::apply_gpu_profile(request).map_err(BridgeError::from),
+            )
+        }
         "gpu.getInventory" => serialize_result(get_gpu_inventory()),
         "gpu.getPerformance" => serialize_result(get_gpu_performance()),
         "gpu.getDaemonStatus" => serialize_result(get_gpu_daemon_status()),
@@ -392,6 +399,32 @@ mod tests {
         });
 
         assert!(response.result.is_none());
+        assert_eq!(response.error.expect("error").code, "invalid_request");
+    }
+
+    #[test]
+    fn profile_application_rejects_malformed_included_instructions_before_transport() {
+        for settings in [
+            json!({ "powerLimitWatts": null }),
+            json!({ "powerLimitWatts": "450" }),
+            json!({ "graphicsOffsetMHz": 120.5 }),
+            json!({ "memoryOffsetMHz": { "kind": "default" } }),
+            json!({ "powerLimitWatts": 450, "fanSpeed": 80 }),
+            json!({ "gpuClockLock": 1800 }),
+        ] {
+            let response = handle_request(BridgeRequest {
+                id: 14,
+                method: "gpu.applyProfile".into(),
+                params: Some(json!({ "gpuId": "GPU-123", "settings": settings })),
+            });
+            assert!(response.result.is_none());
+            assert_eq!(response.error.expect("error").code, "invalid_request");
+        }
+        let response = handle_request(BridgeRequest {
+            id: 14,
+            method: "gpu.applyProfile".into(),
+            params: None,
+        });
         assert_eq!(response.error.expect("error").code, "invalid_request");
     }
 

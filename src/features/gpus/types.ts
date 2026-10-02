@@ -240,3 +240,19 @@ export interface SaveGpuProfileRequest {
   gpuId: string;
   name: string;
 }
+
+export interface NumericProfileSettings {
+  powerLimitWatts?: number;
+  graphicsOffsetMHz?: number;
+  memoryOffsetMHz?: number;
+}
+
+export interface ApplyGpuProfileRequest {
+  /** Verified stable identity of the owning GPU. */
+  gpuId: string;
+  settings: NumericProfileSettings;
+}
+
+export interface ProfileApplicationResponse extends ClockOffsetResponse {
+  power: TuningOutcome | null;
+}

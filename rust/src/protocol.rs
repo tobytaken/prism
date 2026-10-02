@@ -38,12 +38,60 @@ pub struct ClockOffsetResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NumericProfileSettings {
+    #[serde(
+        default,
+        deserialize_with = "included_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub power_limit_watts: Option<i64>,
+    #[serde(
+        default,
+        rename = "graphicsOffsetMHz",
+        deserialize_with = "included_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub graphics_offset_mhz: Option<i64>,
+    #[serde(
+        default,
+        rename = "memoryOffsetMHz",
+        deserialize_with = "included_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub memory_offset_mhz: Option<i64>,
+}
+
+// An included null is invalid; only an omitted instruction leaves a control alone.
+fn included_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error> {
+    i64::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApplyGpuProfileRequest {
+    pub gpu_id: String,
+    pub settings: NumericProfileSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApplicationResponse {
+    pub power: Option<TuningOutcome>,
+    pub graphics: Option<TuningOutcome>,
+    pub memory: Option<TuningOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
     GetInventory,
     GetPerformance,
     GetDaemonStatus,
     ApplyConfig(ApplyGpuConfigRequest),
+    ApplyProfile(ApplyGpuProfileRequest),
     ResetConfig(ResetGpuConfigRequest),
     ReapplySavedConfig,
     SetPowerLimit(SetGpuPowerLimitRequest),
@@ -68,6 +116,7 @@ pub enum DaemonResponse {
     Mutation(GpuMutationResponse),
     Command(DaemonCommandResponse),
     ClockOffsets(ClockOffsetResponse),
+    ProfileApplication(ProfileApplicationResponse),
     DriverStatus(DriverStatusResponse),
     DriverJob(DriverJob),
     Error(GpuCommandError),

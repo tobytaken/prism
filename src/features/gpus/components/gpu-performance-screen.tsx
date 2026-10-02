@@ -147,7 +147,12 @@ export function GpuPerformanceScreen({
         </Alert>
       )}
 
-      <UnavailableGpuEdits devices={editStore.devices} gpus={gpus} />
+      <UnavailableGpuEdits
+        devices={editStore.devices}
+        gpus={gpus}
+        onDiscard={editStore.discard}
+        pending={pendingAction != null}
+      />
       {profiles && <GpuProfileAvailability workflow={profiles} gpus={gpus} />}
 
       {isLoading && <GpuPerformanceSkeleton />}
@@ -175,6 +180,10 @@ export function GpuPerformanceScreen({
             profiles={profiles}
             history={historyByGpuId[gpu.id]}
             controlsDisabled={daemonDisconnected}
+            profileLoadingDisabled={
+              daemonStatus?.reachable !== true || pendingAction != null
+            }
+            readError={errorMessage}
             pendingAction={pendingAction}
             onMutationAction={onMutationAction}
           />
@@ -189,6 +198,8 @@ function GpuTelemetrySurface({
   editStore,
   history,
   controlsDisabled,
+  profileLoadingDisabled,
+  readError,
   pendingAction,
   onMutationAction,
 }: {
@@ -197,6 +208,8 @@ function GpuTelemetrySurface({
   editStore: TuningEditStore;
   history?: GpuMetricHistory;
   controlsDisabled: boolean;
+  profileLoadingDisabled: boolean;
+  readError: string | null;
   pendingAction: PerformanceMutationAction | null;
   onMutationAction?: TuningMutationHandler;
 }) {
@@ -273,8 +286,25 @@ function GpuTelemetrySurface({
               gpu={gpu}
               workflow={profiles}
               edits={editStore.devices[gpu.id]?.edits ?? {}}
-              readError={null}
+              readError={readError}
               pendingAction={pendingAction}
+              loadDisabled={profileLoadingDisabled}
+              onLoad={
+                onMutationAction
+                  ? (profile, settings) => {
+                      void editStore.apply(
+                        {
+                          kind: "applyProfile",
+                          gpuId: gpu.id,
+                          stableId: profile.gpuId,
+                          settings,
+                        },
+                        gpu,
+                        onMutationAction,
+                      );
+                    }
+                  : undefined
+              }
             />
           </div>
         )}

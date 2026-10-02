@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BrowserWindow } from "electron";
 import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
+import profileOutcomes from "@/test/contracts/profile-outcomes.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 import { createPerformanceResponse } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
@@ -50,6 +51,77 @@ describe("registerIpc", () => {
     });
     mocks.openExternal.mockReset();
     mocks.spawn.mockReset();
+  });
+
+  it("forwards profile application to backend validation and preserves each outcome", async () => {
+    const child = createBackendChild(profileOutcomes);
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    const request = {
+      gpuId: "GPU-123",
+      settings: { powerLimitWatts: 450, graphicsOffsetMHz: -150 },
+    };
+    try {
+      expect(
+        await callHandler("prism:gpu:applyProfile", trustedEvent(), request),
+      ).toEqual(profileOutcomes);
+      expect(JSON.parse(child.stdin.write.mock.calls[0][0])).toMatchObject({
+        method: "gpu.applyProfile",
+        params: request,
+      });
+      expect(
+        JSON.parse(child.stdin.write.mock.calls[0][0]).params.settings,
+      ).not.toHaveProperty("memoryOffsetMHz");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("rejects untrusted or malformed profile application without invoking the backend", async () => {
+    const dispose = registerIpc(getMainWindow);
+    try {
+      await expect(
+        callHandler("prism:gpu:applyProfile", untrustedEvent(), {
+          gpuId: "GPU-123",
+          settings: { powerLimitWatts: 450 },
+        }),
+      ).rejects.toThrow("Untrusted IPC sender");
+      for (const payload of [
+        null,
+        {},
+        { gpuId: " ", settings: { powerLimitWatts: 450 } },
+        { gpuId: "GPU-123", settings: {} },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: null } },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: 450.5 } },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: Infinity } },
+        {
+          gpuId: "GPU-123",
+          settings: { powerLimitWatts: Number.MAX_SAFE_INTEGER + 1 },
+        },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: "450" } },
+        {
+          gpuId: "GPU-123",
+          settings: { powerLimitWatts: { kind: "default" } },
+        },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: 450, fanSpeed: 80 } },
+        {
+          gpuId: "GPU-123",
+          settings: { graphicsOffsetMHz: 120, gpuClockLock: 1800 },
+        },
+        {
+          gpuId: "GPU-123",
+          settings: { powerLimitWatts: 450 },
+          reapplySaved: true,
+        },
+      ]) {
+        await expect(
+          callHandler("prism:gpu:applyProfile", trustedEvent(), payload),
+        ).rejects.toThrow("Invalid applyProfile payload");
+      }
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
   });
 
   it("saves known numeric profile settings without tuning and retains them after app reload", async () => {

@@ -7,6 +7,8 @@ import type {
 } from "@/features/drivers/types";
 import type {
   ApplyGpuConfigRequest,
+  ApplyGpuProfileRequest,
+  ProfileApplicationResponse,
   ClockOffsetResponse,
   GpuCommandResponse,
   GpuDaemonStatus,
@@ -20,6 +22,11 @@ import type {
 
 const prismApi = {
   gpu: {
+    applyProfile: (request: ApplyGpuProfileRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:applyProfile",
+        request,
+      ) as Promise<ProfileApplicationResponse>,
     listProfiles: () =>
       ipcRenderer.invoke("prism:gpu:listProfiles") as Promise<
         GpuTuningProfile[]

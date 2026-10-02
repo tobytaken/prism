@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
+import profileOutcomes from "@/test/contracts/profile-outcomes.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 
 import type { PrismDesktopApi } from "@/types/global";
@@ -30,6 +31,24 @@ describe("preload bridge", () => {
     mocks.invoke.mockReset();
     mocks.on.mockReset();
     mocks.removeListener.mockReset();
+  });
+
+  it("transports stable ownership and included profile values without hiding partial outcomes or transport failures", async () => {
+    const prism = await loadPrismApi();
+    const request = {
+      gpuId: "GPU-123",
+      settings: { powerLimitWatts: 450, graphicsOffsetMHz: -150 },
+    };
+    mocks.invoke.mockResolvedValue(profileOutcomes);
+    expect(await prism.gpu.applyProfile(request)).toEqual(profileOutcomes);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:applyProfile",
+      request,
+    );
+    mocks.invoke.mockRejectedValue(new Error("Connection lost"));
+    await expect(prism.gpu.applyProfile(request)).rejects.toThrow(
+      "Connection lost",
+    );
   });
 
   it("exposes GPU IPC methods with exact channels and payloads", async () => {
