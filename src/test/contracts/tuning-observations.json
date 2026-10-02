@@ -2,6 +2,7 @@
   "gpus": [
     {
       "id": "GPU-123",
+      "stableId": "GPU-123",
       "vendor": "nvidia",
       "name": "RTX Test",
       "architecture": null,

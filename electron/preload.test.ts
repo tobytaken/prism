@@ -80,6 +80,30 @@ describe("preload bridge", () => {
     );
   });
 
+  it("exposes profile save/list commands and preserves omitted, numeric, and default setting meanings", async () => {
+    const prism = await loadPrismApi();
+    const profile = {
+      id: "quiet",
+      name: "Quiet",
+      gpuId: "GPU-123",
+      settings: {
+        powerLimitWatts: { kind: "value", value: 575 },
+        graphicsOffsetMHz: { kind: "default" },
+      },
+    };
+    mocks.invoke.mockResolvedValue(profile);
+    expect(
+      await prism.gpu.saveProfile({ gpuId: "GPU-123", name: "Quiet" }),
+    ).toEqual(profile);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:saveProfile", {
+      gpuId: "GPU-123",
+      name: "Quiet",
+    });
+    mocks.invoke.mockResolvedValue([profile]);
+    expect(await prism.gpu.listProfiles()).toEqual([profile]);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:listProfiles");
+  });
+
   it("returns individual clock application outcomes without turning partial failure into success", async () => {
     const prism = await loadPrismApi();
     mocks.invoke.mockResolvedValue(tuningOutcomes);

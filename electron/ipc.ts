@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
+import { GpuProfileStore } from "./gpu-profile-store";
+import type { GpuPerformanceResponse } from "@/features/gpus/types";
 
 import {
   app,
@@ -319,6 +321,37 @@ function isAllowedExternalUrl(url: string) {
 
 export function registerIpc(getMainWindow: MainWindowGetter) {
   const backend = new RustBackendClient();
+  let profileStore: GpuProfileStore | undefined;
+  const getProfileStore = () =>
+    (profileStore ??= new GpuProfileStore(
+      path.join(app.getPath("userData"), "gpu-tuning-profiles.json"),
+    ));
+
+  ipcMain.handle("prism:gpu:listProfiles", async (event) => {
+    assertTrustedSender(event, getMainWindow);
+    return getProfileStore().list();
+  });
+
+  ipcMain.handle("prism:gpu:saveProfile", async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow);
+    if (
+      !isObject(payload) ||
+      !isString(payload.gpuId) ||
+      !payload.gpuId.trim() ||
+      !isString(payload.name) ||
+      !payload.name.trim()
+    ) {
+      throw new Error("Invalid saveProfile payload");
+    }
+    const performance =
+      await backend.invoke<GpuPerformanceResponse>("gpu.getPerformance");
+    const gpu = performance.gpus.find((device) => device.id === payload.gpuId);
+    if (!gpu)
+      throw new Error(
+        "The owning GPU is unavailable. Refresh the GPU readings and try again.",
+      );
+    return getProfileStore().save(payload.name, gpu);
+  });
 
   ipcMain.handle("prism:gpu:getInventory", async (event) => {
     assertTrustedSender(event, getMainWindow);

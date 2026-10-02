@@ -1,4 +1,6 @@
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
+import { GpuProfilePanel, GpuProfileAvailability } from "./gpu-profile-panel";
+import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import { TuningOutcomes, tuningSettingLabel } from "./tuning-outcomes";
 import {
   inTuningRange,
@@ -78,6 +80,7 @@ const EMPTY_PERFORMANCE_GPUS: GpuPerformanceDevice[] = [];
 const EMPTY_WARNINGS: string[] = [];
 
 type GpuTuningScreenProps = {
+  profiles?: GpuProfileWorkflow;
   inventory?: GpuPerformanceResponse;
   daemonStatus?: GpuDaemonStatus;
   isLoading: boolean;
@@ -91,6 +94,7 @@ type GpuTuningScreenProps = {
 };
 
 export function GpuTuningScreen({
+  profiles,
   inventory,
   daemonStatus,
   isLoading,
@@ -214,6 +218,8 @@ export function GpuTuningScreen({
         pending={busy}
       />
 
+      {profiles && <GpuProfileAvailability workflow={profiles} gpus={gpus} />}
+
       {isLoading && <GpuTuningSkeleton />}
 
       {!isLoading && gpus.length === 0 && !errorMessage && (
@@ -228,14 +234,7 @@ export function GpuTuningScreen({
       )}
 
       {!isLoading && gpus.length > 0 && (
-        <fieldset
-          disabled={daemonDisconnected || busy}
-          aria-disabled={daemonDisconnected || busy}
-          className={cn(
-            "space-y-5 transition-opacity",
-            daemonDisconnected && "pointer-events-none opacity-45 saturate-50",
-          )}
-        >
+        <div className="space-y-5">
           {gpus.map((gpu) => (
             <div
               key={gpu.id}
@@ -249,20 +248,40 @@ export function GpuTuningScreen({
                   Adjust power, cooling, and clock offsets for this GPU.
                 </p>
               </div>
-              <GpuTuningControls
-                gpu={
-                  errorMessage
-                    ? unavailableTuningReadback(gpu, errorMessage)
-                    : gpu
-                }
-                showIdentity
-                editStore={editStore}
-                pendingAction={pendingAction}
-                onMutationAction={onMutationAction}
-              />
+              {profiles && (
+                <GpuProfilePanel
+                  gpu={gpu}
+                  workflow={profiles}
+                  edits={editStore.devices[gpu.id]?.edits ?? {}}
+                  readError={errorMessage}
+                  pendingAction={pendingAction}
+                  reapplyPending={reapplyPending}
+                />
+              )}
+              <fieldset
+                disabled={daemonDisconnected || busy}
+                aria-disabled={daemonDisconnected || busy}
+                className={cn(
+                  "transition-opacity",
+                  daemonDisconnected &&
+                    "pointer-events-none opacity-45 saturate-50",
+                )}
+              >
+                <GpuTuningControls
+                  gpu={
+                    errorMessage
+                      ? unavailableTuningReadback(gpu, errorMessage)
+                      : gpu
+                  }
+                  showIdentity
+                  editStore={editStore}
+                  pendingAction={pendingAction}
+                  onMutationAction={onMutationAction}
+                />
+              </fieldset>
             </div>
           ))}
-        </fieldset>
+        </div>
       )}
     </div>
   );

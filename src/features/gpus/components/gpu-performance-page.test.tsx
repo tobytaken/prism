@@ -31,7 +31,8 @@ vi.mock("@/features/gpus/hooks/use-gpu-daemon-status", () => ({
   useGpuDaemonStatus: () => mocks.daemonStatusQuery,
 }));
 
-vi.mock("@/features/gpus/api", () => ({
+vi.mock("@/features/gpus/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/gpus/api")>()),
   resetGpuClockOffsets: vi.fn(),
   resetGpuPowerLimit: vi.fn(),
   setGpuClockOffsets: vi.fn(),

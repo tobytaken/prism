@@ -14,10 +14,21 @@ import type {
   GpuMutationResponse,
   GpuPerformanceResponse,
   ResetGpuConfigRequest,
+  GpuTuningProfile,
+  SaveGpuProfileRequest,
 } from "@/features/gpus/types";
 
 const prismApi = {
   gpu: {
+    listProfiles: () =>
+      ipcRenderer.invoke("prism:gpu:listProfiles") as Promise<
+        GpuTuningProfile[]
+      >,
+    saveProfile: (request: SaveGpuProfileRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:saveProfile",
+        request,
+      ) as Promise<GpuTuningProfile>,
     getInventory: () =>
       ipcRenderer.invoke(
         "prism:gpu:getInventory",

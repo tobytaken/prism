@@ -7,6 +7,7 @@ import {
 } from "@/features/gpus/lib/tuning-mutation";
 import { useGpuDaemonStatus } from "@/features/gpus/hooks/use-gpu-daemon-status";
 import { useGpuPerformance } from "@/features/gpus/hooks/use-gpu-performance";
+import { useGpuProfiles } from "@/features/gpus/hooks/use-gpu-profiles";
 
 import {
   GpuTuningScreen,
@@ -15,6 +16,7 @@ import {
 
 export function GpuTuningPage() {
   const queryClient = useQueryClient();
+  const profiles = useGpuProfiles();
   const query = useGpuPerformance();
   const daemonStatusQuery = useGpuDaemonStatus();
   const mutation = useMutation<
@@ -40,6 +42,7 @@ export function GpuTuningPage() {
 
   return (
     <GpuTuningScreen
+      profiles={profiles}
       inventory={query.data}
       daemonStatus={daemonStatusQuery.data}
       isLoading={query.isPending}

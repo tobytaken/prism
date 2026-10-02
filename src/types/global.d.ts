@@ -7,6 +7,8 @@ import type {
   GpuMutationResponse,
   GpuPerformanceResponse,
   ResetGpuConfigRequest,
+  GpuTuningProfile,
+  SaveGpuProfileRequest,
 } from "@/features/gpus/types";
 import type {
   DriverAction,
@@ -16,6 +18,8 @@ import type {
 
 export interface PrismDesktopApi {
   gpu: {
+    listProfiles(): Promise<GpuTuningProfile[]>;
+    saveProfile(request: SaveGpuProfileRequest): Promise<GpuTuningProfile>;
     getInventory(): Promise<GpuInventoryResponse>;
     getPerformance(): Promise<GpuPerformanceResponse>;
     getDaemonStatus(): Promise<GpuDaemonStatus>;

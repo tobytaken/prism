@@ -1,4 +1,6 @@
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
+import { GpuProfilePanel, GpuProfileAvailability } from "./gpu-profile-panel";
+import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import {
   useTuningEdits,
   type TuningEditStore,
@@ -59,6 +61,7 @@ const SPARKLINE_INSETS = {
 };
 
 type GpuPerformanceScreenProps = {
+  profiles?: GpuProfileWorkflow;
   inventory?: GpuPerformanceResponse;
   daemonStatus?: GpuDaemonStatus;
   isLoading: boolean;
@@ -69,6 +72,7 @@ type GpuPerformanceScreenProps = {
 };
 
 export function GpuPerformanceScreen({
+  profiles,
   inventory,
   daemonStatus,
   isLoading,
@@ -144,6 +148,7 @@ export function GpuPerformanceScreen({
       )}
 
       <UnavailableGpuEdits devices={editStore.devices} gpus={gpus} />
+      {profiles && <GpuProfileAvailability workflow={profiles} gpus={gpus} />}
 
       {isLoading && <GpuPerformanceSkeleton />}
 
@@ -167,6 +172,7 @@ export function GpuPerformanceScreen({
               errorMessage ? unavailableTuningReadback(gpu, errorMessage) : gpu
             }
             editStore={editStore}
+            profiles={profiles}
             history={historyByGpuId[gpu.id]}
             controlsDisabled={daemonDisconnected}
             pendingAction={pendingAction}
@@ -179,6 +185,7 @@ export function GpuPerformanceScreen({
 
 function GpuTelemetrySurface({
   gpu,
+  profiles,
   editStore,
   history,
   controlsDisabled,
@@ -186,6 +193,7 @@ function GpuTelemetrySurface({
   onMutationAction,
 }: {
   gpu: GpuPerformanceDevice;
+  profiles?: GpuProfileWorkflow;
   editStore: TuningEditStore;
   history?: GpuMetricHistory;
   controlsDisabled: boolean;
@@ -259,6 +267,17 @@ function GpuTelemetrySurface({
 
       <section className="relative overflow-hidden px-5 py-7">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/70 to-transparent" />
+        {profiles && (
+          <div className="mb-7">
+            <GpuProfilePanel
+              gpu={gpu}
+              workflow={profiles}
+              edits={editStore.devices[gpu.id]?.edits ?? {}}
+              readError={null}
+              pendingAction={pendingAction}
+            />
+          </div>
+        )}
         <div className="flex flex-col gap-8 xl:flex-row">
           <OcControlRail
             gpu={gpu}
