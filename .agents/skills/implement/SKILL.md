@@ -13,3 +13,5 @@ Run typechecking regularly, single test files regularly, and the full test suite
 Once done, use /code-review to review the work.
 
 Commit your work to the current branch. If the current branch is not a feature branch (e.g. 'main', 'master', 'dev', etc.) ask the user if you should open a feature branch.
+
+Once the implementation is complete and all tests pass, open a pull request.
