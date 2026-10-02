@@ -1,4 +1,5 @@
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
+import { TuningOutcomes, tuningSettingLabel } from "./tuning-outcomes";
 import {
   inTuningRange,
   retryTuningAction,
@@ -109,27 +110,45 @@ export function GpuTuningScreen({
   const daemonMessage =
     daemonStatus?.message ??
     "Privileged GPU controls require prismd to be installed and reachable.";
+  const busy =
+    editStore.applyAllPending || pendingAction != null || reapplyPending;
+  const hasEdits = Object.values(editStore.devices).some(
+    (device) => Object.keys(device.edits).length > 0,
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Tuning</h1>
-        {daemonConnected && (
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
-            variant="outline"
-            disabled={reapplyPending}
-            onClick={onReapplySavedSettings}
+            disabled={!daemonConnected || !hasEdits || busy || isLoading}
+            onClick={() => void editStore.applyAll(gpus, onMutationAction)}
           >
-            {reapplyPending ? (
+            {editStore.applyAllPending && (
               <LoaderCircle className="animate-spin" />
-            ) : (
-              <RefreshCw />
             )}
-            Reapply Saved Settings
+            Apply all
           </Button>
-        )}
+          {daemonConnected && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={onReapplySavedSettings}
+            >
+              {reapplyPending ? (
+                <LoaderCircle className="animate-spin" />
+              ) : (
+                <RefreshCw />
+              )}
+              Reapply Saved Settings
+            </Button>
+          )}
+        </div>
       </div>
 
       {daemonDisconnected && daemonStatus && (
@@ -188,7 +207,12 @@ export function GpuTuningScreen({
         </Alert>
       )}
 
-      <UnavailableGpuEdits devices={editStore.devices} gpus={gpus} />
+      <UnavailableGpuEdits
+        devices={editStore.devices}
+        gpus={gpus}
+        onDiscard={editStore.discard}
+        pending={busy}
+      />
 
       {isLoading && <GpuTuningSkeleton />}
 
@@ -205,8 +229,8 @@ export function GpuTuningScreen({
 
       {!isLoading && gpus.length > 0 && (
         <fieldset
-          disabled={daemonDisconnected}
-          aria-disabled={daemonDisconnected}
+          disabled={daemonDisconnected || busy}
+          aria-disabled={daemonDisconnected || busy}
           className={cn(
             "space-y-5 transition-opacity",
             daemonDisconnected && "pointer-events-none opacity-45 saturate-50",
@@ -305,25 +329,10 @@ export function GpuTuningControls({
       {Object.keys(edits).length > 0 && (
         <Badge variant="outline">Unapplied changes</Badge>
       )}
-      {Object.entries(outcomes).map(
-        ([setting, outcome]) =>
-          outcome && (
-            <p key={setting}>
-              {settingLabel(setting)}:{" "}
-              {outcome.status === "succeeded"
-                ? "Applied"
-                : outcome.status === "failed"
-                  ? "Failed"
-                  : outcome.status === "unattempted"
-                    ? "Not attempted"
-                    : "Outcome unknown"}
-              {outcome.error ? ` — ${outcome.error}` : ""}
-            </p>
-          ),
-      )}
+      <TuningOutcomes outcomes={outcomes} />
       {Object.keys(edits).map((key) => {
         const setting = key as keyof typeof edits;
-        const label = settingLabel(setting).toLowerCase();
+        const label = tuningSettingLabel(setting).toLowerCase();
         const retry = retryTuningAction(gpu, setting, edits[setting]);
         return (
           <div key={setting} className="flex gap-2">
@@ -1050,14 +1059,4 @@ function TuningAvailability({
       {currentValueError && <p>{currentValueError}</p>}
     </div>
   );
-}
-
-function settingLabel(setting: string) {
-  return setting === "power"
-    ? "Power limit"
-    : setting === "graphics"
-      ? "Graphics clock offset"
-      : setting === "memory"
-        ? "Memory clock offset"
-        : `Fan ${Number(setting.slice(4)) + 1}`;
 }
