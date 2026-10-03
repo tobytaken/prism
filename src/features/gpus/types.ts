@@ -263,8 +263,10 @@ export interface ProfileRangeCorrection {
   setting: keyof GpuProfileSettings;
   savedValue: number;
   proposedValue: number;
-  bound: "minimum" | "maximum";
+  bound: RangeBound;
 }
+
+export type RangeBound = "minimum" | "maximum";
 
 export interface CorrectGpuProfileRequest {
   profileId: string;

@@ -225,15 +225,20 @@ export function GpuProfilePanel({
           </p>
           <ul className="list-disc space-y-1 pl-5 text-sm">
             {review.corrections.map((correction) => {
-              const unit =
-                correction.setting === "powerLimitWatts" ? "W" : "MHz";
+              const { label, unit } = settingDisplay[correction.setting];
               return (
                 <li key={correction.setting}>
-                  {`${correctionLabels[correction.setting]}: saved ${correction.savedValue} ${unit} → current ${correction.bound} ${correction.proposedValue} ${unit}`}
+                  {`${label}: saved ${correction.savedValue} ${unit} → current ${correction.bound} ${correction.proposedValue} ${unit}`}
                 </li>
               );
             })}
           </ul>
+          {Object.keys(edits).length > 0 && (
+            <p role="status" className="text-sm text-muted-foreground">
+              Apply or discard outstanding tuning changes before adjusting the
+              profile.
+            </p>
+          )}
           {workflow.correct.error && (
             <p role="alert" className="text-sm text-destructive">
               The corrected profile could not be saved, so no GPU settings were
@@ -273,9 +278,9 @@ export function GpuProfilePanel({
             <Badge key={key} variant="secondary">
               {setting.kind === "default"
                 ? "Use default"
-                : `${setting.value} ${key === "powerLimitWatts" ? "W" : "MHz"}`}
+                : `${setting.value} ${settingDisplay[key as keyof GpuProfileSettings].unit}`}
               <span className="ml-1 text-muted-foreground">
-                {settingLabels[key as keyof GpuProfileSettings]}
+                {settingDisplay[key as keyof GpuProfileSettings].shortLabel}
               </span>
             </Badge>
           ))}
@@ -303,16 +308,22 @@ export function GpuProfilePanel({
   );
 }
 
-const settingLabels = {
-  powerLimitWatts: "Power limit",
-  graphicsOffsetMHz: "Graphics offset",
-  memoryOffsetMHz: "Memory offset",
-};
-
-const correctionLabels = {
-  powerLimitWatts: "Power limit",
-  graphicsOffsetMHz: "Graphics clock offset",
-  memoryOffsetMHz: "Memory clock offset",
+const settingDisplay = {
+  powerLimitWatts: {
+    label: "Power limit",
+    shortLabel: "Power limit",
+    unit: "W",
+  },
+  graphicsOffsetMHz: {
+    label: "Graphics clock offset",
+    shortLabel: "Graphics offset",
+    unit: "MHz",
+  },
+  memoryOffsetMHz: {
+    label: "Memory clock offset",
+    shortLabel: "Memory offset",
+    unit: "MHz",
+  },
 };
 
 function numericSettings(profile: GpuTuningProfile): NumericProfileSettings {

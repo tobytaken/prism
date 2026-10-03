@@ -452,3 +452,27 @@ it("blocks application without GPU changes when a setting becomes unsupported du
     screen.getByRole("button", { name: "Discard power limit change" }),
   ).toBeEnabled();
 });
+
+it("explains why adjusting waits while tuning edits are outstanding during review", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop();
+  renderPerformancePage();
+  const review = await openReview(user);
+  const power = screen.getByRole("spinbutton", { name: "Power limit" });
+  await user.clear(power);
+  await user.type(power, "260");
+  const adjust = within(review).getByRole("button", {
+    name: "Adjust profile and apply",
+  });
+  expect(adjust).toBeDisabled();
+  expect(
+    within(review).getByText(
+      "Apply or discard outstanding tuning changes before adjusting the profile.",
+    ),
+  ).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "Discard power limit change" }),
+  );
+  expect(adjust).toBeEnabled();
+  expect(fake.correctProfile).not.toHaveBeenCalled();
+});

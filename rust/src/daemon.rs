@@ -382,7 +382,7 @@ fn apply_profile<B: DaemonBackend>(
                         return;
                     };
                     range_errors.push((
-                        format!("{label}: requested {value} is outside the current allowed range {min} to {max}. Update the profile or cancel loading."),
+                        format!("{label}: requested {value} is outside the current allowed range {min} to {max}. Discard this change and load the profile again to review a correction."),
                         ProfileRangeCorrection { setting, saved_value: value, proposed_value, bound },
                     ));
                 },

@@ -318,6 +318,13 @@ function validateDriverJobPayload(
   return isObject(payload) && isString(payload.jobId);
 }
 
+const PROFILE_SETTING_KEYS = [
+  "powerLimitWatts",
+  "graphicsOffsetMHz",
+  "memoryOffsetMHz",
+];
+const CORRECTION_KEYS = ["setting", "savedValue", "proposedValue", "bound"];
+
 // A correction only moves a saved value to the bound it exceeded; it is never a free-form edit.
 function validateCorrectProfilePayload(
   payload: unknown,
@@ -337,10 +344,8 @@ function validateCorrectProfilePayload(
   return payload.corrections.every((correction: unknown) => {
     if (
       !isObject(correction) ||
-      Object.keys(correction).length !== 4 ||
-      !["powerLimitWatts", "graphicsOffsetMHz", "memoryOffsetMHz"].includes(
-        correction.setting as string,
-      ) ||
+      Object.keys(correction).some((key) => !CORRECTION_KEYS.includes(key)) ||
+      !PROFILE_SETTING_KEYS.includes(correction.setting as string) ||
       settings.has(correction.setting) ||
       !Number.isSafeInteger(correction.savedValue) ||
       !Number.isSafeInteger(correction.proposedValue)
@@ -387,9 +392,7 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       Object.keys(payload.settings).length === 0 ||
       Object.entries(payload.settings).some(
         ([key, value]) =>
-          !["powerLimitWatts", "graphicsOffsetMHz", "memoryOffsetMHz"].includes(
-            key,
-          ) || !Number.isSafeInteger(value),
+          !PROFILE_SETTING_KEYS.includes(key) || !Number.isSafeInteger(value),
       )
     ) {
       throw new Error("Invalid applyProfile payload");
