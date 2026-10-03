@@ -26,11 +26,35 @@ _Avoid_: GPU configuration, benchmark results
 Support for a particular tuning control on a GPU and its driver, including any allowed value range; support alone does not establish permission or current availability to change it.
 _Avoid_: Supported GPU when only one control has been checked
 
-### Tuning and saved configuration
+### Tuning, profiles, and startup
 
 **GPU tuning profile**:
-A named, reusable set of desired GPU tuning values owned by one individual GPU, capturing all supported settings within the profile's tuning scope after edits have been applied. Each application targets that GPU; any omitted settings leave the corresponding current tuning values unchanged.
-_Avoid_: Saved GPU configuration when referring to a named profile
+A named, reusable set of desired GPU tuning values owned by one individual GPU, with a name unique among that GPU's profiles regardless of letter case, capturing all supported settings within the profile's tuning scope after edits have been applied. Each application targets that GPU; any omitted settings leave the corresponding current tuning values unchanged.
+_Avoid_: Saved GPU configuration, preset
+
+**Profile application**:
+An attempt to put a GPU tuning profile's settings into effect on its owning GPU; choosing a profile requests its application, and a saved profile alone does not establish that its values are in effect.
+_Avoid_: Loading a profile, profile selection when the profile has not been applied
+
+**Current profile**:
+The GPU tuning profile most recently applied to or saved from a GPU; an individual GPU has at most one, and its values can differ from the current tuning values.
+_Avoid_: Selected profile, loaded profile, active profile
+
+**Startup behavior**:
+The host-wide choice of what Prism puts into effect on GPUs when the host starts: nothing, each GPU's startup profile, or the last applied tuning values; nothing by default.
+_Avoid_: Saved configuration reapplication, autostart
+
+**Startup profile**:
+The GPU tuning profile deliberately designated, host-wide, for an individual GPU to be applied when the host starts; a GPU has at most one, none by default, and its latest saved values are the ones applied.
+_Avoid_: Default profile, current profile
+
+**Last applied tuning values**:
+The most recent successfully applied value of each setting within the profile tuning scope for an individual GPU, whether it came from a profile or a live tuning change.
+_Avoid_: Last applied profile, current profile
+
+**Startup outcome**:
+The per-GPU result of Prism's startup behavior on the most recent host start, including settings applied, failed, or not attempted and why, such as a skip after an unclean shutdown.
+_Avoid_: Profile application result when no user requested it
 
 **Profile setting**:
 A desired tuning instruction in a GPU tuning profile, expressed as a specific value or an explicit request for the default at application time; omission means leave the current tuning value unchanged.
@@ -49,24 +73,12 @@ Edits to desired GPU tuning settings that have not yet been successfully applied
 _Avoid_: Unsaved profile changes when the edits have not reached the GPU
 
 **Changes not saved to profile**:
-Applied tuning values or explicit default choices within a profile's scope that differ from the selected GPU tuning profile.
+Applied tuning values or explicit default choices within a profile's scope that differ from the current profile.
 _Avoid_: Unapplied changes, fan changes when cooling is outside the profile's scope
 
-**Saved GPU configuration**:
-The retained desired power limit, clock locks, and clock offsets for an individual GPU, available for later reapplication; its existence does not establish that those values are currently in effect.
-_Avoid_: Profile, preset, current tuning values
-
 **Live tuning change**:
-A change to current GPU controls that does not update the saved GPU configuration.
+A change to current GPU controls made outside a profile application, which updates no GPU tuning profile.
 _Avoid_: Save, persistent configuration change
-
-**Saved configuration reapplication**:
-An attempt to apply retained desired values to their corresponding GPUs again, with a separate outcome for each GPU.
-_Avoid_: Reset, restore defaults
-
-**GPU configuration reset**:
-Restoration of supported power and clock controls to their defaults, with the saved configuration cleared on success; fan mode is outside this reset's scope.
-_Avoid_: Factory reset, reset all settings
 
 **Power draw**:
 The GPU's measured power consumption in watts at a given time.
