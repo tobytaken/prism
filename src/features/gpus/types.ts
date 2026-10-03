@@ -255,4 +255,18 @@ export interface ApplyGpuProfileRequest {
 
 export interface ProfileApplicationResponse extends ClockOffsetResponse {
   power: TuningOutcome | null;
+  /** Present only when out-of-range values alone blocked application; nothing was written. */
+  corrections?: ProfileRangeCorrection[];
+}
+
+export interface ProfileRangeCorrection {
+  setting: keyof GpuProfileSettings;
+  savedValue: number;
+  proposedValue: number;
+  bound: "minimum" | "maximum";
+}
+
+export interface CorrectGpuProfileRequest {
+  profileId: string;
+  corrections: ProfileRangeCorrection[];
 }

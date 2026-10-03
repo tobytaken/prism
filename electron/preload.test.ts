@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
 import profileOutcomes from "@/test/contracts/profile-outcomes.json";
+import profileCorrections from "@/test/contracts/profile-corrections.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 
+import type { CorrectGpuProfileRequest } from "@/features/gpus/types";
 import type { PrismDesktopApi } from "@/types/global";
 
 const mocks = vi.hoisted(() => ({
@@ -48,6 +50,40 @@ describe("preload bridge", () => {
     mocks.invoke.mockRejectedValue(new Error("Connection lost"));
     await expect(prism.gpu.applyProfile(request)).rejects.toThrow(
       "Connection lost",
+    );
+  });
+
+  it("transports proposed range corrections and approved profile corrections", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValue(profileCorrections);
+    expect(
+      await prism.gpu.applyProfile({
+        gpuId: "GPU-123",
+        settings: { powerLimitWatts: 300, graphicsOffsetMHz: -150 },
+      }),
+    ).toEqual(profileCorrections);
+    const corrected = {
+      id: "quiet",
+      name: "Quiet",
+      gpuId: "GPU-123",
+      settings: { powerLimitWatts: { kind: "value", value: 280 } },
+    };
+    mocks.invoke.mockResolvedValue(corrected);
+    const request: CorrectGpuProfileRequest = {
+      profileId: "quiet",
+      corrections: [
+        {
+          setting: "powerLimitWatts",
+          savedValue: 300,
+          proposedValue: 280,
+          bound: "maximum",
+        },
+      ],
+    };
+    expect(await prism.gpu.correctProfile(request)).toEqual(corrected);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:correctProfile",
+      request,
     );
   });
 
