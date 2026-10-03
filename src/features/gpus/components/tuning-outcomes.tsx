@@ -1,10 +1,6 @@
-import type { TuningMutationResult } from "@/features/gpus/lib/tuning-mutation";
+import type { TuningOutcomeMap } from "@/features/gpus/lib/tuning-mutation";
 
-export function TuningOutcomes({
-  outcomes,
-}: {
-  outcomes: TuningMutationResult;
-}) {
+export function TuningOutcomes({ outcomes }: { outcomes: TuningOutcomeMap }) {
   return Object.entries(outcomes).map(([setting, outcome]) =>
     outcome ? (
       <p key={setting}>

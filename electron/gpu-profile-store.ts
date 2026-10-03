@@ -11,6 +11,7 @@ import type {
   GpuPerformanceDevice,
   GpuTuningProfile,
   ProfileSettingKey,
+  ProfileRangeCorrection,
 } from "@/features/gpus/types";
 
 // User-owned named profiles never participate in daemon startup reapplication.
@@ -36,9 +37,49 @@ export class GpuProfileStore {
       gpuId: gpu.stableId!,
       settings,
     };
+    return this.write((profiles) => {
+      profiles.push(profile);
+      return profile;
+    });
+  }
+
+  // Replaces only reviewed numeric values; omitted and default settings keep their meaning.
+  correct(
+    profileId: string,
+    corrections: ProfileRangeCorrection[],
+  ): Promise<GpuTuningProfile> {
+    return this.write((profiles) => {
+      const index = profiles.findIndex((profile) => profile.id === profileId);
+      if (index < 0) {
+        throw new Error(
+          "The GPU tuning profile no longer exists. No GPU settings were changed.",
+        );
+      }
+      const settings = { ...profiles[index].settings };
+      for (const correction of corrections) {
+        const setting = settings[correction.setting];
+        if (
+          setting?.kind !== "value" ||
+          setting.value !== correction.savedValue
+        ) {
+          throw new Error(
+            "The saved profile changed while its corrections were being reviewed. Load it again to review current corrections. No GPU settings were changed.",
+          );
+        }
+        settings[correction.setting] = {
+          kind: "value",
+          value: correction.proposedValue,
+        };
+      }
+      profiles[index] = { ...profiles[index], settings };
+      return profiles[index];
+    });
+  }
+
+  private write<T>(change: (profiles: GpuTuningProfile[]) => T): Promise<T> {
     const write = this.writes.then(async () => {
       const profiles = await this.read();
-      profiles.push(profile);
+      const result = change(profiles);
       await mkdir(path.dirname(this.filePath), { recursive: true });
       const temporaryPath = `${this.filePath}.tmp`;
       await writeFile(
@@ -47,7 +88,7 @@ export class GpuProfileStore {
         { mode: 0o600 },
       );
       await rename(temporaryPath, this.filePath);
-      return profile;
+      return result;
     });
     this.writes = write.catch(() => undefined);
     return write;

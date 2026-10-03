@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserWindow } from "electron";
 import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
 import profileOutcomes from "@/test/contracts/profile-outcomes.json";
+import profileCorrections from "@/test/contracts/profile-corrections.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 import { createPerformanceResponse } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
@@ -77,6 +78,236 @@ describe("registerIpc", () => {
       ).not.toHaveProperty("memoryOffsetMHz");
     } finally {
       dispose();
+    }
+  });
+
+  it("forwards proposed range corrections from fresh backend validation unchanged", async () => {
+    const child = createBackendChild(profileCorrections);
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      expect(
+        await callHandler("prism:gpu:applyProfile", trustedEvent(), {
+          gpuId: "GPU-123",
+          settings: {
+            powerLimitWatts: { kind: "value", value: 300 },
+            graphicsOffsetMHz: { kind: "value", value: -150 },
+          },
+        }),
+      ).toEqual(profileCorrections);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("persists exactly the approved corrections, preserving other settings, without touching the GPU", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
+    mocks.getPath.mockReturnValue(directory);
+    const quiet = {
+      id: "quiet",
+      name: "Quiet",
+      gpuId: "GPU-123",
+      settings: {
+        powerLimitWatts: { kind: "value", value: 300 },
+        graphicsOffsetMHz: { kind: "value", value: -150 },
+        memoryOffsetMHz: { kind: "default" },
+      },
+    };
+    const other = {
+      id: "other",
+      name: "Other",
+      gpuId: "GPU-123",
+      settings: { powerLimitWatts: { kind: "value", value: 300 } },
+    };
+    await writeFile(
+      path.join(directory, "gpu-tuning-profiles.json"),
+      JSON.stringify({ version: 1, profiles: [quiet, other] }),
+    );
+    let dispose = registerIpc(getMainWindow);
+    try {
+      const corrected = {
+        ...quiet,
+        settings: {
+          ...quiet.settings,
+          powerLimitWatts: { kind: "value", value: 280 },
+          graphicsOffsetMHz: { kind: "value", value: -100 },
+        },
+      };
+      expect(
+        await callHandler("prism:gpu:correctProfile", trustedEvent(), {
+          profileId: "quiet",
+          corrections: profileCorrections.corrections,
+        }),
+      ).toEqual(corrected);
+      dispose();
+      dispose = registerIpc(getMainWindow);
+      expect(
+        await callHandler("prism:gpu:listProfiles", trustedEvent()),
+      ).toEqual([corrected, other]);
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      label: "a saved value that changed during review",
+      corrections: [
+        {
+          setting: "powerLimitWatts",
+          savedValue: 320,
+          proposedValue: 280,
+          bound: "maximum",
+        },
+      ],
+      reason: /changed while its corrections were being reviewed/,
+    },
+    {
+      label: "an explicit default",
+      corrections: [
+        {
+          setting: "memoryOffsetMHz",
+          savedValue: 80,
+          proposedValue: 50,
+          bound: "maximum",
+        },
+      ],
+      reason: /changed while its corrections were being reviewed/,
+    },
+    {
+      label: "an omitted setting",
+      profileId: "power-only",
+      corrections: [
+        {
+          setting: "graphicsOffsetMHz",
+          savedValue: -150,
+          proposedValue: -100,
+          bound: "minimum",
+        },
+      ],
+      reason: /changed while its corrections were being reviewed/,
+    },
+    {
+      label: "a missing profile",
+      profileId: "deleted",
+      corrections: profileCorrections.corrections,
+      reason: /no longer exists/,
+    },
+  ])(
+    "rejects corrections for $label and leaves every profile unchanged",
+    async ({ profileId = "quiet", corrections, reason }) => {
+      const directory = await mkdtemp(
+        path.join(os.tmpdir(), "prism-profiles-"),
+      );
+      mocks.getPath.mockReturnValue(directory);
+      const file = path.join(directory, "gpu-tuning-profiles.json");
+      const original = JSON.stringify({
+        version: 1,
+        profiles: [
+          {
+            id: "quiet",
+            name: "Quiet",
+            gpuId: "GPU-123",
+            settings: {
+              powerLimitWatts: { kind: "value", value: 300 },
+              memoryOffsetMHz: { kind: "default" },
+            },
+          },
+          {
+            id: "power-only",
+            name: "Power only",
+            gpuId: "GPU-123",
+            settings: { powerLimitWatts: { kind: "value", value: 300 } },
+          },
+        ],
+      });
+      await writeFile(file, original);
+      const dispose = registerIpc(getMainWindow);
+      try {
+        await expect(
+          callHandler("prism:gpu:correctProfile", trustedEvent(), {
+            profileId,
+            corrections,
+          }),
+        ).rejects.toThrow(reason);
+        expect(await readFile(file, "utf8")).toBe(original);
+        expect(mocks.spawn).not.toHaveBeenCalled();
+      } finally {
+        dispose();
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("reports unreadable profile storage when persisting corrections and preserves the file", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
+    mocks.getPath.mockReturnValue(directory);
+    const file = path.join(directory, "gpu-tuning-profiles.json");
+    await writeFile(file, "{ not json");
+    const dispose = registerIpc(getMainWindow);
+    try {
+      await expect(
+        callHandler("prism:gpu:correctProfile", trustedEvent(), {
+          profileId: "quiet",
+          corrections: profileCorrections.corrections,
+        }),
+      ).rejects.toThrow();
+      expect(await readFile(file, "utf8")).toBe("{ not json");
+    } finally {
+      dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects untrusted or malformed correction requests before reading profiles", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
+    mocks.getPath.mockReturnValue(directory);
+    const dispose = registerIpc(getMainWindow);
+    const correction = profileCorrections.corrections[0];
+    try {
+      await expect(
+        callHandler("prism:gpu:correctProfile", untrustedEvent(), {
+          profileId: "quiet",
+          corrections: [correction],
+        }),
+      ).rejects.toThrow("Untrusted IPC sender");
+      for (const payload of [
+        undefined,
+        { profileId: "quiet", corrections: [] },
+        { profileId: " ", corrections: [correction] },
+        { profileId: "quiet", corrections: [correction], gpuId: "GPU-123" },
+        { profileId: "quiet", corrections: [correction, correction] },
+        {
+          profileId: "quiet",
+          corrections: [{ ...correction, setting: "fanSpeed" }],
+        },
+        {
+          profileId: "quiet",
+          corrections: [{ ...correction, proposedValue: 280.5 }],
+        },
+        {
+          profileId: "quiet",
+          corrections: [{ ...correction, bound: "minimum" }],
+        },
+        {
+          profileId: "quiet",
+          corrections: [{ ...correction, proposedValue: 320 }],
+        },
+        {
+          profileId: "quiet",
+          corrections: [{ ...correction, extra: true }],
+        },
+      ]) {
+        await expect(
+          callHandler("prism:gpu:correctProfile", trustedEvent(), payload),
+        ).rejects.toThrow("Invalid correctProfile payload");
+      }
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+      await rm(directory, { recursive: true, force: true });
     }
   });
 

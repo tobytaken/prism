@@ -421,7 +421,11 @@ mod tests {
                 params: Some(json!({ "gpuId": "GPU-123", "settings": settings })),
             });
             assert!(response.result.is_none());
-            assert_eq!(response.error.expect("error").code, "invalid_request", "{settings}");
+            assert_eq!(
+                response.error.expect("error").code,
+                "invalid_request",
+                "{settings}"
+            );
         }
         let response = handle_request(BridgeRequest {
             id: 14,

@@ -264,8 +264,8 @@ export function GpuTuningScreen({
                   pendingAction={pendingAction}
                   reapplyPending={reapplyPending}
                   loadDisabled={busy || !daemonConnected}
-                  onLoad={(profile, settings) => {
-                    void editStore.apply(
+                  onLoad={(profile, settings) =>
+                    editStore.apply(
                       {
                         kind: "applyProfile",
                         gpuId: gpu.id,
@@ -274,8 +274,9 @@ export function GpuTuningScreen({
                       },
                       gpu,
                       onMutationAction,
-                    );
-                  }}
+                      { reviewCorrections: true },
+                    )
+                  }
                 />
               )}
               <fieldset

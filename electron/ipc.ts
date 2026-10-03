@@ -7,6 +7,7 @@ import {
   isProfileSettingKey,
 } from "@/features/gpus/lib/tuning-profiles";
 import type {
+  CorrectGpuProfileRequest,
   GpuPerformanceResponse,
   ProfileSettingKey,
 } from "@/features/gpus/types";
@@ -322,6 +323,44 @@ function validateDriverJobPayload(
   return isObject(payload) && isString(payload.jobId);
 }
 
+const CORRECTION_KEYS = ["setting", "savedValue", "proposedValue", "bound"];
+
+// A correction only moves a saved value to the bound it exceeded; it is never a free-form edit.
+function validateCorrectProfilePayload(
+  payload: unknown,
+): payload is CorrectGpuProfileRequest {
+  if (
+    !isObject(payload) ||
+    Object.keys(payload).some(
+      (key) => key !== "profileId" && key !== "corrections",
+    ) ||
+    !isString(payload.profileId) ||
+    !payload.profileId.trim() ||
+    !Array.isArray(payload.corrections) ||
+    payload.corrections.length === 0
+  )
+    return false;
+  const settings = new Set<unknown>();
+  return payload.corrections.every((correction: unknown) => {
+    if (
+      !isObject(correction) ||
+      Object.keys(correction).some((key) => !CORRECTION_KEYS.includes(key)) ||
+      !isProfileSettingKey(correction.setting) ||
+      settings.has(correction.setting) ||
+      !Number.isSafeInteger(correction.savedValue) ||
+      !Number.isSafeInteger(correction.proposedValue)
+    )
+      return false;
+    settings.add(correction.setting);
+    const saved = correction.savedValue as number;
+    const proposed = correction.proposedValue as number;
+    return (
+      (correction.bound === "maximum" && proposed < saved) ||
+      (correction.bound === "minimum" && proposed > saved)
+    );
+  });
+}
+
 function isAllowedExternalUrl(url: string) {
   return url.startsWith("https://") || url.startsWith("mailto:");
 }
@@ -360,6 +399,17 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     }
     return backend.invoke("gpu.applyProfile", payload);
   });
+
+  ipcMain.handle(
+    "prism:gpu:correctProfile",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (!validateCorrectProfilePayload(payload)) {
+        throw new Error("Invalid correctProfile payload");
+      }
+      return getProfileStore().correct(payload.profileId, payload.corrections);
+    },
+  );
 
   ipcMain.handle("prism:gpu:saveProfile", async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow);

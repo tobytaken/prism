@@ -10,6 +10,7 @@ import type {
   GpuProfileSettings,
   ProfileSetting,
   ProfileSettingKey,
+  ProfileRangeCorrection,
   TuningOutcome,
 } from "@/features/gpus/types";
 
@@ -55,11 +56,13 @@ export function useTuningEdits() {
     }
     return retryTuningAction(gpu, setting, value);
   }
+  // With reviewCorrections, proposed range corrections are returned instead of retained as edits.
   async function apply(
     action: PerformanceMutationAction,
     gpu: GpuPerformanceDevice,
     handler: TuningMutationHandler,
-  ) {
+    { reviewCorrections = false } = {},
+  ): Promise<ProfileRangeCorrection[] | undefined> {
     const intentions = actionIntentions(action, gpu);
     // Existing Apply buttons also retry retained profile instructions through validation.
     if (action.kind !== "applyProfile") {
@@ -110,6 +113,20 @@ export function useTuningEdits() {
       result = Object.fromEntries(
         Object.keys(intentions).map((setting) => [setting, outcome]),
       );
+    }
+    if (reviewCorrections && result?.corrections?.length) {
+      // Nothing was written, so declining the review must leave no trace.
+      update(gpu.id, (device) => {
+        const edits = { ...device.edits };
+        const profileOwners = { ...device.profileOwners };
+        for (const setting of Object.keys(intentions) as TuningSetting[]) {
+          if (edits[setting] !== intentions[setting]) continue;
+          delete edits[setting];
+          delete profileOwners[setting];
+        }
+        return { ...device, edits, profileOwners };
+      });
+      return result.corrections;
     }
     update(gpu.id, (device) => {
       const edits = { ...device.edits };

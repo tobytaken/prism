@@ -15,6 +15,7 @@ import type {
   GpuPerformanceDevice,
   GpuProfileSettings,
   GpuTuningProfile,
+  ProfileRangeCorrection,
   ProfileSettingKey,
 } from "@/features/gpus/types";
 
@@ -36,11 +37,20 @@ export function GpuProfilePanel({
   readError: string | null;
   pendingAction: PerformanceMutationAction | null;
   reapplyPending?: boolean;
-  onLoad?: (profile: GpuTuningProfile, settings: GpuProfileSettings) => void;
+  /** Resolves with proposed range corrections when the profile needs review before applying. */
+  onLoad?: (
+    profile: GpuTuningProfile,
+    settings: GpuProfileSettings,
+  ) => Promise<ProfileRangeCorrection[] | undefined>;
   loadDisabled?: boolean;
 }) {
   const id = useId();
   const [name, setName] = useState("");
+  const [review, setReview] = useState<{
+    profile: GpuTuningProfile;
+    corrections: ProfileRangeCorrection[];
+  } | null>(null);
+  const [correctedNotice, setCorrectedNotice] = useState<string | null>(null);
   const profiles =
     workflow.query.data?.filter((profile) => profile.gpuId === gpu.stableId) ??
     [];
@@ -74,6 +84,7 @@ export function GpuProfilePanel({
       : null;
   const canLoad =
     !!selected &&
+    !review &&
     !!gpu.stableId &&
     !readError &&
     !loadBlocker &&
@@ -82,6 +93,38 @@ export function GpuProfilePanel({
     !workflow.save.isPending &&
     !workflow.query.isPending &&
     !workflow.query.error;
+  const canAdjust =
+    !!review &&
+    Object.keys(edits).length === 0 &&
+    !loadDisabled &&
+    !profileMutationPending &&
+    !workflow.correct.isPending;
+  async function load(profile: GpuTuningProfile) {
+    const corrections = await onLoad?.(profile, profile.settings);
+    if (corrections?.length) setReview({ profile, corrections });
+  }
+  // Approved corrections are saved first and stay saved whatever the GPU later reports.
+  async function adjustAndApply() {
+    if (!canAdjust || !review) return;
+    let corrected: GpuTuningProfile;
+    try {
+      corrected = await workflow.correct.mutateAsync({
+        profileId: review.profile.id,
+        corrections: review.corrections,
+      });
+    } catch {
+      return;
+    }
+    setReview(null);
+    setCorrectedNotice(
+      `Saved the approved corrections to "${corrected.name}". The saved profile does not confirm GPU settings; check each setting's application outcome.`,
+    );
+    await load(corrected);
+  }
+  function closeReview() {
+    setReview(null);
+    workflow.correct.reset();
+  }
   return (
     <section
       aria-label={`${gpu.name} profiles (${gpu.stableId ?? gpu.id})`}
@@ -103,9 +146,12 @@ export function GpuProfilePanel({
             id={`${id}-select`}
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={selected?.id ?? ""}
-            onChange={(event) =>
-              gpu.stableId && workflow.select(gpu.stableId, event.target.value)
-            }
+            onChange={(event) => {
+              closeReview();
+              setCorrectedNotice(null);
+              if (gpu.stableId)
+                workflow.select(gpu.stableId, event.target.value);
+            }}
           >
             <option value="">Select a profile</option>
             {profiles.map((profile) => (
@@ -119,7 +165,9 @@ export function GpuProfilePanel({
               type="button"
               disabled={!canLoad}
               onClick={() => {
-                if (canLoad && selected) onLoad(selected, selected.settings);
+                if (!canLoad || !selected) return;
+                setCorrectedNotice(null);
+                void load(selected);
               }}
             >
               Load profile
@@ -167,15 +215,75 @@ export function GpuProfilePanel({
           {loadBlocker}
         </p>
       )}
+      {review && (
+        <section
+          aria-label="Review profile corrections"
+          className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4"
+        >
+          <h3 className="text-sm font-semibold">Review profile corrections</h3>
+          <p className="text-sm text-muted-foreground">
+            Some values saved in "{review.profile.name}" are outside this GPU's
+            current allowed ranges. Adjusting saves these values to the profile
+            and then applies it. Cancel leaves the profile and GPU unchanged.
+          </p>
+          <ul className="list-disc space-y-1 pl-5 text-sm">
+            {review.corrections.map((correction) => {
+              const { label, unit } = settingDisplay[correction.setting];
+              return (
+                <li key={correction.setting}>
+                  {`${label}: saved ${correction.savedValue} ${unit} → current ${correction.bound} ${correction.proposedValue} ${unit}`}
+                </li>
+              );
+            })}
+          </ul>
+          {Object.keys(edits).length > 0 && (
+            <p role="status" className="text-sm text-muted-foreground">
+              Apply or discard outstanding tuning changes before adjusting the
+              profile.
+            </p>
+          )}
+          {workflow.correct.error && (
+            <p role="alert" className="text-sm text-destructive">
+              The corrected profile could not be saved, so no GPU settings were
+              changed. {workflow.correct.error.message}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              disabled={!canAdjust}
+              onClick={() => void adjustAndApply()}
+            >
+              {workflow.correct.isPending && (
+                <LoaderCircle className="animate-spin" />
+              )}
+              Adjust profile and apply
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={workflow.correct.isPending}
+              onClick={closeReview}
+            >
+              Cancel
+            </Button>
+          </div>
+        </section>
+      )}
+      {correctedNotice && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {correctedNotice}
+        </p>
+      )}
       {selected && (
         <div className="flex flex-wrap gap-3 text-sm">
           {Object.entries(selected.settings).map(([key, setting]) => (
             <Badge key={key} variant="secondary">
               {setting.kind === "default"
                 ? "Use default"
-                : `${setting.value} ${key === "powerLimitWatts" ? "W" : "MHz"}`}
+                : `${setting.value} ${settingDisplay[key as keyof GpuProfileSettings].unit}`}
               <span className="ml-1 text-muted-foreground">
-                {settingLabels[key as keyof GpuProfileSettings]}
+                {settingDisplay[key as keyof GpuProfileSettings].shortLabel}
               </span>
             </Badge>
           ))}
@@ -203,10 +311,22 @@ export function GpuProfilePanel({
   );
 }
 
-const settingLabels = {
-  powerLimitWatts: "Power limit",
-  graphicsOffsetMHz: "Graphics offset",
-  memoryOffsetMHz: "Memory offset",
+const settingDisplay = {
+  powerLimitWatts: {
+    label: "Power limit",
+    shortLabel: "Power limit",
+    unit: "W",
+  },
+  graphicsOffsetMHz: {
+    label: "Graphics clock offset",
+    shortLabel: "Graphics offset",
+    unit: "MHz",
+  },
+  memoryOffsetMHz: {
+    label: "Memory clock offset",
+    shortLabel: "Memory offset",
+    unit: "MHz",
+  },
 };
 
 export function GpuProfileAvailability({
