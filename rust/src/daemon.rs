@@ -24,7 +24,7 @@ use crate::gpu::{
 };
 use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, DaemonCommandResponse, DaemonRequest,
-    DaemonResponse, ProfileApplicationResponse, TuningOutcome, TuningOutcomeStatus,
+    DaemonResponse, ProfileApplicationResponse, ProfileSetting, TuningOutcome, TuningOutcomeStatus,
 };
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/prism/prismd.sock";
@@ -355,50 +355,76 @@ fn apply_profile<B: DaemonBackend>(
     if owners.next().is_some() {
         return blocked("The owning GPU's stable identity is ambiguous. Refresh the GPU readings and try again.".into());
     }
+    // Resolve explicit defaults from the same fresh readings used for validation.
     let mut errors = Vec::new();
-    let mut validate = |label: &str,
-                        value: Option<i64>,
-                        support: ControlSupport,
-                        reason: &Option<String>,
-                        min: Option<i64>,
-                        max: Option<i64>| {
-        let Some(value) = value else {
-            return;
-        };
+    let mut resolve = |label: &str,
+                       setting: Option<ProfileSetting>,
+                       support: ControlSupport,
+                       reason: &Option<String>,
+                       default: Option<i64>,
+                       min: Option<i64>,
+                       max: Option<i64>|
+     -> Option<i64> {
+        let setting = setting?;
         match support {
-            ControlSupport::Unsupported => errors.push(format!("{label} is unsupported. {}", reason.as_deref().unwrap_or("Choose a compatible profile."))),
-            ControlSupport::Unknown => errors.push(format!("{label} support is unknown. {}", reason.as_deref().unwrap_or("Refresh the GPU readings and try again."))),
-            ControlSupport::Supported => match (min, max) {
-                (Some(min), Some(max)) if min <= max => {
-                    if value < min || value > max {
-                        errors.push(format!("{label}: requested {value} is outside the current allowed range {min} to {max}. Update the profile or cancel loading."));
-                    }
-                },
-                _ => errors.push(format!("{label}: the current allowed range is unavailable. Refresh the GPU readings and try again.")),
-            },
+            ControlSupport::Unsupported => errors.push(format!(
+                "{label} is unsupported. {}",
+                reason.as_deref().unwrap_or("Choose a compatible profile.")
+            )),
+            ControlSupport::Unknown => errors.push(format!(
+                "{label} support is unknown. {}",
+                reason
+                    .as_deref()
+                    .unwrap_or("Refresh the GPU readings and try again.")
+            )),
+            ControlSupport::Supported => {
+                let (value, requested) = match setting {
+                    ProfileSetting::Value { value } => (value, "requested"),
+                    ProfileSetting::Default {} => match default {
+                        Some(value) => (value, "the default"),
+                        None => {
+                            errors.push(format!("{label}: the default is unavailable. Refresh the GPU readings and try again."));
+                            return None;
+                        }
+                    },
+                };
+                match (min, max) {
+                    (Some(min), Some(max)) if min <= max => {
+                        if value < min || value > max {
+                            errors.push(format!("{label}: {requested} {value} is outside the current allowed range {min} to {max}. Update the profile or cancel loading."));
+                        }
+                    },
+                    _ => errors.push(format!("{label}: the current allowed range is unavailable. Refresh the GPU readings and try again.")),
+                }
+                return Some(value);
+            }
         }
+        None
     };
-    validate(
+    let power = resolve(
         "Power limit",
         settings.power_limit_watts,
         gpu.power.support,
         &gpu.power.reason,
+        gpu.power.default_limit_watts.map(i64::from),
         gpu.power.min_limit_watts.map(i64::from),
         gpu.power.max_limit_watts.map(i64::from),
     );
-    validate(
+    let graphics = resolve(
         "Graphics clock offset",
         settings.graphics_offset_mhz,
         gpu.clocks.graphics.support,
         &gpu.clocks.graphics.reason,
+        Some(0),
         gpu.clocks.graphics.min_offset_mhz.map(i64::from),
         gpu.clocks.graphics.max_offset_mhz.map(i64::from),
     );
-    validate(
+    let memory = resolve(
         "Memory clock offset",
         settings.memory_offset_mhz,
         gpu.clocks.memory.support,
         &gpu.clocks.memory.reason,
+        Some(0),
         gpu.clocks.memory.min_offset_mhz.map(i64::from),
         gpu.clocks.memory.max_offset_mhz.map(i64::from),
     );
@@ -430,7 +456,7 @@ fn apply_profile<B: DaemonBackend>(
         }
     };
     ProfileApplicationResponse {
-        power: settings.power_limit_watts.map(|value| {
+        power: power.map(|value| {
             execute(&mut || {
                 backend.set_power_limit(SetGpuPowerLimitRequest {
                     gpu_id: request.gpu_id.clone(),
@@ -438,7 +464,7 @@ fn apply_profile<B: DaemonBackend>(
                 })
             })
         }),
-        graphics: settings.graphics_offset_mhz.map(|value| {
+        graphics: graphics.map(|value| {
             execute(&mut || {
                 backend.set_clock_offsets(SetGpuClockOffsetsRequest {
                     gpu_id: request.gpu_id.clone(),
@@ -447,7 +473,7 @@ fn apply_profile<B: DaemonBackend>(
                 })
             })
         }),
-        memory: settings.memory_offset_mhz.map(|value| {
+        memory: memory.map(|value| {
             execute(&mut || {
                 backend.set_clock_offsets(SetGpuClockOffsetsRequest {
                     gpu_id: request.gpu_id.clone(),
@@ -880,7 +906,7 @@ mod tests {
         PersistedGpuConfig, PersistedGpuState, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
         SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
     };
-    use crate::protocol::{DaemonRequest, DaemonResponse};
+    use crate::protocol::{ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, ProfileSetting};
     use std::cell::RefCell;
     use std::path::PathBuf;
 
@@ -1034,7 +1060,7 @@ mod tests {
         let mut state = PersistedGpuState::default();
         let request = serde_json::from_value(serde_json::json!({
             "type": "apply_profile", "payload": {
-                "gpuId": "GPU-123", "settings": { "powerLimitWatts": 450, "memoryOffsetMHz": 80 }
+                "gpuId": "GPU-123", "settings": { "powerLimitWatts": { "kind": "value", "value": 450 }, "memoryOffsetMHz": { "kind": "value", "value": 80 } }
             }
         }))
         .unwrap();
@@ -1126,7 +1152,7 @@ mod tests {
             };
             let mut state = PersistedGpuState::default();
             let request = serde_json::from_value(serde_json::json!({ "type": "apply_profile", "payload": {
-                "gpuId": "GPU-123", "settings": { "powerLimitWatts": 450, "graphicsOffsetMHz": 150, "memoryOffsetMHz": 80 }
+                "gpuId": "GPU-123", "settings": { "powerLimitWatts": { "kind": "value", "value": 450 }, "graphicsOffsetMHz": { "kind": "value", "value": 150 }, "memoryOffsetMHz": { "kind": "value", "value": 80 } }
             }})).unwrap();
             let result =
                 serde_json::to_value(handle_request(&backend, &paths, &mut state, request))
@@ -1197,7 +1223,7 @@ mod tests {
         let bytes = serde_json::to_vec(&saved).unwrap();
         std::fs::write(&paths.state_path, &bytes).unwrap();
         let request = serde_json::from_value(serde_json::json!({ "type": "apply_profile", "payload": {
-            "gpuId": "GPU-123", "settings": { "powerLimitWatts": 450, "graphicsOffsetMHz": -150 }
+            "gpuId": "GPU-123", "settings": { "powerLimitWatts": { "kind": "value", "value": 450 }, "graphicsOffsetMHz": { "kind": "value", "value": -150 } }
         }})).unwrap();
         let result =
             serde_json::to_value(handle_request(&backend, &paths, &mut state, request)).unwrap();
@@ -1232,7 +1258,7 @@ mod tests {
         };
         let mut state = PersistedGpuState::default();
         let request = serde_json::from_value(serde_json::json!({ "type": "apply_profile", "payload": {
-            "gpuId": "GPU-123", "settings": { "powerLimitWatts": 450, "graphicsOffsetMHz": 150, "memoryOffsetMHz": 80 }
+            "gpuId": "GPU-123", "settings": { "powerLimitWatts": { "kind": "value", "value": 450 }, "graphicsOffsetMHz": { "kind": "value", "value": 150 }, "memoryOffsetMHz": { "kind": "value", "value": 80 } }
         }})).unwrap();
         let result =
             serde_json::to_value(handle_request(&backend, &paths, &mut state, request)).unwrap();
@@ -1253,7 +1279,7 @@ mod tests {
             .max_offset_mhz = Some(50);
         let retry: DaemonRequest =
             serde_json::from_value(serde_json::json!({ "type": "apply_profile", "payload": {
-                "gpuId": "GPU-123", "settings": { "graphicsOffsetMHz": 150, "memoryOffsetMHz": 80 }
+                "gpuId": "GPU-123", "settings": { "graphicsOffsetMHz": { "kind": "value", "value": 150 }, "memoryOffsetMHz": { "kind": "value", "value": 80 } }
             }}))
             .unwrap();
         let rejected =
@@ -1282,6 +1308,170 @@ mod tests {
         assert_eq!(actual.gpus[0].clocks.graphics.current_offset_mhz, Some(150));
         assert_eq!(actual.gpus[0].clocks.memory.current_offset_mhz, Some(80));
         assert!(!paths.state_path.exists());
+    }
+
+    fn apply_profile_settings(
+        backend: &MockBackend,
+        settings: serde_json::Value,
+    ) -> serde_json::Value {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = DaemonPaths {
+            state_path: directory.path().join("state.json"),
+            ..test_paths()
+        };
+        let mut state = PersistedGpuState::default();
+        let request =
+            serde_json::from_value(serde_json::json!({ "type": "apply_profile", "payload": {
+                "gpuId": "GPU-123", "settings": settings
+            }}))
+            .unwrap();
+        let result =
+            serde_json::to_value(handle_request(backend, &paths, &mut state, request)).unwrap();
+        assert!(!paths.state_path.exists());
+        result["payload"].clone()
+    }
+
+    #[test]
+    fn explicit_defaults_follow_the_currently_reported_power_default_while_numbers_stay_fixed() {
+        let backend = profile_backend();
+        let defaults = serde_json::json!({
+            "powerLimitWatts": { "kind": "default" },
+            "graphicsOffsetMHz": { "kind": "default" },
+            "memoryOffsetMHz": { "kind": "default" }
+        });
+        let fixed = serde_json::json!({ "powerLimitWatts": { "kind": "value", "value": 575 } });
+        let result = apply_profile_settings(&backend, defaults.clone());
+        for setting in ["power", "graphics", "memory"] {
+            assert_eq!(result[setting]["status"], "succeeded", "{setting}");
+        }
+        let gpu = backend.performance.borrow().gpus[0].clone();
+        assert_eq!(gpu.power.current_limit_watts, Some(575));
+        assert_eq!(gpu.clocks.graphics.current_offset_mhz, Some(0));
+        assert_eq!(gpu.clocks.memory.current_offset_mhz, Some(0));
+
+        // A driver update changes the reported default.
+        backend.performance.borrow_mut().gpus[0]
+            .power
+            .default_limit_watts = Some(520);
+        apply_profile_settings(&backend, fixed);
+        assert_eq!(
+            backend.performance.borrow().gpus[0]
+                .power
+                .current_limit_watts,
+            Some(575)
+        );
+        apply_profile_settings(&backend, defaults);
+        assert_eq!(
+            backend.performance.borrow().gpus[0]
+                .power
+                .current_limit_watts,
+            Some(520)
+        );
+    }
+
+    #[test]
+    fn unavailable_or_out_of_range_defaults_block_every_included_instruction_before_writes() {
+        for (invalid, expected) in [
+            (
+                "power default unavailable",
+                "Power limit: the default is unavailable",
+            ),
+            (
+                "power default above maximum",
+                "Power limit: the default 650 is outside the current allowed range 300 to 600",
+            ),
+            (
+                "offset range excludes zero",
+                "Memory clock offset: the default 0 is outside the current allowed range 10 to 200",
+            ),
+            ("unsupported default", "Memory clock offset is unsupported"),
+        ] {
+            let backend = profile_backend();
+            {
+                let mut performance = backend.performance.borrow_mut();
+                let gpu = &mut performance.gpus[0];
+                match invalid {
+                    "power default unavailable" => gpu.power.default_limit_watts = None,
+                    "power default above maximum" => gpu.power.default_limit_watts = Some(650),
+                    "offset range excludes zero" => gpu.clocks.memory.min_offset_mhz = Some(10),
+                    "unsupported default" => {
+                        gpu.clocks.memory.support = crate::gpu::ControlSupport::Unsupported
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            let before = backend.performance.borrow().clone();
+            let result = apply_profile_settings(
+                &backend,
+                serde_json::json!({
+                    "powerLimitWatts": { "kind": "default" },
+                    "graphicsOffsetMHz": { "kind": "value", "value": 150 },
+                    "memoryOffsetMHz": { "kind": "default" }
+                }),
+            );
+            for setting in ["power", "graphics", "memory"] {
+                assert_eq!(result[setting]["status"], "unattempted", "{invalid}");
+                assert!(
+                    result[setting]["error"]
+                        .as_str()
+                        .unwrap()
+                        .contains(expected),
+                    "{invalid}: {}",
+                    result[setting]["error"]
+                );
+            }
+            assert_eq!(*backend.performance.borrow(), before, "{invalid}");
+        }
+    }
+
+    #[test]
+    fn omitted_settings_need_no_default_resolution() {
+        let backend = profile_backend();
+        {
+            let mut performance = backend.performance.borrow_mut();
+            performance.gpus[0].power.default_limit_watts = None;
+            performance.gpus[0].power.support = crate::gpu::ControlSupport::Unknown;
+        }
+        let result = apply_profile_settings(
+            &backend,
+            serde_json::json!({ "graphicsOffsetMHz": { "kind": "default" } }),
+        );
+        assert_eq!(result["graphics"]["status"], "succeeded");
+        assert!(result["power"].is_null());
+        assert_eq!(
+            backend.performance.borrow().gpus[0]
+                .power
+                .current_limit_watts,
+            Some(475)
+        );
+    }
+
+    #[test]
+    fn profile_settings_round_trip_omitted_numeric_and_default_instructions() {
+        let request: ApplyGpuProfileRequest = serde_json::from_value(serde_json::json!({
+            "gpuId": "GPU-123",
+            "settings": {
+                "powerLimitWatts": { "kind": "value", "value": 575 },
+                "graphicsOffsetMHz": { "kind": "default" }
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            request.settings.power_limit_watts,
+            Some(ProfileSetting::Value { value: 575 })
+        );
+        assert_eq!(
+            request.settings.graphics_offset_mhz,
+            Some(ProfileSetting::Default {})
+        );
+        assert_eq!(request.settings.memory_offset_mhz, None);
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["settings"],
+            serde_json::json!({
+                "powerLimitWatts": { "kind": "value", "value": 575 },
+                "graphicsOffsetMHz": { "kind": "default" }
+            })
+        );
     }
 
     #[test]

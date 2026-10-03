@@ -3,10 +3,73 @@ import type {
   GpuPerformanceDevice,
   GpuProfileSettings,
   GpuTuningProfile,
+  ProfileSetting,
+  ProfileSettingKey,
 } from "@/features/gpus/types";
+
+export const PROFILE_SETTING_KEYS = [
+  "powerLimitWatts",
+  "graphicsOffsetMHz",
+  "memoryOffsetMHz",
+] as const satisfies readonly ProfileSettingKey[];
+
+type ProfileReading = {
+  label: string;
+  support: ControlSupport;
+  current: number | null;
+  default: number | null;
+  error: string | null;
+};
+
+function profileReadings(
+  gpu: GpuPerformanceDevice,
+): Record<ProfileSettingKey, ProfileReading> {
+  return {
+    powerLimitWatts: {
+      label: "Power limit",
+      support: gpu.power.support,
+      current: gpu.power.currentLimitWatts,
+      default: gpu.power.defaultLimitWatts,
+      error: gpu.power.currentValueError ?? gpu.power.reason,
+    },
+    graphicsOffsetMHz: {
+      label: "Graphics clock offset",
+      support: gpu.clocks.graphics.support,
+      current: gpu.clocks.graphics.currentOffsetMHz,
+      default: 0,
+      error:
+        gpu.clocks.graphics.currentValueError ?? gpu.clocks.graphics.reason,
+    },
+    memoryOffsetMHz: {
+      label: "Memory clock offset",
+      support: gpu.clocks.memory.support,
+      current: gpu.clocks.memory.currentOffsetMHz,
+      default: 0,
+      error: gpu.clocks.memory.currentValueError ?? gpu.clocks.memory.reason,
+    },
+  };
+}
+
+// An applied default choice describes the GPU only while the current value is
+// the resolved default; numeric equality alone never establishes default intent.
+function appliedSetting(
+  reading: ProfileReading,
+  followsDefault: boolean,
+): ProfileSetting | null {
+  if (
+    reading.support !== "supported" ||
+    reading.current == null ||
+    !Number.isFinite(reading.current)
+  )
+    return null;
+  return followsDefault && reading.current === reading.default
+    ? { kind: "default" }
+    : { kind: "value", value: reading.current };
+}
 
 export function captureProfileSettings(
   gpu: GpuPerformanceDevice,
+  appliedDefaults: readonly ProfileSettingKey[] = [],
 ): GpuProfileSettings {
   if (!gpu.stableId?.trim()) {
     throw new Error(
@@ -14,53 +77,23 @@ export function captureProfileSettings(
     );
   }
   const settings: GpuProfileSettings = {};
-  function capture({
-    key,
-    label,
-    support,
-    value,
-    error,
-  }: {
-    key: keyof GpuProfileSettings;
-    label: string;
-    support: ControlSupport;
-    value: number | null;
-    error: string | null;
-  }) {
-    if (support === "unsupported") return;
-    if (support !== "supported") {
+  const readings = profileReadings(gpu);
+  for (const key of PROFILE_SETTING_KEYS) {
+    const reading = readings[key];
+    if (reading.support === "unsupported") continue;
+    if (reading.support !== "supported") {
       throw new Error(
-        `${label}: support is unknown. ${error ?? "Refresh the GPU readings and try again."}`,
+        `${reading.label}: support is unknown. ${reading.error ?? "Refresh the GPU readings and try again."}`,
       );
     }
-    if (value == null || !Number.isFinite(value)) {
+    const setting = appliedSetting(reading, appliedDefaults.includes(key));
+    if (!setting) {
       throw new Error(
-        `${label}: current configured value is unavailable. ${error ?? "Refresh the GPU readings and try again."}`,
+        `${reading.label}: current configured value is unavailable. ${reading.error ?? "Refresh the GPU readings and try again."}`,
       );
     }
-    settings[key] = { kind: "value", value };
+    settings[key] = setting;
   }
-  capture({
-    key: "powerLimitWatts",
-    label: "Power limit",
-    support: gpu.power.support,
-    value: gpu.power.currentLimitWatts,
-    error: gpu.power.currentValueError ?? gpu.power.reason,
-  });
-  capture({
-    key: "graphicsOffsetMHz",
-    label: "Graphics clock offset",
-    support: gpu.clocks.graphics.support,
-    value: gpu.clocks.graphics.currentOffsetMHz,
-    error: gpu.clocks.graphics.currentValueError ?? gpu.clocks.graphics.reason,
-  });
-  capture({
-    key: "memoryOffsetMHz",
-    label: "Memory clock offset",
-    support: gpu.clocks.memory.support,
-    value: gpu.clocks.memory.currentOffsetMHz,
-    error: gpu.clocks.memory.currentValueError ?? gpu.clocks.memory.reason,
-  });
   if (Object.keys(settings).length === 0) {
     throw new Error(
       "This GPU has no supported profile settings (power limit or clock offsets).",
@@ -81,39 +114,25 @@ export function profileSaveBlocker(gpu: GpuPerformanceDevice): string | null {
 export function compareProfile(
   gpu: GpuPerformanceDevice,
   profile: GpuTuningProfile,
+  appliedDefaults: readonly ProfileSettingKey[] = [],
 ) {
-  const readings = {
-    powerLimitWatts: {
-      support: gpu.power.support,
-      current: gpu.power.currentLimitWatts,
-      default: gpu.power.defaultLimitWatts,
-    },
-    graphicsOffsetMHz: {
-      support: gpu.clocks.graphics.support,
-      current: gpu.clocks.graphics.currentOffsetMHz,
-      default: 0,
-    },
-    memoryOffsetMHz: {
-      support: gpu.clocks.memory.support,
-      current: gpu.clocks.memory.currentOffsetMHz,
-      default: 0,
-    },
-  };
+  const readings = profileReadings(gpu);
   let changed = false;
   let unavailable = false;
-  for (const key of Object.keys(
-    profile.settings,
-  ) as (keyof GpuProfileSettings)[]) {
+  for (const key of Object.keys(profile.settings) as ProfileSettingKey[]) {
     const setting = profile.settings[key]!;
-    const reading = readings[key];
-    const desired = setting.kind === "value" ? setting.value : reading.default;
-    if (
-      reading.support !== "supported" ||
-      reading.current == null ||
-      desired == null
-    ) {
+    const applied = appliedSetting(
+      readings[key],
+      appliedDefaults.includes(key),
+    );
+    if (!applied) {
       unavailable = true;
-    } else if (reading.current !== desired) {
+    } else if (
+      applied.kind !== setting.kind ||
+      (applied.kind === "value" &&
+        setting.kind === "value" &&
+        applied.value !== setting.value)
+    ) {
       changed = true;
     }
   }

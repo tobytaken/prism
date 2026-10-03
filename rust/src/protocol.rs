@@ -37,43 +37,52 @@ pub struct ClockOffsetResponse {
     pub memory: Option<TuningOutcome>,
 }
 
+/// A desired tuning instruction: a fixed number, or the default resolved at application time.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ProfileSetting {
+    Value { value: i64 },
+    // A struct variant so deny_unknown_fields also rejects `{ "kind": "default", "value": .. }`.
+    Default {},
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NumericProfileSettings {
+pub struct ProfileSettings {
     #[serde(
         default,
-        deserialize_with = "included_value",
+        deserialize_with = "included_setting",
         skip_serializing_if = "Option::is_none"
     )]
-    pub power_limit_watts: Option<i64>,
+    pub power_limit_watts: Option<ProfileSetting>,
     #[serde(
         default,
         rename = "graphicsOffsetMHz",
-        deserialize_with = "included_value",
+        deserialize_with = "included_setting",
         skip_serializing_if = "Option::is_none"
     )]
-    pub graphics_offset_mhz: Option<i64>,
+    pub graphics_offset_mhz: Option<ProfileSetting>,
     #[serde(
         default,
         rename = "memoryOffsetMHz",
-        deserialize_with = "included_value",
+        deserialize_with = "included_setting",
         skip_serializing_if = "Option::is_none"
     )]
-    pub memory_offset_mhz: Option<i64>,
+    pub memory_offset_mhz: Option<ProfileSetting>,
 }
 
 // An included null is invalid; only an omitted instruction leaves a control alone.
-fn included_value<'de, D: serde::Deserializer<'de>>(
+fn included_setting<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Option<i64>, D::Error> {
-    i64::deserialize(deserializer).map(Some)
+) -> Result<Option<ProfileSetting>, D::Error> {
+    ProfileSetting::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ApplyGpuProfileRequest {
     pub gpu_id: String,
-    pub settings: NumericProfileSettings,
+    pub settings: ProfileSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

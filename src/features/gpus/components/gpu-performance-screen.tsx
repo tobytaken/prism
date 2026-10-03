@@ -286,6 +286,7 @@ function GpuTelemetrySurface({
               gpu={gpu}
               workflow={profiles}
               edits={editStore.devices[gpu.id]?.edits ?? {}}
+              appliedDefaults={editStore.appliedDefaults(gpu.id)}
               readError={readError}
               pendingAction={pendingAction}
               loadDisabled={profileLoadingDisabled}

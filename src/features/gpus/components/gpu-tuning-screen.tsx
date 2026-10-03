@@ -39,7 +39,8 @@ import type {
   GpuPerformanceDevice,
   GpuPerformanceResponse,
   PowerControlInfo,
-  NumericProfileSettings,
+  GpuProfileSettings,
+  ProfileSettingKey,
 } from "@/features/gpus/types";
 
 export type PerformanceMutationAction =
@@ -47,7 +48,7 @@ export type PerformanceMutationAction =
       kind: "applyProfile";
       gpuId: string;
       stableId: string;
-      settings: NumericProfileSettings;
+      settings: GpuProfileSettings;
     }
   | {
       kind: "setPowerLimit";
@@ -72,8 +73,9 @@ export type PerformanceMutationAction =
   | {
       kind: "setClockOffsets";
       gpuId: string;
-      graphicsOffsetMHz: number | null;
-      memoryOffsetMHz: number | null;
+      // "default" requests the default offset, which is zero.
+      graphicsOffsetMHz: number | "default" | null;
+      memoryOffsetMHz: number | "default" | null;
     }
   | {
       kind: "resetClockOffsets";
@@ -257,6 +259,7 @@ export function GpuTuningScreen({
                   gpu={gpu}
                   workflow={profiles}
                   edits={editStore.devices[gpu.id]?.edits ?? {}}
+                  appliedDefaults={editStore.appliedDefaults(gpu.id)}
                   readError={errorMessage}
                   pendingAction={pendingAction}
                   reapplyPending={reapplyPending}
@@ -334,18 +337,31 @@ export function GpuTuningControls({
           ? gpu.power.defaultLimitWatts
           : null
       : gpu.power.currentLimitWatts;
-  const graphicsDraft =
-    "graphics" in edits
-      ? typeof edits.graphics === "number"
-        ? edits.graphics
+  const offsetDraft = (setting: "graphics" | "memory") =>
+    setting in edits
+      ? typeof edits[setting] === "number"
+        ? edits[setting]
+        : edits[setting] === "default"
+          ? 0
+          : null
+      : gpu.clocks[setting].currentOffsetMHz;
+  const graphicsDraft = offsetDraft("graphics");
+  const memoryDraft = offsetDraft("memory");
+  // A default choice is shown as applied only while the GPU still reports the resolved default.
+  const appliedDefaults = editStore.appliedDefaults(gpu.id);
+  const defaultChoice = (
+    setting: "power" | "graphics" | "memory",
+    key: ProfileSettingKey,
+    current: number | null,
+    resolved: number | null,
+  ): DefaultChoice =>
+    setting in edits
+      ? edits[setting] === "default"
+        ? "unapplied"
         : null
-      : gpu.clocks.graphics.currentOffsetMHz;
-  const memoryDraft =
-    "memory" in edits
-      ? typeof edits.memory === "number"
-        ? edits.memory
-        : null
-      : gpu.clocks.memory.currentOffsetMHz;
+      : appliedDefaults.includes(key) && current != null && current === resolved
+        ? "applied"
+        : null;
   const fanDrafts = Object.fromEntries(
     gpu.cooling.fans.map((fan) => [
       fan.index,
@@ -398,26 +414,19 @@ export function GpuTuningControls({
   const powerBusy = pendingAction != null;
   const clocksBusy = pendingAction != null;
 
-  const graphicsToApply =
-    "graphics" in edits &&
-    canEditOffset(gpu.clocks.graphics) &&
-    inTuningRange(
-      graphicsDraft,
-      gpu.clocks.graphics.minOffsetMHz,
-      gpu.clocks.graphics.maxOffsetMHz,
-    )
-      ? graphicsDraft
+  const offsetToApply = (setting: "graphics" | "memory") => {
+    const info = gpu.clocks[setting];
+    const draft = offsetDraft(setting);
+    return setting in edits &&
+      canEditOffset(info) &&
+      inTuningRange(draft, info.minOffsetMHz, info.maxOffsetMHz)
+      ? edits[setting] === "default"
+        ? ("default" as const)
+        : draft
       : null;
-  const memoryToApply =
-    "memory" in edits &&
-    canEditOffset(gpu.clocks.memory) &&
-    inTuningRange(
-      memoryDraft,
-      gpu.clocks.memory.minOffsetMHz,
-      gpu.clocks.memory.maxOffsetMHz,
-    )
-      ? memoryDraft
-      : null;
+  };
+  const graphicsToApply = offsetToApply("graphics");
+  const memoryToApply = offsetToApply("memory");
   const hasClockChanges = graphicsToApply != null || memoryToApply != null;
 
   const identity = showIdentity ? (
@@ -446,14 +455,23 @@ export function GpuTuningControls({
         layout={layout}
         busy={powerBusy}
         hasChanges={"power" in edits}
+        defaultChoice={defaultChoice(
+          "power",
+          "powerLimitWatts",
+          gpu.power.currentLimitWatts,
+          gpu.power.defaultLimitWatts,
+        )}
         onDraftChange={setPowerDraft}
+        onUseDefault={() => editStore.change(gpu.id, "power", "default")}
         onApply={() =>
-          powerDraft != null &&
-          onMutationAction({
-            kind: "setPowerLimit",
-            gpuId: gpu.id,
-            limitWatts: powerDraft,
-          })
+          edits.power === "default"
+            ? onMutationAction({ kind: "resetPowerLimit", gpuId: gpu.id })
+            : powerDraft != null &&
+              onMutationAction({
+                kind: "setPowerLimit",
+                gpuId: gpu.id,
+                limitWatts: powerDraft,
+              })
         }
         onReset={() =>
           onMutationAction({
@@ -507,8 +525,21 @@ export function GpuTuningControls({
         layout={layout}
         busy={clocksBusy}
         hasChanges={hasClockChanges}
+        graphicsDefaultChoice={defaultChoice(
+          "graphics",
+          "graphicsOffsetMHz",
+          gpu.clocks.graphics.currentOffsetMHz,
+          0,
+        )}
+        memoryDefaultChoice={defaultChoice(
+          "memory",
+          "memoryOffsetMHz",
+          gpu.clocks.memory.currentOffsetMHz,
+          0,
+        )}
         onGraphicsDraftChange={setGraphicsDraft}
         onMemoryDraftChange={setMemoryDraft}
+        onUseDefault={(setting) => editStore.change(gpu.id, setting, "default")}
         onApply={() =>
           onMutationAction({
             kind: "setClockOffsets",
@@ -559,7 +590,9 @@ function PowerSectionContent({
   draft,
   layout,
   busy,
+  defaultChoice,
   onDraftChange,
+  onUseDefault,
   onApply,
   onReset,
   hasChanges,
@@ -569,7 +602,9 @@ function PowerSectionContent({
   draft: number | null;
   layout: "stack" | "rail";
   busy: boolean;
+  defaultChoice: DefaultChoice;
   onDraftChange: (value: number | null) => void;
+  onUseDefault: () => void;
   onApply: () => void;
   onReset: () => void;
 }) {
@@ -595,6 +630,7 @@ function PowerSectionContent({
             <p className="mt-1 text-xs text-muted-foreground">
               Current limit {formatWatts(power.currentLimitWatts)}
             </p>
+            <DefaultChoiceNote choice={defaultChoice} />
           </div>
           <p className="text-sm font-semibold tabular-nums">
             {formatWatts(power.currentLimitWatts == null ? null : draft)}
@@ -635,6 +671,20 @@ function PowerSectionContent({
         />
       </div>
 
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label="Use default power limit"
+        onClick={onUseDefault}
+        disabled={
+          !canEdit ||
+          power.defaultLimitWatts == null ||
+          defaultChoice != null ||
+          busy
+        }
+      >
+        Use default
+      </Button>
       <div className="grid grid-cols-2 gap-2">
         <Button
           size="sm"
@@ -728,8 +778,11 @@ function ClockSectionContent({
   layout,
   busy,
   hasChanges,
+  graphicsDefaultChoice,
+  memoryDefaultChoice,
   onGraphicsDraftChange,
   onMemoryDraftChange,
+  onUseDefault,
   onApply,
   onReset,
 }: {
@@ -739,8 +792,11 @@ function ClockSectionContent({
   layout: "stack" | "rail";
   busy: boolean;
   hasChanges: boolean;
+  graphicsDefaultChoice: DefaultChoice;
+  memoryDefaultChoice: DefaultChoice;
   onGraphicsDraftChange: (value: number | null) => void;
   onMemoryDraftChange: (value: number | null) => void;
+  onUseDefault: (setting: "graphics" | "memory") => void;
   onApply: () => void;
   onReset: () => void;
 }) {
@@ -758,7 +814,9 @@ function ClockSectionContent({
           icon={Zap}
           info={clocks.graphics}
           draft={graphicsDraft}
+          defaultChoice={graphicsDefaultChoice}
           onDraftChange={onGraphicsDraftChange}
+          onUseDefault={() => onUseDefault("graphics")}
           disabled={!canEditOffset(clocks.graphics) || busy}
         />
         <ClockOffsetEditor
@@ -766,7 +824,9 @@ function ClockSectionContent({
           icon={Clock3}
           info={clocks.memory}
           draft={memoryDraft}
+          defaultChoice={memoryDefaultChoice}
           onDraftChange={onMemoryDraftChange}
+          onUseDefault={() => onUseDefault("memory")}
           disabled={!canEditOffset(clocks.memory) || busy}
         />
       </div>
@@ -952,14 +1012,18 @@ function ClockOffsetEditor({
   info,
   draft,
   disabled,
+  defaultChoice,
   onDraftChange,
+  onUseDefault,
 }: {
   title: string;
   icon: typeof Gauge;
   info: ClockOffsetInfo;
   draft: number | null;
   disabled: boolean;
+  defaultChoice: DefaultChoice;
   onDraftChange: (value: number | null) => void;
+  onUseDefault: () => void;
 }) {
   return (
     <div className="space-y-3 border-t border-border/70 pt-4">
@@ -985,6 +1049,7 @@ function ClockOffsetEditor({
       <p className="text-xs text-muted-foreground">
         Current offset {formatOffset(info.currentOffsetMHz)}
       </p>
+      <DefaultChoiceNote choice={defaultChoice} />
       <TuningAvailability
         support={info.support}
         reason={info.reason}
@@ -1026,9 +1091,33 @@ function ClockOffsetEditor({
             }}
             disabled={disabled}
           />
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Use default ${title.toLowerCase()} clock offset`}
+            onClick={onUseDefault}
+            disabled={
+              disabled ||
+              defaultChoice != null ||
+              !inTuningRange(0, info.minOffsetMHz, info.maxOffsetMHz)
+            }
+          >
+            Use default
+          </Button>
         </div>
       )}
     </div>
+  );
+}
+
+type DefaultChoice = "unapplied" | "applied" | null;
+
+function DefaultChoiceNote({ choice }: { choice: DefaultChoice }) {
+  if (!choice) return null;
+  return (
+    <p className="mt-1 text-xs text-primary">
+      {choice === "unapplied" ? "Use default (not applied)" : "Uses default"}
+    </p>
   );
 }
 

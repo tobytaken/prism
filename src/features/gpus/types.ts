@@ -236,21 +236,19 @@ export interface GpuTuningProfile {
   settings: GpuProfileSettings;
 }
 
+export type ProfileSettingKey = keyof GpuProfileSettings;
+
 export interface SaveGpuProfileRequest {
   gpuId: string;
   name: string;
-}
-
-export interface NumericProfileSettings {
-  powerLimitWatts?: number;
-  graphicsOffsetMHz?: number;
-  memoryOffsetMHz?: number;
+  /** Settings whose successfully applied instruction was an explicit default request. */
+  appliedDefaults?: ProfileSettingKey[];
 }
 
 export interface ApplyGpuProfileRequest {
   /** Verified stable identity of the owning GPU. */
   gpuId: string;
-  settings: NumericProfileSettings;
+  settings: GpuProfileSettings;
 }
 
 export interface ProfileApplicationResponse extends ClockOffsetResponse {
