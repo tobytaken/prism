@@ -2,9 +2,14 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
 import { GpuProfileStore } from "./gpu-profile-store";
+import {
+  isProfileSetting,
+  isProfileSettingKey,
+} from "@/features/gpus/lib/tuning-profiles";
 import type {
   CorrectGpuProfileRequest,
   GpuPerformanceResponse,
+  ProfileSettingKey,
 } from "@/features/gpus/types";
 
 import {
@@ -318,11 +323,6 @@ function validateDriverJobPayload(
   return isObject(payload) && isString(payload.jobId);
 }
 
-const PROFILE_SETTING_KEYS = [
-  "powerLimitWatts",
-  "graphicsOffsetMHz",
-  "memoryOffsetMHz",
-];
 const CORRECTION_KEYS = ["setting", "savedValue", "proposedValue", "bound"];
 
 // A correction only moves a saved value to the bound it exceeded; it is never a free-form edit.
@@ -345,7 +345,7 @@ function validateCorrectProfilePayload(
     if (
       !isObject(correction) ||
       Object.keys(correction).some((key) => !CORRECTION_KEYS.includes(key)) ||
-      !PROFILE_SETTING_KEYS.includes(correction.setting as string) ||
+      !isProfileSettingKey(correction.setting) ||
       settings.has(correction.setting) ||
       !Number.isSafeInteger(correction.savedValue) ||
       !Number.isSafeInteger(correction.proposedValue)
@@ -391,8 +391,8 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       Array.isArray(payload.settings) ||
       Object.keys(payload.settings).length === 0 ||
       Object.entries(payload.settings).some(
-        ([key, value]) =>
-          !PROFILE_SETTING_KEYS.includes(key) || !Number.isSafeInteger(value),
+        ([key, setting]) =>
+          !isProfileSettingKey(key) || !isProfileSetting(setting),
       )
     ) {
       throw new Error("Invalid applyProfile payload");
@@ -418,7 +418,12 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       !isString(payload.gpuId) ||
       !payload.gpuId.trim() ||
       !isString(payload.name) ||
-      !payload.name.trim()
+      !payload.name.trim() ||
+      (payload.appliedDefaults !== undefined &&
+        (!Array.isArray(payload.appliedDefaults) ||
+          !payload.appliedDefaults.every(isProfileSettingKey) ||
+          new Set(payload.appliedDefaults).size !==
+            payload.appliedDefaults.length))
     ) {
       throw new Error("Invalid saveProfile payload");
     }
@@ -429,7 +434,11 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       throw new Error(
         "The owning GPU is unavailable. Refresh the GPU readings and try again.",
       );
-    return getProfileStore().save(payload.name, gpu);
+    return getProfileStore().save(
+      payload.name,
+      gpu,
+      payload.appliedDefaults as ProfileSettingKey[] | undefined,
+    );
   });
 
   ipcMain.handle("prism:gpu:getInventory", async (event) => {

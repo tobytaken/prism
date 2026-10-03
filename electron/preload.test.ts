@@ -39,7 +39,10 @@ describe("preload bridge", () => {
     const prism = await loadPrismApi();
     const request = {
       gpuId: "GPU-123",
-      settings: { powerLimitWatts: 450, graphicsOffsetMHz: -150 },
+      settings: {
+        powerLimitWatts: { kind: "default" as const },
+        graphicsOffsetMHz: { kind: "value" as const, value: -150 },
+      },
     };
     mocks.invoke.mockResolvedValue(profileOutcomes);
     expect(await prism.gpu.applyProfile(request)).toEqual(profileOutcomes);
@@ -59,7 +62,10 @@ describe("preload bridge", () => {
     expect(
       await prism.gpu.applyProfile({
         gpuId: "GPU-123",
-        settings: { powerLimitWatts: 300, graphicsOffsetMHz: -150 },
+        settings: {
+          powerLimitWatts: { kind: "value", value: 300 },
+          graphicsOffsetMHz: { kind: "value", value: -150 },
+        },
       }),
     ).toEqual(profileCorrections);
     const corrected = {
@@ -148,11 +154,16 @@ describe("preload bridge", () => {
     };
     mocks.invoke.mockResolvedValue(profile);
     expect(
-      await prism.gpu.saveProfile({ gpuId: "GPU-123", name: "Quiet" }),
+      await prism.gpu.saveProfile({
+        gpuId: "GPU-123",
+        name: "Quiet",
+        appliedDefaults: ["graphicsOffsetMHz"],
+      }),
     ).toEqual(profile);
     expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:saveProfile", {
       gpuId: "GPU-123",
       name: "Quiet",
+      appliedDefaults: ["graphicsOffsetMHz"],
     });
     mocks.invoke.mockResolvedValue([profile]);
     expect(await prism.gpu.listProfiles()).toEqual([profile]);

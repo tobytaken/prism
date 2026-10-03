@@ -64,8 +64,8 @@ export async function runTuningMutation(
         action.kind === "setClockOffsets"
           ? await api.setGpuClockOffsets(
               action.gpuId,
-              action.graphicsOffsetMHz,
-              action.memoryOffsetMHz,
+              offsetValue(action.graphicsOffsetMHz),
+              offsetValue(action.memoryOffsetMHz),
             )
           : await api.resetGpuClockOffsets(action.gpuId);
       return {
@@ -74,6 +74,10 @@ export async function runTuningMutation(
       };
     }
   }
+}
+
+function offsetValue(offset: number | "default" | null) {
+  return offset === "default" ? 0 : offset;
 }
 
 function commandOutcome(response: GpuCommandResponse): TuningOutcome {

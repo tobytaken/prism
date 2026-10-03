@@ -406,11 +406,14 @@ mod tests {
     fn profile_application_rejects_malformed_included_instructions_before_transport() {
         for settings in [
             json!({ "powerLimitWatts": null }),
-            json!({ "powerLimitWatts": "450" }),
-            json!({ "graphicsOffsetMHz": 120.5 }),
-            json!({ "memoryOffsetMHz": { "kind": "default" } }),
-            json!({ "powerLimitWatts": 450, "fanSpeed": 80 }),
-            json!({ "gpuClockLock": 1800 }),
+            json!({ "powerLimitWatts": 450 }),
+            json!({ "powerLimitWatts": { "kind": "value", "value": "450" } }),
+            json!({ "powerLimitWatts": { "kind": "value" } }),
+            json!({ "graphicsOffsetMHz": { "kind": "value", "value": 120.5 } }),
+            json!({ "memoryOffsetMHz": { "kind": "default", "value": 0 } }),
+            json!({ "memoryOffsetMHz": { "kind": "reset" } }),
+            json!({ "powerLimitWatts": { "kind": "default" }, "fanSpeed": 80 }),
+            json!({ "gpuClockLock": { "kind": "value", "value": 1800 } }),
         ] {
             let response = handle_request(BridgeRequest {
                 id: 14,
@@ -418,7 +421,11 @@ mod tests {
                 params: Some(json!({ "gpuId": "GPU-123", "settings": settings })),
             });
             assert!(response.result.is_none());
-            assert_eq!(response.error.expect("error").code, "invalid_request");
+            assert_eq!(
+                response.error.expect("error").code,
+                "invalid_request",
+                "{settings}"
+            );
         }
         let response = handle_request(BridgeRequest {
             id: 14,

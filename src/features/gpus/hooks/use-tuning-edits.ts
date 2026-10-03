@@ -7,7 +7,9 @@ import type {
 } from "@/features/gpus/lib/tuning-mutation";
 import type {
   GpuPerformanceDevice,
-  NumericProfileSettings,
+  GpuProfileSettings,
+  ProfileSetting,
+  ProfileSettingKey,
   ProfileRangeCorrection,
   TuningOutcome,
 } from "@/features/gpus/types";
@@ -15,13 +17,15 @@ import type {
 export type TuningSetting = "power" | "graphics" | "memory" | `fan:${number}`;
 export type TuningEdits = {
   power?: number | null | "default";
-  graphics?: number | null;
-  memory?: number | null;
+  graphics?: number | null | "default";
+  memory?: number | null | "default";
 } & Partial<Record<`fan:${number}`, number | null | "auto">>;
 type DeviceEdits = {
   edits: TuningEdits;
   outcomes: Partial<Record<TuningSetting, TuningOutcome>>;
   profileOwners?: Partial<Record<TuningSetting, string>>;
+  // Profile settings whose last successful application was an explicit default request.
+  appliedDefaults?: Partial<Record<ProfileSettingKey, true>>;
 };
 
 // Observations never acknowledge an intention: only a command outcome or discard does.
@@ -40,16 +44,15 @@ export function useTuningEdits() {
     const owner = device?.profileOwners?.[setting];
     const value = device?.edits[setting];
     if (owner) {
-      if (gpu.stableId !== owner || typeof value !== "number") return null;
       const key = profileSettingKey(setting);
-      return key
-        ? {
-            kind: "applyProfile" as const,
-            gpuId: gpu.id,
-            stableId: owner,
-            settings: { [key]: value },
-          }
-        : null;
+      const instruction = profileInstruction(value);
+      if (gpu.stableId !== owner || !key || !instruction) return null;
+      return {
+        kind: "applyProfile" as const,
+        gpuId: gpu.id,
+        stableId: owner,
+        settings: { [key]: instruction },
+      };
     }
     return retryTuningAction(gpu, setting, value);
   }
@@ -66,13 +69,14 @@ export function useTuningEdits() {
       const owner = (Object.keys(intentions) as TuningSetting[])
         .map((setting) => devices[gpu.id]?.profileOwners?.[setting])
         .find((owner) => owner != null);
-      const settings: NumericProfileSettings = {};
+      const settings: GpuProfileSettings = {};
       if (
         owner &&
         Object.entries(intentions).every(([setting, value]) => {
           const key = profileSettingKey(setting as TuningSetting);
-          if (!key || typeof value !== "number") return false;
-          settings[key] = value;
+          const instruction = profileInstruction(value);
+          if (!key || !instruction) return false;
+          settings[key] = instruction;
           return true;
         })
       ) {
@@ -128,7 +132,14 @@ export function useTuningEdits() {
       const edits = { ...device.edits };
       const outcomes = { ...device.outcomes };
       const profileOwners = { ...device.profileOwners };
+      const appliedDefaults = { ...device.appliedDefaults };
       for (const setting of Object.keys(intentions) as TuningSetting[]) {
+        const key = profileSettingKey(setting);
+        // The GPU accepted this instruction even if the user has since edited it again.
+        if (key && result?.[setting]?.status === "succeeded") {
+          if (intentions[setting] === "default") appliedDefaults[key] = true;
+          else delete appliedDefaults[key];
+        }
         if (edits[setting] !== intentions[setting]) continue;
         const outcome = result?.[setting] ?? {
           status: "unknown",
@@ -140,13 +151,18 @@ export function useTuningEdits() {
           delete profileOwners[setting];
         }
       }
-      return { edits, outcomes, profileOwners };
+      return { edits, outcomes, profileOwners, appliedDefaults };
     });
   }
 
   return {
     devices,
     retryAction,
+    appliedDefaults(gpuId: string): ProfileSettingKey[] {
+      return Object.keys(
+        devices[gpuId]?.appliedDefaults ?? {},
+      ) as ProfileSettingKey[];
+    },
     applyAllPending,
     async applyAll(
       gpus: readonly GpuPerformanceDevice[],
@@ -168,9 +184,11 @@ export function useTuningEdits() {
                   ...current.outcomes,
                   [setting]: {
                     status: "unattempted",
-                    error: gpu
-                      ? "The edit requires an available control and a value within its current range."
-                      : "GPU unavailable.",
+                    error: !gpu
+                      ? "GPU unavailable."
+                      : device.edits[setting] === "default"
+                        ? "The default for this control is unavailable or outside its current range. Refresh the GPU readings and try again."
+                        : "The edit requires an available control and a value within its current range.",
                   },
                 },
               }));
@@ -207,7 +225,7 @@ export function useTuningEdits() {
       setting: K,
       value: TuningEdits[K],
     ) {
-      update(gpuId, ({ edits, outcomes, profileOwners }) => {
+      update(gpuId, ({ edits, outcomes, profileOwners, appliedDefaults }) => {
         const nextOutcomes = { ...outcomes };
         const nextOwners = { ...profileOwners };
         delete nextOwners[setting];
@@ -216,11 +234,12 @@ export function useTuningEdits() {
           edits: { ...edits, [setting]: value },
           outcomes: nextOutcomes,
           profileOwners: nextOwners,
+          appliedDefaults,
         };
       });
     },
     discard(gpuId: string, setting: TuningSetting) {
-      update(gpuId, ({ edits, outcomes, profileOwners }) => {
+      update(gpuId, ({ edits, outcomes, profileOwners, appliedDefaults }) => {
         const nextEdits = { ...edits };
         const nextOutcomes = { ...outcomes };
         const nextOwners = { ...profileOwners };
@@ -231,6 +250,7 @@ export function useTuningEdits() {
           edits: nextEdits,
           outcomes: nextOutcomes,
           profileOwners: nextOwners,
+          appliedDefaults,
         };
       });
     },
@@ -239,9 +259,12 @@ export function useTuningEdits() {
 }
 export type TuningEditStore = ReturnType<typeof useTuningEdits>;
 
-function profileSettingKey(
-  setting: TuningSetting,
-): keyof NumericProfileSettings | null {
+function profileInstruction(value: unknown): ProfileSetting | null {
+  if (value === "default") return { kind: "default" };
+  return typeof value === "number" ? { kind: "value", value } : null;
+}
+
+function profileSettingKey(setting: TuningSetting): ProfileSettingKey | null {
   return setting === "power"
     ? "powerLimitWatts"
     : setting === "graphics"
@@ -256,18 +279,17 @@ function actionIntentions(
   gpu: GpuPerformanceDevice,
 ): TuningEdits {
   switch (action.kind) {
-    case "applyProfile":
+    case "applyProfile": {
+      const intention = (setting: ProfileSetting) =>
+        setting.kind === "default" ? ("default" as const) : setting.value;
+      const { powerLimitWatts, graphicsOffsetMHz, memoryOffsetMHz } =
+        action.settings;
       return {
-        ...(action.settings.powerLimitWatts != null && {
-          power: action.settings.powerLimitWatts,
-        }),
-        ...(action.settings.graphicsOffsetMHz != null && {
-          graphics: action.settings.graphicsOffsetMHz,
-        }),
-        ...(action.settings.memoryOffsetMHz != null && {
-          memory: action.settings.memoryOffsetMHz,
-        }),
+        ...(powerLimitWatts && { power: intention(powerLimitWatts) }),
+        ...(graphicsOffsetMHz && { graphics: intention(graphicsOffsetMHz) }),
+        ...(memoryOffsetMHz && { memory: intention(memoryOffsetMHz) }),
       };
+    }
     case "setPowerLimit":
       return { power: action.limitWatts };
     case "resetPowerLimit":
@@ -287,8 +309,12 @@ function actionIntentions(
       };
     case "resetClockOffsets":
       return {
-        ...(gpu.clocks.graphics.support !== "unsupported" && { graphics: 0 }),
-        ...(gpu.clocks.memory.support !== "unsupported" && { memory: 0 }),
+        ...(gpu.clocks.graphics.support !== "unsupported" && {
+          graphics: "default" as const,
+        }),
+        ...(gpu.clocks.memory.support !== "unsupported" && {
+          memory: "default" as const,
+        }),
       };
   }
 }

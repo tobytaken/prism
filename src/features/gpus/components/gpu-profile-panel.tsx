@@ -15,14 +15,15 @@ import type {
   GpuPerformanceDevice,
   GpuProfileSettings,
   GpuTuningProfile,
-  NumericProfileSettings,
   ProfileRangeCorrection,
+  ProfileSettingKey,
 } from "@/features/gpus/types";
 
 export function GpuProfilePanel({
   gpu,
   workflow,
   edits,
+  appliedDefaults,
   readError,
   pendingAction,
   reapplyPending = false,
@@ -32,13 +33,14 @@ export function GpuProfilePanel({
   gpu: GpuPerformanceDevice;
   workflow: GpuProfileWorkflow;
   edits: TuningEdits;
+  appliedDefaults: ProfileSettingKey[];
   readError: string | null;
   pendingAction: PerformanceMutationAction | null;
   reapplyPending?: boolean;
   /** Resolves with proposed range corrections when the profile needs review before applying. */
   onLoad?: (
     profile: GpuTuningProfile,
-    settings: NumericProfileSettings,
+    settings: GpuProfileSettings,
   ) => Promise<ProfileRangeCorrection[] | undefined>;
   loadDisabled?: boolean;
 }) {
@@ -56,7 +58,9 @@ export function GpuProfilePanel({
     (profile) => profile.id === workflow.selectedIds[gpu.stableId ?? ""],
   );
   const comparison =
-    selected && !readError ? compareProfile(gpu, selected) : null;
+    selected && !readError
+      ? compareProfile(gpu, selected, appliedDefaults)
+      : null;
   const profileMutationPending =
     reapplyPending ||
     (pendingAction?.gpuId === gpu.id &&
@@ -77,12 +81,7 @@ export function GpuProfilePanel({
   const loadBlocker =
     Object.keys(edits).length > 0
       ? "Apply or discard outstanding tuning changes before loading a profile."
-      : selected &&
-          Object.values(selected.settings).some(
-            (setting) => setting.kind === "default",
-          )
-        ? "This profile requests defaults. Loading currently requires numeric profile settings."
-        : null;
+      : null;
   const canLoad =
     !!selected &&
     !review &&
@@ -101,7 +100,7 @@ export function GpuProfilePanel({
     !profileMutationPending &&
     !workflow.correct.isPending;
   async function load(profile: GpuTuningProfile) {
-    const corrections = await onLoad?.(profile, numericSettings(profile));
+    const corrections = await onLoad?.(profile, profile.settings);
     if (corrections?.length) setReview({ profile, corrections });
   }
   // Approved corrections are saved first and stay saved whatever the GPU later reports.
@@ -180,7 +179,11 @@ export function GpuProfilePanel({
           onSubmit={(event) => {
             event.preventDefault();
             if (canSave)
-              workflow.save.mutate({ gpuId: gpu.id, name: name.trim() });
+              workflow.save.mutate({
+                gpuId: gpu.id,
+                name: name.trim(),
+                ...(appliedDefaults.length > 0 && { appliedDefaults }),
+              });
           }}
         >
           <label htmlFor={`${id}-name`} className="text-sm">
@@ -325,17 +328,6 @@ const settingDisplay = {
     unit: "MHz",
   },
 };
-
-function numericSettings(profile: GpuTuningProfile): NumericProfileSettings {
-  const settings: NumericProfileSettings = {};
-  for (const key of Object.keys(
-    profile.settings,
-  ) as (keyof GpuProfileSettings)[]) {
-    const setting = profile.settings[key]!;
-    if (setting.kind === "value") settings[key] = setting.value;
-  }
-  return settings;
-}
 
 export function GpuProfileAvailability({
   workflow,

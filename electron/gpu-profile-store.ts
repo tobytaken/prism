@@ -2,10 +2,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { captureProfileSettings } from "@/features/gpus/lib/tuning-profiles";
+import {
+  captureProfileSettings,
+  isProfileSetting,
+  isProfileSettingKey,
+} from "@/features/gpus/lib/tuning-profiles";
 import type {
   GpuPerformanceDevice,
   GpuTuningProfile,
+  ProfileSettingKey,
   ProfileRangeCorrection,
 } from "@/features/gpus/types";
 
@@ -20,8 +25,12 @@ export class GpuProfileStore {
     return this.read();
   }
 
-  save(name: string, gpu: GpuPerformanceDevice): Promise<GpuTuningProfile> {
-    const settings = captureProfileSettings(gpu);
+  save(
+    name: string,
+    gpu: GpuPerformanceDevice,
+    appliedDefaults: readonly ProfileSettingKey[] = [],
+  ): Promise<GpuTuningProfile> {
+    const settings = captureProfileSettings(gpu, appliedDefaults);
     const profile: GpuTuningProfile = {
       id: randomUUID(),
       name: name.trim(),
@@ -129,22 +138,8 @@ function isProfile(value: unknown): value is GpuTuningProfile {
   const keys = Object.keys(settings);
   return (
     keys.length > 0 &&
-    keys.every((key) => {
-      if (
-        !["powerLimitWatts", "graphicsOffsetMHz", "memoryOffsetMHz"].includes(
-          key,
-        )
-      )
-        return false;
-      const setting = settings[key];
-      return (
-        isRecord(setting) &&
-        ((setting.kind === "default" && Object.keys(setting).length === 1) ||
-          (setting.kind === "value" &&
-            typeof setting.value === "number" &&
-            Number.isFinite(setting.value) &&
-            Object.keys(setting).length === 2))
-      );
-    })
+    keys.every(
+      (key) => isProfileSettingKey(key) && isProfileSetting(settings[key]),
+    )
   );
 }

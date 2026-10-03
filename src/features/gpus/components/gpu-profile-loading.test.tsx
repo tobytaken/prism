@@ -7,7 +7,7 @@ import {
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
 import { renderWithQueryClient } from "@/test/query-client";
-import type { GpuTuningProfile } from "@/features/gpus/types";
+import type { GpuTuningProfile, ProfileSetting } from "@/features/gpus/types";
 import { GpuTuningPage } from "./gpu-tuning-page";
 import { GpuPerformancePage } from "./gpu-performance-page";
 import { MemoryRouter, RouterProvider } from "react-router-dom";
@@ -19,6 +19,11 @@ function renderPerformancePage() {
       <GpuPerformancePage />
     </MemoryRouter>,
   );
+}
+
+function fixed(setting: ProfileSetting | undefined) {
+  if (setting?.kind !== "value") throw new Error("Expected a numeric setting");
+  return setting.value;
 }
 
 beforeEach(() => {
@@ -65,8 +70,8 @@ it("saves a profile, changes live values, and loads the selected profile without
   vi.spyOn(window.prism.gpu, "applyProfile").mockImplementation(
     async ({ gpuId, settings }) => {
       const gpu = response.gpus.find((gpu) => gpu.stableId === gpuId)!;
-      gpu.power.currentLimitWatts = settings.powerLimitWatts!;
-      gpu.clocks.graphics.currentOffsetMHz = settings.graphicsOffsetMHz!;
+      gpu.power.currentLimitWatts = fixed(settings.powerLimitWatts);
+      gpu.clocks.graphics.currentOffsetMHz = fixed(settings.graphicsOffsetMHz);
       return {
         power: { status: "succeeded", error: null },
         graphics: { status: "succeeded", error: null },
@@ -137,7 +142,9 @@ it("keeps failed and unattempted profile instructions, retries through backend v
   vi.spyOn(window.prism.gpu, "applyProfile").mockImplementation(
     async ({ settings }) => {
       if (settings.powerLimitWatts != null) {
-        response.gpus[0].power.currentLimitWatts = settings.powerLimitWatts;
+        response.gpus[0].power.currentLimitWatts = fixed(
+          settings.powerLimitWatts,
+        );
         return {
           power: { status: "succeeded", error: null },
           graphics: { status: "failed", error: "Graphics write denied" },
@@ -149,7 +156,7 @@ it("keeps failed and unattempted profile instructions, retries through backend v
       }
       if (
         settings.memoryOffsetMHz != null &&
-        settings.memoryOffsetMHz > memoryMaximum
+        fixed(settings.memoryOffsetMHz) > memoryMaximum
       ) {
         return {
           power: null,
@@ -161,8 +168,9 @@ it("keeps failed and unattempted profile instructions, retries through backend v
           },
         };
       }
-      response.gpus[0].clocks.memory.currentOffsetMHz =
-        settings.memoryOffsetMHz!;
+      response.gpus[0].clocks.memory.currentOffsetMHz = fixed(
+        settings.memoryOffsetMHz,
+      );
       return {
         power: null,
         graphics: null,
@@ -339,7 +347,7 @@ it("loads only the stable owner after identical-model GPUs reorder, and retains 
   vi.spyOn(window.prism.gpu, "applyProfile").mockImplementation(
     async ({ gpuId, settings }) => {
       const gpu = response.gpus.find((gpu) => gpu.stableId === gpuId)!;
-      gpu.power.currentLimitWatts = settings.powerLimitWatts!;
+      gpu.power.currentLimitWatts = fixed(settings.powerLimitWatts);
       return {
         power: { status: "succeeded", error: null },
         graphics: null,
@@ -414,7 +422,9 @@ it("applies only included instructions even when omitted controls have unknown s
   const apply = vi
     .spyOn(window.prism.gpu, "applyProfile")
     .mockImplementation(async ({ settings }) => {
-      response.gpus[0].power.currentLimitWatts = settings.powerLimitWatts!;
+      response.gpus[0].power.currentLimitWatts = fixed(
+        settings.powerLimitWatts,
+      );
       return {
         power: { status: "succeeded", error: null },
         graphics: null,
@@ -428,7 +438,7 @@ it("applies only included instructions even when omitted controls have unknown s
   await screen.findByText("Power limit: Applied");
   expect(apply).toHaveBeenCalledWith({
     gpuId: "GPU-123",
-    settings: { powerLimitWatts: 450 },
+    settings: { powerLimitWatts: { kind: "value", value: 450 } },
   });
   expect(response.gpus[0].clocks.graphics.currentOffsetMHz).toBe(120);
   expect(

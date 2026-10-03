@@ -60,7 +60,10 @@ describe("registerIpc", () => {
     const dispose = registerIpc(getMainWindow);
     const request = {
       gpuId: "GPU-123",
-      settings: { powerLimitWatts: 450, graphicsOffsetMHz: -150 },
+      settings: {
+        powerLimitWatts: { kind: "default" },
+        graphicsOffsetMHz: { kind: "value", value: -150 },
+      },
     };
     try {
       expect(
@@ -86,7 +89,10 @@ describe("registerIpc", () => {
       expect(
         await callHandler("prism:gpu:applyProfile", trustedEvent(), {
           gpuId: "GPU-123",
-          settings: { powerLimitWatts: 300, graphicsOffsetMHz: -150 },
+          settings: {
+            powerLimitWatts: { kind: "value", value: 300 },
+            graphicsOffsetMHz: { kind: "value", value: -150 },
+          },
         }),
       ).toEqual(profileCorrections);
     } finally {
@@ -311,34 +317,47 @@ describe("registerIpc", () => {
       await expect(
         callHandler("prism:gpu:applyProfile", untrustedEvent(), {
           gpuId: "GPU-123",
-          settings: { powerLimitWatts: 450 },
+          settings: { powerLimitWatts: { kind: "value", value: 450 } },
         }),
       ).rejects.toThrow("Untrusted IPC sender");
+      const value = (value: unknown) => ({ kind: "value", value });
       for (const payload of [
         null,
         {},
-        { gpuId: " ", settings: { powerLimitWatts: 450 } },
+        { gpuId: " ", settings: { powerLimitWatts: value(450) } },
         { gpuId: "GPU-123", settings: {} },
         { gpuId: "GPU-123", settings: { powerLimitWatts: null } },
-        { gpuId: "GPU-123", settings: { powerLimitWatts: 450.5 } },
-        { gpuId: "GPU-123", settings: { powerLimitWatts: Infinity } },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: 450 } },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: value(450.5) } },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: value(Infinity) } },
         {
           gpuId: "GPU-123",
-          settings: { powerLimitWatts: Number.MAX_SAFE_INTEGER + 1 },
+          settings: { powerLimitWatts: value(Number.MAX_SAFE_INTEGER + 1) },
         },
-        { gpuId: "GPU-123", settings: { powerLimitWatts: "450" } },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: value("450") } },
+        { gpuId: "GPU-123", settings: { powerLimitWatts: { kind: "value" } } },
         {
           gpuId: "GPU-123",
-          settings: { powerLimitWatts: { kind: "default" } },
-        },
-        { gpuId: "GPU-123", settings: { powerLimitWatts: 450, fanSpeed: 80 } },
-        {
-          gpuId: "GPU-123",
-          settings: { graphicsOffsetMHz: 120, gpuClockLock: 1800 },
+          settings: { powerLimitWatts: { kind: "default", value: 450 } },
         },
         {
           gpuId: "GPU-123",
-          settings: { powerLimitWatts: 450 },
+          settings: { powerLimitWatts: { kind: "reset" } },
+        },
+        {
+          gpuId: "GPU-123",
+          settings: { powerLimitWatts: value(450), fanSpeed: value(80) },
+        },
+        {
+          gpuId: "GPU-123",
+          settings: {
+            graphicsOffsetMHz: value(120),
+            gpuClockLock: value(1800),
+          },
+        },
+        {
+          gpuId: "GPU-123",
+          settings: { powerLimitWatts: value(450) },
           reapplySaved: true,
         },
       ]) {
@@ -442,6 +461,69 @@ describe("registerIpc", () => {
     }
   });
 
+  it("saves applied explicit default choices only while fresh readings still reflect them, and retains them after reload", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
+    mocks.getPath.mockReturnValue(directory);
+    const readings = createPerformanceResponse();
+    Object.assign(readings.gpus[0].power, {
+      currentLimitWatts: 575,
+      defaultLimitWatts: 575,
+    });
+    readings.gpus[0].clocks.graphics.currentOffsetMHz = 0;
+    const child = createBackendChild(readings);
+    mocks.spawn.mockReturnValue(child);
+    let dispose = registerIpc(getMainWindow);
+    try {
+      const numeric = await callHandler(
+        "prism:gpu:saveProfile",
+        trustedEvent(),
+        { gpuId: "GPU-123", name: "Numeric" },
+      );
+      const defaults = await callHandler(
+        "prism:gpu:saveProfile",
+        trustedEvent(),
+        {
+          gpuId: "GPU-123",
+          name: "Defaults",
+          appliedDefaults: ["powerLimitWatts", "graphicsOffsetMHz"],
+        },
+      );
+      // The driver now reports another default, so the earlier choice no longer describes the GPU.
+      readings.gpus[0].power.defaultLimitWatts = 520;
+      const stale = await callHandler("prism:gpu:saveProfile", trustedEvent(), {
+        gpuId: "GPU-123",
+        name: "Stale",
+        appliedDefaults: ["powerLimitWatts"],
+      });
+      expect(numeric).toMatchObject({
+        settings: {
+          powerLimitWatts: { kind: "value", value: 575 },
+          graphicsOffsetMHz: { kind: "value", value: 0 },
+        },
+      });
+      expect(defaults).toMatchObject({
+        settings: {
+          powerLimitWatts: { kind: "default" },
+          graphicsOffsetMHz: { kind: "default" },
+        },
+      });
+      expect(stale).toMatchObject({
+        settings: {
+          powerLimitWatts: { kind: "value", value: 575 },
+          graphicsOffsetMHz: { kind: "value", value: 0 },
+        },
+      });
+      dispose();
+      dispose = registerIpc(getMainWindow);
+      expect(
+        await callHandler("prism:gpu:listProfiles", trustedEvent()),
+      ).toEqual([numeric, defaults, stale]);
+    } finally {
+      dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reloads omitted, numeric, and explicit-default settings through the public list command without a GPU", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
     mocks.getPath.mockReturnValue(directory);
@@ -530,6 +612,13 @@ describe("registerIpc", () => {
         { gpuId: "GPU-123", name: " " },
         { gpuId: 0, name: "Quiet" },
         { name: "Quiet" },
+        { gpuId: "GPU-123", name: "Quiet", appliedDefaults: "powerLimitWatts" },
+        { gpuId: "GPU-123", name: "Quiet", appliedDefaults: ["fanSpeed"] },
+        {
+          gpuId: "GPU-123",
+          name: "Quiet",
+          appliedDefaults: ["powerLimitWatts", "powerLimitWatts"],
+        },
       ]) {
         await expect(
           callHandler("prism:gpu:saveProfile", trustedEvent(), payload),
@@ -538,6 +627,34 @@ describe("registerIpc", () => {
       expect(mocks.spawn).not.toHaveBeenCalled();
     } finally {
       dispose();
+    }
+  });
+
+  it("rejects stored profile values that the application boundaries could never accept", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
+    mocks.getPath.mockReturnValue(directory);
+    await writeFile(
+      path.join(directory, "gpu-tuning-profiles.json"),
+      JSON.stringify({
+        version: 1,
+        profiles: [
+          {
+            id: "fractional",
+            name: "Fractional",
+            gpuId: "GPU-123",
+            settings: { powerLimitWatts: { kind: "value", value: 250.5 } },
+          },
+        ],
+      }),
+    );
+    const dispose = registerIpc(getMainWindow);
+    try {
+      await expect(
+        callHandler("prism:gpu:listProfiles", trustedEvent()),
+      ).rejects.toThrow("profile file has been preserved");
+    } finally {
+      dispose();
+      await rm(directory, { recursive: true, force: true });
     }
   });
 

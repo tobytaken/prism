@@ -29,9 +29,13 @@ export function retryTuningAction(
   if (setting === "power") {
     if (gpu.power.support !== "supported") return null;
     if (value === "default")
-      return gpu.power.defaultLimitWatts == null
-        ? null
-        : { kind: "resetPowerLimit", gpuId };
+      return inTuningRange(
+        gpu.power.defaultLimitWatts,
+        gpu.power.minLimitWatts,
+        gpu.power.maxLimitWatts,
+      )
+        ? { kind: "resetPowerLimit", gpuId }
+        : null;
     return typeof value === "number" &&
       inTuningRange(value, gpu.power.minLimitWatts, gpu.power.maxLimitWatts)
       ? { kind: "setPowerLimit", gpuId, limitWatts: value }
@@ -39,14 +43,21 @@ export function retryTuningAction(
   }
   if (setting === "graphics" || setting === "memory") {
     const info = gpu.clocks[setting];
+    const offset = value === "default" ? 0 : value;
     return info.support === "supported" &&
-      typeof value === "number" &&
-      inTuningRange(value, info.minOffsetMHz, info.maxOffsetMHz)
+      typeof offset === "number" &&
+      inTuningRange(offset, info.minOffsetMHz, info.maxOffsetMHz)
       ? {
           kind: "setClockOffsets",
           gpuId,
-          graphicsOffsetMHz: setting === "graphics" ? value : null,
-          memoryOffsetMHz: setting === "memory" ? value : null,
+          graphicsOffsetMHz:
+            setting !== "graphics"
+              ? null
+              : value === "default"
+                ? value
+                : offset,
+          memoryOffsetMHz:
+            setting !== "memory" ? null : value === "default" ? value : offset,
         }
       : null;
   }

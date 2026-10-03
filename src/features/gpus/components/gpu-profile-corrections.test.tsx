@@ -103,6 +103,12 @@ function createFakeDesktop() {
     .spyOn(window.prism.gpu, "applyProfile")
     .mockImplementation(async ({ settings }) => {
       savedWhenApplied.push(structuredClone(profiles[0].settings));
+      const valueOf = (key: keyof GpuProfileSettings) => {
+        const setting = settings[key]!;
+        if (setting.kind !== "value")
+          throw new Error("This fake applies numeric profile settings only");
+        return setting.value;
+      };
       const included = (Object.keys(controls) as Setting[]).filter(
         (setting) => settings[controls[setting].key] != null,
       );
@@ -110,7 +116,7 @@ function createFakeDesktop() {
       const corrections: ProfileRangeCorrection[] = [];
       for (const setting of included) {
         const { key, label, info } = controls[setting];
-        const value = settings[key]!;
+        const value = valueOf(key);
         const { support, min, max } = info();
         if (support !== "supported") errors.push(`${label} is ${support}.`);
         else if (value > max! || value < min!) {
@@ -144,7 +150,7 @@ function createFakeDesktop() {
           failed = true;
           outcome = { status: "failed", error: failures[setting]! };
         } else {
-          controls[setting].write(settings[controls[setting].key]!);
+          controls[setting].write(valueOf(controls[setting].key));
           outcome = { status: "succeeded", error: null };
         }
         result[setting] = outcome;
@@ -275,11 +281,7 @@ it.each([
     expect(fake.profiles[0].settings).toEqual(corrected);
     expect(fake.applyProfile).toHaveBeenLastCalledWith({
       gpuId: "GPU-123",
-      settings: {
-        powerLimitWatts: 280,
-        graphicsOffsetMHz: -200,
-        memoryOffsetMHz: 500,
-      },
+      settings: corrected,
     });
     expect(fake.savedWhenApplied.at(-1)).toEqual(corrected);
     expect(fake.gpu.power.currentLimitWatts).toBe(280);
