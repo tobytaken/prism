@@ -56,6 +56,26 @@ _Avoid_: Last applied profile, current profile
 The per-GPU result of Prism's startup behavior on the most recent host start, including settings applied, failed, or not attempted and why, such as a skip after an unclean shutdown.
 _Avoid_: Profile application result when no user requested it
 
+**Game**:
+Something a user plays that Prism can recognize while it runs: a Steam app, identified by its app ID whether it runs natively or through Proton, or a manually identified program, identified by its executable's location.
+_Avoid_: Process, executable when referring to a Steam game
+
+**Game launch**:
+The period between a user starting a game and its own processes existing, including launcher-side preparation such as shader compilation or compatibility setup.
+_Avoid_: Running game
+
+**Launcher**:
+A program used to browse, install, and start games, such as the Steam client; a running launcher alone is not a running game.
+_Avoid_: Game when referring to the store or client application
+
+**Running game**:
+A game whose own processes currently exist on the host, regardless of window focus.
+_Avoid_: Game launch, active game when referring to the focused window
+
+**Game association**:
+A user's link from a game to at most one of their GPU tuning profiles per GPU, used for automatic switching only while that user's game is running; GPUs without a linked profile are unaffected, and many games can share one profile.
+_Avoid_: Game profile, per-game profile
+
 **Profile setting**:
 A desired tuning instruction in a GPU tuning profile, expressed as a specific value or an explicit request for the default at application time; omission means leave the current tuning value unchanged.
 _Avoid_: Current tuning value, captured default when referring to an explicit default request
