@@ -443,3 +443,24 @@ it("keeps failed default offset edits for retry through Apply all while failed f
     graphicsOffsetMHz: { kind: "default" },
   });
 });
+
+it("does not request a power default that falls outside the current range after the edit was made", async () => {
+  const user = userEvent.setup();
+  const response = createPerformanceResponse();
+  const fake = fakeDesktopGpu(response);
+  renderWithQueryClient(<GpuTuningPage />);
+  await user.click(
+    await screen.findByRole("button", { name: "Use default power limit" }),
+  );
+  response.gpus[0].power.maxLimitWatts = 500;
+  await waitFor(() =>
+    expect(within(powerRegion()).getByText("400-500 W allowed")).toBeVisible(),
+  );
+  await user.click(screen.getByRole("button", { name: "Apply all" }));
+  await screen.findByText(
+    /Power limit: Not attempted — The default for this control is unavailable or outside its current range/,
+  );
+  expect(fake.resetPower).not.toHaveBeenCalled();
+  expect(response.gpus[0].power.currentLimitWatts).toBe(475);
+  expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
+});

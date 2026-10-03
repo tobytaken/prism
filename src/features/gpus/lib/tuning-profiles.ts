@@ -13,6 +13,26 @@ export const PROFILE_SETTING_KEYS = [
   "memoryOffsetMHz",
 ] as const satisfies readonly ProfileSettingKey[];
 
+export function isProfileSettingKey(
+  value: unknown,
+): value is ProfileSettingKey {
+  return (PROFILE_SETTING_KEYS as readonly unknown[]).includes(value);
+}
+
+// Matches what the IPC and daemon boundaries accept, so a stored profile can always be sent.
+export function isProfileSetting(value: unknown): value is ProfileSetting {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const setting = value as Record<string, unknown>;
+  const keys = Object.keys(setting).length;
+  return (
+    (setting.kind === "default" && keys === 1) ||
+    (setting.kind === "value" &&
+      Number.isSafeInteger(setting.value) &&
+      keys === 2)
+  );
+}
+
 type ProfileReading = {
   label: string;
   support: ControlSupport;

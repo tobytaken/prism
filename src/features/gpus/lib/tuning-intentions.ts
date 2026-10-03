@@ -29,9 +29,13 @@ export function retryTuningAction(
   if (setting === "power") {
     if (gpu.power.support !== "supported") return null;
     if (value === "default")
-      return gpu.power.defaultLimitWatts == null
-        ? null
-        : { kind: "resetPowerLimit", gpuId };
+      return inTuningRange(
+        gpu.power.defaultLimitWatts,
+        gpu.power.minLimitWatts,
+        gpu.power.maxLimitWatts,
+      )
+        ? { kind: "resetPowerLimit", gpuId }
+        : null;
     return typeof value === "number" &&
       inTuningRange(value, gpu.power.minLimitWatts, gpu.power.maxLimitWatts)
       ? { kind: "setPowerLimit", gpuId, limitWatts: value }

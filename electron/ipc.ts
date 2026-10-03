@@ -2,7 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
 import { GpuProfileStore } from "./gpu-profile-store";
-import { PROFILE_SETTING_KEYS } from "@/features/gpus/lib/tuning-profiles";
+import {
+  isProfileSetting,
+  isProfileSettingKey,
+} from "@/features/gpus/lib/tuning-profiles";
 import type {
   GpuPerformanceResponse,
   ProfileSettingKey,
@@ -317,20 +320,6 @@ function validateDriverJobPayload(
   payload: unknown,
 ): payload is DriverJobPayload {
   return isObject(payload) && isString(payload.jobId);
-}
-
-function isProfileSettingKey(value: unknown): value is ProfileSettingKey {
-  return (PROFILE_SETTING_KEYS as readonly unknown[]).includes(value);
-}
-
-function isProfileSetting(value: unknown) {
-  return (
-    isObject(value) &&
-    ((value.kind === "default" && Object.keys(value).length === 1) ||
-      (value.kind === "value" &&
-        Number.isSafeInteger(value.value) &&
-        Object.keys(value).length === 2))
-  );
 }
 
 function isAllowedExternalUrl(url: string) {

@@ -678,7 +678,11 @@ function PowerSectionContent({
         onClick={onUseDefault}
         disabled={
           !canEdit ||
-          power.defaultLimitWatts == null ||
+          !inTuningRange(
+            power.defaultLimitWatts,
+            power.minLimitWatts,
+            power.maxLimitWatts,
+          ) ||
           defaultChoice != null ||
           busy
         }

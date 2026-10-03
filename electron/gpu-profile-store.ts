@@ -4,7 +4,8 @@ import path from "node:path";
 
 import {
   captureProfileSettings,
-  PROFILE_SETTING_KEYS,
+  isProfileSetting,
+  isProfileSettingKey,
 } from "@/features/gpus/lib/tuning-profiles";
 import type {
   GpuPerformanceDevice,
@@ -96,18 +97,8 @@ function isProfile(value: unknown): value is GpuTuningProfile {
   const keys = Object.keys(settings);
   return (
     keys.length > 0 &&
-    keys.every((key) => {
-      if (!(PROFILE_SETTING_KEYS as readonly string[]).includes(key))
-        return false;
-      const setting = settings[key];
-      return (
-        isRecord(setting) &&
-        ((setting.kind === "default" && Object.keys(setting).length === 1) ||
-          (setting.kind === "value" &&
-            typeof setting.value === "number" &&
-            Number.isFinite(setting.value) &&
-            Object.keys(setting).length === 2))
-      );
-    })
+    keys.every(
+      (key) => isProfileSettingKey(key) && isProfileSetting(settings[key]),
+    )
   );
 }

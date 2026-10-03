@@ -399,6 +399,34 @@ describe("registerIpc", () => {
     }
   });
 
+  it("rejects stored profile values that the application boundaries could never accept", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
+    mocks.getPath.mockReturnValue(directory);
+    await writeFile(
+      path.join(directory, "gpu-tuning-profiles.json"),
+      JSON.stringify({
+        version: 1,
+        profiles: [
+          {
+            id: "fractional",
+            name: "Fractional",
+            gpuId: "GPU-123",
+            settings: { powerLimitWatts: { kind: "value", value: 250.5 } },
+          },
+        ],
+      }),
+    );
+    const dispose = registerIpc(getMainWindow);
+    try {
+      await expect(
+        callHandler("prism:gpu:listProfiles", trustedEvent()),
+      ).rejects.toThrow("profile file has been preserved");
+    } finally {
+      dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("preserves unreadable storage and reports errors instead of overwriting retained profiles", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
     mocks.getPath.mockReturnValue(directory);
