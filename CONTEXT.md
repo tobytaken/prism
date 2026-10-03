@@ -37,7 +37,7 @@ An attempt to put a GPU tuning profile's settings into effect on its owning GPU;
 _Avoid_: Loading a profile, profile selection when the profile has not been applied
 
 **Current profile**:
-The GPU tuning profile most recently applied to or saved from a GPU; an individual GPU has at most one, and its values can differ from the current tuning values.
+The GPU tuning profile used as the reference for a GPU's applied or saved tuning state, including an automatically applied game profile; an individual GPU has at most one, and its saved values can differ from the current tuning values.
 _Avoid_: Selected profile, loaded profile, active profile
 
 **Startup behavior**:
@@ -49,7 +49,7 @@ The GPU tuning profile deliberately designated, host-wide, for an individual GPU
 _Avoid_: Default profile, current profile
 
 **Last applied tuning values**:
-The most recent successfully applied value of each setting within the profile tuning scope for an individual GPU, whether it came from a profile or a live tuning change.
+The most recent successfully applied manual value of each setting within the profile tuning scope for an individual GPU, whether it came from a profile or a live tuning change; temporary automatic applications and their restorations are excluded.
 _Avoid_: Last applied profile, current profile
 
 **Startup outcome**:
@@ -75,6 +75,30 @@ _Avoid_: Game launch, active game when referring to the focused window
 **Game association**:
 A user's link from a game to at most one of their GPU tuning profiles per GPU, used for automatic switching only while that user's game is running; GPUs without a linked profile are unaffected, and many games can share one profile.
 _Avoid_: Game profile, per-game profile
+
+**Automatic switching**:
+An opt-in, per-user behavior that applies game-associated GPU tuning profiles while games run, with the most recently started associated game taking precedence on each GPU.
+_Avoid_: Auto profile, game mode
+
+**Automatic switching status**:
+The per-GPU explanation of which game and profile drive automatic switching, or why switching is waiting, paused, overridden, blocked, or failed; it does not establish which tuning values are actually in effect.
+_Avoid_: Active profile, profile application result
+
+**Pre-game tuning values**:
+The actual tuning values within a GPU's profile tuning scope held as its restoration baseline before automatic changes, including changes not saved to a profile.
+_Avoid_: Startup settings, previous profile
+
+**Manual override**:
+A user's attempted profile application or live change within the profile tuning scope that pauses automatic switching for the affected GPU until all its associated running games end or the user explicitly resumes switching, preserving the resulting values afterward.
+_Avoid_: Profile override, automatic switching off
+
+**Automatic switching pause**:
+An explicit, persistent hold on automatic changes to one GPU until the user resumes switching, retaining its current tuning values; it is distinct from disabling a user's automatic switching and from a temporary manual override.
+_Avoid_: Automatic switching off, manual override
+
+**Failure pause**:
+A suspension of automatic writes to one GPU following an unsuccessful automatic application or recovery, retaining recovery state until the user requests a retry.
+_Avoid_: Manual override, automatic switching off
 
 **Profile setting**:
 A desired tuning instruction in a GPU tuning profile, expressed as a specific value or an explicit request for the default at application time; omission means leave the current tuning value unchanged.

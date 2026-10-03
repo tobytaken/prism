@@ -1,0 +1,7 @@
+# Temporary game tuning uses a recoverable per-GPU baseline
+
+For [Define automatic switching and restoration rules](https://github.com/tobytaken/prism-electron/issues/6), automatic switching is temporary tuning owned by the host daemon. Each GPU retains its actual pre-game tuning values and previous current-profile reference across overlapping games, rather than restoring a named or startup profile that could lose unsaved manual tweaks. The most recently started eligible game wins across users; a manual tuning attempt takes precedence and preserves the resulting values instead of restoring an obsolete baseline.
+
+The baseline and switching state must survive a daemon restart within the same host boot, while a host reboot starts with the chosen startup behavior and a fresh baseline. Temporary automatic applications and their restorations are excluded from last applied tuning values, refining ADR-0002 so that a reboot during a game does not turn temporary game tuning into startup tuning.
+
+Automatic switching waits while profile-scope edits are unapplied, and the app must explain that hold. A partial automatic application triggers best-effort restoration of the values immediately before that attempt and pauses further automatic writes until explicit retry; rollback is not guaranteed, so reported current tuning values and per-setting outcomes remain authoritative. This favors predictable recovery and manual control over repeated background attempts.
