@@ -8,6 +8,7 @@ import type {
 import type {
   ApplyGpuConfigRequest,
   ApplyGpuProfileRequest,
+  CorrectGpuProfileRequest,
   ProfileApplicationResponse,
   ClockOffsetResponse,
   GpuCommandResponse,
@@ -31,6 +32,11 @@ const prismApi = {
       ipcRenderer.invoke("prism:gpu:listProfiles") as Promise<
         GpuTuningProfile[]
       >,
+    correctProfile: (request: CorrectGpuProfileRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:correctProfile",
+        request,
+      ) as Promise<GpuTuningProfile>,
     saveProfile: (request: SaveGpuProfileRequest) =>
       ipcRenderer.invoke(
         "prism:gpu:saveProfile",

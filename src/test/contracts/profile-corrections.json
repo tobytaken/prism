@@ -1,0 +1,28 @@
+{
+  "power": {
+    "status": "unattempted",
+    "error": "Power limit: requested 300 is outside the current allowed range 100 to 280. Discard this change and load the profile again to review a correction.\nGraphics clock offset: requested -150 is outside the current allowed range -100 to 200. Discard this change and load the profile again to review a correction."
+  },
+  "graphics": {
+    "status": "unattempted",
+    "error": "Power limit: requested 300 is outside the current allowed range 100 to 280. Discard this change and load the profile again to review a correction.\nGraphics clock offset: requested -150 is outside the current allowed range -100 to 200. Discard this change and load the profile again to review a correction."
+  },
+  "memory": {
+    "status": "unattempted",
+    "error": "Power limit: requested 300 is outside the current allowed range 100 to 280. Discard this change and load the profile again to review a correction.\nGraphics clock offset: requested -150 is outside the current allowed range -100 to 200. Discard this change and load the profile again to review a correction."
+  },
+  "corrections": [
+    {
+      "setting": "powerLimitWatts",
+      "savedValue": 300,
+      "proposedValue": 280,
+      "bound": "maximum"
+    },
+    {
+      "setting": "graphicsOffsetMHz",
+      "savedValue": -150,
+      "proposedValue": -100,
+      "bound": "minimum"
+    }
+  ]
+}

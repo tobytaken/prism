@@ -2,7 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
 import { GpuProfileStore } from "./gpu-profile-store";
-import type { GpuPerformanceResponse } from "@/features/gpus/types";
+import type {
+  CorrectGpuProfileRequest,
+  GpuPerformanceResponse,
+} from "@/features/gpus/types";
 
 import {
   app,
@@ -315,6 +318,49 @@ function validateDriverJobPayload(
   return isObject(payload) && isString(payload.jobId);
 }
 
+const PROFILE_SETTING_KEYS = [
+  "powerLimitWatts",
+  "graphicsOffsetMHz",
+  "memoryOffsetMHz",
+];
+const CORRECTION_KEYS = ["setting", "savedValue", "proposedValue", "bound"];
+
+// A correction only moves a saved value to the bound it exceeded; it is never a free-form edit.
+function validateCorrectProfilePayload(
+  payload: unknown,
+): payload is CorrectGpuProfileRequest {
+  if (
+    !isObject(payload) ||
+    Object.keys(payload).some(
+      (key) => key !== "profileId" && key !== "corrections",
+    ) ||
+    !isString(payload.profileId) ||
+    !payload.profileId.trim() ||
+    !Array.isArray(payload.corrections) ||
+    payload.corrections.length === 0
+  )
+    return false;
+  const settings = new Set<unknown>();
+  return payload.corrections.every((correction: unknown) => {
+    if (
+      !isObject(correction) ||
+      Object.keys(correction).some((key) => !CORRECTION_KEYS.includes(key)) ||
+      !PROFILE_SETTING_KEYS.includes(correction.setting as string) ||
+      settings.has(correction.setting) ||
+      !Number.isSafeInteger(correction.savedValue) ||
+      !Number.isSafeInteger(correction.proposedValue)
+    )
+      return false;
+    settings.add(correction.setting);
+    const saved = correction.savedValue as number;
+    const proposed = correction.proposedValue as number;
+    return (
+      (correction.bound === "maximum" && proposed < saved) ||
+      (correction.bound === "minimum" && proposed > saved)
+    );
+  });
+}
+
 function isAllowedExternalUrl(url: string) {
   return url.startsWith("https://") || url.startsWith("mailto:");
 }
@@ -346,15 +392,24 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       Object.keys(payload.settings).length === 0 ||
       Object.entries(payload.settings).some(
         ([key, value]) =>
-          !["powerLimitWatts", "graphicsOffsetMHz", "memoryOffsetMHz"].includes(
-            key,
-          ) || !Number.isSafeInteger(value),
+          !PROFILE_SETTING_KEYS.includes(key) || !Number.isSafeInteger(value),
       )
     ) {
       throw new Error("Invalid applyProfile payload");
     }
     return backend.invoke("gpu.applyProfile", payload);
   });
+
+  ipcMain.handle(
+    "prism:gpu:correctProfile",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (!validateCorrectProfilePayload(payload)) {
+        throw new Error("Invalid correctProfile payload");
+      }
+      return getProfileStore().correct(payload.profileId, payload.corrections);
+    },
+  );
 
   ipcMain.handle("prism:gpu:saveProfile", async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow);

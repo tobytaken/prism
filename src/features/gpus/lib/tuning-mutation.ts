@@ -1,11 +1,17 @@
 import * as api from "@/features/gpus/api";
 import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-screen";
 import type { TuningSetting } from "@/features/gpus/hooks/use-tuning-edits";
-import type { GpuCommandResponse, TuningOutcome } from "@/features/gpus/types";
+import type {
+  GpuCommandResponse,
+  ProfileRangeCorrection,
+  TuningOutcome,
+} from "@/features/gpus/types";
 
-export type TuningMutationResult = Partial<
-  Record<TuningSetting, TuningOutcome>
->;
+export type TuningOutcomeMap = Partial<Record<TuningSetting, TuningOutcome>>;
+export type TuningMutationResult = TuningOutcomeMap & {
+  /** Proposed by fresh validation when only range bounds blocked a profile; nothing was written. */
+  corrections?: ProfileRangeCorrection[];
+};
 export type TuningMutationHandler = (
   action: PerformanceMutationAction,
 ) => Promise<TuningMutationResult> | void;
@@ -23,6 +29,7 @@ export async function runTuningMutation(
         ...(result.power && { power: result.power }),
         ...(result.graphics && { graphics: result.graphics }),
         ...(result.memory && { memory: result.memory }),
+        ...(result.corrections?.length && { corrections: result.corrections }),
       };
     }
     case "setPowerLimit":

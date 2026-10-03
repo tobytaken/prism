@@ -1,6 +1,7 @@
 import type {
   ApplyGpuConfigRequest,
   ApplyGpuProfileRequest,
+  CorrectGpuProfileRequest,
   ProfileApplicationResponse,
   ClockOffsetResponse,
   GpuCommandResponse,
@@ -22,6 +23,9 @@ export interface PrismDesktopApi {
   gpu: {
     listProfiles(): Promise<GpuTuningProfile[]>;
     saveProfile(request: SaveGpuProfileRequest): Promise<GpuTuningProfile>;
+    correctProfile(
+      request: CorrectGpuProfileRequest,
+    ): Promise<GpuTuningProfile>;
     applyProfile(
       request: ApplyGpuProfileRequest,
     ): Promise<ProfileApplicationResponse>;

@@ -82,6 +82,35 @@ pub struct ProfileApplicationResponse {
     pub power: Option<TuningOutcome>,
     pub graphics: Option<TuningOutcome>,
     pub memory: Option<TuningOutcome>,
+    // Present only when out-of-range numeric values are the sole obstacle; nothing was written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corrections: Vec<ProfileRangeCorrection>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ProfileSettingKey {
+    #[serde(rename = "powerLimitWatts")]
+    PowerLimitWatts,
+    #[serde(rename = "graphicsOffsetMHz")]
+    GraphicsOffsetMhz,
+    #[serde(rename = "memoryOffsetMHz")]
+    MemoryOffsetMhz,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RangeBound {
+    Minimum,
+    Maximum,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileRangeCorrection {
+    pub setting: ProfileSettingKey,
+    pub saved_value: i64,
+    pub proposed_value: i64,
+    pub bound: RangeBound,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

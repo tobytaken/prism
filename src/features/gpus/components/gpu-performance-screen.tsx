@@ -291,8 +291,8 @@ function GpuTelemetrySurface({
               loadDisabled={profileLoadingDisabled}
               onLoad={
                 onMutationAction
-                  ? (profile, settings) => {
-                      void editStore.apply(
+                  ? (profile, settings) =>
+                      editStore.apply(
                         {
                           kind: "applyProfile",
                           gpuId: gpu.id,
@@ -301,8 +301,8 @@ function GpuTelemetrySurface({
                         },
                         gpu,
                         onMutationAction,
-                      );
-                    }
+                        { reviewCorrections: true },
+                      )
                   : undefined
               }
             />
