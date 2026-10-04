@@ -1030,3 +1030,28 @@ fn a_client_slow_to_send_its_request_does_not_hold_up_other_connections() {
         DaemonResponse::DaemonStatus(_)
     ));
 }
+
+#[test]
+fn a_reapplication_queued_behind_a_reset_does_not_restore_the_cleared_configuration() {
+    let daemon = Harness::start_with_saved_state(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        Some(&saved_state_with("GPU-123", desired_power(225))),
+    );
+    let gate = daemon.gpus.block("GPU-123", Setter::ResetConfig);
+    let reset = daemon.send_in_background(DaemonRequest::ResetConfig(ResetGpuConfigRequest {
+        gpu_id: "GPU-123".into(),
+    }));
+    gate.wait_until_entered();
+    let mut reapply = daemon.send_in_background(DaemonRequest::ReapplySavedConfig);
+    assert!(reapply.is_pending());
+
+    gate.release();
+    assert!(matches!(reset.response(), DaemonResponse::Mutation(_)));
+    assert!(matches!(reapply.response(), DaemonResponse::Mutation(_)));
+
+    assert!(daemon.saved_state().gpus.is_empty());
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(575)
+    );
+}

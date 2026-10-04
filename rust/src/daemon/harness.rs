@@ -342,11 +342,11 @@ impl HostShutdownSignal for FakeHostShutdown {
 pub struct Harness {
     pub gpus: Arc<FakeGpuBackend>,
     pub clock: Arc<FakeClock>,
-    host_shutdown: Arc<FakeHostShutdown>,
+    host_shutting_down: Arc<FakeHostShutdown>,
     persistent_dir: TempDir,
     boot_dir: TempDir,
     boot_id: String,
-    core: Arc<DaemonCore>,
+    core: Option<Arc<DaemonCore>>,
 }
 
 impl Harness {
@@ -360,40 +360,41 @@ impl Harness {
         if let Some(saved) = saved {
             std::fs::write(persistent_dir.path().join("state.json"), saved).unwrap();
         }
-        let gpus = Arc::new(gpus);
-        let clock = Arc::new(FakeClock::default());
-        let host_shutdown = Arc::new(FakeHostShutdown::default());
-        let boot_dir = tempfile::tempdir().unwrap();
-        let boot_id = "boot-1".to_string();
-        let core = Arc::new(DaemonCore::start(dependencies(
-            &gpus,
-            &clock,
-            &host_shutdown,
-            persistent_dir.path().into(),
-            boot_dir.path().into(),
-            &boot_id,
-        )));
-        Self {
-            gpus,
-            clock,
-            host_shutdown,
+        let mut harness = Self {
+            gpus: Arc::new(gpus),
+            clock: Arc::default(),
+            host_shutting_down: Arc::default(),
             persistent_dir,
-            boot_dir,
-            boot_id,
-            core,
-        }
+            boot_dir: tempfile::tempdir().unwrap(),
+            boot_id: "boot-1".into(),
+            core: None,
+        };
+        harness.start_core();
+        harness
     }
 
     /// Simulates a daemon restart: drops the core and starts a new one on the same directories.
     pub fn restart(&mut self) {
-        self.core = Arc::new(DaemonCore::start(dependencies(
-            &self.gpus,
-            &self.clock,
-            &self.host_shutdown,
-            self.persistent_dir.path().into(),
-            self.boot_dir.path().into(),
-            &self.boot_id,
-        )));
+        self.core = None;
+        self.start_core();
+    }
+
+    fn start_core(&mut self) {
+        let persistent_dir = self.persistent_dir.path().to_path_buf();
+        self.core = Some(Arc::new(DaemonCore::start(CoreDependencies {
+            backend: Arc::clone(&self.gpus) as Arc<dyn DaemonBackend>,
+            drivers: DriverService::new(persistent_dir.join("driver-jobs.json")),
+            persistent_dir,
+            boot_dir: self.boot_dir.path().to_path_buf(),
+            boot_id: self.boot_id.clone(),
+            clock: Arc::clone(&self.clock) as Arc<dyn Clock>,
+            host_shutting_down: Arc::clone(&self.host_shutting_down) as Arc<dyn HostShutdownSignal>,
+            socket_path: PathBuf::from("/tmp/prismd-test.sock"),
+        })));
+    }
+
+    pub fn core(&self) -> Arc<DaemonCore> {
+        Arc::clone(self.core.as_ref().expect("the daemon is running"))
     }
 
     pub fn send(&self, request: DaemonRequest) -> DaemonResponse {
@@ -414,13 +415,9 @@ impl Harness {
         performance
     }
 
-    pub fn core(&self) -> Arc<DaemonCore> {
-        Arc::clone(&self.core)
-    }
-
     /// Sends the request from its own connection without waiting for the response.
     pub fn send_in_background(&self, request: DaemonRequest) -> InFlightRequest {
-        let core = Arc::clone(&self.core);
+        let core = self.core();
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             let _ = sender.send(core.handle(request));
@@ -438,26 +435,6 @@ impl Harness {
 
     pub fn saved_state(&self) -> PersistedGpuState {
         serde_json::from_slice(&self.saved_state_bytes().expect("no saved state")).unwrap()
-    }
-}
-
-fn dependencies(
-    gpus: &Arc<FakeGpuBackend>,
-    clock: &Arc<FakeClock>,
-    host_shutdown: &Arc<FakeHostShutdown>,
-    persistent_dir: PathBuf,
-    boot_dir: PathBuf,
-    boot_id: &str,
-) -> CoreDependencies {
-    CoreDependencies {
-        backend: Arc::clone(gpus) as Arc<dyn DaemonBackend>,
-        drivers: DriverService::new(persistent_dir.join("driver-jobs.json")),
-        persistent_dir,
-        boot_dir,
-        boot_id: boot_id.into(),
-        clock: Arc::clone(clock) as Arc<dyn Clock>,
-        host_shutting_down: Arc::clone(host_shutdown) as Arc<dyn HostShutdownSignal>,
-        socket_path: PathBuf::from("/tmp/prismd-test.sock"),
     }
 }
 

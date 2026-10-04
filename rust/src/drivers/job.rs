@@ -80,6 +80,13 @@ impl DriverJobStore {
                     "Driver job state is poisoned",
                 )
             })?;
+            // Checked again under the lock: concurrent requests can both pass the caller's check.
+            if state.jobs.iter().any(|job| job.status.is_active()) {
+                return Err(GpuCommandError::new(
+                    GpuCommandErrorCode::InvalidArgument,
+                    "A driver install or update is already running",
+                ));
+            }
             state.jobs.push(job.clone());
         }
         self.persist();
@@ -562,6 +569,36 @@ mod tests {
         assert!(is_deb_nvidia_package("libnvidia-gl-595:amd64"));
         assert!(!is_deb_nvidia_package("bash"));
         assert!(!is_deb_nvidia_package("nvidia-driver-595;touch"));
+    }
+
+    #[test]
+    fn a_second_job_is_refused_while_one_is_active() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jobs.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({ "jobs": [{
+                "id": "driver-1",
+                "status": "running",
+                "action": "installRecommended",
+                "startedAtUnixMs": 1,
+                "finishedAtUnixMs": null,
+                "currentStep": "Installing",
+                "logTail": [],
+                "error": null,
+                "requiresReboot": true
+            }] })
+            .to_string(),
+        )
+        .expect("write jobs");
+        let store = DriverJobStore::load(path);
+
+        let error = store
+            .start(DriverAction::UpdateInstalled)
+            .expect_err("refused");
+
+        assert!(error.message.contains("already running"));
+        assert_eq!(store.active_job().expect("active").id, "driver-1");
     }
 
     #[test]

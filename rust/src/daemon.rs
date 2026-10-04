@@ -42,8 +42,8 @@ pub const DEFAULT_CONFIG_PATH: &str = "/etc/prism/prismd.toml";
 #[derive(Debug, Clone)]
 struct DaemonPaths {
     socket_path: PathBuf,
-    state_dir: PathBuf,
-    boot_state_dir: PathBuf,
+    persistent_dir: PathBuf,
+    boot_dir: PathBuf,
     driver_jobs_path: PathBuf,
     config_path: PathBuf,
 }
@@ -52,8 +52,8 @@ impl DaemonPaths {
     fn from_environment() -> Self {
         Self {
             socket_path: env_path("PRISM_SOCKET_PATH", DEFAULT_SOCKET_PATH),
-            state_dir: env_path("PRISM_STATE_DIR", DEFAULT_STATE_DIR),
-            boot_state_dir: env_path("PRISM_BOOT_STATE_DIR", DEFAULT_BOOT_STATE_DIR),
+            persistent_dir: env_path("PRISM_STATE_DIR", DEFAULT_STATE_DIR),
+            boot_dir: env_path("PRISM_BOOT_STATE_DIR", DEFAULT_BOOT_STATE_DIR),
             driver_jobs_path: env_path("PRISM_DRIVER_JOBS_PATH", DEFAULT_DRIVER_JOBS_PATH),
             config_path: env_path("PRISM_CONFIG_PATH", DEFAULT_CONFIG_PATH),
         }
@@ -86,8 +86,8 @@ pub fn run() -> Result<(), String> {
     let core = DaemonCore::start(CoreDependencies {
         backend: Arc::new(RealDaemonBackend),
         drivers: DriverService::new(paths.driver_jobs_path.clone()),
-        persistent_dir: paths.state_dir.clone(),
-        boot_dir: paths.boot_state_dir.clone(),
+        persistent_dir: paths.persistent_dir.clone(),
+        boot_dir: paths.boot_dir.clone(),
         boot_id: read_boot_id(),
         clock: Arc::new(SystemClock),
         host_shutting_down: Arc::new(SystemdShutdownSignal),
