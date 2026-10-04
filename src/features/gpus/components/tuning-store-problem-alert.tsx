@@ -12,19 +12,18 @@ const PROBLEM_COPY: Record<
   { cause: string; remedy: string }
 > = {
   unreadable: {
-    cause: "Prism couldn't read its saved tuning state.",
+    cause: "Prism couldn't read its tuning store.",
     remedy:
       "Restore the file from a backup or move it aside, then restart prismd.",
   },
   newerVersion: {
-    cause:
-      "Prism's saved tuning state was written by a newer version of Prism.",
+    cause: "Prism's tuning store was written by a newer version of Prism.",
     remedy:
       "Update Prism to use it, or move the file aside and restart prismd to start over.",
   },
 };
 
-/** Explains why the daemon can't use its saved tuning state, if it can't. */
+/** Explains why the daemon can't use its tuning store, if it can't. */
 export function TuningStoreProblemAlert({
   health,
 }: {
@@ -43,7 +42,7 @@ export function TuningStoreProblemAlert({
       className="border-destructive/50 bg-destructive/12"
     >
       <DatabaseZap className="text-destructive" />
-      <AlertTitle id={titleId}>Saved tuning state can't be used</AlertTitle>
+      <AlertTitle id={titleId}>Tuning store can't be used</AlertTitle>
       <AlertDescription className="text-destructive/90">
         <div className="space-y-1">
           <p>

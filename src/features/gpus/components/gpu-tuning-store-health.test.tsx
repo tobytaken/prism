@@ -50,11 +50,11 @@ describe("Tuning store health on Performance", () => {
     renderPerformancePage();
 
     const problem = await screen.findByRole("alert", {
-      name: "Saved tuning state can't be used",
+      name: "Tuning store can't be used",
     });
     expect(
       within(problem).getByText(
-        /Prism couldn't read its saved tuning state\. It left the file untouched/,
+        /Prism couldn't read its tuning store\. It left the file untouched/,
       ),
     ).toBeInTheDocument();
     expect(
@@ -85,11 +85,11 @@ describe("Tuning store health on Performance", () => {
     renderPerformancePage();
 
     const problem = await screen.findByRole("alert", {
-      name: "Saved tuning state can't be used",
+      name: "Tuning store can't be used",
     });
     expect(
       within(problem).getByText(
-        /Prism's saved tuning state was written by a newer version of Prism\. It left the file untouched/,
+        /Prism's tuning store was written by a newer version of Prism\. It left the file untouched/,
       ),
     ).toBeInTheDocument();
   });
@@ -105,7 +105,7 @@ describe("Tuning store health on Performance", () => {
       expect(window.prism.gpu.getDaemonStatus).toHaveBeenCalled(),
     );
     expect(
-      screen.queryByRole("alert", { name: "Saved tuning state can't be used" }),
+      screen.queryByRole("alert", { name: "Tuning store can't be used" }),
     ).not.toBeInTheDocument();
   });
 });

@@ -26,12 +26,12 @@ type RawDocument = serde_json::Map<String, serde_json::Value>;
 const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     TUNING_STORE_SCHEMA_VERSION as usize - 1] = [];
 
-/// The persistent tuning state. It holds no user data yet.
+/// The tuning store's contents. It holds no user data yet.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TuningDocument {}
 
-/// The daemon's persistent tuning state: one versioned document, separate from the legacy saved
+/// The daemon's tuning store: one versioned document, separate from the legacy saved
 /// configurations. It fails closed: a document it can't use is preserved untouched and never
 /// rewritten.
 pub struct TuningStore {
@@ -96,7 +96,7 @@ impl std::fmt::Display for TuningStoreWriteError {
 impl TuningStore {
     /// Changes the document and writes it atomically at the current schema version. The change
     /// is kept only once it is on disk.
-    // Nothing writes tuning state yet; profiles and startup choices will.
+    // Nothing writes the tuning store yet; profiles and startup choices will.
     #[allow(dead_code)]
     pub fn update(
         &self,

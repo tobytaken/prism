@@ -135,11 +135,11 @@ export interface GpuDaemonStatus {
   tuningStore: TuningStoreHealth | null;
 }
 
-/** Why the daemon can't use its saved tuning state. */
+/** Why the daemon can't use its tuning store. */
 export type TuningStoreProblemKind = "unreadable" | "newerVersion";
 
 /**
- * Whether the daemon can use its saved tuning state. An unhealthy store is
+ * Whether the daemon can use its tuning store. An unhealthy store is
  * preserved untouched; manual live tuning keeps working.
  */
 export type TuningStoreHealth =
