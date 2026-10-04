@@ -3,6 +3,7 @@ use serde_json::json;
 use super::harness::{
     observed_gpu, tunable_gpu, tunable_gpu_with_id, FakeGpuBackend, Harness, Setter,
 };
+use super::tuning_store::{STAGED_FILE_SUFFIX, TUNING_STORE_FILE_NAME};
 use crate::gpu::{
     ApplyGpuConfigRequest, ClockRangeInput, ControlSupport, DesiredGpuConfig, GpuCommandErrorCode,
     GpuTargetRequest, PersistedGpuConfig, PersistedGpuState, ResetGpuConfigRequest,
@@ -1056,7 +1057,7 @@ fn a_reapplication_queued_behind_a_reset_does_not_restore_the_cleared_configurat
     );
 }
 
-const TUNING_STORE: &str = "tuning-state.json";
+const TUNING_STORE: &str = TUNING_STORE_FILE_NAME;
 
 #[test]
 fn without_a_tuning_store_the_daemon_starts_healthy_and_creates_nothing_until_a_write() {
@@ -1091,7 +1092,9 @@ fn assert_unhealthy(daemon: &Harness, expected: TuningStoreProblem) {
     assert!(!detail.is_empty());
 }
 
-// Acceptance scenario 11 from #8, as far as it exists so far.
+// Acceptance scenario 11 from #8, as far as it exists so far: the file is preserved, manual
+// tuning works and the problem is reported. Startup behavior and automatic writes don't exist
+// yet; legacy saved-configuration reapplication still runs at every start until #38 retires it.
 #[test]
 fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_working() {
     let corrupt: &[u8] = b"{\"schemaVersion\": 1, \"profiles\": [tru";
@@ -1150,6 +1153,11 @@ fn a_tuning_store_from_a_newer_schema_version_is_treated_as_unreadable_and_prese
         panic!("expected a command response");
     };
     assert!(power.success);
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(450)
+    );
+    assert_eq!(daemon.persistent_file(TUNING_STORE).as_deref(), Some(newer));
     daemon.restart();
     assert_unhealthy(&daemon, TuningStoreProblem::NewerVersion);
     assert_eq!(daemon.persistent_file(TUNING_STORE).as_deref(), Some(newer));
@@ -1162,7 +1170,10 @@ fn a_store_write_interrupted_by_a_crash_leaves_the_previous_document_in_use() {
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[
             (TUNING_STORE, previous),
-            ("tuning-state.json.tmp", b"{\"schemaVersion\": 1, \"pro"),
+            (
+                &format!("{TUNING_STORE}{STAGED_FILE_SUFFIX}"),
+                b"{\"schemaVersion\": 1, \"pro",
+            ),
         ],
     );
 

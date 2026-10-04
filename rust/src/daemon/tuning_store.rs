@@ -13,11 +13,17 @@ pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 /// The schema version this daemon reads and writes.
 pub const TUNING_STORE_SCHEMA_VERSION: u64 = 1;
 
-type Document = serde_json::Map<String, serde_json::Value>;
+/// Appended to the document's file name for the new contents of a write in progress.
+pub const STAGED_FILE_SUFFIX: &str = ".tmp";
+
+const SCHEMA_VERSION_KEY: &str = "schemaVersion";
+
+/// The document as JSON, before it is read as a typed document.
+type RawDocument = serde_json::Map<String, serde_json::Value>;
 
 /// Upgrades a document by one schema version: the first entry upgrades version 1 to 2, and so on.
 /// Bumping the schema version means adding its migration here.
-const MIGRATIONS: [fn(Document) -> Result<Document, String>;
+const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     TUNING_STORE_SCHEMA_VERSION as usize - 1] = [];
 
 /// The persistent tuning state. It holds no user data yet.
@@ -74,14 +80,14 @@ impl TuningStore {
 #[derive(Debug)]
 pub enum TuningStoreWriteError {
     /// The store is unhealthy, so its document is never rewritten.
-    Suspended,
+    Unhealthy,
     Io(io::Error),
 }
 
 impl std::fmt::Display for TuningStoreWriteError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Suspended => write!(formatter, "the tuning store is unhealthy"),
+            Self::Unhealthy => write!(formatter, "the tuning store is unhealthy"),
             Self::Io(error) => write!(formatter, "failed to write the tuning store: {error}"),
         }
     }
@@ -98,7 +104,7 @@ impl TuningStore {
     ) -> Result<(), TuningStoreWriteError> {
         let mut state = self.state.lock().unwrap();
         let StoreState::Healthy(document) = &mut *state else {
-            return Err(TuningStoreWriteError::Suspended);
+            return Err(TuningStoreWriteError::Unhealthy);
         };
         let mut changed = document.clone();
         change(&mut changed);
@@ -134,12 +140,16 @@ impl<'a> StagedFile<'a> {
         let parent = parent_dir(path);
         fs::create_dir_all(parent)?;
         let mut staged_path = path.as_os_str().to_owned();
-        staged_path.push(".tmp");
+        staged_path.push(STAGED_FILE_SUFFIX);
         let staged_path = PathBuf::from(staged_path);
+        // A file left by an interrupted write is replaced, so the new one gets its own mode.
+        match fs::remove_file(&staged_path) {
+            Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
         let mut file = OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .mode(0o600)
             .open(&staged_path)?;
         file.write_all(contents)?;
@@ -170,10 +180,10 @@ fn load(path: &Path) -> Result<TuningDocument, LoadError> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(TuningDocument::default()),
         Err(error) => return Err(unreadable(error.to_string())),
     };
-    let mut document: Document =
+    let mut document: RawDocument =
         serde_json::from_slice(&contents).map_err(|error| unreadable(error.to_string()))?;
     let version = document
-        .remove("schemaVersion")
+        .remove(SCHEMA_VERSION_KEY)
         .ok_or_else(|| unreadable("the document has no schema version".into()))?;
     let version = version
         .as_u64()
@@ -234,7 +244,7 @@ mod tests {
 
             assert!(matches!(
                 store.update(|_| {}),
-                Err(TuningStoreWriteError::Suspended)
+                Err(TuningStoreWriteError::Unhealthy)
             ));
             assert_eq!(fs::read(store_path(&dir)).unwrap(), preserved);
         }

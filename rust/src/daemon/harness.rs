@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
+use super::daemon_core::LEGACY_STATE_FILE_NAME;
 use super::{Clock, CoreDependencies, DaemonBackend, DaemonCore, HostShutdownSignal};
 use crate::drivers::DriverService;
 use crate::gpu::{
@@ -357,7 +358,9 @@ impl Harness {
     /// Starts the daemon on a persistent directory that already holds this saved state.
     pub fn start_with_saved_state(gpus: FakeGpuBackend, saved: Option<&[u8]>) -> Self {
         match saved {
-            Some(saved) => Self::start_with_persistent_files(gpus, &[("state.json", saved)]),
+            Some(saved) => {
+                Self::start_with_persistent_files(gpus, &[(LEGACY_STATE_FILE_NAME, saved)])
+            }
             None => Self::start_with_persistent_files(gpus, &[]),
         }
     }
@@ -445,7 +448,7 @@ impl Harness {
 
     /// The saved state file's bytes, if the daemon has written one.
     pub fn saved_state_bytes(&self) -> Option<Vec<u8>> {
-        std::fs::read(self.persistent_dir.path().join("state.json")).ok()
+        std::fs::read(self.persistent_dir.path().join(LEGACY_STATE_FILE_NAME)).ok()
     }
 
     /// A file's bytes in the persistent directory, if it exists.

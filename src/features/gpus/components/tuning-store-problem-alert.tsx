@@ -2,9 +2,15 @@ import { useId } from "react";
 import { DatabaseZap } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { TuningStoreHealth } from "@/features/gpus/types";
+import type {
+  TuningStoreHealth,
+  TuningStoreProblemKind,
+} from "@/features/gpus/types";
 
-const PROBLEM_COPY = {
+const PROBLEM_COPY: Record<
+  TuningStoreProblemKind,
+  { cause: string; remedy: string }
+> = {
   unreadable: {
     cause: "Prism couldn't read its saved tuning state.",
     remedy:
@@ -16,10 +22,10 @@ const PROBLEM_COPY = {
     remedy:
       "Update Prism to use it, or move the file aside and restart prismd to start over.",
   },
-} as const;
+};
 
 /** Explains why the daemon can't use its saved tuning state, if it can't. */
-export function TuningStoreProblem({
+export function TuningStoreProblemAlert({
   health,
 }: {
   health: TuningStoreHealth | null | undefined;

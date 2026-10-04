@@ -15,7 +15,7 @@ use super::queue::{GpuOperationQueues, PendingOperation};
 use super::tuning::{apply_live_offsets, apply_profile, reset_live_offsets};
 use super::tuning_store::{TuningStore, TUNING_STORE_FILE_NAME};
 
-const LEGACY_STATE_FILE_NAME: &str = "state.json";
+pub(super) const LEGACY_STATE_FILE_NAME: &str = "state.json";
 
 /// Everything the daemon core needs from the host, so tests can substitute each part.
 pub struct CoreDependencies {

@@ -526,7 +526,7 @@ pub struct GpuDaemonStatus {
     pub managed_by_daemon: bool,
     pub socket_path: String,
     pub message: Option<String>,
-    /// Unknown when the daemon can't be reached.
+    /// Unknown when the daemon can't be reached or predates the tuning store.
     #[serde(default)]
     pub tuning_store: Option<TuningStoreHealth>,
 }
