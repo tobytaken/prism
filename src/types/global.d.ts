@@ -32,6 +32,9 @@ export interface PrismDesktopApi {
     getInventory(): Promise<GpuInventoryResponse>;
     getPerformance(): Promise<GpuPerformanceResponse>;
     getDaemonStatus(): Promise<GpuDaemonStatus>;
+    onDaemonStatusChanged(
+      callback: (status: GpuDaemonStatus) => void,
+    ): () => void;
     applyConfig(request: ApplyGpuConfigRequest): Promise<GpuMutationResponse>;
     resetConfig(request: ResetGpuConfigRequest): Promise<GpuMutationResponse>;
     setPowerLimit(

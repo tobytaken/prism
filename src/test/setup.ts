@@ -23,6 +23,7 @@ const prismStub: PrismDesktopApi = {
       message: "Prism daemon is unavailable.",
       tuningStore: null,
     }),
+    onDaemonStatusChanged: () => () => undefined,
     applyConfig: async () => ({ success: true, inventory: null, error: null }),
     resetConfig: async () => ({ success: true, inventory: null, error: null }),
     setPowerLimit: async () => ({ success: true, error: null }),

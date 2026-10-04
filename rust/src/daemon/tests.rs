@@ -11,6 +11,230 @@ use crate::gpu::{
 };
 use crate::protocol::{ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, ProfileSetting};
 
+#[test]
+fn fake_sessions_keep_their_callers_and_receive_store_health_alongside_one_shot_requests() {
+    use super::{SessionPeer, SessionPolicy};
+    use crate::protocol::DaemonEvent;
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let policy = SessionPolicy {
+        admin_group: "admins".into(),
+        admin_user: Some("alice".into()),
+    };
+    let alice = SessionPeer {
+        uid: 1000,
+        username: "alice".into(),
+        groups: vec![],
+        primary_group: "users".into(),
+    };
+    let bob = SessionPeer {
+        uid: 1001,
+        username: "bob".into(),
+        groups: vec!["admins".into()],
+        primary_group: "users".into(),
+    };
+    let core = daemon.core();
+    let first = core.open_session(alice, &policy).unwrap();
+    let second = core.open_session(bob, &policy).unwrap();
+    assert_eq!(first.peer().uid, 1000);
+    assert_eq!(second.peer().username, "bob");
+    for session in [&first, &second] {
+        assert_eq!(
+            session
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap(),
+            DaemonEvent::StoreHealthChanged(TuningStoreHealth::Healthy {})
+        );
+        assert!(matches!(
+            core.handle_session(session, DaemonRequest::GetDaemonStatus),
+            DaemonResponse::DaemonStatus(_)
+        ));
+    }
+    assert!(matches!(
+        daemon.send(DaemonRequest::GetDaemonStatus),
+        DaemonResponse::DaemonStatus(_)
+    ));
+}
+
+#[test]
+fn unauthorized_sessions_are_rejected_by_the_same_admin_policy() {
+    use super::{SessionPeer, SessionPolicy};
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let policy = SessionPolicy {
+        admin_group: "admins".into(),
+        admin_user: Some("alice".into()),
+    };
+    let peer = SessionPeer {
+        uid: 1002,
+        username: "mallory".into(),
+        groups: vec!["users".into()],
+        primary_group: "users".into(),
+    };
+    let expected = policy.authorize(&peer).unwrap_err();
+    let Err(actual) = daemon.core().open_session(peer, &policy) else {
+        panic!("unauthorized session was admitted")
+    };
+    assert_eq!(actual, expected);
+    assert_eq!(actual.code, GpuCommandErrorCode::NoPermission);
+}
+
+#[test]
+fn restarting_the_core_closes_old_fake_sessions_and_pushes_the_reopened_stores_health() {
+    use super::{SessionPeer, SessionPolicy};
+    use crate::protocol::DaemonEvent;
+    let mut daemon = Harness::start(FakeGpuBackend::default());
+    let policy = SessionPolicy {
+        admin_group: "admins".into(),
+        admin_user: None,
+    };
+    let peer = SessionPeer {
+        uid: 1000,
+        username: "alice".into(),
+        groups: vec!["admins".into()],
+        primary_group: "users".into(),
+    };
+    let old = daemon.core().open_session(peer.clone(), &policy).unwrap();
+    old.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    std::fs::write(daemon.persistent_path(TUNING_STORE_FILE_NAME), b"{broken").unwrap();
+    daemon.restart();
+    assert!(matches!(
+        old.recv_timeout(std::time::Duration::from_secs(1)),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+    ));
+    let resumed = daemon.core().open_session(peer, &policy).unwrap();
+    assert!(matches!(
+        resumed
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        DaemonEvent::StoreHealthChanged(TuningStoreHealth::Unhealthy {
+            problem: TuningStoreProblem::Unreadable,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn framed_sessions_share_the_socket_with_one_shot_clients_and_close_on_eof() {
+    use crate::framing::{read_frame, write_frame};
+    use crate::protocol::{SessionMessage, SessionRequest};
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let (mut client, mut server) = UnixStream::pair().unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let core = daemon.core();
+    let policy = super::PrismDaemonConfig {
+        admin_group: "root".into(),
+        admin_user: users::get_current_username().map(|n| n.to_string_lossy().into_owned()),
+    };
+    let serving = std::thread::spawn(move || super::handle_connection(&core, &policy, &mut server));
+    write_frame(
+        &mut client,
+        &SessionRequest {
+            id: 1,
+            request: DaemonRequest::OpenSession,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<SessionMessage>(&mut client).unwrap(),
+        Some(SessionMessage::Response {
+            id: 1,
+            response: DaemonResponse::DaemonStatus(_)
+        })
+    ));
+    assert!(matches!(
+        read_frame::<SessionMessage>(&mut client).unwrap(),
+        Some(SessionMessage::Event { .. })
+    ));
+    write_frame(
+        &mut client,
+        &SessionRequest {
+            id: 7,
+            request: DaemonRequest::GetPerformance,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<SessionMessage>(&mut client).unwrap(),
+        Some(SessionMessage::Response {
+            id: 7,
+            response: DaemonResponse::Performance(_)
+        })
+    ));
+    assert!(matches!(
+        daemon.send(DaemonRequest::GetDaemonStatus),
+        DaemonResponse::DaemonStatus(_)
+    ));
+    client.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut end = Vec::new();
+    client.read_to_end(&mut end).unwrap();
+    serving.join().unwrap().unwrap();
+}
+
+#[test]
+fn a_non_admin_socket_peer_is_rejected_identically_for_sessions_and_one_shot_requests() {
+    use crate::framing::{read_frame, write_frame};
+    use crate::protocol::{SessionMessage, SessionRequest};
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    // Root is always authorized, including on CI hosts that run the tests as root.
+    if users::get_current_uid() == 0 {
+        return;
+    }
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let policy = super::SessionPolicy {
+        admin_group: "prism-test-no-admin-group".into(),
+        admin_user: None,
+    };
+    let (mut one_shot, mut server) = UnixStream::pair().unwrap();
+    let core = daemon.core();
+    let one_shot_policy = policy.clone();
+    let serving =
+        std::thread::spawn(move || super::handle_connection(&core, &one_shot_policy, &mut server));
+    one_shot
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    one_shot
+        .write_all(&serde_json::to_vec(&DaemonRequest::GetInventory).unwrap())
+        .unwrap();
+    one_shot.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut response = Vec::new();
+    one_shot.read_to_end(&mut response).unwrap();
+    let DaemonResponse::Error(expected) = serde_json::from_slice(&response).unwrap() else {
+        panic!("unauthorized one-shot client was admitted")
+    };
+    serving.join().unwrap().unwrap();
+    let (mut session, mut server) = UnixStream::pair().unwrap();
+    let core = daemon.core();
+    let serving = std::thread::spawn(move || super::handle_connection(&core, &policy, &mut server));
+    session
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut session,
+        &SessionRequest {
+            id: 1,
+            request: DaemonRequest::OpenSession,
+        },
+    )
+    .unwrap();
+    let Some(SessionMessage::Response {
+        id: 1,
+        response: DaemonResponse::Error(actual),
+    }) = read_frame(&mut session).unwrap()
+    else {
+        panic!("unauthorized session was admitted")
+    };
+    assert_eq!(actual, expected);
+    assert_eq!(actual.code, GpuCommandErrorCode::NoPermission);
+    assert!(read_frame::<SessionMessage>(&mut session)
+        .unwrap()
+        .is_none());
+    serving.join().unwrap().unwrap();
+}
+
 fn apply_profile_request(settings: serde_json::Value) -> serde_json::Value {
     json!({ "type": "apply_profile", "payload": { "gpuId": "GPU-123", "settings": settings } })
 }
@@ -1065,12 +1289,12 @@ fn without_a_tuning_store_the_daemon_starts_healthy_and_creates_nothing_until_a_
 
     assert_eq!(
         daemon.status().tuning_store,
-        Some(TuningStoreHealth::Healthy)
+        Some(TuningStoreHealth::Healthy {})
     );
     daemon.restart();
     assert_eq!(
         daemon.status().tuning_store,
-        Some(TuningStoreHealth::Healthy)
+        Some(TuningStoreHealth::Healthy {})
     );
     assert_eq!(daemon.persistent_file(TUNING_STORE), None);
 }
@@ -1179,7 +1403,7 @@ fn a_store_write_interrupted_by_a_crash_leaves_the_previous_document_in_use() {
 
     assert_eq!(
         daemon.status().tuning_store,
-        Some(TuningStoreHealth::Healthy)
+        Some(TuningStoreHealth::Healthy {})
     );
     assert_eq!(
         daemon.persistent_file(TUNING_STORE).as_deref(),

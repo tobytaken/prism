@@ -11,6 +11,7 @@ import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
 import profileOutcomes from "@/test/contracts/profile-outcomes.json";
 import profileCorrections from "@/test/contracts/profile-corrections.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
+import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store.json";
 import { createPerformanceResponse } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
 
@@ -52,6 +53,98 @@ describe("registerIpc", () => {
     });
     mocks.openExternal.mockReset();
     mocks.spawn.mockReset();
+  });
+
+  it("forwards validated id-less notifications to the subscribed renderer without consuming a pending response", async () => {
+    const child = createBackendChild({ success: true });
+    mocks.spawn.mockReturnValue(child);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      child.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: unhealthyStoreStatus })}\n`,
+      );
+      expect(send).toHaveBeenCalledWith(
+        "prism:daemon:statusChanged",
+        unhealthyStoreStatus,
+      );
+      expect(
+        await callHandler("prism:gpu:getDaemonStatus", trustedEvent()),
+      ).toEqual({ success: true });
+      await callHandler("prism:daemon:unsubscribe", trustedEvent());
+      send.mockClear();
+      child.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: unhealthyStoreStatus })}\n`,
+      );
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each(["subscribe", "unsubscribe"])(
+    "validates the sender and payload of daemon %s",
+    async (method) => {
+      const dispose = registerIpc(getMainWindow);
+      try {
+        const channel = `prism:daemon:${method}`;
+        await expect(callHandler(channel, untrustedEvent())).rejects.toThrow(
+          "Untrusted IPC sender",
+        );
+        await expect(
+          callHandler(channel, trustedEvent(), { uid: 0 }),
+        ).rejects.toThrow("Invalid daemon subscription payload");
+        expect(mocks.spawn).not.toHaveBeenCalled();
+      } finally {
+        dispose();
+      }
+    },
+  );
+
+  it("ignores malformed notification payloads and envelopes", async () => {
+    const child = createBackendChild();
+    mocks.spawn.mockReturnValue(child);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      for (const value of [
+        null,
+        [],
+        { method: "daemon.statusChanged", params: null },
+        {
+          method: "daemon.statusChanged",
+          params: { ...unhealthyStoreStatus, reachable: "true" },
+        },
+        {
+          method: "daemon.statusChanged",
+          params: {
+            ...unhealthyStoreStatus,
+            tuningStore: {
+              status: "unhealthy",
+              problem: "unknown",
+              path: "/store",
+              detail: "problem",
+            },
+          },
+        },
+        {
+          method: "daemon.statusChanged",
+          params: unhealthyStoreStatus,
+          id: 99,
+        },
+        { method: "unknown", params: unhealthyStoreStatus },
+      ])
+        child.stdout.write(`${JSON.stringify(value)}\n`);
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
   });
 
   it("forwards profile application to backend validation and preserves each outcome", async () => {

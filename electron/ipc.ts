@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
 import { GpuProfileStore } from "./gpu-profile-store";
+import { daemonStatusNotification } from "./daemon-events";
 import {
   isProfileSetting,
   isProfileSettingKey,
@@ -9,6 +10,7 @@ import {
 import type {
   CorrectGpuProfileRequest,
   GpuPerformanceResponse,
+  GpuDaemonStatus,
   ProfileSettingKey,
 } from "@/features/gpus/types";
 
@@ -65,6 +67,12 @@ class RustBackendClient {
   private reader: readline.Interface | null = null;
   private nextId = 0;
   private pending = new Map<number, PendingRequest>();
+
+  constructor(private readonly onStatus: (status: GpuDaemonStatus) => void) {}
+
+  start() {
+    this.ensureStarted();
+  }
 
   async invoke<T>(method: string, params?: unknown): Promise<T> {
     this.ensureStarted();
@@ -176,15 +184,28 @@ class RustBackendClient {
       return;
     }
 
-    let response: SidecarResponse;
+    let value: unknown;
     try {
-      response = JSON.parse(line) as SidecarResponse;
+      value = JSON.parse(line);
     } catch (error) {
       process.stderr.write(
         `[prism_backend] invalid JSON response: ${String(error)}\n`,
       );
       return;
     }
+
+    const notification = daemonStatusNotification(value);
+    if (notification) {
+      this.onStatus(notification);
+      return;
+    }
+    if (
+      !isObject(value) ||
+      !Number.isSafeInteger(value.id) ||
+      typeof value.id !== "number"
+    )
+      return;
+    const response = value as SidecarResponse;
 
     const pending = this.pending.get(response.id);
     if (!pending) {
@@ -214,6 +235,9 @@ function assertTrustedSender(
 
   if (event.sender.id !== window.webContents.id) {
     throw new Error("Untrusted IPC sender");
+  }
+  if (event.senderFrame && event.senderFrame !== window.webContents.mainFrame) {
+    throw new Error("Untrusted IPC sender frame");
   }
 }
 
@@ -366,7 +390,36 @@ function isAllowedExternalUrl(url: string) {
 }
 
 export function registerIpc(getMainWindow: MainWindowGetter) {
-  const backend = new RustBackendClient();
+  let subscribed = false;
+  let latestStatus: GpuDaemonStatus | undefined;
+  const backend = new RustBackendClient((status) => {
+    latestStatus = status;
+    if (subscribed)
+      getMainWindow()?.webContents.send("prism:daemon:statusChanged", status);
+  });
+
+  ipcMain.handle(
+    "prism:daemon:subscribe",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid daemon subscription payload");
+      subscribed = true;
+      backend.start();
+      if (latestStatus)
+        getMainWindow()?.webContents.send(
+          "prism:daemon:statusChanged",
+          latestStatus,
+        );
+    },
+  );
+  ipcMain.handle(
+    "prism:daemon:unsubscribe",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid daemon subscription payload");
+      subscribed = false;
+    },
+  );
   let profileStore: GpuProfileStore | undefined;
   const getProfileStore = () =>
     (profileStore ??= new GpuProfileStore(

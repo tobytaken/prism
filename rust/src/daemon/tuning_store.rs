@@ -2,11 +2,13 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use super::session::{DaemonSession, SessionEvents, SessionPeer};
 use crate::gpu::{TuningStoreHealth, TuningStoreProblem};
+use crate::protocol::DaemonEvent;
 
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
@@ -37,6 +39,7 @@ pub struct TuningDocument {}
 pub struct TuningStore {
     path: PathBuf,
     state: Mutex<StoreState>,
+    events: Arc<SessionEvents>,
 }
 
 enum StoreState {
@@ -62,12 +65,25 @@ impl TuningStore {
         Self {
             path,
             state: Mutex::new(state),
+            events: Arc::default(),
         }
     }
 
     pub fn health(&self) -> TuningStoreHealth {
-        match &*self.state.lock().unwrap() {
-            StoreState::Healthy(_) => TuningStoreHealth::Healthy,
+        self.health_of(&self.state.lock().unwrap())
+    }
+
+    pub fn subscribe(&self, peer: SessionPeer) -> DaemonSession {
+        let state = self.state.lock().unwrap();
+        self.events.subscribe(
+            peer,
+            DaemonEvent::StoreHealthChanged(self.health_of(&state)),
+        )
+    }
+
+    fn health_of(&self, state: &StoreState) -> TuningStoreHealth {
+        match state {
+            StoreState::Healthy(_) => TuningStoreHealth::Healthy {},
             StoreState::Unhealthy { problem, detail } => TuningStoreHealth::Unhealthy {
                 problem: *problem,
                 path: self.path.display().to_string(),
@@ -108,7 +124,15 @@ impl TuningStore {
         };
         let mut changed = document.clone();
         change(&mut changed);
-        write_atomically(&self.path, &serialize(&changed)).map_err(TuningStoreWriteError::Io)?;
+        if let Err(error) = write_atomically(&self.path, &serialize(&changed)) {
+            *state = StoreState::Unhealthy {
+                problem: TuningStoreProblem::Unreadable,
+                detail: format!("Failed to write the tuning store: {error}"),
+            };
+            self.events
+                .publish(DaemonEvent::StoreHealthChanged(self.health_of(&state)));
+            return Err(TuningStoreWriteError::Io(error));
+        }
         *document = changed;
         Ok(())
     }
@@ -216,6 +240,47 @@ mod tests {
     }
 
     #[test]
+    fn a_write_failure_pushes_the_new_health_to_every_session_and_preserves_the_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let store = TuningStore::open(path.clone());
+        store.update(|_| {}).unwrap();
+        let before = fs::read(&path).unwrap();
+        let sessions: Vec<_> = [(1000, "alice"), (1001, "bob")]
+            .into_iter()
+            .map(|(uid, username)| {
+                store.subscribe(SessionPeer {
+                    uid,
+                    username: username.into(),
+                    groups: vec![],
+                    primary_group: "users".into(),
+                })
+            })
+            .collect();
+        for session in &sessions {
+            session
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap();
+        }
+        fs::create_dir(path.with_file_name("tuning-state.json.tmp")).unwrap();
+        assert!(store.update(|_| {}).is_err());
+        for session in &sessions {
+            let DaemonEvent::StoreHealthChanged(health) = session
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap();
+            assert!(matches!(
+                health,
+                TuningStoreHealth::Unhealthy {
+                    problem: TuningStoreProblem::Unreadable,
+                    ..
+                }
+            ));
+            assert_eq!(health, store.health());
+        }
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
     fn the_first_write_creates_the_document_at_the_current_schema_version() {
         let dir = tempfile::tempdir().unwrap();
         let store = TuningStore::open(store_path(&dir));
@@ -227,7 +292,7 @@ mod tests {
         assert_eq!(written, serde_json::json!({ "schemaVersion": 1 }));
         assert_eq!(
             TuningStore::open(store_path(&dir)).health(),
-            TuningStoreHealth::Healthy
+            TuningStoreHealth::Healthy {}
         );
     }
 
@@ -263,7 +328,7 @@ mod tests {
 
         assert_eq!(fs::read(store_path(&dir)).unwrap(), previous);
         let reopened = TuningStore::open(store_path(&dir));
-        assert_eq!(reopened.health(), TuningStoreHealth::Healthy);
+        assert_eq!(reopened.health(), TuningStoreHealth::Healthy {});
         reopened.update(|_| {}).unwrap();
         assert_eq!(fs::read(store_path(&dir)).unwrap(), previous);
     }

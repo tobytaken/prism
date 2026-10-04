@@ -16,6 +16,9 @@ use crate::protocol::{
     DaemonResponse, ProfileApplicationResponse,
 };
 
+mod session;
+pub use session::start_session;
+
 pub fn apply_gpu_profile(
     request: ApplyGpuProfileRequest,
 ) -> Result<ProfileApplicationResponse, GpuCommandError> {
@@ -158,6 +161,19 @@ pub fn request_host_reboot() -> Result<(), String> {
 }
 
 fn send_request(request: DaemonRequest) -> Result<DaemonResponse, GpuCommandError> {
+    if !matches!(
+        request,
+        DaemonRequest::GetDaemonStatus
+            | DaemonRequest::GetDriverStatus
+            | DaemonRequest::StartDriverAction(_)
+            | DaemonRequest::GetDriverJob(_)
+            | DaemonRequest::CancelDriverJob(_)
+            | DaemonRequest::RequestHostReboot
+    ) {
+        if let Some(session) = session::SESSION.get() {
+            return session.request(request);
+        }
+    }
     let mut stream = UnixStream::connect(socket_path()).map_err(map_io_error)?;
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
