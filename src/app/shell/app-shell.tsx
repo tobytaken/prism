@@ -1,5 +1,6 @@
 import {
   BookCopy,
+  Gamepad2,
   Gem,
   Gauge,
   HardDriveDownload,
@@ -12,6 +13,11 @@ import { useEffect, useState } from "react";
 import { TitleBar } from "@/components/title-bar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+// PROTOTYPE (#7): variant D renames the Profiles entry to Games.
+import {
+  isPrototypeActive,
+  useProto,
+} from "@/features/gpus/prototype/profile-prototype-store";
 
 const navigation = [
   { label: "Overview", to: "/", icon: LayoutGrid },
@@ -23,6 +29,8 @@ const navigation = [
 
 export function AppShell() {
   const [isMaximized, setIsMaximized] = useState(false);
+  const { variant } = useProto();
+  const gamesEntry = isPrototypeActive() && variant === "D";
 
   useEffect(() => {
     let isActive = true;
@@ -72,7 +80,11 @@ export function AppShell() {
             <Separator />
 
             <nav className="flex flex-1 flex-col gap-1 p-3">
-              {navigation.map((item) => {
+              {navigation.map((entry) => {
+                const item =
+                  gamesEntry && entry.to === "/profiles"
+                    ? { ...entry, label: "Games", icon: Gamepad2 }
+                    : entry;
                 const Icon = item.icon;
 
                 return (

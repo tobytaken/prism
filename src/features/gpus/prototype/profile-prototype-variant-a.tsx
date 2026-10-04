@@ -40,12 +40,13 @@ export function VariantA({ s }: { s: State }) {
   );
 }
 
-function GpuPanelA({ s, gpu }: { s: State; gpu: Gpu }) {
+/** combined = variant D: status and startup outcomes move to C's console; games move to the Games page. */
+export function GpuPanelA({ s, gpu, combined = false }: { s: State; gpu: Gpu; combined?: boolean }) {
   const status = autoStatus(s, gpu);
   const p = useProfileActions(s, gpu);
   const [menuOpen, setMenuOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
-  const showStrip = status.tone !== "neutral";
+  const showStrip = !combined && status.tone !== "neutral";
 
   return (
     <details open className="group/gpu rounded-lg border border-border/80 bg-card/55 shadow-sm">
@@ -70,21 +71,27 @@ function GpuPanelA({ s, gpu }: { s: State; gpu: Gpu }) {
                 {p.unsaved.length > 0 && <span className="size-1.5 rounded-full bg-amber-300" title="Changes not saved to profile" />}
               </span>
             </span>
-            <span className={cn("size-2 rounded-full", toneDot[status.tone])} title={status.title} />
+            {!combined && <span className={cn("size-2 rounded-full", toneDot[status.tone])} title={status.title} />}
             <ChevronDown className="size-4 text-muted-foreground" />
           </button>
           {menuOpen && (
-            <ProfileMenu s={s} gpu={gpu} p={p} onClose={() => setMenuOpen(false)} onManage={() => setManageOpen(true)} />
+            <ProfileMenu combined={combined} s={s} gpu={gpu} p={p} onClose={() => setMenuOpen(false)} onManage={() => setManageOpen(true)} />
           )}
         </div>
 
         <div className="flex items-center gap-4">
+          {combined && status.tone !== "neutral" && (
+            <Badge variant="outline" className="gap-1.5">
+              <span className={cn("size-1.5 rounded-full", toneDot[status.tone])} />
+              {status.short}
+            </Badge>
+          )}
           <Headline />
           <ChevronDown className="size-4 text-muted-foreground transition-transform group-open/gpu:rotate-180" />
         </div>
       </summary>
 
-      {gpu.startupOutcome && <StartupNoticeA gpu={gpu} />}
+      {!combined && gpu.startupOutcome && <StartupNoticeA gpu={gpu} />}
 
       {showStrip && (
         <div className={cn("space-y-2 border-b px-5 py-2.5 text-sm", toneClass[status.tone])}>
@@ -118,11 +125,14 @@ function GpuPanelA({ s, gpu }: { s: State; gpu: Gpu }) {
               </Button>
             </div>
           )}
+          {combined && gpu.auto.kind === "waiting" && (
+            <p className="mb-4 rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">{status.title}</p>
+          )}
           <TuningEditor s={s} gpu={gpu} />
         </aside>
         <FakeTelemetry />
       </section>
-      {manageOpen && <ManageDialogA s={s} gpu={gpu} p={p} onClose={() => setManageOpen(false)} />}
+      {manageOpen && <ManageDialogA s={s} gpu={gpu} p={p} combined={combined} onClose={() => setManageOpen(false)} />}
       {p.dialog}
     </details>
   );
@@ -134,7 +144,9 @@ function ProfileMenu({
   p,
   onClose,
   onManage,
+  combined,
 }: {
+  combined?: boolean;
   s: State;
   gpu: Gpu;
   p: ReturnType<typeof useProfileActions>;
@@ -202,7 +214,7 @@ function ProfileMenu({
           onClick={() => (onManage(), onClose())}
           className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted"
         >
-          Manage profiles &amp; games…
+          {combined ? "Manage profiles…" : <>Manage profiles &amp; games…</>}
         </button>
       </div>
     </>
@@ -213,8 +225,10 @@ function ManageDialogA({
   s,
   gpu,
   p,
+  combined,
   onClose,
 }: {
+  combined?: boolean;
   s: State;
   gpu: Gpu;
   p: ReturnType<typeof useProfileActions>;
@@ -224,7 +238,7 @@ function ManageDialogA({
   const profiles = profilesFor(s, gpu.id);
   return (
     <Modal title={`${gpu.name} · profiles`} onClose={onClose} wide>
-      <div className="mb-4 flex gap-1 border-b border-border">
+      {!combined && <div className="mb-4 flex gap-1 border-b border-border">
         {(["profiles", "games"] as const).map((t) => (
           <button
             key={t}
@@ -238,7 +252,7 @@ function ManageDialogA({
             {t}
           </button>
         ))}
-      </div>
+      </div>}
       {tab === "profiles" && (
         <div className="space-y-2">
           {profiles.map((profile) => (
@@ -268,6 +282,11 @@ function ManageDialogA({
             <button type="button" className="underline" onClick={() => actions.setStartup(gpu.id, null)}>
               No startup profile
             </button>
+            {combined && (
+              <Link to="/profiles" className="text-primary underline">
+                Game associations → Games
+              </Link>
+            )}
             <span>
               Startup behavior (all GPUs): <b>{startupLabel(s)}</b> ·{" "}
               <Link to="/settings" className="text-primary underline">

@@ -20,11 +20,13 @@ import { DiscardGuard, valuesSummary } from "./profile-prototype-shared";
 import { ProfilesPageA, VariantA } from "./profile-prototype-variant-a";
 import { ProfilesPageB, VariantB } from "./profile-prototype-variant-b";
 import { ProfilesPageC, VariantC } from "./profile-prototype-variant-c";
+import { GamesPageD, VariantD } from "./profile-prototype-variant-d";
 
 const VARIANTS = [
   { key: "A", name: "Header menu · no Profiles page" },
   { key: "B", name: "Rail list · Profiles library" },
   { key: "C", name: "Game console · Games page" },
+  { key: "D", name: "A + C console · Games page" },
 ];
 
 installBrowserStub();
@@ -49,6 +51,7 @@ export function PerformancePrototypeRoute() {
       {variant === "A" && <VariantA s={state} />}
       {variant === "B" && <VariantB s={state} />}
       {variant === "C" && <VariantC s={state} />}
+      {variant === "D" && <VariantD s={state} />}
     </Frame>
   );
 }
@@ -62,6 +65,7 @@ export function ProfilesPrototypeRoute() {
       {variant === "A" && <ProfilesPageA />}
       {variant === "B" && <ProfilesPageB s={state} />}
       {variant === "C" && <ProfilesPageC s={state} />}
+      {variant === "D" && <GamesPageD s={state} />}
     </Frame>
   );
 }

@@ -42,7 +42,7 @@ export function VariantC({ s }: { s: State }) {
   );
 }
 
-function GameTuningConsole({ s }: { s: State }) {
+export function GameTuningConsole({ s }: { s: State }) {
   const running = s.running.map((r) => gameById(s, r.gameId)!).filter(Boolean);
   const outcomes = s.gpus.filter((g) => g.startupOutcome);
   return (
@@ -242,7 +242,7 @@ export function ProfilesPageC({ s }: { s: State }) {
   return (
     <div className="space-y-6">
       <PageTitle title="Games">
-        <span className="text-xs text-muted-foreground">(sidebar entry would read "Games")</span>
+        <span className="text-xs text-muted-foreground">(sidebar entry reads "Games" in variant D)</span>
       </PageTitle>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-sm">
