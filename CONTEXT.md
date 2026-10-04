@@ -88,6 +88,10 @@ _Avoid_: Active profile, profile application result
 The actual tuning values within a GPU's profile tuning scope held as its restoration baseline before automatic changes, including changes not saved to a profile.
 _Avoid_: Startup settings, previous profile
 
+**Edit hold**:
+The deferral of automatic changes to a GPU while an open Prism session has unapplied tuning changes within its profile tuning scope; it ends when those edits are applied or discarded, or when that session closes.
+_Avoid_: Automatic switching pause, lock
+
 **Manual override**:
 A user's attempted profile application or live change within the profile tuning scope that pauses automatic switching for the affected GPU until all its associated running games end or the user explicitly resumes switching, preserving the resulting values afterward.
 _Avoid_: Profile override, automatic switching off
