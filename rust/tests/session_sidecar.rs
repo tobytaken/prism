@@ -1,5 +1,7 @@
 use std::io::{BufRead, BufReader, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -16,9 +18,38 @@ impl Drop for Sidecar {
     }
 }
 
-fn accept_session(listener: &UnixListener) -> UnixStream {
+fn spawn_sidecar(socket: &Path, stdout: Stdio) -> Sidecar {
+    Sidecar(
+        Command::new(env!("CARGO_BIN_EXE_prism_backend"))
+            .env("PRISM_SOCKET_PATH", socket)
+            .stdin(Stdio::piped())
+            .stdout(stdout)
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+fn output_lines(sidecar: &mut Sidecar) -> mpsc::Receiver<serde_json::Value> {
+    let stdout = sidecar.0.stdout.take().unwrap();
+    let (sender, lines) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if sender
+                .send(serde_json::from_str::<serde_json::Value>(&line).unwrap())
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    lines
+}
+
+fn accept_stream(listener: &UnixListener) -> UnixStream {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let mut stream = loop {
+    let stream = loop {
         match listener.accept() {
             Ok((stream, _)) => break stream,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -34,6 +65,11 @@ fn accept_session(listener: &UnixListener) -> UnixStream {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
+    stream
+}
+
+fn accept_session(listener: &UnixListener) -> UnixStream {
+    let mut stream = accept_stream(listener);
     let request = read_frame::<SessionRequest>(&mut stream).unwrap().unwrap();
     assert_eq!(request.request, DaemonRequest::OpenSession);
     write_frame(
@@ -56,24 +92,8 @@ fn sidecar_forwards_notifications_reconnects_and_closes_its_session_when_stdin_c
     let socket = directory.path().join("prismd.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     listener.set_nonblocking(true).unwrap();
-    let mut sidecar = Sidecar(
-        Command::new(env!("CARGO_BIN_EXE_prism_backend"))
-            .env("PRISM_SOCKET_PATH", &socket)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
-    let stdout = sidecar.0.stdout.take().unwrap();
-    let (sender, lines) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            sender
-                .send(serde_json::from_str::<serde_json::Value>(&line.unwrap()).unwrap())
-                .unwrap();
-        }
-    });
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
     let mut first = accept_session(&listener);
     let connected = lines.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(connected["method"], "daemon.statusChanged");
@@ -181,33 +201,150 @@ fn stdin_close_interrupts_a_daemon_that_has_not_answered_the_session_opening() {
     let socket = directory.path().join("prismd.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     listener.set_nonblocking(true).unwrap();
-    let mut sidecar = Sidecar(
-        Command::new(env!("CARGO_BIN_EXE_prism_backend"))
-            .env("PRISM_SOCKET_PATH", &socket)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let mut stream = loop {
-        match listener.accept() {
-            Ok((stream, _)) => break stream,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "sidecar never connected"
-                );
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(error) => panic!("{error}"),
-        }
-    };
+    let mut sidecar = spawn_sidecar(&socket, Stdio::null());
+    let mut stream = accept_stream(&listener);
     stream
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
     read_frame::<SessionRequest>(&mut stream).unwrap().unwrap();
     drop(sidecar.0.stdin.take());
     assert!(read_frame::<SessionRequest>(&mut stream).unwrap().is_none());
+}
+
+#[test]
+fn tuning_requests_wait_for_the_first_session_to_finish_opening() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
+    let mut stream = accept_stream(&listener);
+    let opening = read_frame::<SessionRequest>(&mut stream).unwrap().unwrap();
+    writeln!(sidecar.0.stdin.as_mut().unwrap(), "{}", serde_json::json!({"id": 9, "method": "gpu.setPowerLimit", "params": {"gpuId": "GPU-123", "limitWatts": 450}})).unwrap();
+    assert!(
+        matches!(
+            lines.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "request failed before session opening finished"
+    );
+    write_frame(
+        &mut stream,
+        &SessionMessage::Response {
+            id: opening.id,
+            response: DaemonResponse::DaemonStatus(GpuDaemonStatus::connected(
+                "/test/prismd.sock",
+                TuningStoreHealth::Healthy {},
+            )),
+        },
+    )
+    .unwrap();
+    let request = read_frame::<SessionRequest>(&mut stream).unwrap().unwrap();
+    assert!(matches!(request.request, DaemonRequest::SetPowerLimit(_)));
+    write_frame(
+        &mut stream,
+        &SessionMessage::Response {
+            id: request.id,
+            response: DaemonResponse::Command(prism_rust::protocol::DaemonCommandResponse {
+                success: true,
+                error: None,
+            }),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["method"],
+        "daemon.statusChanged"
+    );
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap(),
+        serde_json::json!({"id": 9, "result": {"success": true, "error": null}})
+    );
+}
+
+#[test]
+fn session_rejection_keeps_the_daemons_permission_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
+    let mut stream = accept_stream(&listener);
+    let opening = read_frame::<SessionRequest>(&mut stream).unwrap().unwrap();
+    write_frame(
+        &mut stream,
+        &SessionMessage::Response {
+            id: opening.id,
+            response: DaemonResponse::Error(prism_rust::gpu::GpuCommandError::new(
+                prism_rust::gpu::GpuCommandErrorCode::NoPermission,
+                "User bob is not allowed to access prismd (primary group: users)",
+            )),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["params"]["reachable"],
+        false
+    );
+    writeln!(sidecar.0.stdin.as_mut().unwrap(), "{}", serde_json::json!({"id": 9, "method": "gpu.setPowerLimit", "params": {"gpuId": "GPU-123", "limitWatts": 450}})).unwrap();
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(3)).unwrap(),
+        serde_json::json!({"id": 9, "error": {"code": "no_permission", "message": "User bob is not allowed to access prismd (primary group: users)"}})
+    );
+}
+
+#[test]
+fn stdin_close_exits_even_when_notification_output_is_blocked() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let mut stream = accept_session(&listener);
+    write_frame(
+        &mut stream,
+        &SessionMessage::Event {
+            event: prism_rust::protocol::DaemonEvent::StoreHealthChanged(
+                TuningStoreHealth::Unhealthy {
+                    problem: prism_rust::gpu::TuningStoreProblem::Unreadable,
+                    path: "/store".into(),
+                    detail: "x".repeat(512 * 1024),
+                },
+            ),
+        },
+    )
+    .unwrap();
+    let stdout_fd = sidecar.0.stdout.as_ref().unwrap().as_raw_fd();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut unread: libc::c_int = 0;
+        assert_eq!(
+            unsafe { libc::ioctl(stdout_fd, libc::FIONREAD, &mut unread) },
+            0
+        );
+        if unread >= 4096 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "notification never reached stdout"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(sidecar.0.stdin.take());
+    assert!(read_frame::<SessionRequest>(&mut stream).unwrap().is_none());
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        if let Some(status) = sidecar.0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "sidecar stayed alive with blocked stdout after stdin closed"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

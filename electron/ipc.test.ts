@@ -13,6 +13,7 @@ import profileCorrections from "@/test/contracts/profile-corrections.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store.json";
 import { createPerformanceResponse } from "@/test/gpu-fixtures";
+import { connectedDaemonStatus } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
 
 const mocks = vi.hoisted(() => ({
@@ -144,6 +145,44 @@ describe("registerIpc", () => {
       expect(send).not.toHaveBeenCalled();
     } finally {
       dispose();
+    }
+  });
+
+  it("reports a sidecar crash, restarts its session, and cancels restart on disposal", async () => {
+    vi.useFakeTimers();
+    const first = createBackendChild();
+    const second = createBackendChild();
+    mocks.spawn.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      first.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: connectedDaemonStatus })}\n`,
+      );
+      first.emit("exit", 1, null);
+      expect(send).toHaveBeenLastCalledWith(
+        "prism:daemon:statusChanged",
+        expect.objectContaining({ reachable: false, tuningStore: null }),
+      );
+      await vi.advanceTimersByTimeAsync(250);
+      expect(mocks.spawn).toHaveBeenCalledTimes(2);
+      second.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: connectedDaemonStatus })}\n`,
+      );
+      expect(send).toHaveBeenLastCalledWith(
+        "prism:daemon:statusChanged",
+        connectedDaemonStatus,
+      );
+      second.emit("exit", 1, null);
+      dispose();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(mocks.spawn).toHaveBeenCalledTimes(2);
+    } finally {
+      dispose();
+      vi.useRealTimers();
     }
   });
 
