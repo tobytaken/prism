@@ -5,8 +5,11 @@ import { DriversPage } from "@/features/drivers/components/drivers-page";
 import { GpuDetailPage } from "@/features/gpus/components/gpu-detail-page";
 import { GpuOverviewPage } from "@/features/gpus/components/gpu-overview-page";
 import { GpuPerformanceMetricPage } from "@/features/gpus/components/gpu-performance-metric-page";
-import { GpuPerformancePage } from "@/features/gpus/components/gpu-performance-page";
-import { PlaceholderPage } from "@/features/gpus/components/placeholder-page";
+// PROTOTYPE (#7): these wrappers render the real pages unless ?variant= is set.
+import {
+  PerformancePrototypeRoute,
+  ProfilesPrototypeRoute,
+} from "@/features/gpus/prototype/profile-prototype-routes";
 import { SettingsPage } from "@/features/settings/components/settings-page";
 
 export const appRouter = createHashRouter([
@@ -17,12 +20,12 @@ export const appRouter = createHashRouter([
       { index: true, element: <GpuOverviewPage /> },
       { path: "gpus/:gpuId", element: <GpuDetailPage /> },
       { path: "drivers", element: <DriversPage /> },
-      { path: "performance", element: <GpuPerformancePage /> },
+      { path: "performance", element: <PerformancePrototypeRoute /> },
       {
         path: "performance/:gpuId/:metricKey",
         element: <GpuPerformanceMetricPage />,
       },
-      { path: "profiles", element: <PlaceholderPage title="Profiles" /> },
+      { path: "profiles", element: <ProfilesPrototypeRoute /> },
       { path: "settings", element: <SettingsPage /> },
     ],
   },

@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "electron-forge start",
     "start": "electron-forge start",
+    "prototype:profiles": "VITE_PROFILE_PROTOTYPE=1 electron-forge start",
     "test": "bun run test:renderer && bun run test:electron",
     "test:renderer": "vitest run --config vite.renderer.config.ts",
     "test:electron": "vitest run --config vite.electron.test.config.ts",
