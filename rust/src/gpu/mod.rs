@@ -319,16 +319,24 @@ pub struct GpuApplyRecord {
 
 impl GpuApplyRecord {
     pub fn success() -> Self {
+        Self::success_at(unix_timestamp_ms())
+    }
+
+    pub fn success_at(applied_at_unix_ms: u64) -> Self {
         Self {
-            applied_at_unix_ms: unix_timestamp_ms(),
+            applied_at_unix_ms,
             success: true,
             message: None,
         }
     }
 
     pub fn failure(message: impl Into<String>) -> Self {
+        Self::failure_at(unix_timestamp_ms(), message)
+    }
+
+    pub fn failure_at(applied_at_unix_ms: u64, message: impl Into<String>) -> Self {
         Self {
-            applied_at_unix_ms: unix_timestamp_ms(),
+            applied_at_unix_ms,
             success: false,
             message: Some(message.into()),
         }

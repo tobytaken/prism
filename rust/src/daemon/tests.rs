@@ -1,0 +1,1032 @@
+use serde_json::json;
+
+use super::harness::{
+    observed_gpu, tunable_gpu, tunable_gpu_with_id, FakeGpuBackend, Harness, Setter,
+};
+use crate::gpu::{
+    ApplyGpuConfigRequest, ClockRangeInput, ControlSupport, DesiredGpuConfig, GpuCommandErrorCode,
+    GpuTargetRequest, PersistedGpuConfig, PersistedGpuState, ResetGpuConfigRequest,
+    SetGpuClockOffsetsRequest, SetGpuPowerLimitRequest,
+};
+use crate::protocol::{ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, ProfileSetting};
+
+fn apply_profile_request(settings: serde_json::Value) -> serde_json::Value {
+    json!({ "type": "apply_profile", "payload": { "gpuId": "GPU-123", "settings": settings } })
+}
+
+fn saved_state_with(gpu_id: &str, config: PersistedGpuConfig) -> Vec<u8> {
+    let mut state = PersistedGpuState::default();
+    state.gpus.insert(gpu_id.into(), config);
+    serde_json::to_vec(&state).unwrap()
+}
+
+fn desired_power(watts: u32) -> PersistedGpuConfig {
+    PersistedGpuConfig {
+        desired: DesiredGpuConfig {
+            power_limit_watts: Some(watts),
+            ..Default::default()
+        },
+        last_apply: None,
+    }
+}
+
+#[test]
+fn profile_validation_blocks_all_writes_when_an_included_setting_is_unsupported() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![observed_gpu()]));
+    let saved = daemon.saved_state_bytes();
+    let result = daemon.send_json(apply_profile_request(json!({
+        "powerLimitWatts": { "kind": "value", "value": 450 },
+        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+    })));
+    assert_eq!(result["payload"]["power"]["status"], "unattempted");
+    assert_eq!(result["payload"]["memory"]["status"], "unattempted");
+    assert!(result["payload"]["memory"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("Memory clock offset is unsupported"));
+    assert_eq!(daemon.performance().gpus[0].power.current_limit_watts, None);
+    assert!(daemon.gpus.writes().is_empty());
+    assert_eq!(daemon.saved_state_bytes(), saved);
+}
+
+#[test]
+fn profiles_validate_fresh_support_ranges_and_stable_ownership_before_any_write() {
+    for invalid in [
+        "power low",
+        "power high",
+        "graphics low",
+        "memory high",
+        "unknown support",
+        "unsupported",
+        "missing range",
+        "reversed range",
+        "absent owner",
+        "unverified identity",
+        "ambiguous identity",
+    ] {
+        let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+        if invalid == "ambiguous identity" {
+            daemon.gpus.arrive(tunable_gpu());
+        } else {
+            daemon.gpus.update("GPU-123", |gpu| match invalid {
+                "power low" => gpu.power.min_limit_watts = Some(500),
+                "power high" => gpu.power.max_limit_watts = Some(400),
+                "graphics low" => gpu.clocks.graphics.min_offset_mhz = Some(180),
+                "memory high" => gpu.clocks.memory.max_offset_mhz = Some(50),
+                "unknown support" => gpu.clocks.memory.support = ControlSupport::Unknown,
+                "unsupported" => gpu.clocks.memory.support = ControlSupport::Unsupported,
+                "missing range" => gpu.clocks.memory.min_offset_mhz = None,
+                "reversed range" => gpu.clocks.memory.min_offset_mhz = Some(300),
+                "absent owner" => gpu.stable_id = Some("GPU-replacement".into()),
+                "unverified identity" => gpu.stable_id = None,
+                _ => unreachable!(),
+            });
+        }
+        let before = daemon.performance();
+        let saved = daemon.saved_state_bytes();
+        let result = daemon.send_json(apply_profile_request(json!({
+            "powerLimitWatts": { "kind": "value", "value": 450 },
+            "graphicsOffsetMHz": { "kind": "value", "value": 150 },
+            "memoryOffsetMHz": { "kind": "value", "value": 80 }
+        })));
+        for setting in ["power", "graphics", "memory"] {
+            assert_eq!(
+                result["payload"][setting]["status"], "unattempted",
+                "{invalid}"
+            );
+            assert!(
+                result["payload"][setting]["error"].as_str().unwrap().len() > 10,
+                "{invalid}"
+            );
+        }
+        assert_eq!(daemon.performance(), before, "{invalid}");
+        assert!(daemon.gpus.writes().is_empty(), "{invalid}");
+        assert_eq!(daemon.saved_state_bytes(), saved, "{invalid}");
+    }
+}
+
+#[test]
+fn profile_application_is_blocked_while_its_gpu_is_absent_and_works_once_it_returns() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let request =
+        apply_profile_request(json!({ "powerLimitWatts": { "kind": "value", "value": 450 } }));
+
+    daemon.gpus.depart("GPU-123");
+    let result = daemon.send_json(request.clone());
+    assert_eq!(result["payload"]["power"]["status"], "unattempted");
+    assert!(result["payload"]["power"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("The owning GPU is absent"));
+
+    daemon.gpus.arrive(tunable_gpu());
+    let result = daemon.send_json(request);
+    assert_eq!(result["payload"]["power"]["status"], "succeeded");
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(450)
+    );
+}
+
+#[test]
+fn profile_application_changes_only_included_values_on_its_owner_and_preserves_saved_configuration()
+{
+    let mut owner = tunable_gpu();
+    // Omitted controls need no applicability information.
+    owner.clocks.memory.support = ControlSupport::Unknown;
+    let gpus = FakeGpuBackend::with_gpus(vec![tunable_gpu_with_id("GPU-other"), owner]);
+    let saved = saved_state_with(
+        "GPU-123",
+        PersistedGpuConfig {
+            desired: DesiredGpuConfig {
+                power_limit_watts: Some(575),
+                gpu_clock_lock: Some(ClockRangeInput {
+                    min_mhz: 1800,
+                    max_mhz: 2400,
+                }),
+                memory_clock_lock: Some(ClockRangeInput {
+                    min_mhz: 6000,
+                    max_mhz: 8000,
+                }),
+                ..DesiredGpuConfig::default()
+            },
+            last_apply: None,
+        },
+    );
+    let daemon = Harness::start_with_saved_state(gpus, Some(&saved));
+    let other = daemon.gpus.gpu("GPU-other");
+    let before = daemon.gpus.gpu("GPU-123");
+    let saved = daemon.saved_state_bytes();
+
+    let result = daemon.send_json(apply_profile_request(json!({
+        "powerLimitWatts": { "kind": "value", "value": 450 },
+        "graphicsOffsetMHz": { "kind": "value", "value": -150 }
+    })));
+    assert_eq!(result["payload"]["power"]["status"], "succeeded");
+    assert_eq!(result["payload"]["graphics"]["status"], "succeeded");
+    assert!(result["payload"]["memory"].is_null());
+    let actual = daemon.performance();
+    assert_eq!(actual.gpus[0], other);
+    assert_eq!(actual.gpus[1].power.current_limit_watts, Some(450));
+    assert_eq!(
+        actual.gpus[1].clocks.graphics.current_offset_mhz,
+        Some(-150)
+    );
+    assert_eq!(actual.gpus[1].clocks.memory, before.clocks.memory);
+    assert_eq!(actual.gpus[1].cooling, before.cooling);
+    assert_eq!(daemon.saved_state_bytes(), saved);
+}
+
+#[test]
+fn out_of_range_profile_values_propose_every_bound_correction_without_any_write() {
+    let mut gpu = tunable_gpu();
+    gpu.power.min_limit_watts = Some(100);
+    gpu.power.max_limit_watts = Some(280);
+    gpu.clocks.graphics.min_offset_mhz = Some(-100);
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    let before = daemon.performance();
+    let saved = daemon.saved_state_bytes();
+    let result = daemon.send_json(apply_profile_request(json!({
+        "powerLimitWatts": { "kind": "value", "value": 300 },
+        "graphicsOffsetMHz": { "kind": "value", "value": -150 },
+        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+    })));
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src/test/contracts/profile-corrections.json"
+    ))
+    .unwrap();
+    assert_eq!(result["payload"], contract);
+    let DaemonResponse::ProfileApplication(roundtrip) = serde_json::from_value(result).unwrap()
+    else {
+        panic!("expected profile application")
+    };
+    assert_eq!(roundtrip.corrections.len(), 2);
+    assert_eq!(daemon.performance(), before);
+
+    let result = daemon.send_json(apply_profile_request(json!({
+        "powerLimitWatts": { "kind": "value", "value": 280 },
+        "graphicsOffsetMHz": { "kind": "value", "value": -100 },
+        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+    })));
+    for setting in ["power", "graphics", "memory"] {
+        assert_eq!(result["payload"][setting]["status"], "succeeded");
+    }
+    assert!(result["payload"].get("corrections").is_none());
+    let gpu = daemon.gpus.gpu("GPU-123");
+    assert_eq!(gpu.power.current_limit_watts, Some(280));
+    assert_eq!(gpu.clocks.graphics.current_offset_mhz, Some(-100));
+    assert_eq!(daemon.saved_state_bytes(), saved);
+}
+
+#[test]
+fn range_corrections_are_not_offered_when_another_included_setting_blocks_application() {
+    for blocker in [
+        "unsupported",
+        "unknown support",
+        "missing range",
+        "absent owner",
+    ] {
+        let mut gpu = tunable_gpu();
+        gpu.power.max_limit_watts = Some(400);
+        match blocker {
+            "unsupported" => gpu.clocks.memory.support = ControlSupport::Unsupported,
+            "unknown support" => gpu.clocks.memory.support = ControlSupport::Unknown,
+            "missing range" => gpu.clocks.memory.max_offset_mhz = None,
+            "absent owner" => gpu.stable_id = Some("GPU-replacement".into()),
+            _ => unreachable!(),
+        }
+        let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+        let before = daemon.performance();
+        let result = daemon.send_json(apply_profile_request(json!({
+            "powerLimitWatts": { "kind": "value", "value": 450 },
+            "memoryOffsetMHz": { "kind": "value", "value": 80 }
+        })));
+        assert!(result["payload"].get("corrections").is_none(), "{blocker}");
+        assert_eq!(result["payload"]["power"]["status"], "unattempted");
+        assert_eq!(result["payload"]["memory"]["status"], "unattempted");
+        assert_eq!(daemon.performance(), before, "{blocker}");
+    }
+}
+
+#[test]
+fn profile_application_reports_partial_failure_and_validates_retries() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let saved = daemon.saved_state_bytes();
+    daemon
+        .gpus
+        .fail("GPU-123", Setter::GraphicsOffset, "Graphics write denied");
+    let result = daemon.send_json(apply_profile_request(json!({
+        "powerLimitWatts": { "kind": "value", "value": 450 },
+        "graphicsOffsetMHz": { "kind": "value", "value": 150 },
+        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+    })));
+    assert_eq!(result["payload"]["power"]["status"], "succeeded");
+    assert_eq!(result["payload"]["graphics"]["status"], "failed");
+    assert_eq!(result["payload"]["memory"]["status"], "unattempted");
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src/test/contracts/profile-outcomes.json"
+    ))
+    .unwrap();
+    assert_eq!(result["payload"], contract);
+    let roundtrip: DaemonResponse = serde_json::from_value(result).unwrap();
+    assert!(matches!(roundtrip, DaemonResponse::ProfileApplication(_)));
+
+    daemon.gpus.stop_failing("GPU-123", Setter::GraphicsOffset);
+    daemon
+        .gpus
+        .update("GPU-123", |gpu| gpu.clocks.memory.max_offset_mhz = Some(50));
+    let retry = apply_profile_request(json!({
+        "graphicsOffsetMHz": { "kind": "value", "value": 150 },
+        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+    }));
+    let rejected = daemon.send_json(retry.clone());
+    assert_eq!(rejected["payload"]["graphics"]["status"], "unattempted");
+    assert!(rejected["payload"]["memory"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("-200 to 50"));
+
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.clocks.memory.max_offset_mhz = Some(200)
+    });
+    let success = daemon.send_json(retry);
+    assert_eq!(success["payload"]["graphics"]["status"], "succeeded");
+    assert_eq!(success["payload"]["memory"]["status"], "succeeded");
+    assert!(success["payload"]["power"].is_null());
+    let gpu = daemon.gpus.gpu("GPU-123");
+    assert_eq!(gpu.power.current_limit_watts, Some(450));
+    assert_eq!(gpu.clocks.graphics.current_offset_mhz, Some(150));
+    assert_eq!(gpu.clocks.memory.current_offset_mhz, Some(80));
+    assert_eq!(daemon.saved_state_bytes(), saved);
+}
+
+fn apply_profile_settings(daemon: &Harness, settings: serde_json::Value) -> serde_json::Value {
+    let saved = daemon.saved_state_bytes();
+    let result = daemon.send_json(apply_profile_request(settings));
+    assert_eq!(daemon.saved_state_bytes(), saved);
+    result["payload"].clone()
+}
+
+#[test]
+fn explicit_defaults_follow_the_currently_reported_power_default_while_numbers_stay_fixed() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let defaults = json!({
+        "powerLimitWatts": { "kind": "default" },
+        "graphicsOffsetMHz": { "kind": "default" },
+        "memoryOffsetMHz": { "kind": "default" }
+    });
+    let fixed = json!({ "powerLimitWatts": { "kind": "value", "value": 575 } });
+    let result = apply_profile_settings(&daemon, defaults.clone());
+    for setting in ["power", "graphics", "memory"] {
+        assert_eq!(result[setting]["status"], "succeeded", "{setting}");
+    }
+    let gpu = daemon.gpus.gpu("GPU-123");
+    assert_eq!(gpu.power.current_limit_watts, Some(575));
+    assert_eq!(gpu.clocks.graphics.current_offset_mhz, Some(0));
+    assert_eq!(gpu.clocks.memory.current_offset_mhz, Some(0));
+
+    // A driver update changes the reported default.
+    daemon
+        .gpus
+        .update("GPU-123", |gpu| gpu.power.default_limit_watts = Some(520));
+    apply_profile_settings(&daemon, fixed);
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(575)
+    );
+    apply_profile_settings(&daemon, defaults);
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(520)
+    );
+}
+
+#[test]
+fn unavailable_or_out_of_range_defaults_block_every_included_instruction_before_writes() {
+    for (invalid, expected) in [
+        (
+            "power default unavailable",
+            "Power limit: the default is unavailable",
+        ),
+        (
+            "power default above maximum",
+            "Power limit: the default 650 is outside the current allowed range 300 to 600",
+        ),
+        (
+            "offset range excludes zero",
+            "Memory clock offset: the default 0 is outside the current allowed range 10 to 200",
+        ),
+        ("unsupported default", "Memory clock offset is unsupported"),
+    ] {
+        let mut gpu = tunable_gpu();
+        match invalid {
+            "power default unavailable" => gpu.power.default_limit_watts = None,
+            "power default above maximum" => gpu.power.default_limit_watts = Some(650),
+            "offset range excludes zero" => gpu.clocks.memory.min_offset_mhz = Some(10),
+            "unsupported default" => gpu.clocks.memory.support = ControlSupport::Unsupported,
+            _ => unreachable!(),
+        }
+        let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+        let before = daemon.performance();
+        let result = apply_profile_settings(
+            &daemon,
+            json!({
+                "powerLimitWatts": { "kind": "default" },
+                "graphicsOffsetMHz": { "kind": "value", "value": 150 },
+                "memoryOffsetMHz": { "kind": "default" }
+            }),
+        );
+        // A default has no saved value to correct, so no range review is offered.
+        assert!(result.get("corrections").is_none(), "{invalid}");
+        for setting in ["power", "graphics", "memory"] {
+            assert_eq!(result[setting]["status"], "unattempted", "{invalid}");
+            assert!(
+                result[setting]["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains(expected),
+                "{invalid}: {}",
+                result[setting]["error"]
+            );
+        }
+        assert_eq!(daemon.performance(), before, "{invalid}");
+    }
+}
+
+#[test]
+fn range_review_proposes_numeric_corrections_alongside_applicable_defaults() {
+    let mut gpu = tunable_gpu();
+    gpu.clocks.graphics.max_offset_mhz = Some(100);
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    let before = daemon.performance();
+    let result = apply_profile_settings(
+        &daemon,
+        json!({
+            "powerLimitWatts": { "kind": "default" },
+            "graphicsOffsetMHz": { "kind": "value", "value": 150 }
+        }),
+    );
+    assert_eq!(
+        result["corrections"],
+        json!([{
+            "setting": "graphicsOffsetMHz",
+            "savedValue": 150,
+            "proposedValue": 100,
+            "bound": "maximum"
+        }])
+    );
+    assert_eq!(result["power"]["status"], "unattempted");
+    assert_eq!(daemon.performance(), before);
+}
+
+#[test]
+fn omitted_settings_need_no_default_resolution() {
+    let mut gpu = tunable_gpu();
+    gpu.power.default_limit_watts = None;
+    gpu.power.support = ControlSupport::Unknown;
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    let result = apply_profile_settings(
+        &daemon,
+        json!({ "graphicsOffsetMHz": { "kind": "default" } }),
+    );
+    assert_eq!(result["graphics"]["status"], "succeeded");
+    assert!(result["power"].is_null());
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(475)
+    );
+}
+
+#[test]
+fn profile_settings_round_trip_omitted_numeric_and_default_instructions() {
+    let request: ApplyGpuProfileRequest = serde_json::from_value(json!({
+        "gpuId": "GPU-123",
+        "settings": {
+            "powerLimitWatts": { "kind": "value", "value": 575 },
+            "graphicsOffsetMHz": { "kind": "default" }
+        }
+    }))
+    .unwrap();
+    assert_eq!(
+        request.settings.power_limit_watts,
+        Some(ProfileSetting::Value { value: 575 })
+    );
+    assert_eq!(
+        request.settings.graphics_offset_mhz,
+        Some(ProfileSetting::Default {})
+    );
+    assert_eq!(request.settings.memory_offset_mhz, None);
+    assert_eq!(
+        serde_json::to_value(&request).unwrap()["settings"],
+        json!({
+            "powerLimitWatts": { "kind": "value", "value": 575 },
+            "graphicsOffsetMHz": { "kind": "default" }
+        })
+    );
+}
+
+#[test]
+fn live_offsets_report_partial_success_without_replacing_saved_configuration() {
+    let saved = saved_state_with(
+        "GPU-123",
+        PersistedGpuConfig {
+            desired: DesiredGpuConfig {
+                power_limit_watts: Some(450),
+                gpu_clock_lock: Some(ClockRangeInput {
+                    min_mhz: 1800,
+                    max_mhz: 2400,
+                }),
+                ..DesiredGpuConfig::default()
+            },
+            last_apply: None,
+        },
+    );
+    let daemon = Harness::start_with_saved_state(
+        FakeGpuBackend::with_gpus(vec![observed_gpu()]),
+        Some(&saved),
+    );
+    let saved = daemon.saved_state_bytes();
+    daemon
+        .gpus
+        .fail("GPU-123", Setter::MemoryOffset, "Memory write failed");
+    let response = daemon.send(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+        gpu_id: "GPU-123".into(),
+        graphics_offset_mhz: Some(150),
+        memory_offset_mhz: Some(80),
+    }));
+    let json = serde_json::to_value(response).unwrap();
+    assert_eq!(json["payload"]["graphics"]["status"], "succeeded");
+    assert_eq!(json["payload"]["memory"]["status"], "failed");
+    assert_eq!(json["payload"]["memory"]["error"], "Memory write failed");
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src/test/contracts/tuning-outcomes.json"
+    ))
+    .unwrap();
+    assert_eq!(json["payload"], contract);
+    let roundtrip: DaemonResponse = serde_json::from_value(json).unwrap();
+    assert!(matches!(roundtrip, DaemonResponse::ClockOffsets(_)));
+    assert_eq!(
+        daemon.performance().gpus[0]
+            .clocks
+            .graphics
+            .current_offset_mhz,
+        Some(150)
+    );
+    assert_eq!(daemon.saved_state_bytes(), saved);
+}
+
+#[test]
+fn live_offsets_stop_after_failure_and_leave_later_setting_unattempted() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![observed_gpu()]));
+    daemon
+        .gpus
+        .fail("GPU-123", Setter::GraphicsOffset, "GPU unavailable");
+    let response = daemon.send(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+        gpu_id: "GPU-123".into(),
+        graphics_offset_mhz: Some(150),
+        memory_offset_mhz: Some(80),
+    }));
+    let json = serde_json::to_value(response).unwrap();
+    assert_eq!(json["payload"]["graphics"]["status"], "failed");
+    assert_eq!(json["payload"]["memory"]["status"], "unattempted");
+    let gpu = daemon.gpus.gpu("GPU-123");
+    assert_eq!(gpu.clocks.graphics.current_offset_mhz, None);
+    assert_eq!(gpu.clocks.memory.current_offset_mhz, None);
+}
+
+#[test]
+fn live_reset_reports_partial_outcomes_and_memory_only_retry_leaves_graphics_alone() {
+    let mut gpu = observed_gpu();
+    gpu.clocks.graphics.support = ControlSupport::Supported;
+    gpu.clocks.memory.support = ControlSupport::Supported;
+    gpu.clocks.graphics.current_offset_mhz = Some(150);
+    gpu.clocks.memory.current_offset_mhz = Some(80);
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    daemon
+        .gpus
+        .fail("GPU-123", Setter::MemoryOffset, "Memory write failed");
+    let response = daemon.send(DaemonRequest::ResetClockOffsets(GpuTargetRequest {
+        gpu_id: "GPU-123".into(),
+    }));
+    let json = serde_json::to_value(response).unwrap();
+    assert_eq!(json["payload"]["graphics"]["status"], "succeeded");
+    assert_eq!(json["payload"]["memory"]["status"], "failed");
+
+    daemon.gpus.stop_failing("GPU-123", Setter::MemoryOffset);
+    let response = daemon.send(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+        gpu_id: "GPU-123".into(),
+        graphics_offset_mhz: None,
+        memory_offset_mhz: Some(0),
+    }));
+    let json = serde_json::to_value(response).unwrap();
+    assert!(json["payload"]["graphics"].is_null());
+    assert_eq!(json["payload"]["memory"]["status"], "succeeded");
+    let gpu = daemon.gpus.gpu("GPU-123");
+    assert_eq!(gpu.clocks.graphics.current_offset_mhz, Some(0));
+    assert_eq!(gpu.clocks.memory.current_offset_mhz, Some(0));
+}
+
+#[test]
+fn performance_reads_preserve_tuning_states_and_recover_without_changing_saved_configuration() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src/test/contracts/tuning-observations.json"
+    ))
+    .unwrap();
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![observed_gpu()]));
+    let saved = daemon.saved_state_bytes();
+    let response = daemon.send(DaemonRequest::GetPerformance);
+    let wire = serde_json::to_value(&response).unwrap();
+    assert_eq!(wire["type"], "performance");
+    assert_eq!(wire["payload"], fixture);
+    assert_eq!(
+        serde_json::from_value::<DaemonResponse>(wire).unwrap(),
+        response
+    );
+
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.power.current_limit_watts = Some(450);
+        gpu.power.current_value_error = None;
+        gpu.clocks.graphics.support = ControlSupport::Supported;
+        gpu.clocks.graphics.reason = None;
+        gpu.clocks.graphics.current_offset_mhz = Some(80);
+        gpu.clocks.graphics.min_offset_mhz = Some(-200);
+        gpu.clocks.graphics.max_offset_mhz = Some(200);
+    });
+    let performance = daemon.performance();
+    assert_eq!(performance.gpus[0].power.current_limit_watts, Some(450));
+    assert_eq!(performance.gpus[0].power.current_value_error, None);
+    assert_eq!(
+        performance.gpus[0].clocks.graphics.support,
+        ControlSupport::Supported
+    );
+    assert_eq!(
+        performance.gpus[0].clocks.memory.support,
+        ControlSupport::Unsupported
+    );
+    assert!(daemon.gpus.writes().is_empty());
+    assert_eq!(daemon.saved_state_bytes(), saved);
+}
+
+#[test]
+fn apply_request_updates_saved_state() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+
+    let response = daemon.send(DaemonRequest::ApplyConfig(ApplyGpuConfigRequest {
+        gpu_id: Some("GPU-123".into()),
+        power_limit_watts: Some(250),
+        gpu_clock_lock: Some(ClockRangeInput {
+            min_mhz: 1800,
+            max_mhz: 2200,
+        }),
+        ..Default::default()
+    }));
+
+    let DaemonResponse::Mutation(response) = response else {
+        panic!("expected mutation response");
+    };
+
+    assert!(response.success);
+    assert_eq!(
+        daemon.saved_state().gpus["GPU-123"].desired,
+        DesiredGpuConfig {
+            power_limit_watts: Some(250),
+            gpu_clock_lock: Some(ClockRangeInput {
+                min_mhz: 1800,
+                max_mhz: 2200,
+            }),
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn failed_apply_keeps_existing_desired_state_and_records_error() {
+    let daemon = Harness::start_with_saved_state(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        Some(&saved_state_with("GPU-123", desired_power(225))),
+    );
+    daemon
+        .gpus
+        .fail("GPU-123", Setter::ApplyConfig, "mock apply failed");
+    daemon.clock.set(1_750_000_000_000);
+
+    let response = daemon.send(DaemonRequest::ApplyConfig(ApplyGpuConfigRequest {
+        gpu_id: Some("GPU-123".into()),
+        power_limit_watts: Some(250),
+        ..Default::default()
+    }));
+
+    let DaemonResponse::Mutation(response) = response else {
+        panic!("expected mutation response");
+    };
+
+    assert!(!response.success);
+    let saved = daemon.saved_state();
+    assert_eq!(saved.gpus["GPU-123"].desired.power_limit_watts, Some(225));
+    let last_apply = saved.gpus["GPU-123"].last_apply.clone().unwrap();
+    assert_eq!(last_apply.message.as_deref(), Some("mock apply failed"));
+    assert_eq!(last_apply.applied_at_unix_ms, 1_750_000_000_000);
+}
+
+#[test]
+fn get_daemon_status_returns_connected_socket_info() {
+    let daemon = Harness::start(FakeGpuBackend::default());
+
+    let DaemonResponse::DaemonStatus(status) = daemon.send(DaemonRequest::GetDaemonStatus) else {
+        panic!("expected daemon status response");
+    };
+
+    assert!(status.reachable);
+    assert!(status.managed_by_daemon);
+    assert!(status.socket_path.contains("prismd-test.sock"));
+}
+
+#[test]
+fn power_limit_commands_return_command_responses_without_mutating_state() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    daemon
+        .gpus
+        .fail("GPU-123", Setter::PowerLimit, "mock permission denied");
+
+    let response = daemon.send(DaemonRequest::SetPowerLimit(SetGpuPowerLimitRequest {
+        gpu_id: "GPU-123".into(),
+        limit_watts: 250,
+    }));
+
+    let DaemonResponse::Command(response) = response else {
+        panic!("expected command response");
+    };
+
+    assert!(!response.success);
+    assert_eq!(response.error.as_deref(), Some("mock permission denied"));
+    assert!(daemon.saved_state().gpus.is_empty());
+}
+
+#[test]
+fn reset_request_clears_saved_state() {
+    let daemon = Harness::start_with_saved_state(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        Some(&saved_state_with("GPU-123", desired_power(225))),
+    );
+
+    let response = daemon.send(DaemonRequest::ResetConfig(ResetGpuConfigRequest {
+        gpu_id: "GPU-123".into(),
+    }));
+
+    let DaemonResponse::Mutation(response) = response else {
+        panic!("expected mutation response");
+    };
+
+    assert!(response.success);
+    assert!(daemon.saved_state().gpus.is_empty());
+}
+
+#[test]
+fn failed_reset_preserves_saved_state_and_records_error() {
+    let daemon = Harness::start_with_saved_state(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        Some(&saved_state_with("GPU-123", desired_power(225))),
+    );
+    daemon
+        .gpus
+        .fail("GPU-123", Setter::ResetConfig, "mock reset failed");
+
+    let response = daemon.send(DaemonRequest::ResetConfig(ResetGpuConfigRequest {
+        gpu_id: "GPU-123".into(),
+    }));
+
+    let DaemonResponse::Mutation(response) = response else {
+        panic!("expected mutation response");
+    };
+
+    assert!(!response.success);
+    let saved = daemon.saved_state();
+    assert_eq!(saved.gpus["GPU-123"].desired.power_limit_watts, Some(225));
+    assert_eq!(
+        saved.gpus["GPU-123"]
+            .last_apply
+            .as_ref()
+            .and_then(|record| record.message.as_deref()),
+        Some("mock reset failed")
+    );
+}
+
+#[test]
+fn apply_request_without_gpu_id_returns_invalid_argument_without_saving_state() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+
+    let response = daemon.send(DaemonRequest::ApplyConfig(ApplyGpuConfigRequest {
+        power_limit_watts: Some(250),
+        ..Default::default()
+    }));
+
+    let DaemonResponse::Mutation(response) = response else {
+        panic!("expected mutation response");
+    };
+
+    assert!(!response.success);
+    assert_eq!(
+        response.error.expect("error").code,
+        GpuCommandErrorCode::InvalidArgument
+    );
+    assert!(daemon.saved_state().gpus.is_empty());
+    assert!(daemon.gpus.writes().is_empty());
+}
+
+#[test]
+fn reapply_saved_config_applies_non_empty_saved_configs() {
+    let mut saved = PersistedGpuState::default();
+    saved.gpus.insert("GPU-123".into(), desired_power(225));
+    saved.gpus.insert(
+        "GPU-empty".into(),
+        PersistedGpuConfig {
+            desired: DesiredGpuConfig::default(),
+            last_apply: Some(crate::gpu::GpuApplyRecord::failure("old failure")),
+        },
+    );
+    let daemon = Harness::start_with_saved_state(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        Some(&serde_json::to_vec(&saved).unwrap()),
+    );
+    daemon
+        .gpus
+        .update("GPU-123", |gpu| gpu.power.current_limit_watts = Some(300));
+
+    let response = daemon.send(DaemonRequest::ReapplySavedConfig);
+
+    let DaemonResponse::Mutation(response) = response else {
+        panic!("expected mutation response");
+    };
+
+    assert!(response.success);
+    let applied = daemon.gpus.applied_configs();
+    // Once at daemon start and once on request, never for the empty configuration.
+    assert_eq!(applied.len(), 2);
+    assert!(applied
+        .iter()
+        .all(|request| request.gpu_id.as_deref() == Some("GPU-123")
+            && request.power_limit_watts == Some(225)));
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(225)
+    );
+    assert_eq!(
+        daemon.saved_state().gpus["GPU-123"]
+            .last_apply
+            .as_ref()
+            .map(|record| record.success),
+        Some(true)
+    );
+}
+
+#[test]
+fn saved_configurations_are_reapplied_when_the_daemon_restarts() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    daemon.send(DaemonRequest::ApplyConfig(ApplyGpuConfigRequest {
+        gpu_id: Some("GPU-123".into()),
+        power_limit_watts: Some(250),
+        ..Default::default()
+    }));
+    daemon
+        .gpus
+        .update("GPU-123", |gpu| gpu.power.current_limit_watts = Some(300));
+
+    daemon.restart();
+
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(250)
+    );
+}
+
+#[test]
+fn command_success_returns_success_response() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+
+    let response = daemon.send(DaemonRequest::SetPowerLimit(SetGpuPowerLimitRequest {
+        gpu_id: "GPU-123".into(),
+        limit_watts: 250,
+    }));
+
+    let DaemonResponse::Command(response) = response else {
+        panic!("expected command response");
+    };
+
+    assert!(response.success);
+    assert!(response.error.is_none());
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(250)
+    );
+}
+
+fn set_power(gpu_id: &str, limit_watts: u32) -> DaemonRequest {
+    DaemonRequest::SetPowerLimit(SetGpuPowerLimitRequest {
+        gpu_id: gpu_id.into(),
+        limit_watts,
+    })
+}
+
+#[test]
+fn a_write_blocked_on_one_gpu_delays_no_other_gpu_and_no_reads() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![
+        tunable_gpu_with_id("GPU-slow"),
+        tunable_gpu_with_id("GPU-fast"),
+    ]));
+    let gate = daemon.gpus.block("GPU-slow", Setter::PowerLimit);
+    let mut blocked = daemon.send_in_background(set_power("GPU-slow", 400));
+    gate.wait_until_entered();
+
+    // Each of these fails its test by timing out if it waits for the blocked write.
+    let DaemonResponse::Command(fast) = daemon.send(set_power("GPU-fast", 410)) else {
+        panic!("expected command response")
+    };
+    assert!(fast.success);
+    let profile = daemon.send_json(json!({ "type": "apply_profile", "payload": {
+        "gpuId": "GPU-fast", "settings": { "graphicsOffsetMHz": { "kind": "value", "value": 90 } }
+    }}));
+    assert_eq!(profile["payload"]["graphics"]["status"], "succeeded");
+    let DaemonResponse::Mutation(legacy) =
+        daemon.send(DaemonRequest::ApplyConfig(ApplyGpuConfigRequest {
+            gpu_id: Some("GPU-fast".into()),
+            memory_offset_mhz: Some(50),
+            ..Default::default()
+        }))
+    else {
+        panic!("expected mutation response")
+    };
+    assert!(legacy.success);
+    assert!(matches!(
+        daemon.send(DaemonRequest::GetInventory),
+        DaemonResponse::Inventory(_)
+    ));
+    assert!(matches!(
+        daemon.send(DaemonRequest::GetDaemonStatus),
+        DaemonResponse::DaemonStatus(_)
+    ));
+    assert!(matches!(
+        daemon.send(DaemonRequest::GetDriverJob(
+            crate::drivers::DriverJobRequest {
+                job_id: "driver-unknown".into(),
+            }
+        )),
+        DaemonResponse::Error(_)
+    ));
+    let fast = daemon.gpus.gpu("GPU-fast");
+    assert_eq!(fast.power.current_limit_watts, Some(410));
+    assert_eq!(fast.clocks.graphics.current_offset_mhz, Some(90));
+    assert_eq!(fast.clocks.memory.current_offset_mhz, Some(50));
+    assert_eq!(
+        daemon.performance().gpus[0].power.current_limit_watts,
+        Some(475)
+    );
+    assert!(blocked.is_pending());
+
+    gate.release();
+    let DaemonResponse::Command(slow) = blocked.response() else {
+        panic!("expected command response")
+    };
+    assert!(slow.success);
+    assert_eq!(
+        daemon.gpus.gpu("GPU-slow").power.current_limit_watts,
+        Some(400)
+    );
+}
+
+#[test]
+fn a_blocked_saved_configuration_write_does_not_delay_inventory() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let gate = daemon.gpus.block("GPU-123", Setter::ApplyConfig);
+    let mut blocked =
+        daemon.send_in_background(DaemonRequest::ApplyConfig(ApplyGpuConfigRequest {
+            gpu_id: Some("GPU-123".into()),
+            power_limit_watts: Some(250),
+            ..Default::default()
+        }));
+    gate.wait_until_entered();
+
+    assert!(matches!(
+        daemon.send(DaemonRequest::GetInventory),
+        DaemonResponse::Inventory(_)
+    ));
+    assert!(blocked.is_pending());
+
+    gate.release();
+    let DaemonResponse::Mutation(response) = blocked.response() else {
+        panic!("expected mutation response")
+    };
+    assert!(response.success);
+    assert_eq!(
+        daemon.saved_state().gpus["GPU-123"]
+            .desired
+            .power_limit_watts,
+        Some(250)
+    );
+}
+
+#[test]
+fn writes_to_the_same_gpu_wait_for_the_write_in_progress() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let gate = daemon.gpus.block("GPU-123", Setter::PowerLimit);
+    let first = daemon.send_in_background(set_power("GPU-123", 400));
+    gate.wait_until_entered();
+    let mut second =
+        daemon.send_in_background(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+            gpu_id: "GPU-123".into(),
+            graphics_offset_mhz: Some(60),
+            memory_offset_mhz: None,
+        }));
+
+    assert!(second.is_pending());
+    assert_eq!(
+        daemon.gpus.writes(),
+        vec![("GPU-123".to_string(), Setter::PowerLimit)]
+    );
+
+    gate.release();
+    assert!(matches!(first.response(), DaemonResponse::Command(_)));
+    assert!(matches!(second.response(), DaemonResponse::ClockOffsets(_)));
+    assert_eq!(
+        daemon.gpus.writes(),
+        vec![
+            ("GPU-123".to_string(), Setter::PowerLimit),
+            ("GPU-123".to_string(), Setter::GraphicsOffset),
+        ]
+    );
+}
+
+#[test]
+fn a_client_slow_to_send_its_request_does_not_hold_up_other_connections() {
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+
+    let directory = tempfile::tempdir().unwrap();
+    let socket_path = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let core = daemon.core();
+    let config = std::sync::Arc::new(super::PrismDaemonConfig {
+        admin_group: "root".into(),
+        admin_user: None,
+    });
+    std::thread::spawn(move || super::serve(listener, core, config));
+
+    let _slow = UnixStream::connect(&socket_path).unwrap();
+    let mut client = UnixStream::connect(&socket_path).unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    client
+        .write_all(&serde_json::to_vec(&DaemonRequest::GetDaemonStatus).unwrap())
+        .unwrap();
+    client.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut response = Vec::new();
+    client
+        .read_to_end(&mut response)
+        .expect("the daemon did not answer while another client was slow");
+
+    assert!(matches!(
+        serde_json::from_slice(&response).unwrap(),
+        DaemonResponse::DaemonStatus(_)
+    ));
+}
