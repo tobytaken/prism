@@ -1,4 +1,5 @@
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
+import { TuningStoreProblem } from "./tuning-store-problem";
 import { GpuProfilePanel, GpuProfileAvailability } from "./gpu-profile-panel";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import {
@@ -120,6 +121,8 @@ export function GpuPerformanceScreen({
           </AlertDescription>
         </Alert>
       )}
+
+      <TuningStoreProblem health={daemonStatus?.tuningStore} />
 
       {errorMessage && (
         <Alert variant="destructive">

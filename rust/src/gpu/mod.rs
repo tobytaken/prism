@@ -526,15 +526,19 @@ pub struct GpuDaemonStatus {
     pub managed_by_daemon: bool,
     pub socket_path: String,
     pub message: Option<String>,
+    /// Unknown when the daemon can't be reached.
+    #[serde(default)]
+    pub tuning_store: Option<TuningStoreHealth>,
 }
 
 impl GpuDaemonStatus {
-    pub fn connected(socket_path: impl Into<String>) -> Self {
+    pub fn connected(socket_path: impl Into<String>, tuning_store: TuningStoreHealth) -> Self {
         Self {
             reachable: true,
             managed_by_daemon: true,
             socket_path: socket_path.into(),
             message: None,
+            tuning_store: Some(tuning_store),
         }
     }
 
@@ -544,8 +548,31 @@ impl GpuDaemonStatus {
             managed_by_daemon: false,
             socket_path: socket_path.into(),
             message,
+            tuning_store: None,
         }
     }
+}
+
+/// Whether the daemon can use its persistent tuning store. An unhealthy store is preserved
+/// untouched: startup and automatic writes are suspended, and manual live tuning keeps working.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TuningStoreHealth {
+    Healthy,
+    Unhealthy {
+        problem: TuningStoreProblem,
+        path: String,
+        detail: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TuningStoreProblem {
+    /// The document couldn't be read or parsed.
+    Unreadable,
+    /// The document was written by a newer schema version than this daemon understands.
+    NewerVersion,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -758,7 +785,9 @@ mod tests {
         GpuDaemonStatus, GpuDevice, GpuInventoryResponse, GpuPerformanceDevice,
         GpuPerformanceResponse, GpuSupportedFeatures, GpuTelemetryInfo, GpuVendor, MemoryInfo,
         OffsetControl, PcieInfo, PersistedGpuState, PowerControlInfo, PowerInfo, PowerLimitControl,
+        TuningStoreHealth, TuningStoreProblem,
     };
+    use serde_json::json;
 
     #[test]
     fn apply_request_requires_gpu_id_for_non_reapply_calls() {
@@ -1078,5 +1107,62 @@ mod tests {
 
         assert!(!status.reachable);
         assert_eq!(status.socket_path, "/run/prism/prismd.sock");
+        assert_eq!(
+            serde_json::to_value(status).unwrap()["tuningStore"],
+            json!(null)
+        );
+    }
+
+    #[test]
+    fn daemon_status_round_trips_the_shared_unhealthy_store_contract() {
+        let contract: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/test/contracts/daemon-status-unhealthy-store.json"
+        ))
+        .unwrap();
+
+        let status: GpuDaemonStatus = serde_json::from_value(contract.clone()).unwrap();
+
+        assert_eq!(
+            status.tuning_store,
+            Some(TuningStoreHealth::Unhealthy {
+                problem: TuningStoreProblem::NewerVersion,
+                path: "/var/lib/prism/tuning-state.json".into(),
+                detail:
+                    "it was written by schema version 2, and this daemon understands up to version 1"
+                        .into(),
+            })
+        );
+        assert_eq!(serde_json::to_value(status).unwrap(), contract);
+    }
+
+    #[test]
+    fn daemon_status_round_trips_a_healthy_store_and_tolerates_a_daemon_without_one() {
+        let healthy = json!({
+            "reachable": true,
+            "managedByDaemon": true,
+            "socketPath": "/run/prism/prismd.sock",
+            "message": null,
+            "tuningStore": { "status": "healthy" }
+        });
+        let status: GpuDaemonStatus = serde_json::from_value(healthy.clone()).unwrap();
+        assert_eq!(status.tuning_store, Some(TuningStoreHealth::Healthy));
+        assert_eq!(serde_json::to_value(status).unwrap(), healthy);
+
+        let mut older = healthy;
+        older.as_object_mut().unwrap().remove("tuningStore");
+        let status: GpuDaemonStatus = serde_json::from_value(older).unwrap();
+        assert_eq!(status.tuning_store, None);
+    }
+
+    #[test]
+    fn daemon_status_rejects_an_unknown_store_problem() {
+        let malformed = json!({
+            "reachable": true,
+            "managedByDaemon": true,
+            "socketPath": "/run/prism/prismd.sock",
+            "message": null,
+            "tuningStore": { "status": "unhealthy", "problem": "melted", "path": "/x", "detail": "" }
+        });
+        assert!(serde_json::from_value::<GpuDaemonStatus>(malformed).is_err());
     }
 }

@@ -4,6 +4,7 @@ import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
 import profileOutcomes from "@/test/contracts/profile-outcomes.json";
 import profileCorrections from "@/test/contracts/profile-corrections.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
+import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store.json";
 
 import type { CorrectGpuProfileRequest } from "@/features/gpus/types";
 import type { PrismDesktopApi } from "@/types/global";
@@ -186,6 +187,13 @@ describe("preload bridge", () => {
     mocks.invoke.mockResolvedValue(tuningObservations);
     expect(await prism.gpu.getPerformance()).toEqual(tuningObservations);
     expect(mocks.invoke).toHaveBeenCalledWith("prism:gpu:getPerformance");
+  });
+
+  it("preserves the tuning store's health in the daemon status across preload", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValue(unhealthyStoreStatus);
+    expect(await prism.gpu.getDaemonStatus()).toEqual(unhealthyStoreStatus);
+    expect(mocks.invoke).toHaveBeenCalledWith("prism:gpu:getDaemonStatus");
   });
 
   it("exposes window IPC methods and resize cleanup", async () => {

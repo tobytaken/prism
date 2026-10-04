@@ -19,6 +19,7 @@ export const connectedDaemonStatus: GpuDaemonStatus = {
   managedByDaemon: true,
   socketPath: "/run/prism/prismd.sock",
   message: null,
+  tuningStore: { status: "healthy" },
 };
 
 export const disconnectedDaemonStatus: GpuDaemonStatus = {
@@ -26,6 +27,7 @@ export const disconnectedDaemonStatus: GpuDaemonStatus = {
   managedByDaemon: false,
   socketPath: "/run/prism/prismd.sock",
   message: "Prism daemon is unavailable.",
+  tuningStore: null,
 };
 
 export function createInventoryGpu(

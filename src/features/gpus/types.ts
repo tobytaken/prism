@@ -131,7 +131,22 @@ export interface GpuDaemonStatus {
   managedByDaemon: boolean;
   socketPath: string;
   message: string | null;
+  /** Unknown while the daemon can't be reached. */
+  tuningStore: TuningStoreHealth | null;
 }
+
+/**
+ * Whether the daemon can use its saved tuning state. An unhealthy store is
+ * preserved untouched; manual live tuning keeps working.
+ */
+export type TuningStoreHealth =
+  | { status: "healthy" }
+  | {
+      status: "unhealthy";
+      problem: "unreadable" | "newerVersion";
+      path: string;
+      detail: string;
+    };
 
 export interface GpuPerformanceDevice {
   id: string;
