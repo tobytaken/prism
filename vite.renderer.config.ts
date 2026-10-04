@@ -1,3 +1,4 @@
+import { availableParallelism } from "node:os";
 import path from "node:path";
 
 import react from "@vitejs/plugin-react";
@@ -15,6 +16,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // Bound jsdom contention so workflow tests fit the default timeout.
+    maxWorkers: Math.min(4, availableParallelism()),
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: "./src/test/setup.ts",
   },
