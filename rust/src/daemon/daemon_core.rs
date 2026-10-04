@@ -13,8 +13,9 @@ use super::backend::DaemonBackend;
 use super::host::{Clock, HostShutdownSignal};
 use super::queue::{GpuOperationQueues, PendingOperation};
 use super::tuning::{apply_live_offsets, apply_profile, reset_live_offsets};
+use super::tuning_store::{TuningStore, TUNING_STORE_FILE_NAME};
 
-const LEGACY_STATE_FILE_NAME: &str = "state.json";
+pub(super) const LEGACY_STATE_FILE_NAME: &str = "state.json";
 
 /// Everything the daemon core needs from the host, so tests can substitute each part.
 pub struct CoreDependencies {
@@ -36,6 +37,7 @@ pub struct CoreDependencies {
 pub struct DaemonCore {
     dependencies: CoreDependencies,
     queues: GpuOperationQueues,
+    tuning_store: TuningStore,
     legacy_configs: Arc<LegacyConfigStore>,
 }
 
@@ -45,9 +47,12 @@ impl DaemonCore {
         let legacy_configs = Arc::new(LegacyConfigStore::load(
             dependencies.persistent_dir.join(LEGACY_STATE_FILE_NAME),
         ));
+        let tuning_store =
+            TuningStore::open(dependencies.persistent_dir.join(TUNING_STORE_FILE_NAME));
         let core = Self {
             dependencies,
             queues: GpuOperationQueues::default(),
+            tuning_store,
             legacy_configs,
         };
 
@@ -79,9 +84,12 @@ impl DaemonCore {
                     apply_profile(backend, request)
                 }),
             ),
-            DaemonRequest::GetDaemonStatus => DaemonResponse::DaemonStatus(
-                GpuDaemonStatus::connected(self.dependencies.socket_path.display().to_string()),
-            ),
+            DaemonRequest::GetDaemonStatus => {
+                DaemonResponse::DaemonStatus(GpuDaemonStatus::connected(
+                    self.dependencies.socket_path.display().to_string(),
+                    self.tuning_store.health(),
+                ))
+            }
             DaemonRequest::ApplyConfig(request) => {
                 DaemonResponse::Mutation(if request.reapply_saved {
                     self.reapply_legacy_configs_and_save()

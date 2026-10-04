@@ -35,6 +35,7 @@ describe("GPU API bridge", () => {
         managedByDaemon: false,
         socketPath: "/run/prism/prismd.sock",
         message: null,
+        tuningStore: null,
       });
 
     await getGpuInventory();

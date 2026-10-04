@@ -21,6 +21,7 @@ const prismStub: PrismDesktopApi = {
       managedByDaemon: false,
       socketPath: "/run/prism/prismd.sock",
       message: "Prism daemon is unavailable.",
+      tuningStore: null,
     }),
     applyConfig: async () => ({ success: true, inventory: null, error: null }),
     resetConfig: async () => ({ success: true, inventory: null, error: null }),

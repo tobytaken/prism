@@ -52,6 +52,14 @@ _Avoid_: Default profile, current profile
 The most recent successfully applied manual value of each setting within the profile tuning scope for an individual GPU, whether it came from a profile or a live tuning change; temporary automatic applications and their restorations are excluded.
 _Avoid_: Last applied profile, current profile
 
+**Tuning store**:
+The daemon's persistent, versioned record of the tuning state that must outlive a host restart, such as GPU tuning profiles, game associations, startup choices and last applied tuning values; it is distinct from legacy saved GPU configurations.
+_Avoid_: Saved tuning state, state file, saved configuration
+
+**Unhealthy tuning store**:
+A tuning store Prism can't use because it can't be read or was written by a newer version of Prism; it is preserved untouched, startup behavior and automatic switching are suspended, and profile applications and live tuning changes keep working.
+_Avoid_: Corrupt state, reset state
+
 **Startup outcome**:
 The per-GPU result of Prism's startup behavior on the most recent host start, including settings applied, failed, or not attempted and why, such as a skip after an unclean shutdown.
 _Avoid_: Profile application result when no user requested it

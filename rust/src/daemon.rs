@@ -3,6 +3,7 @@ mod daemon_core;
 mod host;
 mod queue;
 mod tuning;
+mod tuning_store;
 
 #[cfg(test)]
 mod harness;

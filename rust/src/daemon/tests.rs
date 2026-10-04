@@ -3,10 +3,11 @@ use serde_json::json;
 use super::harness::{
     observed_gpu, tunable_gpu, tunable_gpu_with_id, FakeGpuBackend, Harness, Setter,
 };
+use super::tuning_store::{STAGED_FILE_SUFFIX, TUNING_STORE_FILE_NAME};
 use crate::gpu::{
     ApplyGpuConfigRequest, ClockRangeInput, ControlSupport, DesiredGpuConfig, GpuCommandErrorCode,
     GpuTargetRequest, PersistedGpuConfig, PersistedGpuState, ResetGpuConfigRequest,
-    SetGpuClockOffsetsRequest, SetGpuPowerLimitRequest,
+    SetGpuClockOffsetsRequest, SetGpuPowerLimitRequest, TuningStoreHealth, TuningStoreProblem,
 };
 use crate::protocol::{ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, ProfileSetting};
 
@@ -1053,5 +1054,135 @@ fn a_reapplication_queued_behind_a_reset_does_not_restore_the_cleared_configurat
     assert_eq!(
         daemon.gpus.gpu("GPU-123").power.current_limit_watts,
         Some(575)
+    );
+}
+
+const TUNING_STORE: &str = TUNING_STORE_FILE_NAME;
+
+#[test]
+fn without_a_tuning_store_the_daemon_starts_healthy_and_creates_nothing_until_a_write() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+
+    assert_eq!(
+        daemon.status().tuning_store,
+        Some(TuningStoreHealth::Healthy)
+    );
+    daemon.restart();
+    assert_eq!(
+        daemon.status().tuning_store,
+        Some(TuningStoreHealth::Healthy)
+    );
+    assert_eq!(daemon.persistent_file(TUNING_STORE), None);
+}
+
+fn assert_unhealthy(daemon: &Harness, expected: TuningStoreProblem) {
+    let Some(TuningStoreHealth::Unhealthy {
+        problem,
+        path,
+        detail,
+    }) = daemon.status().tuning_store
+    else {
+        panic!("expected an unhealthy tuning store");
+    };
+    assert_eq!(problem, expected);
+    assert_eq!(
+        path,
+        daemon.persistent_path(TUNING_STORE).display().to_string()
+    );
+    assert!(!detail.is_empty());
+}
+
+// Acceptance scenario 11 from #8, as far as it exists so far: the file is preserved, manual
+// tuning works and the problem is reported. Startup behavior and automatic writes don't exist
+// yet; legacy saved-configuration reapplication still runs at every start until #38 retires it.
+#[test]
+fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_working() {
+    let corrupt: &[u8] = b"{\"schemaVersion\": 1, \"profiles\": [tru";
+    let mut daemon = Harness::start_with_persistent_files(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        &[(TUNING_STORE, corrupt)],
+    );
+    assert_eq!(
+        daemon.persistent_file(TUNING_STORE).as_deref(),
+        Some(corrupt)
+    );
+    assert_unhealthy(&daemon, TuningStoreProblem::Unreadable);
+
+    let DaemonResponse::Command(power) = daemon.send(set_power("GPU-123", 450)) else {
+        panic!("expected a command response");
+    };
+    assert!(power.success);
+    let offsets = daemon.send(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+        gpu_id: "GPU-123".into(),
+        graphics_offset_mhz: Some(150),
+        memory_offset_mhz: None,
+    }));
+    let offsets = serde_json::to_value(offsets).unwrap();
+    assert_eq!(offsets["payload"]["graphics"]["status"], "succeeded");
+    let profile = daemon.send_json(apply_profile_request(json!({
+        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+    })));
+    assert_eq!(profile["payload"]["memory"]["status"], "succeeded");
+    let gpu = daemon.gpus.gpu("GPU-123");
+    assert_eq!(gpu.power.current_limit_watts, Some(450));
+    assert_eq!(gpu.clocks.graphics.current_offset_mhz, Some(150));
+    assert_eq!(gpu.clocks.memory.current_offset_mhz, Some(80));
+    assert_eq!(
+        daemon.persistent_file(TUNING_STORE).as_deref(),
+        Some(corrupt)
+    );
+
+    daemon.restart();
+    assert_unhealthy(&daemon, TuningStoreProblem::Unreadable);
+    assert_eq!(
+        daemon.persistent_file(TUNING_STORE).as_deref(),
+        Some(corrupt)
+    );
+}
+
+#[test]
+fn a_tuning_store_from_a_newer_schema_version_is_treated_as_unreadable_and_preserved() {
+    let newer: &[u8] = b"{\"schemaVersion\": 2, \"profiles\": []}";
+    let mut daemon = Harness::start_with_persistent_files(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        &[(TUNING_STORE, newer)],
+    );
+    assert_unhealthy(&daemon, TuningStoreProblem::NewerVersion);
+
+    let DaemonResponse::Command(power) = daemon.send(set_power("GPU-123", 450)) else {
+        panic!("expected a command response");
+    };
+    assert!(power.success);
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(450)
+    );
+    assert_eq!(daemon.persistent_file(TUNING_STORE).as_deref(), Some(newer));
+    daemon.restart();
+    assert_unhealthy(&daemon, TuningStoreProblem::NewerVersion);
+    assert_eq!(daemon.persistent_file(TUNING_STORE).as_deref(), Some(newer));
+}
+
+#[test]
+fn a_store_write_interrupted_by_a_crash_leaves_the_previous_document_in_use() {
+    let previous: &[u8] = b"{\"schemaVersion\": 1}";
+    let daemon = Harness::start_with_persistent_files(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        &[
+            (TUNING_STORE, previous),
+            (
+                &format!("{TUNING_STORE}{STAGED_FILE_SUFFIX}"),
+                b"{\"schemaVersion\": 1, \"pro",
+            ),
+        ],
+    );
+
+    assert_eq!(
+        daemon.status().tuning_store,
+        Some(TuningStoreHealth::Healthy)
+    );
+    assert_eq!(
+        daemon.persistent_file(TUNING_STORE).as_deref(),
+        Some(previous)
     );
 }

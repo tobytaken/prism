@@ -11,13 +11,14 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
+use super::daemon_core::LEGACY_STATE_FILE_NAME;
 use super::{Clock, CoreDependencies, DaemonBackend, DaemonCore, HostShutdownSignal};
 use crate::drivers::DriverService;
 use crate::gpu::{
     ApplyGpuConfigRequest, ControlSupport, FanControlMode, GpuCommandError, GpuCommandErrorCode,
-    GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse, GpuTargetRequest,
-    PersistedGpuState, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
-    SetGpuPowerLimitRequest,
+    GpuDaemonStatus, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
+    GpuTargetRequest, PersistedGpuState, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
+    SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 use crate::protocol::{DaemonRequest, DaemonResponse};
 
@@ -356,9 +357,19 @@ impl Harness {
 
     /// Starts the daemon on a persistent directory that already holds this saved state.
     pub fn start_with_saved_state(gpus: FakeGpuBackend, saved: Option<&[u8]>) -> Self {
+        match saved {
+            Some(saved) => {
+                Self::start_with_persistent_files(gpus, &[(LEGACY_STATE_FILE_NAME, saved)])
+            }
+            None => Self::start_with_persistent_files(gpus, &[]),
+        }
+    }
+
+    /// Starts the daemon on a persistent directory that already holds these files.
+    pub fn start_with_persistent_files(gpus: FakeGpuBackend, files: &[(&str, &[u8])]) -> Self {
         let persistent_dir = tempfile::tempdir().unwrap();
-        if let Some(saved) = saved {
-            std::fs::write(persistent_dir.path().join("state.json"), saved).unwrap();
+        for (name, contents) in files {
+            std::fs::write(persistent_dir.path().join(name), contents).unwrap();
         }
         let mut harness = Self {
             gpus: Arc::new(gpus),
@@ -415,6 +426,13 @@ impl Harness {
         performance
     }
 
+    pub fn status(&self) -> GpuDaemonStatus {
+        let DaemonResponse::DaemonStatus(status) = self.send(DaemonRequest::GetDaemonStatus) else {
+            panic!("expected daemon status")
+        };
+        status
+    }
+
     /// Sends the request from its own connection without waiting for the response.
     pub fn send_in_background(&self, request: DaemonRequest) -> InFlightRequest {
         let core = self.core();
@@ -430,7 +448,16 @@ impl Harness {
 
     /// The saved state file's bytes, if the daemon has written one.
     pub fn saved_state_bytes(&self) -> Option<Vec<u8>> {
-        std::fs::read(self.persistent_dir.path().join("state.json")).ok()
+        std::fs::read(self.persistent_dir.path().join(LEGACY_STATE_FILE_NAME)).ok()
+    }
+
+    /// A file's bytes in the persistent directory, if it exists.
+    pub fn persistent_file(&self, name: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.persistent_dir.path().join(name)).ok()
+    }
+
+    pub fn persistent_path(&self, name: &str) -> PathBuf {
+        self.persistent_dir.path().join(name)
     }
 
     pub fn saved_state(&self) -> PersistedGpuState {
