@@ -81,9 +81,11 @@ describe("GPU tuning observations", () => {
       .spyOn(window.prism.gpu, "setClockOffsets")
       .mockImplementation(async (_id, graphics, memory) => {
         if (graphics != null)
-          response.gpus[0].clocks.graphics.currentOffsetMHz = graphics;
+          response.gpus[0].clocks.graphics.currentOffsetMHz =
+            graphics === "default" ? 0 : graphics;
         if (memory != null && !failMemory)
-          response.gpus[0].clocks.memory.currentOffsetMHz = memory;
+          response.gpus[0].clocks.memory.currentOffsetMHz =
+            memory === "default" ? 0 : memory;
         return {
           graphics:
             graphics == null ? null : { status: "succeeded", error: null },
@@ -301,9 +303,11 @@ describe("GPU tuning observations", () => {
             memory: { status: "unattempted", error: "Earlier failure" },
           };
         if (graphics != null)
-          response.gpus[0].clocks.graphics.currentOffsetMHz = graphics;
+          response.gpus[0].clocks.graphics.currentOffsetMHz =
+            graphics === "default" ? 0 : graphics;
         if (memory != null)
-          response.gpus[0].clocks.memory.currentOffsetMHz = memory;
+          response.gpus[0].clocks.memory.currentOffsetMHz =
+            memory === "default" ? 0 : memory;
         return {
           graphics:
             graphics == null ? null : { status: "succeeded", error: null },
@@ -559,9 +563,11 @@ describe("GPU tuning observations", () => {
       .spyOn(window.prism.gpu, "setClockOffsets")
       .mockImplementation(async (_id, graphics, memory) => {
         if (graphics != null)
-          response.gpus[0].clocks.graphics.currentOffsetMHz = graphics;
+          response.gpus[0].clocks.graphics.currentOffsetMHz =
+            graphics === "default" ? 0 : graphics;
         if (memory != null)
-          response.gpus[0].clocks.memory.currentOffsetMHz = memory;
+          response.gpus[0].clocks.memory.currentOffsetMHz =
+            memory === "default" ? 0 : memory;
         return {
           graphics:
             graphics == null ? null : { status: "succeeded", error: null },

@@ -12,7 +12,8 @@ import profileOutcomes from "@/test/contracts/profile-outcomes.json";
 import profileCorrections from "@/test/contracts/profile-corrections.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store.json";
-import { createPerformanceResponse } from "@/test/gpu-fixtures";
+import correctedProfileApplication from "@/test/contracts/corrected-profile-application.json";
+import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
 import { connectedDaemonStatus } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
 
@@ -54,6 +55,9 @@ describe("registerIpc", () => {
     });
     mocks.openExternal.mockReset();
     mocks.spawn.mockReset();
+    // No profile file to import unless a test writes one.
+    mocks.getPath.mockReset();
+    mocks.getPath.mockReturnValue(path.join(os.tmpdir(), "prism-no-user-data"));
   });
 
   it("forwards validated id-less notifications to the subscribed renderer without consuming a pending response", async () => {
@@ -232,175 +236,46 @@ describe("registerIpc", () => {
     }
   });
 
-  it("persists exactly the approved corrections, preserving other settings, without touching the GPU", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
-    mocks.getPath.mockReturnValue(directory);
-    const quiet = {
-      id: "quiet",
-      name: "Quiet",
-      gpuId: "GPU-123",
-      settings: {
-        powerLimitWatts: { kind: "value", value: 300 },
-        graphicsOffsetMHz: { kind: "value", value: -150 },
-        memoryOffsetMHz: { kind: "default" },
-      },
-    };
-    const other = {
-      id: "other",
-      name: "Other",
-      gpuId: "GPU-123",
-      settings: { powerLimitWatts: { kind: "value", value: 300 } },
-    };
-    await writeFile(
-      path.join(directory, "gpu-tuning-profiles.json"),
-      JSON.stringify({ version: 1, profiles: [quiet, other] }),
+  it("forwards profile application by id and correct-and-apply to the daemon unchanged", async () => {
+    const child = createBackendChild((method: string) =>
+      method === "gpu.applyProfileById"
+        ? profileCorrections
+        : correctedProfileApplication,
     );
-    let dispose = registerIpc(getMainWindow);
-    try {
-      const corrected = {
-        ...quiet,
-        settings: {
-          ...quiet.settings,
-          powerLimitWatts: { kind: "value", value: 280 },
-          graphicsOffsetMHz: { kind: "value", value: -100 },
-        },
-      };
-      expect(
-        await callHandler("prism:gpu:correctProfile", trustedEvent(), {
-          profileId: "quiet",
-          corrections: profileCorrections.corrections,
-        }),
-      ).toEqual(corrected);
-      dispose();
-      dispose = registerIpc(getMainWindow);
-      expect(
-        await callHandler("prism:gpu:listProfiles", trustedEvent()),
-      ).toEqual([corrected, other]);
-      expect(mocks.spawn).not.toHaveBeenCalled();
-    } finally {
-      dispose();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    {
-      label: "a saved value that changed during review",
-      corrections: [
-        {
-          setting: "powerLimitWatts",
-          savedValue: 320,
-          proposedValue: 280,
-          bound: "maximum",
-        },
-      ],
-      reason: /changed while its corrections were being reviewed/,
-    },
-    {
-      label: "an explicit default",
-      corrections: [
-        {
-          setting: "memoryOffsetMHz",
-          savedValue: 80,
-          proposedValue: 50,
-          bound: "maximum",
-        },
-      ],
-      reason: /changed while its corrections were being reviewed/,
-    },
-    {
-      label: "an omitted setting",
-      profileId: "power-only",
-      corrections: [
-        {
-          setting: "graphicsOffsetMHz",
-          savedValue: -150,
-          proposedValue: -100,
-          bound: "minimum",
-        },
-      ],
-      reason: /changed while its corrections were being reviewed/,
-    },
-    {
-      label: "a missing profile",
-      profileId: "deleted",
-      corrections: profileCorrections.corrections,
-      reason: /no longer exists/,
-    },
-  ])(
-    "rejects corrections for $label and leaves every profile unchanged",
-    async ({ profileId = "quiet", corrections, reason }) => {
-      const directory = await mkdtemp(
-        path.join(os.tmpdir(), "prism-profiles-"),
-      );
-      mocks.getPath.mockReturnValue(directory);
-      const file = path.join(directory, "gpu-tuning-profiles.json");
-      const original = JSON.stringify({
-        version: 1,
-        profiles: [
-          {
-            id: "quiet",
-            name: "Quiet",
-            gpuId: "GPU-123",
-            settings: {
-              powerLimitWatts: { kind: "value", value: 300 },
-              memoryOffsetMHz: { kind: "default" },
-            },
-          },
-          {
-            id: "power-only",
-            name: "Power only",
-            gpuId: "GPU-123",
-            settings: { powerLimitWatts: { kind: "value", value: 300 } },
-          },
-        ],
-      });
-      await writeFile(file, original);
-      const dispose = registerIpc(getMainWindow);
-      try {
-        await expect(
-          callHandler("prism:gpu:correctProfile", trustedEvent(), {
-            profileId,
-            corrections,
-          }),
-        ).rejects.toThrow(reason);
-        expect(await readFile(file, "utf8")).toBe(original);
-        expect(mocks.spawn).not.toHaveBeenCalled();
-      } finally {
-        dispose();
-        await rm(directory, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it("reports unreadable profile storage when persisting corrections and preserves the file", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
-    mocks.getPath.mockReturnValue(directory);
-    const file = path.join(directory, "gpu-tuning-profiles.json");
-    await writeFile(file, "{ not json");
+    mocks.spawn.mockReturnValue(child);
     const dispose = registerIpc(getMainWindow);
     try {
-      await expect(
-        callHandler("prism:gpu:correctProfile", trustedEvent(), {
+      expect(
+        await callHandler("prism:gpu:applyProfileById", trustedEvent(), {
           profileId: "quiet",
-          corrections: profileCorrections.corrections,
         }),
-      ).rejects.toThrow();
-      expect(await readFile(file, "utf8")).toBe("{ not json");
+      ).toEqual(profileCorrections);
+      const request = {
+        profileId: "quiet",
+        corrections: profileCorrections.corrections,
+      };
+      expect(
+        await callHandler(
+          "prism:gpu:correctAndApplyProfile",
+          trustedEvent(),
+          request,
+        ),
+      ).toEqual(correctedProfileApplication);
+      expect(sentRequests(child)).toEqual([
+        { method: "gpu.applyProfileById", params: { profileId: "quiet" } },
+        { method: "gpu.correctAndApplyProfile", params: request },
+      ]);
     } finally {
       dispose();
-      await rm(directory, { recursive: true, force: true });
     }
   });
 
-  it("rejects untrusted or malformed correction requests before reading profiles", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
-    mocks.getPath.mockReturnValue(directory);
+  it("rejects untrusted or malformed correction requests before the daemon sees them", async () => {
     const dispose = registerIpc(getMainWindow);
     const correction = profileCorrections.corrections[0];
     try {
       await expect(
-        callHandler("prism:gpu:correctProfile", untrustedEvent(), {
+        callHandler("prism:gpu:correctAndApplyProfile", untrustedEvent(), {
           profileId: "quiet",
           corrections: [correction],
         }),
@@ -433,13 +308,32 @@ describe("registerIpc", () => {
         },
       ]) {
         await expect(
-          callHandler("prism:gpu:correctProfile", trustedEvent(), payload),
-        ).rejects.toThrow("Invalid correctProfile payload");
+          callHandler(
+            "prism:gpu:correctAndApplyProfile",
+            trustedEvent(),
+            payload,
+          ),
+        ).rejects.toThrow("Invalid correctAndApplyProfile payload");
+      }
+      await expect(
+        callHandler("prism:gpu:applyProfileById", untrustedEvent(), {
+          profileId: "quiet",
+        }),
+      ).rejects.toThrow("Untrusted IPC sender");
+      for (const payload of [
+        undefined,
+        {},
+        { profileId: " " },
+        { profileId: 7 },
+        { profileId: "quiet", gpuId: "GPU-123" },
+      ]) {
+        await expect(
+          callHandler("prism:gpu:applyProfileById", trustedEvent(), payload),
+        ).rejects.toThrow("Invalid applyProfileById payload");
       }
       expect(mocks.spawn).not.toHaveBeenCalled();
     } finally {
       dispose();
-      await rm(directory, { recursive: true, force: true });
     }
   });
 
@@ -503,230 +397,34 @@ describe("registerIpc", () => {
     }
   });
 
-  it("saves known numeric profile settings without tuning and retains them after app reload", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
-    mocks.getPath.mockReturnValue(directory);
-    const readings = createPerformanceResponse();
-    readings.gpus[0].power.currentLimitWatts = 575;
-    readings.gpus[0].power.currentValueError = null;
-    const child = createBackendChild(readings);
-    mocks.spawn.mockReturnValue(child);
-    let dispose = registerIpc(getMainWindow);
-    try {
-      const saved = await callHandler("prism:gpu:saveProfile", trustedEvent(), {
-        gpuId: "GPU-123",
-        name: "Quiet",
-      });
-      expect(saved).toEqual({
-        id: expect.any(String),
-        name: "Quiet",
-        gpuId: "GPU-123",
-        settings: {
-          powerLimitWatts: { kind: "value", value: 575 },
-          graphicsOffsetMHz: { kind: "value", value: 120 },
-        },
-      });
-      expect(
-        child.stdin.write.mock.calls.map(
-          ([payload]) => JSON.parse(payload).method,
-        ),
-      ).toEqual(["gpu.getPerformance"]);
-      dispose();
-      dispose = registerIpc(getMainWindow);
-      expect(
-        await callHandler("prism:gpu:listProfiles", trustedEvent()),
-      ).toEqual([saved]);
-    } finally {
-      dispose();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("captures all supported settings from fresh readings and gives each saved profile its own identity", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
-    mocks.getPath.mockReturnValue(directory);
-    const readings = createPerformanceResponse();
-    Object.assign(readings.gpus[0].clocks.memory, {
-      support: "supported",
-      currentOffsetMHz: 80,
-      reason: null,
-    });
-    const child = createBackendChild(readings);
+  it("saves as new and lists profiles through the daemon, which captures the values", async () => {
+    const [saved] = gpuTuningProfiles;
+    const child = createBackendChild((method: string) =>
+      method === "gpu.saveProfileAsNew" ? saved : gpuTuningProfiles,
+    );
     mocks.spawn.mockReturnValue(child);
     const dispose = registerIpc(getMainWindow);
     try {
-      const first = await callHandler("prism:gpu:saveProfile", trustedEvent(), {
-        gpuId: "GPU-123",
-        name: "Quiet",
-        settings: { powerLimitWatts: 999 },
-      });
-      readings.gpus[0].power.currentLimitWatts = 450;
-      const second = await callHandler(
-        "prism:gpu:saveProfile",
-        trustedEvent(),
-        { gpuId: "GPU-123", name: "Quiet" },
-      );
-      expect(first).toMatchObject({
-        settings: {
-          powerLimitWatts: { kind: "value", value: 475 },
-          graphicsOffsetMHz: { kind: "value", value: 120 },
-          memoryOffsetMHz: { kind: "value", value: 80 },
-        },
-      });
-      expect(second).toMatchObject({
-        id: expect.any(String),
-        gpuId: "GPU-123",
-        settings: { powerLimitWatts: { kind: "value", value: 450 } },
-      });
-      expect(second).not.toEqual(first);
       expect(
-        await callHandler("prism:gpu:listProfiles", trustedEvent()),
-      ).toEqual([first, second]);
-      expect(
-        child.stdin.write.mock.calls.map(
-          ([payload]) => JSON.parse(payload).method,
-        ),
-      ).toEqual(["gpu.getPerformance", "gpu.getPerformance"]);
-    } finally {
-      dispose();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("saves applied explicit default choices only while fresh readings still reflect them, and retains them after reload", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
-    mocks.getPath.mockReturnValue(directory);
-    const readings = createPerformanceResponse();
-    Object.assign(readings.gpus[0].power, {
-      currentLimitWatts: 575,
-      defaultLimitWatts: 575,
-    });
-    readings.gpus[0].clocks.graphics.currentOffsetMHz = 0;
-    const child = createBackendChild(readings);
-    mocks.spawn.mockReturnValue(child);
-    let dispose = registerIpc(getMainWindow);
-    try {
-      const numeric = await callHandler(
-        "prism:gpu:saveProfile",
-        trustedEvent(),
-        { gpuId: "GPU-123", name: "Numeric" },
-      );
-      const defaults = await callHandler(
-        "prism:gpu:saveProfile",
-        trustedEvent(),
-        {
+        await callHandler("prism:gpu:saveProfile", trustedEvent(), {
           gpuId: "GPU-123",
-          name: "Defaults",
-          appliedDefaults: ["powerLimitWatts", "graphicsOffsetMHz"],
-        },
-      );
-      // The driver now reports another default, so the earlier choice no longer describes the GPU.
-      readings.gpus[0].power.defaultLimitWatts = 520;
-      const stale = await callHandler("prism:gpu:saveProfile", trustedEvent(), {
-        gpuId: "GPU-123",
-        name: "Stale",
-        appliedDefaults: ["powerLimitWatts"],
-      });
-      expect(numeric).toMatchObject({
-        settings: {
-          powerLimitWatts: { kind: "value", value: 575 },
-          graphicsOffsetMHz: { kind: "value", value: 0 },
-        },
-      });
-      expect(defaults).toMatchObject({
-        settings: {
-          powerLimitWatts: { kind: "default" },
-          graphicsOffsetMHz: { kind: "default" },
-        },
-      });
-      expect(stale).toMatchObject({
-        settings: {
-          powerLimitWatts: { kind: "value", value: 575 },
-          graphicsOffsetMHz: { kind: "value", value: 0 },
-        },
-      });
-      dispose();
-      dispose = registerIpc(getMainWindow);
+          name: "Quiet",
+        }),
+      ).toEqual(saved);
       expect(
         await callHandler("prism:gpu:listProfiles", trustedEvent()),
-      ).toEqual([numeric, defaults, stale]);
+      ).toEqual(gpuTuningProfiles);
+      expect(sentRequests(child)).toEqual([
+        {
+          method: "gpu.saveProfileAsNew",
+          params: { gpuId: "GPU-123", name: "Quiet" },
+        },
+        { method: "gpu.listProfiles" },
+      ]);
     } finally {
       dispose();
-      await rm(directory, { recursive: true, force: true });
     }
   });
-
-  it("reloads omitted, numeric, and explicit-default settings through the public list command without a GPU", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
-    mocks.getPath.mockReturnValue(directory);
-    const profile = {
-      id: "future-default",
-      name: "Default clocks",
-      gpuId: "GPU-absent",
-      settings: {
-        powerLimitWatts: { kind: "value", value: 575 },
-        graphicsOffsetMHz: { kind: "default" },
-      },
-    };
-    await writeFile(
-      path.join(directory, "gpu-tuning-profiles.json"),
-      JSON.stringify({ version: 1, profiles: [profile] }),
-    );
-    let dispose = registerIpc(getMainWindow);
-    try {
-      expect(
-        await callHandler("prism:gpu:listProfiles", trustedEvent()),
-      ).toEqual([profile]);
-      dispose();
-      dispose = registerIpc(getMainWindow);
-      expect(
-        await callHandler("prism:gpu:listProfiles", trustedEvent()),
-      ).toEqual([profile]);
-      expect(mocks.spawn).not.toHaveBeenCalled();
-    } finally {
-      dispose();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    {
-      label: "missing stable identity",
-      change: { stableId: null },
-      reason: /stable identity/,
-    },
-    {
-      label: "absent GPU",
-      change: { id: "GPU-other", stableId: "GPU-other" },
-      reason: /owning GPU is unavailable/,
-    },
-  ])(
-    "rejects profile saving for $label at the owner boundary",
-    async ({ change, reason }) => {
-      const directory = await mkdtemp(
-        path.join(os.tmpdir(), "prism-profiles-"),
-      );
-      mocks.getPath.mockReturnValue(directory);
-      const readings = createPerformanceResponse();
-      Object.assign(readings.gpus[0], change);
-      mocks.spawn.mockReturnValue(createBackendChild(readings));
-      const dispose = registerIpc(getMainWindow);
-      try {
-        await expect(
-          callHandler("prism:gpu:saveProfile", trustedEvent(), {
-            gpuId: "GPU-123",
-            name: "Quiet",
-          }),
-        ).rejects.toThrow(reason);
-        expect(
-          await callHandler("prism:gpu:listProfiles", trustedEvent()),
-        ).toEqual([]);
-      } finally {
-        dispose();
-        await rm(directory, { recursive: true, force: true });
-      }
-    },
-  );
 
   it("rejects untrusted or invalid profile requests", async () => {
     const dispose = registerIpc(getMainWindow);
@@ -734,6 +432,9 @@ describe("registerIpc", () => {
       await expect(
         callHandler("prism:gpu:listProfiles", untrustedEvent()),
       ).rejects.toThrow("Untrusted IPC sender");
+      await expect(
+        callHandler("prism:gpu:listProfiles", trustedEvent(), { uid: 0 }),
+      ).rejects.toThrow("Invalid listProfiles payload");
       await expect(
         callHandler("prism:gpu:saveProfile", untrustedEvent(), {
           gpuId: "GPU-123",
@@ -743,14 +444,10 @@ describe("registerIpc", () => {
       for (const payload of [
         { gpuId: "GPU-123", name: " " },
         { gpuId: 0, name: "Quiet" },
+        { gpuId: " ", name: "Quiet" },
         { name: "Quiet" },
-        { gpuId: "GPU-123", name: "Quiet", appliedDefaults: "powerLimitWatts" },
-        { gpuId: "GPU-123", name: "Quiet", appliedDefaults: ["fanSpeed"] },
-        {
-          gpuId: "GPU-123",
-          name: "Quiet",
-          appliedDefaults: ["powerLimitWatts", "powerLimitWatts"],
-        },
+        { gpuId: "GPU-123", name: "Quiet", appliedDefaults: [] },
+        { gpuId: "GPU-123", name: "Quiet", settings: { powerLimitWatts: 999 } },
       ]) {
         await expect(
           callHandler("prism:gpu:saveProfile", trustedEvent(), payload),
@@ -762,11 +459,102 @@ describe("registerIpc", () => {
     }
   });
 
-  it("rejects stored profile values that the application boundaries could never accept", async () => {
+  it("imports the app's profile file into the daemon once, keeping ids, then renames it", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
     mocks.getPath.mockReturnValue(directory);
+    const file = path.join(directory, "gpu-tuning-profiles.json");
     await writeFile(
-      path.join(directory, "gpu-tuning-profiles.json"),
+      file,
+      JSON.stringify({ version: 1, profiles: gpuTuningProfiles }),
+    );
+    let failImport = true;
+    const child = createBackendChild((method: string) => {
+      if (method !== "gpu.importProfiles") return gpuTuningProfiles;
+      if (failImport) return new Error("Prism's tuning store can't be used.");
+      return { imported: gpuTuningProfiles, skipped: [] };
+    });
+    mocks.spawn.mockReturnValue(child);
+    let dispose = registerIpc(getMainWindow);
+    try {
+      // A failed import still lists the daemon's profiles and keeps the file for another try.
+      expect(
+        await callHandler("prism:gpu:listProfiles", trustedEvent()),
+      ).toEqual(gpuTuningProfiles);
+      expect(await readFile(file, "utf8")).toContain('"version":1');
+
+      failImport = false;
+      await callHandler("prism:gpu:listProfiles", trustedEvent());
+      await callHandler("prism:gpu:listProfiles", trustedEvent());
+      expect(sentRequests(child)).toEqual([
+        {
+          method: "gpu.importProfiles",
+          params: { profiles: gpuTuningProfiles },
+        },
+        { method: "gpu.listProfiles" },
+        {
+          method: "gpu.importProfiles",
+          params: { profiles: gpuTuningProfiles },
+        },
+        { method: "gpu.listProfiles" },
+        { method: "gpu.listProfiles" },
+      ]);
+      await expect(readFile(file, "utf8")).rejects.toThrow();
+      expect(
+        JSON.parse(await readFile(`${file}.imported`, "utf8")).profiles,
+      ).toEqual(gpuTuningProfiles);
+
+      // A later app start finds nothing left to import.
+      dispose();
+      child.stdin.write.mockClear();
+      dispose = registerIpc(getMainWindow);
+      await callHandler("prism:gpu:listProfiles", trustedEvent());
+      expect(sentRequests(child)).toEqual([{ method: "gpu.listProfiles" }]);
+    } finally {
+      dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("starts the profile import when the daemon session connects", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
+    mocks.getPath.mockReturnValue(directory);
+    const file = path.join(directory, "gpu-tuning-profiles.json");
+    await writeFile(
+      file,
+      JSON.stringify({ version: 1, profiles: gpuTuningProfiles }),
+    );
+    const child = createBackendChild({ imported: [], skipped: [] });
+    mocks.spawn.mockReturnValue(child);
+    const window = getMainWindow();
+    window.webContents.send = vi.fn();
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      child.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: connectedDaemonStatus })}\n`,
+      );
+      await vi.waitFor(() =>
+        expect(readFile(`${file}.imported`, "utf8")).resolves.toBeTruthy(),
+      );
+      expect(sentRequests(child)).toEqual([
+        {
+          method: "gpu.importProfiles",
+          params: { profiles: gpuTuningProfiles },
+        },
+      ]);
+    } finally {
+      dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an unreadable profile file instead of importing or replacing it", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
+    mocks.getPath.mockReturnValue(directory);
+    const file = path.join(directory, "gpu-tuning-profiles.json");
+    for (const original of [
+      "{ not json",
+      JSON.stringify({ version: 2, profiles: [{ id: "existing" }] }),
       JSON.stringify({
         version: 1,
         profiles: [
@@ -778,46 +566,22 @@ describe("registerIpc", () => {
           },
         ],
       }),
-    );
-    const dispose = registerIpc(getMainWindow);
-    try {
-      await expect(
-        callHandler("prism:gpu:listProfiles", trustedEvent()),
-      ).rejects.toThrow("profile file has been preserved");
-    } finally {
-      dispose();
-      await rm(directory, { recursive: true, force: true });
+    ]) {
+      await writeFile(file, original);
+      const child = createBackendChild([]);
+      mocks.spawn.mockReturnValue(child);
+      const dispose = registerIpc(getMainWindow);
+      try {
+        expect(
+          await callHandler("prism:gpu:listProfiles", trustedEvent()),
+        ).toEqual([]);
+        expect(sentRequests(child)).toEqual([{ method: "gpu.listProfiles" }]);
+        expect(await readFile(file, "utf8")).toBe(original);
+      } finally {
+        dispose();
+      }
     }
-  });
-
-  it("preserves unreadable storage and reports errors instead of overwriting retained profiles", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "prism-profiles-"));
-    mocks.getPath.mockReturnValue(directory);
-    const file = path.join(directory, "gpu-tuning-profiles.json");
-    const original = JSON.stringify({
-      version: 2,
-      profiles: [{ id: "existing" }],
-    });
-    await writeFile(file, original);
-    mocks.spawn.mockReturnValue(
-      createBackendChild(createPerformanceResponse()),
-    );
-    const dispose = registerIpc(getMainWindow);
-    try {
-      await expect(
-        callHandler("prism:gpu:listProfiles", trustedEvent()),
-      ).rejects.toThrow("profile file has been preserved");
-      await expect(
-        callHandler("prism:gpu:saveProfile", trustedEvent(), {
-          gpuId: "GPU-123",
-          name: "Quiet",
-        }),
-      ).rejects.toThrow("profile file has been preserved");
-      expect(await readFile(file, "utf8")).toBe(original);
-    } finally {
-      dispose();
-      await rm(directory, { recursive: true, force: true });
-    }
+    await rm(directory, { recursive: true, force: true });
   });
 
   it("rejects untrusted senders", async () => {
@@ -843,13 +607,15 @@ describe("registerIpc", () => {
         speedPercent: 60,
       }),
     ).rejects.toThrow("Invalid setFanSpeed payload");
-    await expect(
-      callHandler("prism:gpu:setClockOffsets", trustedEvent(), {
-        gpuId: "GPU-123",
-        graphicsOffsetMHz: "100",
-        memoryOffsetMHz: null,
-      }),
-    ).rejects.toThrow("Invalid setClockOffsets payload");
+    for (const graphicsOffsetMHz of ["100", "reset", 100.5]) {
+      await expect(
+        callHandler("prism:gpu:setClockOffsets", trustedEvent(), {
+          gpuId: "GPU-123",
+          graphicsOffsetMHz,
+          memoryOffsetMHz: null,
+        }),
+      ).rejects.toThrow("Invalid setClockOffsets payload");
+    }
     await expect(
       callHandler("prism:gpu:resetConfig", trustedEvent(), { gpuId: 123 }),
     ).rejects.toThrow("Invalid resetConfig payload");
@@ -885,16 +651,21 @@ describe("registerIpc", () => {
   });
 
   it("preserves mixed clock outcomes through the sidecar transport", async () => {
-    mocks.spawn.mockReturnValue(createBackendChild(tuningOutcomes));
+    const child = createBackendChild(tuningOutcomes);
+    mocks.spawn.mockReturnValue(child);
     const dispose = registerIpc(getMainWindow);
     try {
+      const request = {
+        gpuId: "GPU-123",
+        graphicsOffsetMHz: "default",
+        memoryOffsetMHz: 80,
+      };
       expect(
-        await callHandler("prism:gpu:setClockOffsets", trustedEvent(), {
-          gpuId: "GPU-123",
-          graphicsOffsetMHz: 150,
-          memoryOffsetMHz: 80,
-        }),
+        await callHandler("prism:gpu:setClockOffsets", trustedEvent(), request),
       ).toEqual(tuningOutcomes);
+      expect(sentRequests(child)).toEqual([
+        { method: "gpu.setClockOffsets", params: request },
+      ]);
     } finally {
       dispose();
     }
@@ -1024,6 +795,15 @@ function callHandler(channel: string, ...args: unknown[]) {
   return Promise.resolve(handler?.(...args));
 }
 
+/** The requests the sidecar received, without their ids. */
+function sentRequests(child: ReturnType<typeof createBackendChild>) {
+  return child.stdin.write.mock.calls.map(([payload]) => {
+    const { method, params } = JSON.parse(payload as string);
+    return params === undefined ? { method } : { method, params };
+  });
+}
+
+/** A sidecar answering every request with the result, or with what it returns for the method. */
 function createBackendChild(result: unknown = null) {
   const child = new EventEmitter() as EventEmitter & {
     stdin: { write: ReturnType<typeof vi.fn> };
@@ -1040,9 +820,24 @@ function createBackendChild(result: unknown = null) {
   child.killed = false;
   child.stdin = {
     write: vi.fn((payload: string) => {
-      const request = JSON.parse(payload) as { id: number };
+      const request = JSON.parse(payload) as {
+        id: number;
+        method: string;
+        params?: unknown;
+      };
+      const answer =
+        typeof result === "function"
+          ? result(request.method, request.params)
+          : result;
+      const response =
+        answer instanceof Error
+          ? {
+              id: request.id,
+              error: { code: "io", message: answer.message },
+            }
+          : { id: request.id, result: answer };
       queueMicrotask(() => {
-        child.stdout.write(`${JSON.stringify({ id: request.id, result })}\n`);
+        child.stdout.write(`${JSON.stringify(response)}\n`);
       });
       return true;
     }),

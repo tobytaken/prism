@@ -460,9 +460,10 @@ function fakeDesktopGpuApi(response: GpuPerformanceResponse) {
                 error: null,
               });
       if (graphics != null && graphicsOutcome?.status === "succeeded")
-        gpu.clocks.graphics.currentOffsetMHz = graphics;
+        gpu.clocks.graphics.currentOffsetMHz =
+          graphics === "default" ? 0 : graphics;
       if (memory != null && memoryOutcome?.status === "succeeded")
-        gpu.clocks.memory.currentOffsetMHz = memory;
+        gpu.clocks.memory.currentOffsetMHz = memory === "default" ? 0 : memory;
       return { graphics: graphicsOutcome, memory: memoryOutcome };
     });
   const setFan = vi

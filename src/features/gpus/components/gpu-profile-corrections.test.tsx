@@ -5,21 +5,13 @@ import {
   connectedDaemonStatus,
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
+import { createFakeDesktop as createDesktop } from "@/test/fake-desktop";
 import { renderWithQueryClient } from "@/test/query-client";
-import type {
-  GpuProfileSettings,
-  GpuTuningProfile,
-  ProfileApplicationResponse,
-  ProfileRangeCorrection,
-  TuningOutcome,
-} from "@/features/gpus/types";
 import { MemoryRouter } from "react-router-dom";
 import { GpuPerformancePage } from "./gpu-performance-page";
 import { GpuTuningPage } from "./gpu-tuning-page";
 
-type Setting = "power" | "graphics" | "memory";
-
-// A stateful stand-in for the desktop bridge: fresh validation, profile storage, and GPU controls.
+// The daemon-backed desktop API: fresh validation, profile storage, and GPU controls.
 function createFakeDesktop() {
   const response = createPerformanceResponse();
   const gpu = response.gpus[0];
@@ -34,141 +26,21 @@ function createFakeDesktop() {
     minOffsetMHz: -1000,
     maxOffsetMHz: 1000,
   };
-  const profiles: GpuTuningProfile[] = [
-    {
-      id: "quiet",
-      name: "Quiet",
-      gpuId: "GPU-123",
-      settings: {
-        powerLimitWatts: { kind: "value", value: 300 },
-        graphicsOffsetMHz: { kind: "value", value: -250 },
-        memoryOffsetMHz: { kind: "value", value: 500 },
+  return createDesktop({
+    response,
+    profiles: [
+      {
+        id: "quiet",
+        name: "Quiet",
+        gpuId: "GPU-123",
+        settings: {
+          powerLimitWatts: { kind: "value", value: 300 },
+          graphicsOffsetMHz: { kind: "value", value: -250 },
+          memoryOffsetMHz: { kind: "value", value: 500 },
+        },
       },
-    },
-  ];
-  const failures: Partial<Record<Setting, string>> = {};
-  const savedWhenApplied: GpuProfileSettings[] = [];
-  const controls = {
-    power: {
-      key: "powerLimitWatts",
-      label: "Power limit",
-      info: () => ({
-        support: gpu.power.support,
-        min: gpu.power.minLimitWatts,
-        max: gpu.power.maxLimitWatts,
-      }),
-      write: (value: number) => (gpu.power.currentLimitWatts = value),
-    },
-    graphics: {
-      key: "graphicsOffsetMHz",
-      label: "Graphics clock offset",
-      info: () => ({
-        support: gpu.clocks.graphics.support,
-        min: gpu.clocks.graphics.minOffsetMHz,
-        max: gpu.clocks.graphics.maxOffsetMHz,
-      }),
-      write: (value: number) => (gpu.clocks.graphics.currentOffsetMHz = value),
-    },
-    memory: {
-      key: "memoryOffsetMHz",
-      label: "Memory clock offset",
-      info: () => ({
-        support: gpu.clocks.memory.support,
-        min: gpu.clocks.memory.minOffsetMHz,
-        max: gpu.clocks.memory.maxOffsetMHz,
-      }),
-      write: (value: number) => (gpu.clocks.memory.currentOffsetMHz = value),
-    },
-  } as const;
-  vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
-    structuredClone(response),
-  );
-  vi.spyOn(window.prism.gpu, "listProfiles").mockImplementation(async () =>
-    structuredClone(profiles),
-  );
-  const correctProfile = vi
-    .spyOn(window.prism.gpu, "correctProfile")
-    .mockImplementation(async ({ profileId, corrections }) => {
-      const profile = profiles.find((profile) => profile.id === profileId)!;
-      for (const { setting, savedValue, proposedValue } of corrections) {
-        expect(profile.settings[setting]).toEqual({
-          kind: "value",
-          value: savedValue,
-        });
-        profile.settings[setting] = { kind: "value", value: proposedValue };
-      }
-      return structuredClone(profile);
-    });
-  const applyProfile = vi
-    .spyOn(window.prism.gpu, "applyProfile")
-    .mockImplementation(async ({ settings }) => {
-      savedWhenApplied.push(structuredClone(profiles[0].settings));
-      const valueOf = (key: keyof GpuProfileSettings) => {
-        const setting = settings[key]!;
-        if (setting.kind !== "value")
-          throw new Error("This fake applies numeric profile settings only");
-        return setting.value;
-      };
-      const included = (Object.keys(controls) as Setting[]).filter(
-        (setting) => settings[controls[setting].key] != null,
-      );
-      const errors: string[] = [];
-      const corrections: ProfileRangeCorrection[] = [];
-      for (const setting of included) {
-        const { key, label, info } = controls[setting];
-        const value = valueOf(key);
-        const { support, min, max } = info();
-        if (support !== "supported") errors.push(`${label} is ${support}.`);
-        else if (value > max! || value < min!) {
-          errors.push(`${label}: requested ${value} is outside the range.`);
-          corrections.push({
-            setting: key,
-            savedValue: value,
-            proposedValue: value > max! ? max! : min!,
-            bound: value > max! ? "maximum" : "minimum",
-          });
-        }
-      }
-      const result: ProfileApplicationResponse = {
-        power: null,
-        graphics: null,
-        memory: null,
-      };
-      if (errors.length > 0) {
-        for (const setting of included)
-          result[setting] = { status: "unattempted", error: errors.join(" ") };
-        if (corrections.length === errors.length)
-          result.corrections = corrections;
-        return result;
-      }
-      let failed = false;
-      for (const setting of included) {
-        let outcome: TuningOutcome;
-        if (failed)
-          outcome = { status: "unattempted", error: "An earlier failure" };
-        else if (failures[setting]) {
-          failed = true;
-          outcome = { status: "failed", error: failures[setting]! };
-        } else {
-          controls[setting].write(valueOf(controls[setting].key));
-          outcome = { status: "succeeded", error: null };
-        }
-        result[setting] = outcome;
-      }
-      return result;
-    });
-  const livePower = vi.spyOn(window.prism.gpu, "setPowerLimit");
-  const liveClocks = vi.spyOn(window.prism.gpu, "setClockOffsets");
-  return {
-    gpu,
-    profiles,
-    failures,
-    savedWhenApplied,
-    correctProfile,
-    applyProfile,
-    liveWrites: () =>
-      livePower.mock.calls.length + liveClocks.mock.calls.length,
-  };
+    ],
+  });
 }
 
 function renderPerformancePage() {
@@ -229,8 +101,10 @@ it("collects every out-of-range setting into one review, and Cancel changes neit
   ).not.toBeInTheDocument();
   expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Load profile" })).toBeEnabled();
-  expect(fake.correctProfile).not.toHaveBeenCalled();
-  expect(fake.applyProfile).toHaveBeenCalledTimes(1);
+  expect(fake.correctAndApplyProfile).not.toHaveBeenCalled();
+  expect(fake.applyProfileById).toHaveBeenCalledExactlyOnceWith({
+    profileId: "quiet",
+  });
   expect(fake.profiles[0].settings).toEqual({
     powerLimitWatts: { kind: "value", value: 300 },
     graphicsOffsetMHz: { kind: "value", value: -250 },
@@ -256,7 +130,7 @@ it.each([
       within(review).getByRole("button", { name: "Adjust profile and apply" }),
     );
     await screen.findByText("Power limit: Applied");
-    expect(fake.correctProfile).toHaveBeenCalledExactlyOnceWith({
+    expect(fake.correctAndApplyProfile).toHaveBeenCalledExactlyOnceWith({
       profileId: "quiet",
       corrections: [
         {
@@ -279,11 +153,7 @@ it.each([
       memoryOffsetMHz: { kind: "value", value: 500 },
     };
     expect(fake.profiles[0].settings).toEqual(corrected);
-    expect(fake.applyProfile).toHaveBeenLastCalledWith({
-      gpuId: "GPU-123",
-      settings: corrected,
-    });
-    expect(fake.savedWhenApplied.at(-1)).toEqual(corrected);
+    expect(fake.applyProfile).not.toHaveBeenCalled();
     expect(fake.gpu.power.currentLimitWatts).toBe(280);
     expect(fake.gpu.clocks.graphics.currentOffsetMHz).toBe(-200);
     expect(fake.gpu.clocks.memory.currentOffsetMHz).toBe(500);
@@ -305,7 +175,7 @@ it.each([
 it("reports a persistence failure clearly and makes no GPU changes", async () => {
   const user = userEvent.setup();
   const fake = createFakeDesktop();
-  fake.correctProfile.mockRejectedValue(new Error("Disk is read-only"));
+  fake.correctAndApplyProfile.mockRejectedValue(new Error("Disk is read-only"));
   renderPerformancePage();
   const review = await openReview(user);
   await user.click(
@@ -314,7 +184,7 @@ it("reports a persistence failure clearly and makes no GPU changes", async () =>
   expect(await within(review).findByRole("alert")).toHaveTextContent(
     "The corrected profile could not be saved, so no GPU settings were changed. Disk is read-only",
   );
-  expect(fake.applyProfile).toHaveBeenCalledTimes(1);
+  expect(fake.applyProfileById).toHaveBeenCalledTimes(1);
   expect(fake.profiles[0].settings.powerLimitWatts).toEqual({
     kind: "value",
     value: 300,
@@ -380,7 +250,7 @@ it("keeps the corrected profile after partial application failure and reload, wi
   await user.selectOptions(screen.getByRole("combobox"), "quiet");
   expect(within(profilePanel()).getByText("280 W")).toBeVisible();
   expect(within(profilePanel()).getByText("-200 MHz")).toBeVisible();
-  expect(fake.correctProfile).toHaveBeenCalledTimes(1);
+  expect(fake.correctAndApplyProfile).toHaveBeenCalledTimes(1);
 });
 
 it("requires another explicit review when capabilities change while the review is open", async () => {
@@ -476,5 +346,5 @@ it("explains why adjusting waits while tuning edits are outstanding during revie
     screen.getByRole("button", { name: "Discard power limit change" }),
   );
   expect(adjust).toBeEnabled();
-  expect(fake.correctProfile).not.toHaveBeenCalled();
+  expect(fake.correctAndApplyProfile).not.toHaveBeenCalled();
 });

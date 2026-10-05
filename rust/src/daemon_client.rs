@@ -8,12 +8,14 @@ use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDri
 use crate::gpu::{
     ApplyGpuConfigRequest, GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus,
     GpuInventoryResponse, GpuMutationResponse, GpuPerformanceResponse, GpuTargetRequest,
-    ResetGpuConfigRequest, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
-    SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+    ResetGpuConfigRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
+    SetGpuPowerLimitRequest,
 };
 use crate::protocol::{
-    ApplyGpuProfileRequest, ClockOffsetResponse, DaemonCommandResponse, DaemonRequest,
-    DaemonResponse, ProfileApplicationResponse,
+    ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
+    CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
+    GpuTuningProfile, ImportProfilesRequest, LiveClockOffsetsRequest, ProfileApplicationResponse,
+    ProfileIdRequest, ProfileImportResponse, SaveProfileAsNewRequest,
 };
 
 mod session;
@@ -26,6 +28,54 @@ pub fn apply_gpu_profile(
         DaemonResponse::ProfileApplication(response) => Ok(response),
         DaemonResponse::Error(error) => Err(error),
         _ => Err(unexpected_response_error("profile application")),
+    }
+}
+
+pub fn list_gpu_profiles() -> Result<Vec<GpuTuningProfile>, GpuCommandError> {
+    match send_request(DaemonRequest::ListProfiles)? {
+        DaemonResponse::Profiles(profiles) => Ok(profiles),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("profiles")),
+    }
+}
+
+pub fn save_gpu_profile_as_new(
+    request: SaveProfileAsNewRequest,
+) -> Result<GpuTuningProfile, GpuCommandError> {
+    match send_request(DaemonRequest::SaveProfileAsNew(request))? {
+        DaemonResponse::Profile(profile) => Ok(profile),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("saved profile")),
+    }
+}
+
+pub fn apply_gpu_profile_by_id(
+    request: ProfileIdRequest,
+) -> Result<ProfileApplicationResponse, GpuCommandError> {
+    match send_request(DaemonRequest::ApplyProfileById(request))? {
+        DaemonResponse::ProfileApplication(response) => Ok(response),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("profile application")),
+    }
+}
+
+pub fn correct_and_apply_gpu_profile(
+    request: CorrectAndApplyProfileRequest,
+) -> Result<CorrectedProfileApplication, GpuCommandError> {
+    match send_request(DaemonRequest::CorrectAndApplyProfile(request))? {
+        DaemonResponse::CorrectedProfileApplication(response) => Ok(response),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("corrected profile application")),
+    }
+}
+
+pub fn import_gpu_profiles(
+    request: ImportProfilesRequest,
+) -> Result<ProfileImportResponse, GpuCommandError> {
+    match send_request(DaemonRequest::ImportProfiles(request))? {
+        DaemonResponse::ProfileImport(response) => Ok(response),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("profile import")),
     }
 }
 
@@ -111,7 +161,7 @@ pub fn set_gpu_fan_mode_auto(
 }
 
 pub fn set_gpu_clock_offsets(
-    request: SetGpuClockOffsetsRequest,
+    request: LiveClockOffsetsRequest,
 ) -> Result<ClockOffsetResponse, GpuCommandError> {
     send_offset_request(DaemonRequest::SetClockOffsets(request))
 }

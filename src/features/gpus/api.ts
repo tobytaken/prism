@@ -1,11 +1,13 @@
 import type {
   ApplyGpuConfigRequest,
+  ApplyGpuProfileByIdRequest,
   ApplyGpuProfileRequest,
   CorrectGpuProfileRequest,
   GpuDaemonStatus,
   GpuInventoryResponse,
   GpuMutationResponse,
   GpuPerformanceResponse,
+  OffsetInstruction,
   ResetGpuConfigRequest,
   SaveGpuProfileRequest,
 } from "@/features/gpus/types";
@@ -18,8 +20,12 @@ export function applyGpuProfile(request: ApplyGpuProfileRequest) {
   return window.prism.gpu.applyProfile(request);
 }
 
-export function correctGpuProfile(request: CorrectGpuProfileRequest) {
-  return window.prism.gpu.correctProfile(request);
+export function applyGpuProfileById(request: ApplyGpuProfileByIdRequest) {
+  return window.prism.gpu.applyProfileById(request);
+}
+
+export function correctAndApplyGpuProfile(request: CorrectGpuProfileRequest) {
+  return window.prism.gpu.correctAndApplyProfile(request);
 }
 
 export function saveGpuProfile(request: SaveGpuProfileRequest) {
@@ -56,8 +62,8 @@ export function setGpuFanModeAuto(gpuId: string, fanIndex: number) {
 
 export function setGpuClockOffsets(
   gpuId: string,
-  graphicsOffsetMHz: number | null,
-  memoryOffsetMHz: number | null,
+  graphicsOffsetMHz: OffsetInstruction,
+  memoryOffsetMHz: OffsetInstruction,
 ) {
   return window.prism.gpu.setClockOffsets(
     gpuId,

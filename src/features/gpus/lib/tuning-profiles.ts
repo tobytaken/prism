@@ -1,8 +1,10 @@
+import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-screen";
 import type {
   ControlSupport,
   GpuPerformanceDevice,
   GpuProfileSettings,
   GpuTuningProfile,
+  ProfileRangeCorrection,
   ProfileSetting,
   ProfileSettingKey,
 } from "@/features/gpus/types";
@@ -157,4 +159,34 @@ export function compareProfile(
     }
   }
   return { changed, unavailable };
+}
+
+/** The profile's settings once reviewed corrections move saved values to their bounds. */
+export function correctedSettings(
+  settings: GpuProfileSettings,
+  corrections: readonly ProfileRangeCorrection[] = [],
+): GpuProfileSettings {
+  const corrected = { ...settings };
+  for (const correction of corrections)
+    corrected[correction.setting] = {
+      kind: "value",
+      value: correction.proposedValue,
+    };
+  return corrected;
+}
+
+/** Applies a saved profile by id, first saving any reviewed corrections to it. */
+export function profileApplication(
+  gpu: GpuPerformanceDevice,
+  profile: GpuTuningProfile,
+  corrections?: ProfileRangeCorrection[],
+): PerformanceMutationAction {
+  return {
+    kind: "applyProfile",
+    gpuId: gpu.id,
+    stableId: profile.gpuId,
+    settings: correctedSettings(profile.settings, corrections),
+    profileId: profile.id,
+    ...(corrections && { corrections }),
+  };
 }

@@ -1,5 +1,6 @@
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
 import { GpuProfilePanel, GpuProfileAvailability } from "./gpu-profile-panel";
+import { profileApplication } from "@/features/gpus/lib/tuning-profiles";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import { TuningOutcomes, tuningSettingLabel } from "./tuning-outcomes";
 import { inTuningRange } from "@/features/gpus/lib/tuning-intentions";
@@ -40,6 +41,7 @@ import type {
   GpuPerformanceResponse,
   PowerControlInfo,
   GpuProfileSettings,
+  ProfileRangeCorrection,
   ProfileSettingKey,
 } from "@/features/gpus/types";
 
@@ -48,7 +50,12 @@ export type PerformanceMutationAction =
       kind: "applyProfile";
       gpuId: string;
       stableId: string;
+      /** The instructions to apply, which a saved profile's id and corrections must yield. */
       settings: GpuProfileSettings;
+      /** Applies the saved profile by id rather than these instructions alone. */
+      profileId?: string;
+      /** Reviewed range corrections to save to the profile before applying it. */
+      corrections?: ProfileRangeCorrection[];
     }
   | {
       kind: "setPowerLimit";
@@ -264,14 +271,9 @@ export function GpuTuningScreen({
                   pendingAction={pendingAction}
                   reapplyPending={reapplyPending}
                   loadDisabled={busy || !daemonConnected}
-                  onLoad={(profile, settings) =>
+                  onLoad={(profile, corrections) =>
                     editStore.apply(
-                      {
-                        kind: "applyProfile",
-                        gpuId: gpu.id,
-                        stableId: profile.gpuId,
-                        settings,
-                      },
+                      profileApplication(gpu, profile, corrections),
                       gpu,
                       onMutationAction,
                       { reviewCorrections: true },

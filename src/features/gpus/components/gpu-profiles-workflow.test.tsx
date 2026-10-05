@@ -6,6 +6,7 @@ import {
   createPerformanceGpu,
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
+import { createFakeDesktop } from "@/test/fake-desktop";
 import { renderWithQueryClient } from "@/test/query-client";
 import type { GpuTuningProfile } from "@/features/gpus/types";
 import { GpuTuningPage } from "./gpu-tuning-page";
@@ -22,31 +23,7 @@ describe("GPU tuning profiles", () => {
 
   it("saves current configured values without Apply and selects retained profiles after page reload", async () => {
     const user = userEvent.setup();
-    const response = createPerformanceResponse();
-    const profiles: GpuTuningProfile[] = [];
-    vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
-      structuredClone(response),
-    );
-    vi.spyOn(window.prism.gpu, "listProfiles").mockImplementation(async () =>
-      structuredClone(profiles),
-    );
-    vi.spyOn(window.prism.gpu, "saveProfile").mockImplementation(
-      async ({ name, gpuId }) => {
-        const profile: GpuTuningProfile = {
-          id: "profile-quiet",
-          name,
-          gpuId,
-          settings: {
-            powerLimitWatts: { kind: "value", value: 475 },
-            graphicsOffsetMHz: { kind: "value", value: 120 },
-          },
-        };
-        profiles.push(profile);
-        return profile;
-      },
-    );
-    const setPower = vi.spyOn(window.prism.gpu, "setPowerLimit");
-    const setClocks = vi.spyOn(window.prism.gpu, "setClockOffsets");
+    const fake = createFakeDesktop();
     const first = renderWithQueryClient(
       <MemoryRouter>
         <GpuPerformancePage />
@@ -60,7 +37,7 @@ describe("GPU tuning profiles", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("combobox", { name: "Saved profile" }),
-      ).toHaveValue("profile-quiet"),
+      ).toHaveValue("profile-1"),
     );
     expect(
       within(screen.getByRole("region", { name: /profiles/ })).getByText(
@@ -80,11 +57,17 @@ describe("GPU tuning profiles", () => {
       name: "Saved profile",
     });
     await screen.findByRole("option", { name: "Quiet" });
-    await user.selectOptions(select, "profile-quiet");
-    expect(select).toHaveValue("profile-quiet");
-    expect(setPower).not.toHaveBeenCalled();
-    expect(setClocks).not.toHaveBeenCalled();
-    expect(profiles[0].settings).not.toHaveProperty("memoryOffsetMHz");
+    await user.selectOptions(select, "profile-1");
+    expect(select).toHaveValue("profile-1");
+    expect(fake.liveWrites()).toBe(0);
+    expect(fake.saveProfile).toHaveBeenCalledExactlyOnceWith({
+      gpuId: "GPU-123",
+      name: "Quiet",
+    });
+    expect(fake.profiles[0].settings).toEqual({
+      powerLimitWatts: { kind: "value", value: 475 },
+      graphicsOffsetMHz: { kind: "value", value: 120 },
+    });
     expect(
       within(screen.getByRole("region", { name: /profiles/ })).getByText(
         "120 MHz",
@@ -94,36 +77,11 @@ describe("GPU tuning profiles", () => {
 
   it("blocks unresolved profile-setting edits and saves refreshed actual values after explicit discard", async () => {
     const user = userEvent.setup();
-    const response = createPerformanceResponse();
-    const profiles: GpuTuningProfile[] = [];
-    vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
-      structuredClone(response),
-    );
-    vi.spyOn(window.prism.gpu, "listProfiles").mockImplementation(async () =>
-      structuredClone(profiles),
-    );
-    vi.spyOn(window.prism.gpu, "setPowerLimit").mockImplementation(async () => {
-      response.gpus[0].power.currentLimitWatts = 450;
+    const fake = createFakeDesktop();
+    fake.setPowerLimit.mockImplementation(async () => {
+      fake.gpu.power.currentLimitWatts = 450;
       return { success: false, error: "Power denied" };
     });
-    vi.spyOn(window.prism.gpu, "saveProfile").mockImplementation(
-      async ({ name, gpuId }) => {
-        const profile: GpuTuningProfile = {
-          id: "actual",
-          name,
-          gpuId,
-          settings: {
-            powerLimitWatts: {
-              kind: "value",
-              value: response.gpus[0].power.currentLimitWatts!,
-            },
-            graphicsOffsetMHz: { kind: "value", value: 120 },
-          },
-        };
-        profiles.push(profile);
-        return profile;
-      },
-    );
     renderWithQueryClient(<GpuTuningPage />);
     await user.type(
       await screen.findByRole("textbox", { name: "Profile name" }),
@@ -151,8 +109,8 @@ describe("GPU tuning profiles", () => {
     expect(power).toHaveValue(450);
     expect(save).toBeEnabled();
     await user.click(save);
-    await waitFor(() => expect(profiles).toHaveLength(1));
-    expect(profiles[0].settings.powerLimitWatts).toEqual({
+    await waitFor(() => expect(fake.profiles).toHaveLength(1));
+    expect(fake.profiles[0].settings.powerLimitWatts).toEqual({
       kind: "value",
       value: 450,
     });
@@ -160,40 +118,24 @@ describe("GPU tuning profiles", () => {
 
   it("compares applied profile settings separately from drafts and lets failed fan edits coexist with saving", async () => {
     const user = userEvent.setup();
-    const response = createPerformanceResponse();
-    const profile: GpuTuningProfile = {
-      id: "quiet",
-      name: "Quiet",
-      gpuId: "GPU-123",
-      settings: {
-        powerLimitWatts: { kind: "value", value: 475 },
-        graphicsOffsetMHz: { kind: "value", value: 120 },
-      },
-    };
-    vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
-      structuredClone(response),
-    );
-    const profiles = [profile];
-    vi.spyOn(window.prism.gpu, "listProfiles").mockImplementation(async () =>
-      structuredClone(profiles),
-    );
-    vi.spyOn(window.prism.gpu, "setFanSpeed").mockResolvedValue({
+    const fake = createFakeDesktop({
+      profiles: [
+        {
+          id: "quiet",
+          name: "Quiet",
+          gpuId: "GPU-123",
+          settings: {
+            powerLimitWatts: { kind: "value", value: 475 },
+            graphicsOffsetMHz: { kind: "value", value: 120 },
+          },
+        },
+      ],
+    });
+    fake.setFanSpeed.mockResolvedValue({
       success: false,
       error: "Fan denied",
     });
-    vi.spyOn(window.prism.gpu, "setPowerLimit").mockImplementation(
-      async (_id, value) => {
-        response.gpus[0].power.currentLimitWatts = value;
-        return { success: true, error: null };
-      },
-    );
-    const save = vi
-      .spyOn(window.prism.gpu, "saveProfile")
-      .mockImplementation(async () => {
-        const saved = { ...profile, id: "new", name: "New" };
-        profiles.push(saved);
-        return saved;
-      });
+    const save = fake.saveProfile;
     renderWithQueryClient(<GpuTuningPage />);
     await screen.findByRole("option", { name: "Quiet" });
     await user.selectOptions(
@@ -238,29 +180,8 @@ describe("GPU tuning profiles", () => {
     "allows saving known profile settings while %s awaits a fan outcome",
     async (surface) => {
       const user = userEvent.setup();
-      const response = createPerformanceResponse();
-      const profile: GpuTuningProfile = {
-        id: "quiet",
-        name: "Quiet",
-        gpuId: "GPU-123",
-        settings: {
-          powerLimitWatts: { kind: "value", value: 475 },
-          graphicsOffsetMHz: { kind: "value", value: 120 },
-        },
-      };
-      const profiles: GpuTuningProfile[] = [];
-      vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(
-        async () => structuredClone(response),
-      );
-      vi.spyOn(window.prism.gpu, "listProfiles").mockImplementation(async () =>
-        structuredClone(profiles),
-      );
-      const save = vi
-        .spyOn(window.prism.gpu, "saveProfile")
-        .mockImplementation(async () => {
-          profiles.push(profile);
-          return profile;
-        });
+      const fake = createFakeDesktop();
+      const save = fake.saveProfile;
       let finishFan!: (result: {
         success: boolean;
         error: string | null;
@@ -270,7 +191,7 @@ describe("GPU tuning profiles", () => {
           finishFan = resolve;
         },
       );
-      vi.spyOn(window.prism.gpu, "setFanSpeed").mockReturnValue(fanResult);
+      fake.setFanSpeed.mockReturnValue(fanResult);
       renderWithQueryClient(
         surface === "Performance" ? (
           <MemoryRouter>
@@ -333,10 +254,7 @@ describe("GPU tuning profiles", () => {
       gpuId: "GPU-123",
       settings: { powerLimitWatts: { kind: "value", value: 475 } },
     };
-    vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
-      structuredClone(response),
-    );
-    vi.spyOn(window.prism.gpu, "listProfiles").mockResolvedValue([profile]);
+    createFakeDesktop({ response, profiles: [profile] });
     renderWithQueryClient(<GpuTuningPage />);
     const firstPanel = await screen.findByRole("region", {
       name: /profiles \(GPU-123\)/,
@@ -385,11 +303,6 @@ describe("GPU tuning profiles", () => {
   });
 
   it.each([
-    {
-      label: "enumeration fallback",
-      gpu: createPerformanceGpu({ id: "nvidia-0", stableId: null }),
-      reason: /stable identity could not be established/,
-    },
     {
       label: "unknown power support",
       gpu: createPerformanceGpu({
@@ -454,11 +367,9 @@ describe("GPU tuning profiles", () => {
     },
   ])("explains why saving is blocked for $label", async ({ gpu, reason }) => {
     const user = userEvent.setup();
-    vi.spyOn(window.prism.gpu, "getPerformance").mockResolvedValue(
-      createPerformanceResponse({ gpus: [gpu] }),
-    );
-    vi.spyOn(window.prism.gpu, "listProfiles").mockResolvedValue([]);
-    const save = vi.spyOn(window.prism.gpu, "saveProfile");
+    const { saveProfile: save } = createFakeDesktop({
+      response: createPerformanceResponse({ gpus: [gpu] }),
+    });
     renderWithQueryClient(<GpuTuningPage />);
     const panel = await screen.findByRole("region", { name: /profiles/ });
     await user.type(
@@ -481,10 +392,7 @@ describe("GPU tuning profiles", () => {
       gpuId: "GPU-123",
       settings: { powerLimitWatts: { kind: "value", value: 475 } },
     };
-    vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
-      structuredClone(response),
-    );
-    vi.spyOn(window.prism.gpu, "listProfiles").mockResolvedValue([profile]);
+    createFakeDesktop({ response, profiles: [profile] });
     renderWithQueryClient(<GpuTuningPage />);
     await screen.findByRole("option", { name: "Quiet" });
     await user.selectOptions(screen.getByRole("combobox"), "quiet");
@@ -506,4 +414,47 @@ describe("GPU tuning profiles", () => {
     await screen.findByText("Changes not saved to profile");
     expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
   });
+
+  it.each([
+    [
+      "Performance",
+      () => (
+        <MemoryRouter>
+          <GpuPerformancePage />
+        </MemoryRouter>
+      ),
+    ],
+    ["Tuning", () => <GpuTuningPage />],
+  ])(
+    "shows profile features as unavailable, with the reason, on the %s page for a GPU without a stable identity",
+    async (_page, page) => {
+      const fake = createFakeDesktop({
+        response: createPerformanceResponse({
+          gpus: [createPerformanceGpu({ id: "nvidia-0", stableId: null })],
+        }),
+        profiles: [
+          {
+            id: "quiet",
+            name: "Quiet",
+            gpuId: "GPU-123",
+            settings: { powerLimitWatts: { kind: "value", value: 450 } },
+          },
+        ],
+      });
+      renderWithQueryClient(page());
+      const panel = await screen.findByRole("region", {
+        name: /profiles \(nvidia-0\)/,
+      });
+      expect(
+        within(panel).getByText("GPU tuning profiles unavailable"),
+      ).toBeInTheDocument();
+      expect(within(panel).getByRole("status")).toHaveTextContent(
+        "This GPU reports no stable identity (UUID), so a profile can't be tied to it.",
+      );
+      expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
+      expect(within(panel).queryByRole("button")).not.toBeInTheDocument();
+      expect(fake.saveProfile).not.toHaveBeenCalled();
+      expect(fake.applyProfileById).not.toHaveBeenCalled();
+    },
+  );
 });

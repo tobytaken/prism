@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { applyGpuConfig } from "@/features/gpus/api";
 import {
+  mutationErrorMessage,
   runTuningMutation,
   type TuningMutationResult,
 } from "@/features/gpus/lib/tuning-mutation";
@@ -47,7 +48,10 @@ export function GpuTuningPage() {
       daemonStatus={daemonStatusQuery.data}
       isLoading={query.isPending}
       errorMessage={query.error instanceof Error ? query.error.message : null}
-      mutationErrorMessage={mutation.error?.message ?? null}
+      mutationErrorMessage={mutationErrorMessage(
+        mutation.error,
+        mutation.variables,
+      )}
       reapplyPending={reapplyMutation.isPending}
       reapplyErrorMessage={
         reapplyMutation.error instanceof Error
