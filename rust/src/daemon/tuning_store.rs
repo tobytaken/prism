@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings};
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 2;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 3;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -30,6 +30,8 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     TUNING_STORE_SCHEMA_VERSION as usize - 1] = [
     // Version 2 adds users' profiles and last applied tuning values, both empty until written.
     Ok,
+    // Version 3 adds each GPU's current profile, none until a profile is applied or saved.
+    Ok,
 ];
 
 /// The tuning store's contents.
@@ -44,6 +46,10 @@ pub struct TuningDocument {
     /// each setting, keeping explicit default requests.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub last_applied: BTreeMap<String, ProfileSettings>,
+    /// Each GPU's current profile per GPU UUID: the id of the profile most recently applied to
+    /// or saved from it, whichever user owns it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub current_profiles: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +135,11 @@ impl TuningStore {
             peer,
             DaemonEvent::StoreHealthChanged(self.health_of(&state)),
         )
+    }
+
+    /// Pushes the event to every open session.
+    pub fn publish(&self, event: DaemonEvent) {
+        self.events.publish(event);
     }
 
     fn health_of(&self, state: &StoreState) -> TuningStoreHealth {
@@ -337,7 +348,10 @@ mod tests {
         for session in &sessions {
             let DaemonEvent::StoreHealthChanged(health) = session
                 .recv_timeout(std::time::Duration::from_secs(1))
-                .unwrap();
+                .unwrap()
+            else {
+                panic!("expected the store's health")
+            };
             assert!(matches!(
                 health,
                 TuningStoreHealth::Unhealthy {

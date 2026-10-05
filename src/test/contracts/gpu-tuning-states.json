@@ -1,0 +1,8 @@
+[
+  {
+    "gpuId": "GPU-123",
+    "revision": "4f1c2b9d0e8a7c35",
+    "currentProfile": { "id": "quiet-flatpak", "name": "Quiet (2)" }
+  },
+  { "gpuId": "GPU-456", "revision": "a0b1c2d3e4f50617", "currentProfile": null }
+]

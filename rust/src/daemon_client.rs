@@ -14,12 +14,13 @@ use crate::gpu::{
 use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
     CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
-    GpuTuningProfile, ImportProfilesRequest, LiveClockOffsetsRequest, ProfileApplicationResponse,
-    ProfileIdRequest, ProfileImportResponse, SaveProfileAsNewRequest,
+    GpuTuningProfile, GpuTuningState, ImportProfilesRequest, LiveClockOffsetsRequest,
+    ProfileApplicationResponse, ProfileIdRequest, ProfileImportResponse, SaveProfileAsNewRequest,
+    SaveToCurrentProfileRequest,
 };
 
 mod session;
-pub use session::start_session;
+pub use session::{start_session, SessionNotification};
 
 pub fn apply_gpu_profile(
     request: ApplyGpuProfileRequest,
@@ -36,6 +37,24 @@ pub fn list_gpu_profiles() -> Result<Vec<GpuTuningProfile>, GpuCommandError> {
         DaemonResponse::Profiles(profiles) => Ok(profiles),
         DaemonResponse::Error(error) => Err(error),
         _ => Err(unexpected_response_error("profiles")),
+    }
+}
+
+pub fn get_gpu_tuning_states() -> Result<Vec<GpuTuningState>, GpuCommandError> {
+    match send_request(DaemonRequest::GetTuningStates)? {
+        DaemonResponse::TuningStates(states) => Ok(states),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("tuning states")),
+    }
+}
+
+pub fn save_gpu_profile_to_current(
+    request: SaveToCurrentProfileRequest,
+) -> Result<GpuTuningProfile, GpuCommandError> {
+    match send_request(DaemonRequest::SaveToCurrentProfile(request))? {
+        DaemonResponse::Profile(profile) => Ok(profile),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("saved profile")),
     }
 }
 

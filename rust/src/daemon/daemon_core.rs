@@ -9,9 +9,10 @@ use crate::gpu::{
 };
 use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
-    CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
-    GpuTuningProfile, LiveClockOffsetsRequest, OffsetInstruction, ProfileApplicationResponse,
-    ProfileSetting, ProfileSettingKey, SaveProfileAsNewRequest, TuningOutcome, TuningOutcomeStatus,
+    CorrectedProfileApplication, DaemonCommandResponse, DaemonEvent, DaemonRequest, DaemonResponse,
+    GpuTuningProfile, GpuTuningState, LiveClockOffsetsRequest, OffsetInstruction,
+    ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings,
+    SaveProfileAsNewRequest, SaveToCurrentProfileRequest, TuningOutcome, TuningOutcomeStatus,
 };
 
 use super::backend::DaemonBackend;
@@ -19,7 +20,7 @@ use super::host::{Clock, HostShutdownSignal};
 use super::profiles::{capture_settings, new_profile_id, profile_name, uuid_of, verified_gpu};
 use super::queue::{GpuOperationQueues, PendingOperation};
 use super::tuning::{apply_live_offsets, apply_profile, reset_live_offsets};
-use super::tuning_store::{TuningStore, TUNING_STORE_FILE_NAME};
+use super::tuning_store::{TuningDocument, TuningStore, TUNING_STORE_FILE_NAME};
 use super::{DaemonSession, SessionPeer, SessionPolicy};
 
 pub(super) const LEGACY_STATE_FILE_NAME: &str = "state.json";
@@ -78,8 +79,27 @@ impl DaemonCore {
                 .read(|document| document.profiles_of(peer))
                 .map_err(GpuCommandError::from)
                 .map(DaemonResponse::Profiles),
+            DaemonRequest::GetTuningStates => {
+                let performance = self.dependencies.backend.performance();
+                self.tuning_store
+                    .read(|document| {
+                        performance
+                            .gpus
+                            .iter()
+                            .filter_map(|gpu| {
+                                verified_gpu(&performance, gpu.stable_id.as_deref()?).ok()
+                            })
+                            .map(|gpu| document.tuning_state(gpu))
+                            .collect()
+                    })
+                    .map_err(GpuCommandError::from)
+                    .map(DaemonResponse::TuningStates)
+            }
             DaemonRequest::SaveProfileAsNew(request) => self
                 .save_profile_as_new(peer, request)
+                .map(DaemonResponse::Profile),
+            DaemonRequest::SaveToCurrentProfile(request) => self
+                .save_to_current_profile(peer, request)
                 .map(DaemonResponse::Profile),
             DaemonRequest::ApplyProfileById(request) => self
                 .tuning_store
@@ -102,30 +122,70 @@ impl DaemonCore {
     }
 
     // Saving runs on the GPU's queue, so it captures the values after any write queued before it.
+    // The new profile becomes the GPU's current profile.
     fn save_profile_as_new(
         &self,
         peer: &SessionPeer,
         request: SaveProfileAsNewRequest,
     ) -> Result<GpuTuningProfile, GpuCommandError> {
         let name = profile_name(&request.name)?;
-        let store = Arc::clone(&self.tuning_store);
         let peer = peer.clone();
         let gpu_id = request.gpu_id.clone();
-        self.write(&request.gpu_id, move |backend| {
-            let performance = backend.performance();
-            let gpu = verified_gpu(&performance, &gpu_id)?;
-            let id = new_profile_id()?;
-            store.try_update(|document| {
-                let settings = capture_settings(gpu, document.last_applied.get(&gpu_id))?;
-                document.add_profile(
+        self.save(
+            &request.gpu_id,
+            request.revision,
+            move |document, settings| {
+                let profile = document.add_profile(
                     &peer,
                     GpuTuningProfile {
-                        id,
+                        id: new_profile_id()?,
                         name,
-                        gpu_id,
+                        gpu_id: gpu_id.clone(),
                         settings,
                     },
-                )
+                )?;
+                document.current_profiles.insert(gpu_id, profile.id.clone());
+                Ok(profile)
+            },
+        )
+    }
+
+    fn save_to_current_profile(
+        &self,
+        peer: &SessionPeer,
+        request: SaveToCurrentProfileRequest,
+    ) -> Result<GpuTuningProfile, GpuCommandError> {
+        let peer = peer.clone();
+        let gpu_id = request.gpu_id.clone();
+        self.save(
+            &request.gpu_id,
+            request.revision,
+            move |document, settings| document.save_to_current(&peer, &gpu_id, settings),
+        )
+    }
+
+    /// Captures the GPU's applied values from fresh readings on its queue and stores them as
+    /// `store` decides, provided the caller saw the GPU's tuning state at `revision`.
+    fn save(
+        &self,
+        uuid: &str,
+        revision: String,
+        store: impl FnOnce(
+                &mut TuningDocument,
+                ProfileSettings,
+            ) -> Result<GpuTuningProfile, GpuCommandError>
+            + Send
+            + 'static,
+    ) -> Result<GpuTuningProfile, GpuCommandError> {
+        let tuning_store = Arc::clone(&self.tuning_store);
+        let uuid = uuid.to_string();
+        self.tracked_write(&uuid.clone(), move |backend| {
+            let performance = backend.performance();
+            let gpu = verified_gpu(&performance, &uuid)?;
+            tuning_store.try_update(|document| {
+                document.check_revision(gpu, &revision)?;
+                let settings = capture_settings(gpu, document.last_applied.get(&uuid))?;
+                store(document, settings)
             })
         })
     }
@@ -146,32 +206,57 @@ impl DaemonCore {
         })
     }
 
+    /// Applies the profile. Applied in full, it becomes the GPU's current profile; applied in
+    /// part, the GPU is left with no current profile; when nothing was applied, the previous
+    /// current profile stays.
     fn apply_saved_profile(&self, profile: GpuTuningProfile) -> ProfileApplicationResponse {
-        self.apply_profile_settings(ApplyGpuProfileRequest {
-            gpu_id: profile.gpu_id,
-            settings: profile.settings,
-        })
+        self.apply_profile_settings(
+            ApplyGpuProfileRequest {
+                gpu_id: profile.gpu_id,
+                settings: profile.settings,
+            },
+            Some(profile.id),
+        )
     }
 
     fn apply_profile_settings(
         &self,
         request: ApplyGpuProfileRequest,
+        profile_id: Option<String>,
     ) -> ProfileApplicationResponse {
         let store = Arc::clone(&self.tuning_store);
-        self.write(&request.gpu_id.clone(), move |backend| {
+        self.tracked_write(&request.gpu_id.clone(), move |backend| {
             let uuid = request.gpu_id.clone();
             let settings = request.settings.clone();
             let response = apply_profile(backend, request);
-            let applied: Vec<_> = [
+            let outcomes = [
                 (ProfileSettingKey::PowerLimitWatts, &response.power),
                 (ProfileSettingKey::GraphicsOffsetMhz, &response.graphics),
                 (ProfileSettingKey::MemoryOffsetMhz, &response.memory),
-            ]
-            .into_iter()
-            .filter(|(_, outcome)| succeeded(outcome))
-            .filter_map(|(key, _)| settings.get(key).map(|setting| (key, setting)))
-            .collect();
-            record_applied(&store, &uuid, &applied);
+            ];
+            let included = outcomes.iter().filter(|(_, outcome)| outcome.is_some());
+            let applied: Vec<_> = outcomes
+                .iter()
+                .filter(|(_, outcome)| succeeded(outcome))
+                .filter_map(|(key, _)| settings.get(*key).map(|setting| (*key, setting)))
+                .collect();
+            let current = match profile_id {
+                Some(id) if applied.len() == included.count() => Some(Some(id)),
+                Some(_) if !applied.is_empty() => Some(None),
+                _ => None,
+            };
+            record(&store, &uuid, |document| {
+                document.record_applied(&uuid, &applied);
+                match current {
+                    Some(Some(id)) => {
+                        document.current_profiles.insert(uuid.clone(), id);
+                    }
+                    Some(None) => {
+                        document.current_profiles.remove(&uuid);
+                    }
+                    None => {}
+                }
+            });
             response
         })
     }
@@ -186,12 +271,36 @@ impl DaemonCore {
             + 'static,
     ) -> T {
         let store = Arc::clone(&self.tuning_store);
-        self.write(&gpu_id.clone(), move |backend| {
+        self.tracked_write(&gpu_id.clone(), move |backend| {
             let (result, applied) = write(backend);
             if !applied.is_empty() {
                 if let Some(uuid) = uuid_of(&backend.performance(), &gpu_id) {
-                    record_applied(&store, &uuid, &applied);
+                    record(&store, &uuid, |document| {
+                        document.record_applied(&uuid, &applied)
+                    });
                 }
+            }
+            result
+        })
+    }
+
+    /// Runs a tuning write on the GPU's queue, then pushes the GPU's tuning state to every
+    /// session if the write changed it.
+    fn tracked_write<T: Send + 'static>(
+        &self,
+        gpu_id: &str,
+        operation: impl FnOnce(&dyn DaemonBackend) -> T + Send + 'static,
+    ) -> T {
+        let store = Arc::clone(&self.tuning_store);
+        let uuid = gpu_id.to_string();
+        self.write(gpu_id, move |backend| {
+            let before = tuning_state(backend, &store, &uuid);
+            let result = operation(backend);
+            match tuning_state(backend, &store, &uuid) {
+                Some(after) if Some(&after) != before.as_ref() => {
+                    store.publish(DaemonEvent::TuningStateChanged(after))
+                }
+                _ => {}
             }
             result
         })
@@ -240,7 +349,7 @@ impl DaemonCore {
                 DaemonResponse::Performance(self.dependencies.backend.performance())
             }
             DaemonRequest::ApplyProfile(request) => {
-                DaemonResponse::ProfileApplication(self.apply_profile_settings(request))
+                DaemonResponse::ProfileApplication(self.apply_profile_settings(request, None))
             }
             DaemonRequest::GetDaemonStatus => {
                 DaemonResponse::DaemonStatus(GpuDaemonStatus::connected(
@@ -304,7 +413,9 @@ impl DaemonCore {
                 }),
             ),
             DaemonRequest::ListProfiles
+            | DaemonRequest::GetTuningStates
             | DaemonRequest::SaveProfileAsNew(_)
+            | DaemonRequest::SaveToCurrentProfile(_)
             | DaemonRequest::ApplyProfileById(_)
             | DaemonRequest::CorrectAndApplyProfile(_)
             | DaemonRequest::ImportProfiles(_) => DaemonResponse::Error(GpuCommandError::new(
@@ -570,18 +681,24 @@ fn set_live_offsets(
     (response, applied)
 }
 
-/// The write already happened, so failing to record it never fails the request.
-fn record_applied(
+/// Records what a write did. The write already happened, so failing to record it never fails
+/// the request.
+fn record(store: &TuningStore, uuid: &str, change: impl FnOnce(&mut TuningDocument)) {
+    if let Err(error) = store.update(change) {
+        eprintln!("failed to record the tuning state of {uuid}: {error}");
+    }
+}
+
+/// The GPU's tuning state from fresh readings, unless the GPU can't be identified or the
+/// tuning store can't be used.
+fn tuning_state(
+    backend: &dyn DaemonBackend,
     store: &TuningStore,
     uuid: &str,
-    applied: &[(ProfileSettingKey, ProfileSetting)],
-) {
-    if applied.is_empty() {
-        return;
-    }
-    if let Err(error) = store.update(|document| document.record_applied(uuid, applied)) {
-        eprintln!("failed to record the last applied tuning values for {uuid}: {error}");
-    }
+) -> Option<GpuTuningState> {
+    let performance = backend.performance();
+    let gpu = verified_gpu(&performance, uuid).ok()?;
+    store.read(|document| document.tuning_state(gpu)).ok()
 }
 
 fn command_result(result: Result<(), String>) -> DaemonCommandResponse {

@@ -197,6 +197,37 @@ pub struct SaveProfileAsNewRequest {
     /// The owning GPU's UUID.
     pub gpu_id: String,
     pub name: String,
+    /// The GPU's state revision the caller last saw.
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveToCurrentProfileRequest {
+    /// The UUID of the GPU whose current profile is overwritten.
+    pub gpu_id: String,
+    /// The GPU's state revision the caller last saw.
+    pub revision: String,
+}
+
+/// A GPU's current profile, visible by name to every user whoever owns it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CurrentProfile {
+    pub id: String,
+    pub name: String,
+}
+
+/// What a GPU's profile features rely on: its current profile, and the revision of its
+/// reported and recorded tuning state that a save must echo.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GpuTuningState {
+    /// The GPU's UUID.
+    pub gpu_id: String,
+    /// Changes whenever the GPU's reported or recorded tuning state changes.
+    pub revision: String,
+    pub current_profile: Option<CurrentProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -254,7 +285,9 @@ pub enum DaemonRequest {
     SetClockOffsets(LiveClockOffsetsRequest),
     ResetClockOffsets(GpuTargetRequest),
     ListProfiles,
+    GetTuningStates,
     SaveProfileAsNew(SaveProfileAsNewRequest),
+    SaveToCurrentProfile(SaveToCurrentProfileRequest),
     ApplyProfileById(ProfileIdRequest),
     CorrectAndApplyProfile(CorrectAndApplyProfileRequest),
     ImportProfiles(ImportProfilesRequest),
@@ -277,6 +310,7 @@ pub enum DaemonResponse {
     ProfileApplication(ProfileApplicationResponse),
     Profiles(Vec<GpuTuningProfile>),
     Profile(GpuTuningProfile),
+    TuningStates(Vec<GpuTuningState>),
     CorrectedProfileApplication(CorrectedProfileApplication),
     ProfileImport(ProfileImportResponse),
     DriverStatus(DriverStatusResponse),
@@ -307,6 +341,7 @@ pub enum SessionMessage {
 )]
 pub enum DaemonEvent {
     StoreHealthChanged(crate::gpu::TuningStoreHealth),
+    TuningStateChanged(GpuTuningState),
 }
 
 #[cfg(test)]
@@ -359,6 +394,60 @@ mod session_tests {
         .unwrap();
         let typed: CorrectedProfileApplication = serde_json::from_value(corrected.clone()).unwrap();
         assert_eq!(serde_json::to_value(typed).unwrap(), corrected);
+    }
+
+    #[test]
+    fn tuning_states_round_trip_the_shared_contract_as_a_response_and_as_pushed_events() {
+        let states: serde_json::Value = serde_json::from_str(include_str!(
+            "../../src/test/contracts/gpu-tuning-states.json"
+        ))
+        .unwrap();
+        let typed: Vec<GpuTuningState> = serde_json::from_value(states.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(DaemonResponse::TuningStates(typed.clone())).unwrap(),
+            serde_json::json!({ "type": "tuning_states", "payload": states })
+        );
+        let event = SessionMessage::Event {
+            event: DaemonEvent::TuningStateChanged(typed[0].clone()),
+        };
+        let json = serde_json::json!({
+            "type": "event", "event": { "type": "tuningStateChanged", "payload": states[0] }
+        });
+        assert_eq!(serde_json::to_value(&event).unwrap(), json);
+        assert_eq!(
+            serde_json::from_value::<SessionMessage>(json).unwrap(),
+            event
+        );
+    }
+
+    #[test]
+    fn saves_carry_the_revision_the_caller_saw() {
+        let request: DaemonRequest = serde_json::from_value(serde_json::json!({
+            "type": "save_to_current_profile",
+            "payload": { "gpuId": "GPU-123", "revision": "4f1c2b9d0e8a7c35" }
+        }))
+        .unwrap();
+        assert_eq!(
+            request,
+            DaemonRequest::SaveToCurrentProfile(SaveToCurrentProfileRequest {
+                gpu_id: "GPU-123".into(),
+                revision: "4f1c2b9d0e8a7c35".into(),
+            })
+        );
+        for malformed in [
+            serde_json::json!({"type": "save_to_current_profile", "payload": {"gpuId": "GPU-123"}}),
+            serde_json::json!({"type": "save_to_current_profile", "payload": {"gpuId": "GPU-123", "revision": 7}}),
+            serde_json::json!({"type": "save_to_current_profile", "payload": {"gpuId": "GPU-123", "revision": "r", "profileId": "quiet"}}),
+            serde_json::json!({"type": "save_profile_as_new", "payload": {"gpuId": "GPU-123", "name": "Quiet"}}),
+            serde_json::json!({"type": "get_tuning_states", "payload": {"gpuId": "GPU-123"}}),
+        ] {
+            assert!(
+                serde_json::from_value::<DaemonRequest>(malformed.clone()).is_err(),
+                "{malformed}"
+            );
+        }
+        let malformed = serde_json::json!({"type": "event", "event": {"type": "tuningStateChanged", "payload": {"gpuId": "GPU-123", "revision": "r", "currentProfile": null, "uid": 0}}});
+        assert!(serde_json::from_value::<SessionMessage>(malformed).is_err());
     }
 
     #[test]

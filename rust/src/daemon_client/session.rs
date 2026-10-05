@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use crate::framing::{read_frame, write_frame};
 use crate::gpu::{GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus};
-use crate::protocol::{DaemonEvent, DaemonRequest, DaemonResponse, SessionMessage, SessionRequest};
+use crate::protocol::{
+    DaemonEvent, DaemonRequest, DaemonResponse, GpuTuningState, SessionMessage, SessionRequest,
+};
 use once_cell::sync::OnceCell;
 
 pub(super) static SESSION: OnceCell<Arc<SessionTransport>> = OnceCell::new();
@@ -109,8 +111,15 @@ impl Drop for SessionClient {
     }
 }
 
+/// What the session reports without being asked.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionNotification {
+    DaemonStatus(GpuDaemonStatus),
+    TuningState(GpuTuningState),
+}
+
 /// One session for the sidecar's lifetime. Probes and driver requests remain one-shot.
-pub fn start_session(notify: impl Fn(GpuDaemonStatus) + Send + 'static) -> SessionClient {
+pub fn start_session(notify: impl Fn(SessionNotification) + Send + 'static) -> SessionClient {
     let transport = Arc::new(SessionTransport::default());
     assert!(
         SESSION.set(Arc::clone(&transport)).is_ok(),
@@ -122,9 +131,9 @@ pub fn start_session(notify: impl Fn(GpuDaemonStatus) + Send + 'static) -> Sessi
         let mut last_disconnected = None;
         while !running.stopping.load(Ordering::SeqCst) {
             let mut connected = false;
-            let result = connect_and_receive(&running, &socket_path, &mut |status| {
+            let result = connect_and_receive(&running, &socket_path, &mut |notification| {
                 connected = true;
-                notify(status);
+                notify(notification);
             });
             let error = result
                 .err()
@@ -138,7 +147,7 @@ pub fn start_session(notify: impl Fn(GpuDaemonStatus) + Send + 'static) -> Sessi
             }
             let status = GpuDaemonStatus::disconnected(&socket_path, Some(error.message));
             if last_disconnected.as_ref() != Some(&status) {
-                notify(status.clone());
+                notify(SessionNotification::DaemonStatus(status.clone()));
                 last_disconnected = Some(status);
             }
             thread::sleep(Duration::from_millis(250));
@@ -150,7 +159,7 @@ pub fn start_session(notify: impl Fn(GpuDaemonStatus) + Send + 'static) -> Sessi
 fn connect_and_receive(
     transport: &SessionTransport,
     socket: &str,
-    publish: &mut impl FnMut(GpuDaemonStatus),
+    publish: &mut impl FnMut(SessionNotification),
 ) -> Result<(), GpuCommandError> {
     let mut stream = UnixStream::connect(socket).map_err(super::map_io_error)?;
     {
@@ -201,7 +210,7 @@ fn connect_and_receive(
         connection.failure = None;
         transport.connected.notify_all();
     }
-    publish(status.clone());
+    publish(SessionNotification::DaemonStatus(status.clone()));
     while let Some(message) =
         read_frame::<SessionMessage>(&mut stream).map_err(super::map_io_error)?
     {
@@ -215,8 +224,11 @@ fn connect_and_receive(
                 event: DaemonEvent::StoreHealthChanged(health),
             } => {
                 status.tuning_store = Some(health);
-                publish(status.clone());
+                publish(SessionNotification::DaemonStatus(status.clone()));
             }
+            SessionMessage::Event {
+                event: DaemonEvent::TuningStateChanged(state),
+            } => publish(SessionNotification::TuningState(state)),
         }
     }
     Ok(())
