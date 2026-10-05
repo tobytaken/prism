@@ -8,7 +8,10 @@ import {
 } from "@/features/gpus/lib/tuning-mutation";
 import { useGpuDaemonStatus } from "@/features/gpus/hooks/use-gpu-daemon-status";
 import { useGpuPerformance } from "@/features/gpus/hooks/use-gpu-performance";
-import { useGpuProfiles } from "@/features/gpus/hooks/use-gpu-profiles";
+import {
+  TUNING_STATES_QUERY_KEY,
+  useGpuProfiles,
+} from "@/features/gpus/hooks/use-gpu-profiles";
 
 import {
   GpuTuningScreen,
@@ -30,7 +33,7 @@ export function GpuTuningPage() {
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["gpu-performance"] }),
-        queryClient.invalidateQueries({ queryKey: ["gpu-tuning-states"] }),
+        queryClient.invalidateQueries({ queryKey: TUNING_STATES_QUERY_KEY }),
       ]);
     },
   });

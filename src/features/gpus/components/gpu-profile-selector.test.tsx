@@ -235,6 +235,30 @@ it("rejects a save when the GPU's values changed since the app last saw them", a
   expect(fake.currentProfiles).toEqual({ "GPU-123": "quiet" });
 });
 
+it("rejects a save while the app still shows values from before a pushed change", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    profiles: [quiet],
+    currentProfiles: { "GPU-123": "quiet" },
+  });
+  renderPerformancePage();
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
+  // Automation changes the GPU; its pushed state arrives before the readings catch up.
+  fake.getPerformance.mockResolvedValue(
+    await window.prism.gpu.getPerformance(),
+  );
+  fake.gpu.power.currentLimitWatts = 500;
+  fake.pushTuningState("GPU-123");
+
+  await saveToCurrent(user);
+  expect(await screen.findByRole("alert")).toHaveTextContent(STALE);
+  const dialog = await saveAsNew(user, "New");
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(STALE);
+  expect(fake.saveProfileToCurrent).not.toHaveBeenCalled();
+  expect(fake.saveProfile).not.toHaveBeenCalled();
+  expect(fake.profiles).toHaveLength(1);
+});
+
 it("shows another user's current profile by name without offering to save over it", async () => {
   const user = userEvent.setup();
   const theirs: GpuTuningProfile = { ...quiet, id: "theirs", name: "Silent" };

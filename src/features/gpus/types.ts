@@ -284,6 +284,8 @@ export interface GpuTuningState {
   /** The GPU's UUID. */
   gpuId: string;
   revision: string;
+  /** The current tuning values the revision covers; null where unreadable. */
+  reported: Record<ProfileSettingKey, number | null>;
   currentProfile: CurrentProfile | null;
 }
 

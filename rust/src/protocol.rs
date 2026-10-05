@@ -227,7 +227,21 @@ pub struct GpuTuningState {
     pub gpu_id: String,
     /// Changes whenever the GPU's reported or recorded tuning state changes.
     pub revision: String,
+    /// The current tuning values the revision covers, so the app can tell whether they are the
+    /// values it shows.
+    pub reported: ReportedTuningValues,
     pub current_profile: Option<CurrentProfile>,
+}
+
+/// Each profile setting's current tuning value, or null when it can't be read.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReportedTuningValues {
+    pub power_limit_watts: Option<i64>,
+    #[serde(rename = "graphicsOffsetMHz")]
+    pub graphics_offset_mhz: Option<i64>,
+    #[serde(rename = "memoryOffsetMHz")]
+    pub memory_offset_mhz: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

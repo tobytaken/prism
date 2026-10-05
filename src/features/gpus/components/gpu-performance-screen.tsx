@@ -189,7 +189,7 @@ export function GpuPerformanceScreen({
             profiles={profiles}
             history={historyByGpuId[gpu.id]}
             controlsDisabled={daemonDisconnected}
-            profileLoadingDisabled={
+            profileApplicationDisabled={
               daemonStatus?.reachable !== true || pendingAction != null
             }
             readError={errorMessage}
@@ -207,7 +207,7 @@ function GpuTelemetrySurface({
   editStore,
   history,
   controlsDisabled,
-  profileLoadingDisabled,
+  profileApplicationDisabled,
   readError,
   pendingAction,
   onMutationAction,
@@ -217,7 +217,7 @@ function GpuTelemetrySurface({
   editStore: TuningEditStore;
   history?: GpuMetricHistory;
   controlsDisabled: boolean;
-  profileLoadingDisabled: boolean;
+  profileApplicationDisabled: boolean;
   readError: string | null;
   pendingAction: PerformanceMutationAction | null;
   onMutationAction?: TuningMutationHandler;
@@ -229,7 +229,7 @@ function GpuTelemetrySurface({
     appliedDefaults: editStore.appliedDefaults(gpu.id),
     readError,
     pendingAction,
-    applyDisabled: profileLoadingDisabled,
+    applyDisabled: profileApplicationDisabled,
     onApply: onMutationAction
       ? (profile, corrections) =>
           editStore.apply(

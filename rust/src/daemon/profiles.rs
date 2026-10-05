@@ -13,6 +13,7 @@ use crate::gpu::{
 use crate::protocol::{
     CurrentProfile, GpuTuningProfile, GpuTuningState, ProfileImportResponse,
     ProfileRangeCorrection, ProfileSetting, ProfileSettingKey, ProfileSettings, RangeBound,
+    ReportedTuningValues,
 };
 
 impl From<TuningStoreWriteError> for GpuCommandError {
@@ -196,6 +197,11 @@ impl TuningDocument {
         });
         GpuTuningState {
             revision: format!("{:016x}", digest(state.to_string().as_bytes())),
+            reported: ReportedTuningValues {
+                power_limit_watts: reading(gpu, ProfileSettingKey::PowerLimitWatts).current,
+                graphics_offset_mhz: reading(gpu, ProfileSettingKey::GraphicsOffsetMhz).current,
+                memory_offset_mhz: reading(gpu, ProfileSettingKey::MemoryOffsetMhz).current,
+            },
             current_profile: current_id
                 .and_then(|id| self.any_profile(id))
                 .map(|profile| CurrentProfile {

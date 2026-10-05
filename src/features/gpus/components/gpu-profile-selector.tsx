@@ -225,8 +225,8 @@ export function GpuProfileSelector({
 function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const {
+    gpu,
     workflow,
-    uuid,
     profiles,
     current,
     ownCurrent,
@@ -304,7 +304,7 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
           {ownCurrent && (
             <DropdownMenuItem
               disabled={!canSave}
-              onSelect={() => workflow.saveToCurrent.mutate({ gpuId: uuid! })}
+              onSelect={() => workflow.saveToCurrent.mutate({ gpu })}
             >
               Save to "{ownCurrent.name}"
             </DropdownMenuItem>
@@ -366,7 +366,7 @@ function SaveAsNewDialog({
     if (!name.trim() || !canSave || !uuid) return;
     setError(null);
     try {
-      await workflow.saveAsNew.mutateAsync({ gpuId: uuid, name: name.trim() });
+      await workflow.saveAsNew.mutateAsync({ gpu, name: name.trim() });
       changeOpen(false);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
@@ -429,7 +429,7 @@ export function GpuProfileFeedback({
 }) {
   const { review, uuid, workflow } = selector;
   const saveError =
-    workflow.saveToCurrent.variables?.gpuId === uuid
+    workflow.saveToCurrent.variables?.gpu.stableId === uuid
       ? workflow.saveToCurrent.error
       : null;
   if (!review && !selector.correctedNotice && !saveError) return null;

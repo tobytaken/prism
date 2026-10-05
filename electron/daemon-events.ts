@@ -61,9 +61,18 @@ export function daemonStatusNotification(
 export function isTuningState(value: unknown): value is GpuTuningState {
   if (
     !isRecord(value) ||
-    !hasKeys(value, ["gpuId", "revision", "currentProfile"]) ||
+    !hasKeys(value, ["gpuId", "revision", "reported", "currentProfile"]) ||
     typeof value.gpuId !== "string" ||
-    typeof value.revision !== "string"
+    typeof value.revision !== "string" ||
+    !isRecord(value.reported) ||
+    !hasKeys(value.reported, [
+      "powerLimitWatts",
+      "graphicsOffsetMHz",
+      "memoryOffsetMHz",
+    ]) ||
+    !Object.values(value.reported).every(
+      (reading) => reading === null || Number.isSafeInteger(reading),
+    )
   )
     return false;
   const current = value.currentProfile;

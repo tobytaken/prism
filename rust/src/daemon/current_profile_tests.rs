@@ -358,3 +358,21 @@ fn current_profile_and_revision_changes_are_pushed_to_every_session() {
     assert_ne!(pushed[0]["payload"]["revision"], before);
     assert_eq!(pushed[0]["payload"]["currentProfile"]["name"], "Quiet");
 }
+
+#[test]
+fn the_tuning_state_reports_the_values_its_revision_covers() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(
+        state(&alice)["reported"],
+        json!({ "powerLimitWatts": 475, "graphicsOffsetMHz": 120, "memoryOffsetMHz": 0 })
+    );
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.power.current_limit_watts = None;
+        gpu.clocks.memory.current_offset_mhz = Some(-40);
+    });
+    assert_eq!(
+        state(&alice)["reported"],
+        json!({ "powerLimitWatts": null, "graphicsOffsetMHz": 120, "memoryOffsetMHz": -40 })
+    );
+}

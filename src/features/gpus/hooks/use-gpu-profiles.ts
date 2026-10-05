@@ -6,18 +6,22 @@ import {
   saveGpuProfile,
   saveGpuProfileToCurrent,
 } from "@/features/gpus/api";
-import type { GpuTuningState } from "@/features/gpus/types";
+import { PROFILE_SETTING_KEYS } from "@/features/gpus/lib/tuning-profiles";
+import type {
+  GpuPerformanceDevice,
+  GpuTuningState,
+} from "@/features/gpus/types";
 
 const PROFILES = ["gpu-profiles"];
-const TUNING_STATES = ["gpu-tuning-states"];
+export const TUNING_STATES_QUERY_KEY = ["gpu-tuning-states"];
 
 /** The caller's profiles, and each GPU's current profile and state revision from the daemon. */
 export function useGpuProfiles() {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: PROFILES, queryFn: listGpuProfiles });
-  // Polled with the readings, so a save carries the revision of the values on screen.
+  // Polled at the readings' pace and updated by pushes, so it keeps up with the values on screen.
   const states = useQuery({
-    queryKey: TUNING_STATES,
+    queryKey: TUNING_STATES_QUERY_KEY,
     queryFn: getGpuTuningStates,
     refetchInterval: 500,
     refetchIntervalInBackground: true,
@@ -25,35 +29,45 @@ export function useGpuProfiles() {
   useEffect(
     () =>
       window.prism.gpu.onTuningStateChanged((state) => {
-        queryClient.setQueryData<GpuTuningState[]>(TUNING_STATES, (current) => [
-          ...(current ?? []).filter(({ gpuId }) => gpuId !== state.gpuId),
-          state,
-        ]);
+        queryClient.setQueryData<GpuTuningState[]>(
+          TUNING_STATES_QUERY_KEY,
+          (current) => [
+            ...(current ?? []).filter(({ gpuId }) => gpuId !== state.gpuId),
+            state,
+          ],
+        );
       }),
     [queryClient],
   );
   const refresh = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: PROFILES }),
-      queryClient.invalidateQueries({ queryKey: TUNING_STATES }),
+      queryClient.invalidateQueries({ queryKey: TUNING_STATES_QUERY_KEY }),
     ]);
-  const revisionOf = (gpuId: string) => {
-    const revision = states.data?.find(
-      (state) => state.gpuId === gpuId,
-    )?.revision;
-    if (revision == null)
+  // The revision a save carries must cover the values on screen. A pushed or polled state can
+  // be newer than the readings shown, and its revision would let unseen values be saved.
+  const revisionFor = (gpu: GpuPerformanceDevice) => {
+    const state = states.data?.find(({ gpuId }) => gpuId === gpu.stableId);
+    if (!state)
       throw new Error("The GPU's profile state is unavailable. Try again.");
-    return revision;
+    const shown = {
+      powerLimitWatts: gpu.power.currentLimitWatts,
+      graphicsOffsetMHz: gpu.clocks.graphics.currentOffsetMHz,
+      memoryOffsetMHz: gpu.clocks.memory.currentOffsetMHz,
+    };
+    if (PROFILE_SETTING_KEYS.some((key) => state.reported[key] !== shown[key]))
+      throw new Error(STALE_SAVE);
+    return { gpuId: state.gpuId, revision: state.revision };
   };
   // A rejected save may be stale, so it refreshes what the app shows as well.
   const saveAsNew = useMutation({
-    mutationFn: ({ gpuId, name }: { gpuId: string; name: string }) =>
-      saveGpuProfile({ gpuId, name, revision: revisionOf(gpuId) }),
+    mutationFn: ({ gpu, name }: { gpu: GpuPerformanceDevice; name: string }) =>
+      saveGpuProfile({ ...revisionFor(gpu), name }),
     onSettled: refresh,
   });
   const saveToCurrent = useMutation({
-    mutationFn: ({ gpuId }: { gpuId: string }) =>
-      saveGpuProfileToCurrent({ gpuId, revision: revisionOf(gpuId) }),
+    mutationFn: ({ gpu }: { gpu: GpuPerformanceDevice }) =>
+      saveGpuProfileToCurrent(revisionFor(gpu)),
     onSettled: refresh,
   });
   return {
@@ -70,3 +84,7 @@ export function useGpuProfiles() {
 }
 
 export type GpuProfileWorkflow = ReturnType<typeof useGpuProfiles>;
+
+/** The daemon's rejection of a stale save, also given when the app sees one itself. */
+const STALE_SAVE =
+  "The GPU's values changed since you last looked. Review them and save again.";

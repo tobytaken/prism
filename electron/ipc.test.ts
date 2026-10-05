@@ -132,6 +132,11 @@ describe("registerIpc", () => {
         { ...gpuTuningStates[0], revision: 7 },
         { ...gpuTuningStates[0], currentProfile: { id: "quiet" } },
         { ...gpuTuningStates[0], uid: 0 },
+        { ...gpuTuningStates[0], reported: { powerLimitWatts: 300 } },
+        {
+          ...gpuTuningStates[0],
+          reported: { ...gpuTuningStates[0].reported, memoryOffsetMHz: "0" },
+        },
         { gpuId: "GPU-123", revision: "r" },
       ])
         child.stdout.write(

@@ -101,15 +101,14 @@ export function createFakeDesktop({
 
   function tuningState(gpu: GpuPerformanceDevice): GpuTuningState {
     const gpuId = gpu.stableId!;
-    const reported = PROFILE_SETTING_KEYS.map((key) => {
+    const reported = {
+      powerLimitWatts: gpu.power.currentLimitWatts,
+      graphicsOffsetMHz: gpu.clocks.graphics.currentOffsetMHz,
+      memoryOffsetMHz: gpu.clocks.memory.currentOffsetMHz,
+    };
+    const controls = PROFILE_SETTING_KEYS.map((key) => {
       const { support, default: resolved } = control(gpu, key);
-      const current =
-        key === "powerLimitWatts"
-          ? gpu.power.currentLimitWatts
-          : key === "graphicsOffsetMHz"
-            ? gpu.clocks.graphics.currentOffsetMHz
-            : gpu.clocks.memory.currentOffsetMHz;
-      return [support, current, resolved];
+      return [support, reported[key], resolved];
     });
     const currentId = currentProfiles[gpuId];
     const current = [...profiles, ...otherUsersProfiles].find(
@@ -117,7 +116,8 @@ export function createFakeDesktop({
     );
     return {
       gpuId,
-      revision: JSON.stringify([reported, lastApplied[gpuId], currentId]),
+      revision: JSON.stringify([controls, lastApplied[gpuId], currentId]),
+      reported,
       currentProfile: current ? { id: current.id, name: current.name } : null,
     };
   }

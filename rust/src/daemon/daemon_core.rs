@@ -165,27 +165,27 @@ impl DaemonCore {
     }
 
     /// Captures the GPU's applied values from fresh readings on its queue and stores them as
-    /// `store` decides, provided the caller saw the GPU's tuning state at `revision`.
+    /// `keep` decides, provided the caller saw the GPU's tuning state at `revision`.
     fn save(
         &self,
         uuid: &str,
         revision: String,
-        store: impl FnOnce(
+        keep: impl FnOnce(
                 &mut TuningDocument,
                 ProfileSettings,
             ) -> Result<GpuTuningProfile, GpuCommandError>
             + Send
             + 'static,
     ) -> Result<GpuTuningProfile, GpuCommandError> {
-        let tuning_store = Arc::clone(&self.tuning_store);
+        let store = Arc::clone(&self.tuning_store);
         let uuid = uuid.to_string();
         self.tracked_write(&uuid.clone(), move |backend| {
             let performance = backend.performance();
             let gpu = verified_gpu(&performance, &uuid)?;
-            tuning_store.try_update(|document| {
+            store.try_update(|document| {
                 document.check_revision(gpu, &revision)?;
                 let settings = capture_settings(gpu, document.last_applied.get(&uuid))?;
-                store(document, settings)
+                keep(document, settings)
             })
         })
     }
@@ -241,20 +241,20 @@ impl DaemonCore {
                 .filter_map(|(key, _)| settings.get(*key).map(|setting| (*key, setting)))
                 .collect();
             let current = match profile_id {
-                Some(id) if applied.len() == included.count() => Some(Some(id)),
-                Some(_) if !applied.is_empty() => Some(None),
-                _ => None,
+                Some(id) if applied.len() == included.count() => CurrentProfileChange::Become(id),
+                Some(_) if !applied.is_empty() => CurrentProfileChange::Clear,
+                _ => CurrentProfileChange::Keep,
             };
             record(&store, &uuid, |document| {
                 document.record_applied(&uuid, &applied);
                 match current {
-                    Some(Some(id)) => {
+                    CurrentProfileChange::Become(id) => {
                         document.current_profiles.insert(uuid.clone(), id);
                     }
-                    Some(None) => {
+                    CurrentProfileChange::Clear => {
                         document.current_profiles.remove(&uuid);
                     }
-                    None => {}
+                    CurrentProfileChange::Keep => {}
                 }
             });
             response
@@ -601,6 +601,16 @@ impl DaemonCore {
     fn inventory(&self, state: &PersistedGpuState) -> GpuInventoryResponse {
         self.dependencies.backend.inventory(state)
     }
+}
+
+/// What a profile application does to the GPU's current profile.
+enum CurrentProfileChange {
+    /// Applied in full, the profile becomes current.
+    Become(String),
+    /// Applied in part, no profile describes the GPU.
+    Clear,
+    /// Nothing was applied, so the previous current profile stays.
+    Keep,
 }
 
 fn succeeded(outcome: &Option<TuningOutcome>) -> bool {
