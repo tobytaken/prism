@@ -53,6 +53,14 @@ export async function closeProfileMenu(user: User) {
   await user.keyboard("{Escape}");
 }
 
+/** Confirms a profile switch while leaving the previous profile's saved values unchanged. */
+export async function switchWithoutSaving(user: User) {
+  const dialog = await screen.findByRole("dialog", { name: "Switch profile?" });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Switch without saving" }),
+  );
+}
+
 /** Opens Save as new… and saves under the name, leaving the dialog open if saving fails. */
 export async function saveAsNew(user: User, name: string, gpuId = "GPU-123") {
   const menu = await openProfileMenu(user, gpuId);

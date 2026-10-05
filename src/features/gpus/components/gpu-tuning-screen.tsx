@@ -34,6 +34,7 @@ import { VendorBadge } from "@/features/gpus/components/vendor-badge";
 import {
   useTuningEdits,
   type TuningEditStore,
+  type TuningEdits,
 } from "@/features/gpus/hooks/use-tuning-edits";
 import { cn } from "@/lib/utils";
 import type {
@@ -532,6 +533,7 @@ export function GpuTuningControls({
       <CoolingSectionContent
         cooling={gpu.cooling}
         drafts={fanDrafts}
+        edits={edits}
         layout={layout}
         pendingAction={pendingAction}
         onDraftChange={(fanIndex, value) =>
@@ -565,6 +567,8 @@ export function GpuTuningControls({
         layout={layout}
         busy={clocksBusy}
         hasChanges={hasClockChanges}
+        graphicsUnapplied={"graphics" in edits}
+        memoryUnapplied={"memory" in edits}
         graphicsDefaultChoice={defaultChoice(
           "graphics",
           "graphicsOffsetMHz",
@@ -670,6 +674,10 @@ function PowerSectionContent({
             <p className="mt-1 text-xs text-muted-foreground">
               Current limit {formatWatts(power.currentLimitWatts)}
             </p>
+            <UnappliedNote
+              pending={hasChanges}
+              reported={formatWatts(power.currentLimitWatts)}
+            />
             <DefaultChoiceNote choice={defaultChoice} />
           </div>
           <p className="text-sm font-semibold tabular-nums">
@@ -763,6 +771,7 @@ function PowerSectionContent({
 function CoolingSectionContent({
   cooling,
   drafts,
+  edits,
   layout,
   pendingAction,
   onDraftChange,
@@ -771,6 +780,7 @@ function CoolingSectionContent({
 }: {
   cooling: CoolingInfo;
   drafts: Record<number, number | null>;
+  edits: TuningEdits;
   layout: "stack" | "rail";
   pendingAction: PerformanceMutationAction | null;
   onDraftChange: (fanIndex: number, value: number) => void;
@@ -801,6 +811,7 @@ function CoolingSectionContent({
             key={fan.index}
             fan={fan}
             draft={draft}
+            unapplied={`fan:${fan.index}` in edits}
             busy={busy}
             onDraftChange={(value) => onDraftChange(fan.index, value)}
             onSetManual={() => draft != null && onSetManual(fan.index, draft)}
@@ -822,6 +833,8 @@ function ClockSectionContent({
   layout,
   busy,
   hasChanges,
+  graphicsUnapplied,
+  memoryUnapplied,
   graphicsDefaultChoice,
   memoryDefaultChoice,
   onGraphicsDraftChange,
@@ -836,6 +849,8 @@ function ClockSectionContent({
   layout: "stack" | "rail";
   busy: boolean;
   hasChanges: boolean;
+  graphicsUnapplied: boolean;
+  memoryUnapplied: boolean;
   graphicsDefaultChoice: DefaultChoice;
   memoryDefaultChoice: DefaultChoice;
   onGraphicsDraftChange: (value: number | null) => void;
@@ -858,6 +873,7 @@ function ClockSectionContent({
           icon={Zap}
           info={clocks.graphics}
           draft={graphicsDraft}
+          unapplied={graphicsUnapplied}
           defaultChoice={graphicsDefaultChoice}
           onDraftChange={onGraphicsDraftChange}
           onUseDefault={() => onUseDefault("graphics")}
@@ -868,6 +884,7 @@ function ClockSectionContent({
           icon={Clock3}
           info={clocks.memory}
           draft={memoryDraft}
+          unapplied={memoryUnapplied}
           defaultChoice={memoryDefaultChoice}
           onDraftChange={onMemoryDraftChange}
           onUseDefault={() => onUseDefault("memory")}
@@ -951,6 +968,7 @@ function FanEditor({
   fan,
   current,
   draft,
+  unapplied,
   min,
   max,
   busy,
@@ -961,6 +979,7 @@ function FanEditor({
   fan: FanControlInfo;
   current: number | null;
   draft: number | null;
+  unapplied: boolean;
   min: number;
   max: number;
   busy: boolean;
@@ -990,6 +1009,10 @@ function FanEditor({
       <p className="text-xs text-muted-foreground">
         Current speed {current == null ? "Unavailable" : `${current}%`}
       </p>
+      <UnappliedNote
+        pending={unapplied}
+        reported={current == null ? "Unavailable" : `${current}%`}
+      />
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs text-muted-foreground">Manual target</span>
@@ -1055,6 +1078,7 @@ function ClockOffsetEditor({
   icon: Icon,
   info,
   draft,
+  unapplied,
   disabled,
   defaultChoice,
   onDraftChange,
@@ -1064,6 +1088,7 @@ function ClockOffsetEditor({
   icon: typeof Gauge;
   info: ClockOffsetInfo;
   draft: number | null;
+  unapplied: boolean;
   disabled: boolean;
   defaultChoice: DefaultChoice;
   onDraftChange: (value: number | null) => void;
@@ -1093,6 +1118,10 @@ function ClockOffsetEditor({
       <p className="text-xs text-muted-foreground">
         Current offset {formatOffset(info.currentOffsetMHz)}
       </p>
+      <UnappliedNote
+        pending={unapplied}
+        reported={formatOffset(info.currentOffsetMHz)}
+      />
       <DefaultChoiceNote choice={defaultChoice} />
       <TuningAvailability
         support={info.support}
@@ -1155,6 +1184,21 @@ function ClockOffsetEditor({
 }
 
 type DefaultChoice = "unapplied" | "applied" | null;
+
+function UnappliedNote({
+  pending,
+  reported,
+}: {
+  pending: boolean;
+  reported: string;
+}) {
+  if (!pending) return null;
+  return (
+    <p className="mt-1 text-xs text-amber-500">
+      unapplied · reported {reported}
+    </p>
+  );
+}
 
 function DefaultChoiceNote({ choice }: { choice: DefaultChoice }) {
   if (!choice) return null;
