@@ -1,0 +1,254 @@
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, expect, it, vi } from "vitest";
+
+import type { GpuTuningProfile } from "@/features/gpus/types";
+import { createFakeDesktop } from "@/test/fake-desktop";
+import {
+  connectedDaemonStatus,
+  createPerformanceGpu,
+  createPerformanceResponse,
+} from "@/test/gpu-fixtures";
+import {
+  openProfileMenu,
+  profileEntry,
+  profileSelector,
+} from "@/test/profile-selector";
+import { renderWithQueryClient } from "@/test/query-client";
+import { GpuPerformancePage } from "./gpu-performance-page";
+
+const quiet: GpuTuningProfile = {
+  id: "quiet",
+  name: "Quiet",
+  gpuId: "GPU-123",
+  settings: { powerLimitWatts: { kind: "value", value: 450 } },
+};
+
+function renderPerformancePage() {
+  return renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
+}
+
+async function manageProfiles(
+  user: ReturnType<typeof userEvent.setup>,
+  gpuId = "GPU-123",
+) {
+  const menu = await openProfileMenu(user, gpuId);
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Manage profiles…" }),
+  );
+  return screen.findByRole("dialog", { name: "Manage profiles" });
+}
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.spyOn(window.prism.gpu, "getDaemonStatus").mockResolvedValue(
+    connectedDaemonStatus,
+  );
+});
+
+it.each(["pending", "failed"])(
+  "waits for the current profile to be known before allowing deletion when its state is %s",
+  async (read) => {
+    const user = userEvent.setup();
+    const fake = createFakeDesktop({
+      profiles: [structuredClone(quiet)],
+      currentProfiles: { "GPU-123": "quiet" },
+    });
+    if (read === "pending")
+      fake.getTuningStates.mockImplementation(
+        () => new Promise<never>(() => {}),
+      );
+    else
+      fake.getTuningStates.mockRejectedValue(
+        new Error("Failed to read the current profile."),
+      );
+    renderPerformancePage();
+    const dialog = await manageProfiles(user);
+    expect(
+      within(dialog).getByRole("button", { name: "Delete Quiet" }),
+    ).toBeDisabled();
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "Deletion is unavailable until this GPU's current profile can be read. Try again once the Prism daemon is available.",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Rename Quiet" }),
+    ).toBeEnabled();
+    expect(fake.profiles).toEqual([quiet]);
+  },
+);
+
+it("renames the current profile with a trimmed name and keeps it current under its new name", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    profiles: [structuredClone(quiet)],
+    currentProfiles: { "GPU-123": "quiet" },
+  });
+  renderPerformancePage();
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
+  const dialog = await manageProfiles(user);
+  await user.click(
+    within(dialog).getByRole("button", { name: "Rename Quiet" }),
+  );
+  const input = within(dialog).getByRole("textbox", { name: "Profile name" });
+  await user.clear(input);
+  await user.type(input, "  Silent  ");
+  await user.click(within(dialog).getByRole("button", { name: "Save name" }));
+
+  await within(dialog).findByRole("button", { name: "Rename Silent" });
+  expect(fake.profiles).toEqual([{ ...quiet, name: "Silent" }]);
+  expect(fake.currentProfiles).toEqual({ "GPU-123": "quiet" });
+  expect(fake.gpu.power.currentLimitWatts).toBe(475);
+  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Silent"));
+  await openProfileMenu(user);
+  expect(profileEntry("Silent")).toBeChecked();
+});
+
+it("confirms the current-profile role before deleting, keeps tuning values, and shows No current profile", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    profiles: [structuredClone(quiet)],
+    currentProfiles: { "GPU-123": "quiet" },
+  });
+  renderPerformancePage();
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
+  const dialog = await manageProfiles(user);
+  await user.click(
+    within(dialog).getByRole("button", { name: "Delete Quiet" }),
+  );
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: 'Delete "Quiet"?',
+  });
+  expect(confirmation).toHaveTextContent(
+    "This is the current profile. After deletion, this GPU will have no current profile.",
+  );
+  expect(confirmation).toHaveTextContent(
+    "Current tuning values will stay unchanged.",
+  );
+  expect(fake.profiles).toEqual([quiet]);
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Cancel" }),
+  );
+  expect(fake.profiles).toEqual([quiet]);
+
+  await user.click(
+    within(dialog).getByRole("button", { name: "Delete Quiet" }),
+  );
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Delete profile",
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  expect(fake.profiles).toEqual([]);
+  expect(fake.currentProfiles).toEqual({});
+  expect(fake.gpu.power.currentLimitWatts).toBe(475);
+  expect(fake.gpu.clocks.graphics.currentOffsetMHz).toBe(120);
+  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  await waitFor(() =>
+    expect(profileSelector()).toHaveTextContent("No current profile"),
+  );
+  const menu = await openProfileMenu(user);
+  expect(within(menu).queryByRole("menuitemradio")).not.toBeInTheDocument();
+});
+
+it("lists only the caller's profiles for that GPU and explains a case-insensitive rename clash", async () => {
+  const user = userEvent.setup();
+  const loud = { ...quiet, id: "loud", name: "Loud" };
+  const other = { ...quiet, id: "other", name: "Other GPU", gpuId: "GPU-456" };
+  const theirs = { ...quiet, id: "theirs", name: "Another user's" };
+  const fake = createFakeDesktop({
+    response: createPerformanceResponse({
+      gpus: [
+        createPerformanceGpu(),
+        createPerformanceGpu({ id: "GPU-456", stableId: "GPU-456" }),
+      ],
+    }),
+    profiles: structuredClone([quiet, loud, other]),
+    otherUsersProfiles: [theirs],
+  });
+  renderPerformancePage();
+  const dialog = await manageProfiles(user);
+  await within(dialog).findByRole("button", { name: "Rename Quiet" });
+  expect(within(dialog).getAllByRole("listitem")).toHaveLength(2);
+  expect(within(dialog).queryByText("Other GPU")).not.toBeInTheDocument();
+  expect(within(dialog).queryByText("Another user's")).not.toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Rename Quiet" }),
+  );
+  const input = within(dialog).getByRole("textbox", { name: "Profile name" });
+  await user.clear(input);
+  expect(
+    within(dialog).getByRole("button", { name: "Save name" }),
+  ).toBeDisabled();
+  await user.type(input, "  lOuD  ");
+  await user.click(within(dialog).getByRole("button", { name: "Save name" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    'A profile named "lOuD" already exists for this GPU. Choose another name.',
+  );
+  expect(fake.profiles).toEqual([quiet, loud, other]);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+
+  const otherDialog = await manageProfiles(user, "GPU-456");
+  await user.click(
+    within(otherDialog).getByRole("button", { name: "Rename Other GPU" }),
+  );
+  const otherInput = within(otherDialog).getByRole("textbox", {
+    name: "Profile name",
+  });
+  await user.clear(otherInput);
+  await user.type(otherInput, "Loud");
+  await user.click(
+    within(otherDialog).getByRole("button", { name: "Save name" }),
+  );
+  await within(otherDialog).findByRole("button", { name: "Rename Loud" });
+  expect(fake.profiles.find(({ id }) => id === "other")?.name).toBe("Loud");
+});
+
+it("keeps a non-current deletion separate from another user's current profile and shows deletion failures", async () => {
+  const user = userEvent.setup();
+  const theirs = { ...quiet, id: "theirs", name: "Another user's" };
+  const fake = createFakeDesktop({
+    profiles: [structuredClone(quiet)],
+    otherUsersProfiles: [theirs],
+    currentProfiles: { "GPU-123": "theirs" },
+  });
+  renderPerformancePage();
+  await waitFor(() =>
+    expect(profileSelector()).toHaveTextContent("Another user's"),
+  );
+  const dialog = await manageProfiles(user);
+  await user.click(
+    within(dialog).getByRole("button", { name: "Delete Quiet" }),
+  );
+  const confirmation = await screen.findByRole("alertdialog");
+  expect(confirmation).not.toHaveTextContent("This is the current profile.");
+  fake.deleteProfile.mockResolvedValueOnce({
+    success: false,
+    error: "Failed to write Prism's tuning store.",
+  });
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Delete profile" }),
+  );
+  expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
+    "Failed to write Prism's tuning store.",
+  );
+  expect(fake.profiles).toEqual([quiet]);
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Delete profile" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  expect(profileSelector()).toHaveTextContent("Another user's");
+  expect(fake.currentProfiles).toEqual({ "GPU-123": "theirs" });
+});

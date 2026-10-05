@@ -17,7 +17,7 @@ use crate::gpu::{
 };
 use crate::protocol::{
     CorrectAndApplyProfileRequest, ImportProfilesRequest, LiveClockOffsetsRequest,
-    ProfileIdRequest, SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
+    ProfileIdRequest, RenameProfileRequest, SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +58,16 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
         "gpu.listProfiles" => daemon_client::list_gpu_profiles()
             .map_err(BridgeError::from)
             .and_then(serialize_result),
+        "gpu.renameProfile" => parse_and_serialize_result::<RenameProfileRequest, _, _>(
+            request.params,
+            "gpu.renameProfile",
+            |request| daemon_client::rename_gpu_profile(request).map_err(BridgeError::from),
+        ),
+        "gpu.deleteProfile" => parse_and_serialize_result::<ProfileIdRequest, _, _>(
+            request.params,
+            "gpu.deleteProfile",
+            |request| daemon_client::delete_gpu_profile(request).map_err(BridgeError::from),
+        ),
         "gpu.getTuningStates" => daemon_client::get_gpu_tuning_states()
             .map_err(BridgeError::from)
             .and_then(serialize_result),

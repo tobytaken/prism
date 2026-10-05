@@ -211,6 +211,85 @@ fn sidecar_forwards_notifications_reconnects_and_closes_its_session_when_stdin_c
 }
 
 #[test]
+fn profile_management_crosses_the_sidecar_session_by_id_and_preserves_daemon_errors() {
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
+    let mut session = accept_session(&listener);
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["method"],
+        "daemon.statusChanged"
+    );
+    let profiles: Vec<prism_rust::protocol::GpuTuningProfile> = serde_json::from_str(include_str!(
+        "../../src/test/contracts/gpu-tuning-profiles.json"
+    ))
+    .unwrap();
+    let mut renamed = profiles[0].clone();
+    renamed.name = "Silent".into();
+    for (id, method, params, expected, response) in [
+        (
+            9,
+            "gpu.renameProfile",
+            json!({ "profileId": renamed.id, "name": "  Silent  " }),
+            json!({ "type": "rename_profile", "payload": { "profileId": renamed.id, "name": "  Silent  " } }),
+            DaemonResponse::Profile(renamed.clone()),
+        ),
+        (
+            10,
+            "gpu.deleteProfile",
+            json!({ "profileId": renamed.id }),
+            json!({ "type": "delete_profile", "payload": { "profileId": renamed.id } }),
+            DaemonResponse::Command(prism_rust::protocol::DaemonCommandResponse {
+                success: true,
+                error: None,
+            }),
+        ),
+        (
+            11,
+            "gpu.deleteProfile",
+            json!({ "profileId": renamed.id }),
+            json!({ "type": "delete_profile", "payload": { "profileId": renamed.id } }),
+            DaemonResponse::Error(prism_rust::gpu::GpuCommandError::new(
+                prism_rust::gpu::GpuCommandErrorCode::NotFound,
+                "The GPU tuning profile no longer exists.",
+            )),
+        ),
+    ] {
+        writeln!(
+            sidecar.0.stdin.as_mut().unwrap(),
+            "{}",
+            json!({ "id": id, "method": method, "params": params })
+        )
+        .unwrap();
+        let received = read_frame::<SessionRequest>(&mut session).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(received.request).unwrap(), expected);
+        write_frame(
+            &mut session,
+            &SessionMessage::Response {
+                id: received.id,
+                response,
+            },
+        )
+        .unwrap();
+        let reply = lines.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(reply["id"], id);
+        match id {
+            9 => assert_eq!(reply["result"], serde_json::to_value(&renamed).unwrap()),
+            10 => assert_eq!(reply["result"], json!({ "success": true, "error": null })),
+            11 => assert_eq!(
+                reply["error"],
+                json!({ "code": "not_found", "message": "The GPU tuning profile no longer exists." })
+            ),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
 fn stdin_close_interrupts_a_daemon_that_has_not_answered_the_session_opening() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("prismd.sock");

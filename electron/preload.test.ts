@@ -186,6 +186,35 @@ describe("preload bridge", () => {
     );
   });
 
+  it("exposes profile rename and delete by id and preserves their responses and errors", async () => {
+    const prism = await loadPrismApi();
+    const renamed = { ...gpuTuningProfiles[0], name: "Silent" };
+    const rename = { profileId: renamed.id, name: "Silent" };
+    mocks.invoke.mockResolvedValueOnce(renamed);
+    expect(await prism.gpu.renameProfile(rename)).toEqual(renamed);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:renameProfile",
+      rename,
+    );
+    const remove = { profileId: renamed.id };
+    const deleted = { success: true, error: null };
+    mocks.invoke.mockResolvedValueOnce(deleted);
+    expect(await prism.gpu.deleteProfile(remove)).toEqual(deleted);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:deleteProfile",
+      remove,
+    );
+    mocks.invoke.mockRejectedValue(
+      new Error("The GPU tuning profile no longer exists."),
+    );
+    await expect(prism.gpu.renameProfile(rename)).rejects.toThrow(
+      "no longer exists",
+    );
+    await expect(prism.gpu.deleteProfile(remove)).rejects.toThrow(
+      "no longer exists",
+    );
+  });
+
   it("exposes profile save/list commands and preserves omitted, numeric, and default setting meanings", async () => {
     const prism = await loadPrismApi();
     const [profile] = gpuTuningProfiles;

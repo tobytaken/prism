@@ -5,6 +5,12 @@ import type { PrismDesktopApi } from "@/types/global";
 const prismStub: PrismDesktopApi = {
   gpu: {
     listProfiles: async () => [],
+    renameProfile: async () => {
+      throw new Error("Profile renaming is not configured in this test");
+    },
+    deleteProfile: async () => {
+      throw new Error("Profile deletion is not configured in this test");
+    },
     applyProfile: async () => {
       throw new Error("Profile application is not configured in this test");
     },

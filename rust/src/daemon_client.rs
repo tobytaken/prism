@@ -15,8 +15,8 @@ use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
     CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
     GpuTuningProfile, GpuTuningState, ImportProfilesRequest, LiveClockOffsetsRequest,
-    ProfileApplicationResponse, ProfileIdRequest, ProfileImportResponse, SaveProfileAsNewRequest,
-    SaveToCurrentProfileRequest,
+    ProfileApplicationResponse, ProfileIdRequest, ProfileImportResponse, RenameProfileRequest,
+    SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
 };
 
 mod session;
@@ -37,6 +37,26 @@ pub fn list_gpu_profiles() -> Result<Vec<GpuTuningProfile>, GpuCommandError> {
         DaemonResponse::Profiles(profiles) => Ok(profiles),
         DaemonResponse::Error(error) => Err(error),
         _ => Err(unexpected_response_error("profiles")),
+    }
+}
+
+pub fn rename_gpu_profile(
+    request: RenameProfileRequest,
+) -> Result<GpuTuningProfile, GpuCommandError> {
+    match send_request(DaemonRequest::RenameProfile(request))? {
+        DaemonResponse::Profile(profile) => Ok(profile),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("renamed profile")),
+    }
+}
+
+pub fn delete_gpu_profile(
+    request: ProfileIdRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    match send_request(DaemonRequest::DeleteProfile(request))? {
+        DaemonResponse::Command(response) => Ok(response),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("profile deletion")),
     }
 }
 

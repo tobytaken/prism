@@ -289,8 +289,14 @@ export interface GpuTuningState {
   currentProfile: CurrentProfile | null;
 }
 
-export interface ApplyGpuProfileByIdRequest {
+export interface GpuProfileIdRequest {
   profileId: string;
+}
+
+export type ApplyGpuProfileByIdRequest = GpuProfileIdRequest;
+
+export interface RenameGpuProfileRequest extends GpuProfileIdRequest {
+  name: string;
 }
 
 export interface ApplyGpuProfileRequest {

@@ -441,6 +441,75 @@ describe("registerIpc", () => {
     }
   });
 
+  it("forwards profile rename and delete to the daemon, preserving profile identity", async () => {
+    const renamed = { ...gpuTuningProfiles[0], name: "Silent" };
+    const deleted = { success: true, error: null };
+    const child = createBackendChild((method: string) =>
+      method === "gpu.renameProfile" ? renamed : deleted,
+    );
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      const rename = { profileId: renamed.id, name: "  Silent  " };
+      const remove = { profileId: renamed.id };
+      expect(
+        await callHandler("prism:gpu:renameProfile", trustedEvent(), rename),
+      ).toEqual(renamed);
+      expect(
+        await callHandler("prism:gpu:deleteProfile", trustedEvent(), remove),
+      ).toEqual(deleted);
+      expect(sentRequests(child)).toEqual([
+        { method: "gpu.renameProfile", params: rename },
+        { method: "gpu.deleteProfile", params: remove },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("rejects untrusted or malformed profile management requests before reaching the daemon", async () => {
+    const dispose = registerIpc(getMainWindow);
+    try {
+      for (const command of ["renameProfile", "deleteProfile"]) {
+        await expect(
+          callHandler(`prism:gpu:${command}`, untrustedEvent(), {
+            profileId: "quiet",
+            name: "Silent",
+          }),
+        ).rejects.toThrow("Untrusted IPC sender");
+      }
+      for (const payload of [
+        undefined,
+        {},
+        { profileId: "", name: "Silent" },
+        { profileId: 7, name: "Silent" },
+        { profileId: "quiet", name: " \n " },
+        { profileId: "quiet", name: 7 },
+        { profileId: "quiet", name: "Silent", uid: 0 },
+        { profileId: "quiet", name: "Silent", gpuId: "GPU-456" },
+      ]) {
+        await expect(
+          callHandler("prism:gpu:renameProfile", trustedEvent(), payload),
+        ).rejects.toThrow("Invalid renameProfile payload");
+      }
+      for (const payload of [
+        undefined,
+        {},
+        { profileId: " " },
+        { profileId: 7 },
+        { profileId: "quiet", uid: 0 },
+        { profileId: "quiet", gpuId: "GPU-456" },
+      ]) {
+        await expect(
+          callHandler("prism:gpu:deleteProfile", trustedEvent(), payload),
+        ).rejects.toThrow("Invalid deleteProfile payload");
+      }
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
   it("saves as new or to the current profile, and lists profiles and tuning states, through the daemon", async () => {
     const [saved] = gpuTuningProfiles;
     const child = createBackendChild((method: string) =>
