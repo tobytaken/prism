@@ -140,6 +140,7 @@ export function compareProfile(
 ) {
   const readings = profileReadings(gpu);
   let changed = false;
+  let reportedChanged = false;
   let unavailable = false;
   for (const key of Object.keys(profile.settings) as ProfileSettingKey[]) {
     const setting = profile.settings[key]!;
@@ -149,16 +150,22 @@ export function compareProfile(
     );
     if (!applied) {
       unavailable = true;
-    } else if (
-      applied.kind !== setting.kind ||
-      (applied.kind === "value" &&
-        setting.kind === "value" &&
-        applied.value !== setting.value)
-    ) {
-      changed = true;
+    } else {
+      const savedValue =
+        setting.kind === "default" ? readings[key].default : setting.value;
+      if (savedValue != null && readings[key].current !== savedValue)
+        reportedChanged = true;
+      if (
+        applied.kind !== setting.kind ||
+        (applied.kind === "value" &&
+          setting.kind === "value" &&
+          applied.value !== setting.value)
+      ) {
+        changed = true;
+      }
     }
   }
-  return { changed, unavailable };
+  return { changed, reportedChanged, unavailable };
 }
 
 /** The profile's settings once reviewed corrections move saved values to their bounds. */

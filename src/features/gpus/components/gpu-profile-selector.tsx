@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import type { TuningEdits } from "@/features/gpus/hooks/use-tuning-edits";
 import {
+  captureProfileSettings,
   compareProfile,
   correctedSettings,
   PROFILE_SETTING_KEYS,
@@ -82,6 +83,12 @@ export function useGpuProfileSelector({
   const [correctedNotice, setCorrectedNotice] = useState<string | null>(null);
   const [adjusting, setAdjusting] = useState(false);
   const [adjustError, setAdjustError] = useState<string | null>(null);
+  const [switchRequest, setSwitchRequest] = useState<{
+    profile: GpuTuningProfile;
+    current: GpuTuningProfile;
+  } | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   if (!workflow) return null;
   const uuid = gpu.stableId?.trim() ? gpu.stableId : null;
   const profiles =
@@ -115,7 +122,7 @@ export function useGpuProfileSelector({
     Object.keys(edits).length > 0
       ? "Apply or discard outstanding tuning changes before applying a profile."
       : null;
-  const canApply =
+  const applicationAvailable =
     !!onApply &&
     !review &&
     !readError &&
@@ -124,6 +131,12 @@ export function useGpuProfileSelector({
     !profileMutationPending &&
     !saving &&
     profilesReady;
+  const canApply = applicationAvailable && !switchRequest && !switching;
+  const canSwitch =
+    applicationAvailable &&
+    !!switchRequest &&
+    current?.id === switchRequest.current.id &&
+    !switching;
   const canSave =
     !saveBlocker && !profileMutationPending && !saving && profilesReady;
   const canAdjust =
@@ -133,12 +146,35 @@ export function useGpuProfileSelector({
     !profileMutationPending &&
     !adjusting;
 
-  async function choose(profile: GpuTuningProfile) {
-    if (!canApply || !onApply) return;
+  async function applyProfile(profile: GpuTuningProfile) {
+    if (!onApply) return;
     setCorrectedNotice(null);
     const corrections = await onApply(profile);
     void workflow!.refresh();
     if (corrections?.length) setReview({ profile, corrections });
+  }
+  async function choose(profile: GpuTuningProfile) {
+    if (!canApply) return;
+    if (ownCurrent && comparison?.changed && profile.id !== ownCurrent.id) {
+      setSwitchError(null);
+      setSwitchRequest({ profile, current: ownCurrent });
+      return;
+    }
+    await applyProfile(profile);
+  }
+  async function switchProfile(save: boolean) {
+    if (!canSwitch || !switchRequest || (save && !canSave)) return;
+    setSwitching(true);
+    setSwitchError(null);
+    try {
+      if (save) await workflow!.saveToCurrent.mutateAsync({ gpu });
+      await applyProfile(switchRequest.profile);
+      setSwitchRequest(null);
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSwitching(false);
+    }
   }
   // Approved corrections are saved first and stay saved whatever the GPU later reports.
   async function adjustAndApply() {
@@ -175,10 +211,23 @@ export function useGpuProfileSelector({
     ownCurrent,
     comparison,
     saveBlocker,
+    reportedSettings: !saveBlocker
+      ? captureProfileSettings(gpu, appliedDefaults)
+      : null,
     applyBlocker,
     canApply,
     canSave,
     canAdjust,
+    canSwitch,
+    switchRequest,
+    switching,
+    switchError,
+    switchProfile,
+    cancelSwitch() {
+      if (switching) return;
+      setSwitchRequest(null);
+      setSwitchError(null);
+    },
     review,
     adjusting,
     adjustError,
@@ -342,7 +391,79 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
           onOpenChange={setManageOpen}
         />
       )}
+      <SaveBeforeSwitchDialog selector={selector} />
     </>
+  );
+}
+
+function SaveBeforeSwitchDialog({
+  selector,
+}: {
+  selector: GpuProfileSelectorState;
+}) {
+  const { switchRequest, switching, switchError, canSwitch, canSave } =
+    selector;
+  return (
+    <Dialog
+      open={!!switchRequest}
+      onOpenChange={(open) => !open && selector.cancelSwitch()}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Switch profile?</DialogTitle>
+          <DialogDescription>
+            There are changes not saved to "{switchRequest?.current.name}". Save
+            them before applying "{switchRequest?.profile.name}"?
+          </DialogDescription>
+        </DialogHeader>
+        {selector.reportedSettings && (
+          <p className="text-sm">
+            Reported values: {describeSettings(selector.reportedSettings)}
+          </p>
+        )}
+        {selector.saveBlocker && (
+          <p role="status" className="text-sm text-muted-foreground">
+            {selector.saveBlocker}
+          </p>
+        )}
+        {switchRequest && selector.current?.id !== switchRequest.current.id && (
+          <p role="status" className="text-sm text-muted-foreground">
+            The current profile changed. Cancel and choose a profile again.
+          </p>
+        )}
+        {switchError && (
+          <p role="alert" className="text-sm text-destructive">
+            {switchError}
+          </p>
+        )}
+        <DialogFooter className="sm:flex-wrap">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={switching}
+            onClick={selector.cancelSwitch}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!canSwitch}
+            onClick={() => void selector.switchProfile(false)}
+          >
+            Switch without saving
+          </Button>
+          <Button
+            type="button"
+            disabled={!canSwitch || !canSave}
+            onClick={() => void selector.switchProfile(true)}
+          >
+            {switching && <LoaderCircle className="animate-spin" />}
+            Save to "{switchRequest?.current.name}" and switch
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -447,14 +568,40 @@ export function GpuProfileFeedback({
 }: {
   selector: GpuProfileSelectorState;
 }) {
-  const { review, uuid, workflow } = selector;
+  const { review, uuid, workflow, ownCurrent, comparison } = selector;
   const saveError =
     workflow.saveToCurrent.variables?.gpu.stableId === uuid
       ? workflow.saveToCurrent.error
       : null;
-  if (!review && !selector.correctedNotice && !saveError) return null;
+  if (
+    !review &&
+    !selector.correctedNotice &&
+    !saveError &&
+    !comparison?.reportedChanged
+  )
+    return null;
   return (
     <div className="space-y-3">
+      {ownCurrent && comparison?.reportedChanged && (
+        <section
+          aria-label="Current profile saved values"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-4"
+        >
+          <p className="text-sm">
+            Saved in "{ownCurrent.name}":{" "}
+            {describeSettings(ownCurrent.settings)}
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!selector.canSave}
+            onClick={() => workflow.saveToCurrent.mutate({ gpu: selector.gpu })}
+          >
+            Save to "{ownCurrent.name}"
+          </Button>
+        </section>
+      )}
       {saveError && (
         <Alert variant="destructive">
           <AlertTitle>Failed to save the profile</AlertTitle>
