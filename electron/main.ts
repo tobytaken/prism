@@ -31,9 +31,11 @@ app.on("web-contents-created", (_event, contents) => {
     return { action: "deny" };
   });
 
-  contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
-  });
+  contents.session.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => {
+      callback(false);
+    },
+  );
 });
 
 function emitWindowState() {

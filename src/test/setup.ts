@@ -11,6 +11,11 @@ const prismStub: PrismDesktopApi = {
     saveProfile: async () => {
       throw new Error("Profile saving is not configured in this test");
     },
+    saveProfileToCurrent: async () => {
+      throw new Error("Profile saving is not configured in this test");
+    },
+    getTuningStates: async () => [],
+    onTuningStateChanged: () => () => undefined,
     applyProfileById: async () => {
       throw new Error("Profile application is not configured in this test");
     },

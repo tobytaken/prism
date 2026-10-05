@@ -14,6 +14,7 @@ import tuningObservations from "@/test/contracts/tuning-observations.json";
 import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store.json";
 import correctedProfileApplication from "@/test/contracts/corrected-profile-application.json";
 import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
+import gpuTuningStates from "@/test/contracts/gpu-tuning-states.json";
 import { connectedDaemonStatus } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
 
@@ -108,6 +109,44 @@ describe("registerIpc", () => {
       }
     },
   );
+
+  it("forwards validated tuning state changes to the subscribed renderer", async () => {
+    const child = createBackendChild();
+    mocks.spawn.mockReturnValue(child);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      for (const state of gpuTuningStates)
+        child.stdout.write(
+          `${JSON.stringify({ method: "gpu.tuningStateChanged", params: state })}\n`,
+        );
+      expect(send.mock.calls).toEqual(
+        gpuTuningStates.map((state) => ["prism:gpu:tuningStateChanged", state]),
+      );
+      send.mockClear();
+      for (const params of [
+        null,
+        { ...gpuTuningStates[0], revision: 7 },
+        { ...gpuTuningStates[0], currentProfile: { id: "quiet" } },
+        { ...gpuTuningStates[0], uid: 0 },
+        { gpuId: "GPU-123", revision: "r" },
+      ])
+        child.stdout.write(
+          `${JSON.stringify({ method: "gpu.tuningStateChanged", params })}\n`,
+        );
+      expect(send).not.toHaveBeenCalled();
+      await callHandler("prism:daemon:unsubscribe", trustedEvent());
+      child.stdout.write(
+        `${JSON.stringify({ method: "gpu.tuningStateChanged", params: gpuTuningStates[0] })}\n`,
+      );
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
 
   it("ignores malformed notification payloads and envelopes", async () => {
     const child = createBackendChild();
@@ -397,10 +436,14 @@ describe("registerIpc", () => {
     }
   });
 
-  it("saves as new and lists profiles through the daemon, which captures the values", async () => {
+  it("saves as new or to the current profile, and lists profiles and tuning states, through the daemon", async () => {
     const [saved] = gpuTuningProfiles;
     const child = createBackendChild((method: string) =>
-      method === "gpu.saveProfileAsNew" ? saved : gpuTuningProfiles,
+      method === "gpu.saveProfileAsNew" || method === "gpu.saveProfileToCurrent"
+        ? saved
+        : method === "gpu.getTuningStates"
+          ? gpuTuningStates
+          : gpuTuningProfiles,
     );
     mocks.spawn.mockReturnValue(child);
     const dispose = registerIpc(getMainWindow);
@@ -409,17 +452,36 @@ describe("registerIpc", () => {
         await callHandler("prism:gpu:saveProfile", trustedEvent(), {
           gpuId: "GPU-123",
           name: "Quiet",
+          revision: "4f1c2b9d0e8a7c35",
+        }),
+      ).toEqual(saved);
+      expect(
+        await callHandler("prism:gpu:saveProfileToCurrent", trustedEvent(), {
+          gpuId: "GPU-123",
+          revision: "4f1c2b9d0e8a7c35",
         }),
       ).toEqual(saved);
       expect(
         await callHandler("prism:gpu:listProfiles", trustedEvent()),
       ).toEqual(gpuTuningProfiles);
+      expect(
+        await callHandler("prism:gpu:getTuningStates", trustedEvent()),
+      ).toEqual(gpuTuningStates);
       expect(sentRequests(child)).toEqual([
         {
           method: "gpu.saveProfileAsNew",
-          params: { gpuId: "GPU-123", name: "Quiet" },
+          params: {
+            gpuId: "GPU-123",
+            name: "Quiet",
+            revision: "4f1c2b9d0e8a7c35",
+          },
+        },
+        {
+          method: "gpu.saveProfileToCurrent",
+          params: { gpuId: "GPU-123", revision: "4f1c2b9d0e8a7c35" },
         },
         { method: "gpu.listProfiles" },
+        { method: "gpu.getTuningStates" },
       ]);
     } finally {
       dispose();
@@ -439,20 +501,57 @@ describe("registerIpc", () => {
         callHandler("prism:gpu:saveProfile", untrustedEvent(), {
           gpuId: "GPU-123",
           name: "Quiet",
+          revision: "r",
         }),
       ).rejects.toThrow("Untrusted IPC sender");
       for (const payload of [
-        { gpuId: "GPU-123", name: " " },
-        { gpuId: 0, name: "Quiet" },
-        { gpuId: " ", name: "Quiet" },
-        { name: "Quiet" },
-        { gpuId: "GPU-123", name: "Quiet", appliedDefaults: [] },
-        { gpuId: "GPU-123", name: "Quiet", settings: { powerLimitWatts: 999 } },
+        { gpuId: "GPU-123", name: " ", revision: "r" },
+        { gpuId: 0, name: "Quiet", revision: "r" },
+        { gpuId: " ", name: "Quiet", revision: "r" },
+        { name: "Quiet", revision: "r" },
+        { gpuId: "GPU-123", name: "Quiet" },
+        { gpuId: "GPU-123", name: "Quiet", revision: 7 },
+        { gpuId: "GPU-123", name: "Quiet", revision: "r", appliedDefaults: [] },
+        {
+          gpuId: "GPU-123",
+          name: "Quiet",
+          revision: "r",
+          settings: { powerLimitWatts: 999 },
+        },
       ]) {
         await expect(
           callHandler("prism:gpu:saveProfile", trustedEvent(), payload),
         ).rejects.toThrow("Invalid saveProfile payload");
       }
+      await expect(
+        callHandler("prism:gpu:saveProfileToCurrent", untrustedEvent(), {
+          gpuId: "GPU-123",
+          revision: "r",
+        }),
+      ).rejects.toThrow("Untrusted IPC sender");
+      for (const payload of [
+        undefined,
+        { gpuId: "GPU-123" },
+        { gpuId: " ", revision: "r" },
+        { gpuId: "GPU-123", revision: null },
+        { gpuId: "GPU-123", revision: "r", profileId: "quiet" },
+      ]) {
+        await expect(
+          callHandler(
+            "prism:gpu:saveProfileToCurrent",
+            trustedEvent(),
+            payload,
+          ),
+        ).rejects.toThrow("Invalid saveProfileToCurrent payload");
+      }
+      await expect(
+        callHandler("prism:gpu:getTuningStates", untrustedEvent()),
+      ).rejects.toThrow("Untrusted IPC sender");
+      await expect(
+        callHandler("prism:gpu:getTuningStates", trustedEvent(), {
+          gpuId: "GPU-123",
+        }),
+      ).rejects.toThrow("Invalid getTuningStates payload");
       expect(mocks.spawn).not.toHaveBeenCalled();
     } finally {
       dispose();

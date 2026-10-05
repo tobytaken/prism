@@ -1,4 +1,8 @@
-import type { GpuDaemonStatus, TuningStoreHealth } from "@/features/gpus/types";
+import type {
+  GpuDaemonStatus,
+  GpuTuningState,
+  TuningStoreHealth,
+} from "@/features/gpus/types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -49,6 +53,37 @@ export function daemonStatusNotification(
     hasKeys(value, ["method", "params"]) &&
     value.method === "daemon.statusChanged" &&
     isDaemonStatus(value.params)
+  ) {
+    return value.params;
+  }
+}
+
+export function isTuningState(value: unknown): value is GpuTuningState {
+  if (
+    !isRecord(value) ||
+    !hasKeys(value, ["gpuId", "revision", "currentProfile"]) ||
+    typeof value.gpuId !== "string" ||
+    typeof value.revision !== "string"
+  )
+    return false;
+  const current = value.currentProfile;
+  return (
+    current === null ||
+    (isRecord(current) &&
+      hasKeys(current, ["id", "name"]) &&
+      typeof current.id === "string" &&
+      typeof current.name === "string")
+  );
+}
+
+export function tuningStateNotification(
+  value: unknown,
+): GpuTuningState | undefined {
+  if (
+    isRecord(value) &&
+    hasKeys(value, ["method", "params"]) &&
+    value.method === "gpu.tuningStateChanged" &&
+    isTuningState(value.params)
   ) {
     return value.params;
   }

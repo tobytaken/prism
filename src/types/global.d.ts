@@ -14,7 +14,9 @@ import type {
   GpuPerformanceResponse,
   ResetGpuConfigRequest,
   GpuTuningProfile,
+  GpuTuningState,
   SaveGpuProfileRequest,
+  SaveToCurrentProfileRequest,
 } from "@/features/gpus/types";
 import type {
   DriverAction,
@@ -26,8 +28,16 @@ export interface PrismDesktopApi {
   gpu: {
     /** The caller's own profiles. */
     listProfiles(): Promise<GpuTuningProfile[]>;
-    /** Save as new, from the GPU's current values. */
+    /** Save as new, from the GPU's current values; the new profile becomes current. */
     saveProfile(request: SaveGpuProfileRequest): Promise<GpuTuningProfile>;
+    /** Overwrites the GPU's current profile, if the caller owns it, with its current values. */
+    saveProfileToCurrent(
+      request: SaveToCurrentProfileRequest,
+    ): Promise<GpuTuningProfile>;
+    /** Each identified GPU's current profile and state revision. */
+    getTuningStates(): Promise<GpuTuningState[]>;
+    /** Current-profile and revision changes pushed by the daemon. */
+    onTuningStateChanged(callback: (state: GpuTuningState) => void): () => void;
     applyProfileById(
       request: ApplyGpuProfileByIdRequest,
     ): Promise<ProfileApplicationResponse>;

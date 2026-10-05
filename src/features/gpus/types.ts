@@ -262,6 +262,29 @@ export interface SaveGpuProfileRequest {
   /** The owning GPU's UUID. The daemon captures its current values. */
   gpuId: string;
   name: string;
+  /** The GPU's state revision the values were seen at; a stale one is rejected. */
+  revision: string;
+}
+
+export interface SaveToCurrentProfileRequest {
+  /** The GPU's UUID. The daemon overwrites its current profile with the current values. */
+  gpuId: string;
+  /** The GPU's state revision the values were seen at; a stale one is rejected. */
+  revision: string;
+}
+
+/** A GPU's current profile, shown by name to every user whoever owns it. */
+export interface CurrentProfile {
+  id: string;
+  name: string;
+}
+
+/** A GPU's current profile and the revision of its reported and recorded tuning state. */
+export interface GpuTuningState {
+  /** The GPU's UUID. */
+  gpuId: string;
+  revision: string;
+  currentProfile: CurrentProfile | null;
 }
 
 export interface ApplyGpuProfileByIdRequest {

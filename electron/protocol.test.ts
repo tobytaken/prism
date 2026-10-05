@@ -35,7 +35,9 @@ describe("registerAppProtocol", () => {
 
     await handler(new Request("app://bundle/assets/app.js"));
     expect(mocks.fetch).toHaveBeenLastCalledWith(
-      expect.stringMatching(/^file:.*\/renderer\/main_window\/assets\/app\.js$/),
+      expect.stringMatching(
+        /^file:.*\/renderer\/main_window\/assets\/app\.js$/,
+      ),
     );
   });
 
@@ -51,7 +53,9 @@ describe("registerAppProtocol", () => {
   it("rejects path traversal outside the renderer root", async () => {
     registerAppProtocol("main_window");
 
-    const response = await protocolHandler()(new Request("app://bundle/%252e%252e/main.js"));
+    const response = await protocolHandler()(
+      new Request("app://bundle/%252e%252e/main.js"),
+    );
 
     expect(response.status).toBe(403);
     expect(mocks.fetch).not.toHaveBeenCalled();

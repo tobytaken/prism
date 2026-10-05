@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { isDaemonStatus } from "./daemon-events";
+import { isDaemonStatus, isTuningState } from "./daemon-events";
 
 import type {
   DriverAction,
@@ -22,17 +22,24 @@ import type {
   GpuPerformanceResponse,
   ResetGpuConfigRequest,
   GpuTuningProfile,
+  GpuTuningState,
   SaveGpuProfileRequest,
+  SaveToCurrentProfileRequest,
 } from "@/features/gpus/types";
 
-let statusSubscribers = 0;
+let daemonSubscribers = 0;
 
-function onDaemonStatusChanged(callback: (status: GpuDaemonStatus) => void) {
-  const handler = (_event: Electron.IpcRendererEvent, status: unknown) => {
-    if (isDaemonStatus(status)) callback(status);
+/** Listens for a daemon event, keeping the daemon subscription while any listener remains. */
+function onDaemonEvent<T>(
+  channel: string,
+  isEvent: (value: unknown) => value is T,
+  callback: (event: T) => void,
+) {
+  const handler = (_event: Electron.IpcRendererEvent, value: unknown) => {
+    if (isEvent(value)) callback(value);
   };
-  ipcRenderer.on("prism:daemon:statusChanged", handler);
-  if (++statusSubscribers === 1) {
+  ipcRenderer.on(channel, handler);
+  if (++daemonSubscribers === 1) {
     void Promise.resolve(ipcRenderer.invoke("prism:daemon:subscribe")).catch(
       () => undefined,
     );
@@ -41,8 +48,8 @@ function onDaemonStatusChanged(callback: (status: GpuDaemonStatus) => void) {
   return () => {
     if (!subscribed) return;
     subscribed = false;
-    ipcRenderer.removeListener("prism:daemon:statusChanged", handler);
-    if (--statusSubscribers === 0) {
+    ipcRenderer.removeListener(channel, handler);
+    if (--daemonSubscribers === 0) {
       void Promise.resolve(
         ipcRenderer.invoke("prism:daemon:unsubscribe"),
       ).catch(() => undefined);
@@ -50,9 +57,22 @@ function onDaemonStatusChanged(callback: (status: GpuDaemonStatus) => void) {
   };
 }
 
+function onDaemonStatusChanged(callback: (status: GpuDaemonStatus) => void) {
+  return onDaemonEvent("prism:daemon:statusChanged", isDaemonStatus, callback);
+}
+
+function onTuningStateChanged(callback: (state: GpuTuningState) => void) {
+  return onDaemonEvent("prism:gpu:tuningStateChanged", isTuningState, callback);
+}
+
 const prismApi = {
   gpu: {
     onDaemonStatusChanged,
+    onTuningStateChanged,
+    getTuningStates: () =>
+      ipcRenderer.invoke("prism:gpu:getTuningStates") as Promise<
+        GpuTuningState[]
+      >,
     applyProfile: (request: ApplyGpuProfileRequest) =>
       ipcRenderer.invoke(
         "prism:gpu:applyProfile",
@@ -75,6 +95,11 @@ const prismApi = {
     saveProfile: (request: SaveGpuProfileRequest) =>
       ipcRenderer.invoke(
         "prism:gpu:saveProfile",
+        request,
+      ) as Promise<GpuTuningProfile>,
+    saveProfileToCurrent: (request: SaveToCurrentProfileRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:saveProfileToCurrent",
         request,
       ) as Promise<GpuTuningProfile>,
     getInventory: () =>
