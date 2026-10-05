@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import type { TuningEdits } from "@/features/gpus/hooks/use-tuning-edits";
 import {
+  captureProfileSettings,
   compareProfile,
   correctedSettings,
   PROFILE_SETTING_KEYS,
@@ -84,7 +85,6 @@ export function useGpuProfileSelector({
   const [switchRequest, setSwitchRequest] = useState<{
     profile: GpuTuningProfile;
     current: GpuTuningProfile;
-    gpu: GpuPerformanceDevice;
   } | null>(null);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
@@ -154,7 +154,7 @@ export function useGpuProfileSelector({
     if (!canApply) return;
     if (ownCurrent && comparison?.changed && profile.id !== ownCurrent.id) {
       setSwitchError(null);
-      setSwitchRequest({ profile, current: ownCurrent, gpu });
+      setSwitchRequest({ profile, current: ownCurrent });
       return;
     }
     await applyProfile(profile);
@@ -164,8 +164,7 @@ export function useGpuProfileSelector({
     setSwitching(true);
     setSwitchError(null);
     try {
-      if (save)
-        await workflow!.saveToCurrent.mutateAsync({ gpu: switchRequest.gpu });
+      if (save) await workflow!.saveToCurrent.mutateAsync({ gpu });
       await applyProfile(switchRequest.profile);
       setSwitchRequest(null);
     } catch (error) {
@@ -208,6 +207,9 @@ export function useGpuProfileSelector({
     ownCurrent,
     comparison,
     saveBlocker,
+    reportedSettings: !saveBlocker
+      ? captureProfileSettings(gpu, appliedDefaults)
+      : null,
     applyBlocker,
     canApply,
     canSave,
@@ -394,6 +396,11 @@ function SaveBeforeSwitchDialog({
             them before applying "{switchRequest?.profile.name}"?
           </DialogDescription>
         </DialogHeader>
+        {selector.reportedSettings && (
+          <p className="text-sm">
+            Reported values: {describeSettings(selector.reportedSettings)}
+          </p>
+        )}
         {selector.saveBlocker && (
           <p role="status" className="text-sm text-muted-foreground">
             {selector.saveBlocker}

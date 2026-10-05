@@ -43,6 +43,20 @@ const loud: GpuTuningProfile = {
   settings: { powerLimitWatts: { kind: "value", value: 650 } },
 };
 
+// Reported 475 W differs from Quiet's saved 450 W; Loud requests 500 W.
+function createDesktopWithProfileDifference() {
+  return createFakeDesktop({
+    profiles: [
+      {
+        ...quiet,
+        settings: { powerLimitWatts: { kind: "value", value: 450 } },
+      },
+      { ...loud, settings: { powerLimitWatts: { kind: "value", value: 500 } } },
+    ],
+    currentProfiles: { "GPU-123": "quiet" },
+  });
+}
+
 function renderPerformancePage() {
   return renderWithQueryClient(
     <MemoryRouter>
@@ -341,16 +355,7 @@ it("keeps reported clock offsets and fan speed visible alongside their unapplied
 
 it("offers to save applied changes to the current profile before switching to another profile", async () => {
   const user = userEvent.setup();
-  const fake = createFakeDesktop({
-    profiles: [
-      {
-        ...quiet,
-        settings: { powerLimitWatts: { kind: "value", value: 450 } },
-      },
-      { ...loud, settings: { powerLimitWatts: { kind: "value", value: 500 } } },
-    ],
-    currentProfiles: { "GPU-123": "quiet" },
-  });
+  const fake = createDesktopWithProfileDifference();
   renderPerformancePage();
   await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
 
@@ -386,19 +391,7 @@ it.each(["Switch without saving", "Cancel"])(
   "%s leaves the current profile's saved values unchanged",
   async (choice) => {
     const user = userEvent.setup();
-    const fake = createFakeDesktop({
-      profiles: [
-        {
-          ...quiet,
-          settings: { powerLimitWatts: { kind: "value", value: 450 } },
-        },
-        {
-          ...loud,
-          settings: { powerLimitWatts: { kind: "value", value: 500 } },
-        },
-      ],
-      currentProfiles: { "GPU-123": "quiet" },
-    });
+    const fake = createDesktopWithProfileDifference();
     renderPerformancePage();
     await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
     const saved = structuredClone(fake.profiles);
@@ -428,16 +421,7 @@ it.each(["Switch without saving", "Cancel"])(
 
 it("keeps the switch dialog open and applies nothing if saving to the current profile fails", async () => {
   const user = userEvent.setup();
-  const fake = createFakeDesktop({
-    profiles: [
-      {
-        ...quiet,
-        settings: { powerLimitWatts: { kind: "value", value: 450 } },
-      },
-      { ...loud, settings: { powerLimitWatts: { kind: "value", value: 500 } } },
-    ],
-    currentProfiles: { "GPU-123": "quiet" },
-  });
+  const fake = createDesktopWithProfileDifference();
   renderPerformancePage();
   await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
   await chooseProfile(user, "Loud");
@@ -460,16 +444,7 @@ it("keeps the switch dialog open and applies nothing if saving to the current pr
 
 it("requires choosing again if another session changes the current profile during the switch dialog", async () => {
   const user = userEvent.setup();
-  const fake = createFakeDesktop({
-    profiles: [
-      {
-        ...quiet,
-        settings: { powerLimitWatts: { kind: "value", value: 450 } },
-      },
-      { ...loud, settings: { powerLimitWatts: { kind: "value", value: 500 } } },
-    ],
-    currentProfiles: { "GPU-123": "quiet" },
-  });
+  const fake = createDesktopWithProfileDifference();
   renderPerformancePage();
   await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
   await chooseProfile(user, "Loud");
@@ -490,6 +465,42 @@ it("requires choosing again if another session changes the current profile durin
   expect(profileSelector()).toHaveTextContent("Loud");
   expect(fake.liveWrites()).toBe(0);
   expect(fake.saveProfileToCurrent).not.toHaveBeenCalled();
+});
+
+it("lets a stale save be retried using the refreshed reported values shown inside the switch dialog", async () => {
+  const user = userEvent.setup();
+  const fake = createDesktopWithProfileDifference();
+  renderPerformancePage();
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
+  await chooseProfile(user, "Loud");
+  const dialog = await screen.findByRole("dialog", { name: "Switch profile?" });
+  // Keep the old readings on screen until the rejected save is acknowledged.
+  fake.getPerformance.mockResolvedValue(
+    await window.prism.gpu.getPerformance(),
+  );
+  fake.gpu.power.currentLimitWatts = 500;
+  await user.click(
+    within(dialog).getByRole("button", { name: 'Save to "Quiet" and switch' }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(STALE);
+  expect(fake.currentProfiles).toEqual({ "GPU-123": "quiet" });
+  expect(fake.liveWrites()).toBe(0);
+
+  fake.getPerformance.mockImplementation(async () =>
+    structuredClone(fake.response),
+  );
+  expect(
+    await within(dialog).findByText(/Reported values: Power limit 500 W/),
+  ).toBeVisible();
+  await user.click(
+    within(dialog).getByRole("button", { name: 'Save to "Quiet" and switch' }),
+  );
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Loud"));
+  expect(fake.profiles[0].settings.powerLimitWatts).toEqual({
+    kind: "value",
+    value: 500,
+  });
 });
 
 it("rejects a save when the GPU's values changed since the app last saw them", async () => {
