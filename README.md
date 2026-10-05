@@ -57,7 +57,7 @@ Install the daemon on the host for local testing:
 bash scripts/install-prismd-host.sh
 ```
 
-The daemon listens on `/run/prism/prismd.sock` and stores desired GPU settings in `/var/lib/prism/state.json`. Its versioned tuning store lives in `/var/lib/prism/tuning-state.json` and holds each user's GPU tuning profiles, which only that user sees. The first time the app connects, it imports profiles saved by earlier versions of the app and renames its old `gpu-tuning-profiles.json` file to `gpu-tuning-profiles.json.imported`. If the tuning store can't be read, or was written by a newer version of Prism, the daemon leaves it untouched, the Performance page reports the problem, and manual tuning keeps working.
+The daemon listens on `/run/prism/prismd.sock` and stores desired GPU settings in `/var/lib/prism/state.json`. Its versioned tuning store lives in `/var/lib/prism/tuning-state.json` and holds each user's GPU tuning profiles, which only that user sees, and each GPU's current profile, which every user sees by name. The first time the app connects, it imports profiles saved by earlier versions of the app and renames its old `gpu-tuning-profiles.json` file to `gpu-tuning-profiles.json.imported`. If the tuning store can't be read, or was written by a newer version of Prism, the daemon leaves it untouched, the Performance page reports the problem, and manual tuning keeps working.
 
 The default daemon config is:
 

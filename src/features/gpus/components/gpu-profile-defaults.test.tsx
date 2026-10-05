@@ -7,11 +7,22 @@ import {
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
 import { createFakeDesktop } from "@/test/fake-desktop";
+import {
+  chooseProfile,
+  findProfileControls,
+  openProfileMenu,
+  profileEntry,
+  profileSelector,
+  saveAsNew,
+  saveAsNewAvailability,
+} from "@/test/profile-selector";
 import { renderWithQueryClient } from "@/test/query-client";
 import type {
   GpuPerformanceResponse,
   GpuTuningProfile,
 } from "@/features/gpus/types";
+import { MemoryRouter } from "react-router-dom";
+import { GpuPerformancePage } from "./gpu-performance-page";
 import { GpuTuningPage } from "./gpu-tuning-page";
 
 beforeEach(() => {
@@ -21,34 +32,41 @@ beforeEach(() => {
   );
 });
 
-// The daemon-backed desktop API: current values, driver defaults, stored profiles, and the
-// last applied tuning values that saving takes explicit default choices from.
+// The daemon-backed desktop API: current values, driver defaults, stored profiles, each GPU's
+// current profile, and the last applied tuning values that saving takes explicit default
+// choices from.
 function fakeDesktopGpu(
   response: GpuPerformanceResponse = createPerformanceResponse(),
   profiles: GpuTuningProfile[] = [],
+  currentProfiles: Record<string, string> = {},
 ) {
-  return createFakeDesktop({ response, profiles });
+  return createFakeDesktop({ response, profiles, currentProfiles });
+}
+
+function renderPerformancePage() {
+  return renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
 }
 
 const powerRegion = () => screen.getByRole("region", { name: "Power" });
 const clockRegion = () => screen.getByRole("region", { name: "Clock Offsets" });
-const profilePanel = () => screen.getByRole("region", { name: /profiles/ });
 
 async function saveProfile(
   user: ReturnType<typeof userEvent.setup>,
   name: string,
 ) {
-  const input = screen.getByRole("textbox", { name: "Profile name" });
-  await user.clear(input);
-  await user.type(input, name);
-  await user.click(screen.getByRole("button", { name: "Save profile" }));
+  const dialog = await saveAsNew(user, name);
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
 }
 
 it("keeps a numeric value equal to today's default fixed, while an explicit default follows a changed driver default", async () => {
   const user = userEvent.setup();
   const response = createPerformanceResponse();
   const fake = fakeDesktopGpu(response);
-  renderWithQueryClient(<GpuTuningPage />);
+  renderPerformancePage();
 
   const power = await screen.findByRole("spinbutton", { name: "Power limit" });
   await user.clear(power);
@@ -72,8 +90,8 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
   expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
   expect(screen.getByText("Use default (not applied)")).toBeInTheDocument();
   expect(power).toHaveValue(575);
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
-  // An unapplied choice is not yet a difference from the selected profile.
+  expect((await saveAsNewAvailability(user)).enabled).toBe(false);
+  // An unapplied choice is not yet a difference from the current profile.
   expect(screen.queryByText("Changes not saved to profile")).toBeNull();
 
   await user.click(
@@ -89,6 +107,7 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
   expect(fake.saveProfile).toHaveBeenLastCalledWith({
     gpuId: "GPU-123",
     name: "Default",
+    revision: expect.any(String),
   });
   expect(fake.profiles[1].settings).toEqual({
     powerLimitWatts: { kind: "default" },
@@ -100,11 +119,7 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
 
   // A driver update changes the reported default.
   response.gpus[0].power.defaultLimitWatts = 520;
-  await user.selectOptions(
-    screen.getByRole("combobox", { name: "Saved profile" }),
-    "profile-1",
-  );
-  await user.click(screen.getByRole("button", { name: "Load profile" }));
+  await chooseProfile(user, "Fixed");
   await waitFor(() =>
     expect(fake.applyProfileById).toHaveBeenLastCalledWith({
       profileId: "profile-1",
@@ -113,11 +128,8 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
   await waitFor(() =>
     expect(response.gpus[0].power.currentLimitWatts).toBe(575),
   );
-  await user.selectOptions(
-    screen.getByRole("combobox", { name: "Saved profile" }),
-    "profile-2",
-  );
-  await user.click(screen.getByRole("button", { name: "Load profile" }));
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Fixed"));
+  await chooseProfile(user, "Default");
   await waitFor(() => expect(power).toHaveValue(520));
   expect(response.gpus[0].power.currentLimitWatts).toBe(520);
   expect(within(powerRegion()).getByText("Uses default")).toBeInTheDocument();
@@ -129,31 +141,32 @@ it("treats switching between a number and Use default as an unapplied edit even 
   const response = createPerformanceResponse({
     gpus: [createPerformanceGpu({ power: { currentLimitWatts: 575 } })],
   });
-  const fake = fakeDesktopGpu(response, [
-    {
-      id: "fixed",
-      name: "Fixed",
-      gpuId: "GPU-123",
-      settings: {
-        powerLimitWatts: { kind: "value", value: 575 },
-        graphicsOffsetMHz: { kind: "value", value: 120 },
+  const fake = fakeDesktopGpu(
+    response,
+    [
+      {
+        id: "fixed",
+        name: "Fixed",
+        gpuId: "GPU-123",
+        settings: {
+          powerLimitWatts: { kind: "value", value: 575 },
+          graphicsOffsetMHz: { kind: "value", value: 120 },
+        },
       },
-    },
-  ]);
+    ],
+    { "GPU-123": "fixed" },
+  );
   renderWithQueryClient(<GpuTuningPage />);
-  await screen.findByRole("option", { name: "Fixed" });
-  await user.selectOptions(screen.getByRole("combobox"), "fixed");
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Fixed"));
   expect(screen.queryByText("Changes not saved to profile")).toBeNull();
 
   await user.click(
     screen.getByRole("button", { name: "Use default power limit" }),
   );
   expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
-  expect(
-    screen.getByText(
-      "Apply or discard unapplied power-limit or clock-offset changes before saving a profile.",
-    ),
-  ).toBeInTheDocument();
+  expect((await saveAsNewAvailability(user)).text).toContain(
+    "Apply or discard unapplied power-limit or clock-offset changes before saving a profile.",
+  );
   await user.click(
     screen.getByRole("button", { name: "Discard power limit change" }),
   );
@@ -172,7 +185,7 @@ it("treats switching between a number and Use default as an unapplied edit even 
   await user.clear(power);
   await user.type(power, "575");
   expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  expect((await saveAsNewAvailability(user)).enabled).toBe(false);
   await user.click(
     within(powerRegion()).getByRole("button", { name: "Apply" }),
   );
@@ -188,34 +201,39 @@ it("treats switching between a number and Use default as an unapplied edit even 
   });
 });
 
-it("preserves explicit default choices after loading, saving, and reloading, without treating selection as applied", async () => {
+it("preserves explicit default choices after applying, saving, and reloading, without treating a current profile as applied", async () => {
   const user = userEvent.setup();
   const response = createPerformanceResponse({
     gpus: [createPerformanceGpu({ power: { currentLimitWatts: 575 } })],
   });
   response.gpus[0].clocks.graphics.currentOffsetMHz = 0;
-  const fake = fakeDesktopGpu(response, [
-    {
-      id: "defaults",
-      name: "Defaults",
-      gpuId: "GPU-123",
-      settings: {
-        powerLimitWatts: { kind: "default" },
-        graphicsOffsetMHz: { kind: "default" },
+  const fake = fakeDesktopGpu(
+    response,
+    [
+      {
+        id: "defaults",
+        name: "Defaults",
+        gpuId: "GPU-123",
+        settings: {
+          powerLimitWatts: { kind: "default" },
+          graphicsOffsetMHz: { kind: "default" },
+        },
       },
-    },
-  ]);
-  const first = renderWithQueryClient(<GpuTuningPage />);
-  await screen.findByRole("option", { name: "Defaults" });
-  await user.selectOptions(screen.getByRole("combobox"), "defaults");
-  expect(
-    within(profilePanel()).getAllByText("Use default", { exact: false }),
-  ).toHaveLength(2);
+    ],
+    { "GPU-123": "defaults" },
+  );
+  const first = renderPerformancePage();
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Defaults"));
+  await openProfileMenu(user);
+  expect(profileEntry("Defaults")).toHaveTextContent(
+    "Power limit Use default · Graphics offset Use default",
+  );
+  await user.keyboard("{Escape}");
   // Equal numbers never establish default intent.
   expect(screen.getByText("Changes not saved to profile")).toBeInTheDocument();
   expect(screen.queryByText("Uses default")).toBeNull();
 
-  await user.click(screen.getByRole("button", { name: "Load profile" }));
+  await chooseProfile(user, "Defaults");
   await screen.findByText("Power limit: Applied");
   expect(fake.applyProfileById).toHaveBeenCalledWith({
     profileId: "defaults",
@@ -233,16 +251,17 @@ it("preserves explicit default choices after loading, saving, and reloading, wit
   });
   first.unmount();
 
-  renderWithQueryClient(<GpuTuningPage />);
-  await screen.findByRole("option", { name: "Copy" });
-  await user.selectOptions(screen.getByRole("combobox"), "profile-2");
-  expect(
-    within(profilePanel()).getAllByText("Use default", { exact: false }),
-  ).toHaveLength(2);
+  renderPerformancePage();
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Copy"));
+  await openProfileMenu(user);
+  expect(profileEntry("Copy")).toHaveTextContent(
+    "Power limit Use default · Graphics offset Use default",
+  );
+  await user.keyboard("{Escape}");
   expect(screen.getByText("Changes not saved to profile")).toBeInTheDocument();
 });
 
-it("blocks loading when a requested default is unavailable, without changing included or omitted settings", async () => {
+it("blocks applying when a requested default is unavailable, without changing included or omitted settings", async () => {
   const user = userEvent.setup();
   const response = createPerformanceResponse({
     gpus: [createPerformanceGpu({ power: { defaultLimitWatts: null } })],
@@ -258,13 +277,12 @@ it("blocks loading when a requested default is unavailable, without changing inc
       },
     },
   ]);
-  renderWithQueryClient(<GpuTuningPage />);
-  await screen.findByRole("option", { name: "Defaults" });
+  renderPerformancePage();
+  await findProfileControls();
   expect(
-    screen.getByRole("button", { name: "Use default power limit" }),
+    await screen.findByRole("button", { name: "Use default power limit" }),
   ).toBeDisabled();
-  await user.selectOptions(screen.getByRole("combobox"), "defaults");
-  await user.click(screen.getByRole("button", { name: "Load profile" }));
+  await chooseProfile(user, "Defaults");
   const reason =
     "Power limit: the default is unavailable. Refresh the GPU readings and try again.";
   await screen.findByText(`Power limit: Not attempted — ${reason}`);
@@ -277,7 +295,7 @@ it("blocks loading when a requested default is unavailable, without changing inc
   expect(fake.resetPowerLimit).not.toHaveBeenCalled();
   expect(fake.setClockOffsets).not.toHaveBeenCalled();
   expect(screen.getByText("Use default (not applied)")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  expect((await saveAsNewAvailability(user)).enabled).toBe(false);
 
   // Retrying revalidates the retained default request through the profile boundary.
   await user.click(
@@ -298,9 +316,7 @@ it("blocks loading when a requested default is unavailable, without changing inc
     }),
   );
   expect(screen.queryByText("Unapplied changes")).toBeNull();
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
-  await user.type(screen.getByRole("textbox", { name: "Profile name" }), "X");
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
+  expect((await saveAsNewAvailability(user)).enabled).toBe(true);
 });
 
 it("keeps failed default offset edits for retry through Apply all while failed fan edits do not block saving", async () => {
@@ -343,8 +359,7 @@ it("keeps failed default offset edits for retry through Apply all while failed f
   expect(
     within(clockRegion()).getByText("Use default (not applied)"),
   ).toBeInTheDocument();
-  await user.type(screen.getByRole("textbox", { name: "Profile name" }), "Q");
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  expect((await saveAsNewAvailability(user)).enabled).toBe(false);
 
   await user.click(
     screen.getByRole("button", { name: "Retry graphics clock offset change" }),
@@ -354,8 +369,8 @@ it("keeps failed default offset edits for retry through Apply all while failed f
   expect(
     screen.getByText("Fan 1: Failed — Fan write denied"),
   ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Save profile" }));
+  expect((await saveAsNewAvailability(user)).enabled).toBe(true);
+  await saveProfile(user, "Q");
   await waitFor(() => expect(fake.profiles).toHaveLength(1));
   expect(fake.profiles[0].settings).toEqual({
     powerLimitWatts: { kind: "value", value: 475 },

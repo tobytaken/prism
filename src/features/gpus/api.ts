@@ -10,6 +10,7 @@ import type {
   OffsetInstruction,
   ResetGpuConfigRequest,
   SaveGpuProfileRequest,
+  SaveToCurrentProfileRequest,
 } from "@/features/gpus/types";
 
 export function listGpuProfiles() {
@@ -30,6 +31,14 @@ export function correctAndApplyGpuProfile(request: CorrectGpuProfileRequest) {
 
 export function saveGpuProfile(request: SaveGpuProfileRequest) {
   return window.prism.gpu.saveProfile(request);
+}
+
+export function saveGpuProfileToCurrent(request: SaveToCurrentProfileRequest) {
+  return window.prism.gpu.saveProfileToCurrent(request);
+}
+
+export function getGpuTuningStates() {
+  return window.prism.gpu.getTuningStates();
 }
 
 export function getGpuInventory() {

@@ -23,8 +23,12 @@ export function GpuPerformancePage() {
     PerformanceMutationAction
   >({
     mutationFn: runTuningMutation,
+    // A write can change the GPU's current profile and the revision a save must carry.
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["gpu-performance"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["gpu-performance"] }),
+        queryClient.invalidateQueries({ queryKey: ["gpu-tuning-states"] }),
+      ]);
     },
   });
 
