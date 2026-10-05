@@ -6,6 +6,8 @@ import profileCorrections from "@/test/contracts/profile-corrections.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
 import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store.json";
 
+import correctedProfileApplication from "@/test/contracts/corrected-profile-application.json";
+import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
 import type { CorrectGpuProfileRequest } from "@/features/gpus/types";
 import type { PrismDesktopApi } from "@/types/global";
 
@@ -98,22 +100,14 @@ describe("preload bridge", () => {
   it("transports proposed range corrections and approved profile corrections", async () => {
     const prism = await loadPrismApi();
     mocks.invoke.mockResolvedValue(profileCorrections);
-    expect(
-      await prism.gpu.applyProfile({
-        gpuId: "GPU-123",
-        settings: {
-          powerLimitWatts: { kind: "value", value: 300 },
-          graphicsOffsetMHz: { kind: "value", value: -150 },
-        },
-      }),
-    ).toEqual(profileCorrections);
-    const corrected = {
-      id: "quiet",
-      name: "Quiet",
-      gpuId: "GPU-123",
-      settings: { powerLimitWatts: { kind: "value", value: 280 } },
-    };
-    mocks.invoke.mockResolvedValue(corrected);
+    expect(await prism.gpu.applyProfileById({ profileId: "quiet" })).toEqual(
+      profileCorrections,
+    );
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:applyProfileById",
+      { profileId: "quiet" },
+    );
+    mocks.invoke.mockResolvedValue(correctedProfileApplication);
     const request: CorrectGpuProfileRequest = {
       profileId: "quiet",
       corrections: [
@@ -125,9 +119,11 @@ describe("preload bridge", () => {
         },
       ],
     };
-    expect(await prism.gpu.correctProfile(request)).toEqual(corrected);
+    expect(await prism.gpu.correctAndApplyProfile(request)).toEqual(
+      correctedProfileApplication,
+    );
     expect(mocks.invoke).toHaveBeenLastCalledWith(
-      "prism:gpu:correctProfile",
+      "prism:gpu:correctAndApplyProfile",
       request,
     );
   });
@@ -145,6 +141,7 @@ describe("preload bridge", () => {
     await prism.gpu.setFanSpeed("GPU-123", 0, 60);
     await prism.gpu.setFanModeAuto("GPU-123", 0);
     await prism.gpu.setClockOffsets("GPU-123", 100, null);
+    await prism.gpu.setClockOffsets("GPU-123", "default", -50);
     await prism.gpu.resetClockOffsets("GPU-123");
 
     expect(mocks.invoke.mock.calls).toEqual([
@@ -164,6 +161,14 @@ describe("preload bridge", () => {
         "prism:gpu:setClockOffsets",
         { gpuId: "GPU-123", graphicsOffsetMHz: 100, memoryOffsetMHz: null },
       ],
+      [
+        "prism:gpu:setClockOffsets",
+        {
+          gpuId: "GPU-123",
+          graphicsOffsetMHz: "default",
+          memoryOffsetMHz: -50,
+        },
+      ],
       ["prism:gpu:resetClockOffsets", { gpuId: "GPU-123" }],
     ]);
   });
@@ -182,30 +187,17 @@ describe("preload bridge", () => {
 
   it("exposes profile save/list commands and preserves omitted, numeric, and default setting meanings", async () => {
     const prism = await loadPrismApi();
-    const profile = {
-      id: "quiet",
-      name: "Quiet",
-      gpuId: "GPU-123",
-      settings: {
-        powerLimitWatts: { kind: "value", value: 575 },
-        graphicsOffsetMHz: { kind: "default" },
-      },
-    };
+    const [profile] = gpuTuningProfiles;
     mocks.invoke.mockResolvedValue(profile);
     expect(
-      await prism.gpu.saveProfile({
-        gpuId: "GPU-123",
-        name: "Quiet",
-        appliedDefaults: ["graphicsOffsetMHz"],
-      }),
+      await prism.gpu.saveProfile({ gpuId: "GPU-123", name: "Quiet" }),
     ).toEqual(profile);
     expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:saveProfile", {
       gpuId: "GPU-123",
       name: "Quiet",
-      appliedDefaults: ["graphicsOffsetMHz"],
     });
-    mocks.invoke.mockResolvedValue([profile]);
-    expect(await prism.gpu.listProfiles()).toEqual([profile]);
+    mocks.invoke.mockResolvedValue(gpuTuningProfiles);
+    expect(await prism.gpu.listProfiles()).toEqual(gpuTuningProfiles);
     expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:listProfiles");
   });
 

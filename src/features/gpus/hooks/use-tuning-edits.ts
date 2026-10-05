@@ -101,10 +101,27 @@ export function useTuningEdits() {
         edits: { ...device.edits, ...intentions },
       };
     });
+    const withdrawIntentions = () =>
+      update(gpu.id, (device) => {
+        const edits = { ...device.edits };
+        const profileOwners = { ...device.profileOwners };
+        for (const setting of Object.keys(intentions) as TuningSetting[]) {
+          if (edits[setting] !== intentions[setting]) continue;
+          delete edits[setting];
+          delete profileOwners[setting];
+        }
+        return { ...device, edits, profileOwners };
+      });
     let result: TuningMutationResult | void;
     try {
       result = await handler(action);
     } catch (error) {
+      // The daemon saves reviewed corrections before writing, so a rejected correction is
+      // reported with its review rather than as an outcome.
+      if (action.kind === "applyProfile" && action.corrections) {
+        withdrawIntentions();
+        throw error;
+      }
       // A rejected transport cannot establish which writes reached the GPU.
       const outcome: TuningOutcome = {
         status: "unknown",
@@ -116,16 +133,7 @@ export function useTuningEdits() {
     }
     if (reviewCorrections && result?.corrections?.length) {
       // Nothing was written, so declining the review must leave no trace.
-      update(gpu.id, (device) => {
-        const edits = { ...device.edits };
-        const profileOwners = { ...device.profileOwners };
-        for (const setting of Object.keys(intentions) as TuningSetting[]) {
-          if (edits[setting] !== intentions[setting]) continue;
-          delete edits[setting];
-          delete profileOwners[setting];
-        }
-        return { ...device, edits, profileOwners };
-      });
+      withdrawIntentions();
       return result.corrections;
     }
     update(gpu.id, (device) => {

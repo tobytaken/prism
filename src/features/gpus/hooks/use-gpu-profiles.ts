@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  correctGpuProfile,
-  listGpuProfiles,
-  saveGpuProfile,
-} from "@/features/gpus/api";
+import { listGpuProfiles, saveGpuProfile } from "@/features/gpus/api";
 
 export function useGpuProfiles() {
   const queryClient = useQueryClient();
@@ -23,19 +19,16 @@ export function useGpuProfiles() {
       await queryClient.invalidateQueries({ queryKey: ["gpu-profiles"] });
     },
   });
-  const correct = useMutation({
-    mutationFn: correctGpuProfile,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["gpu-profiles"] });
-    },
-  });
   return {
     query,
     save,
-    correct,
     selectedIds,
     select(gpuId: string, profileId: string) {
       setSelectedIds((current) => ({ ...current, [gpuId]: profileId }));
+    },
+    /** Reloads the profiles after the daemon changed one, such as by saving corrections. */
+    refresh() {
+      return queryClient.invalidateQueries({ queryKey: ["gpu-profiles"] });
     },
   };
 }

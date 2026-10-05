@@ -9,6 +9,7 @@ import type { TuningEdits } from "@/features/gpus/hooks/use-tuning-edits";
 import type { PerformanceMutationAction } from "./gpu-tuning-screen";
 import {
   compareProfile,
+  correctedSettings,
   profileSaveBlocker,
 } from "@/features/gpus/lib/tuning-profiles";
 import type {
@@ -19,7 +20,29 @@ import type {
   ProfileSettingKey,
 } from "@/features/gpus/types";
 
-export function GpuProfilePanel({
+export function GpuProfilePanel(
+  props: Parameters<typeof GpuProfileControls>[0],
+) {
+  const { gpu } = props;
+  if (gpu.stableId?.trim()) return <GpuProfileControls {...props} />;
+  return (
+    <section
+      aria-label={`${gpu.name} profiles (${gpu.id})`}
+      className="rounded-xl border border-dashed border-border p-5 space-y-2"
+    >
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Bookmark className="size-4 text-muted-foreground" />
+        GPU tuning profiles unavailable
+      </div>
+      <p role="status" className="text-sm text-muted-foreground">
+        This GPU reports no stable identity (UUID), so a profile can't be tied
+        to it. Profiles can't be saved or applied for this GPU.
+      </p>
+    </section>
+  );
+}
+
+function GpuProfileControls({
   gpu,
   workflow,
   edits,
@@ -37,10 +60,13 @@ export function GpuProfilePanel({
   readError: string | null;
   pendingAction: PerformanceMutationAction | null;
   reapplyPending?: boolean;
-  /** Resolves with proposed range corrections when the profile needs review before applying. */
+  /**
+   * Applies the saved profile, first saving any reviewed corrections to it. Resolves with
+   * proposed range corrections when the profile needs review before applying.
+   */
   onLoad?: (
     profile: GpuTuningProfile,
-    settings: GpuProfileSettings,
+    corrections?: ProfileRangeCorrection[],
   ) => Promise<ProfileRangeCorrection[] | undefined>;
   loadDisabled?: boolean;
 }) {
@@ -51,6 +77,8 @@ export function GpuProfilePanel({
     corrections: ProfileRangeCorrection[];
   } | null>(null);
   const [correctedNotice, setCorrectedNotice] = useState<string | null>(null);
+  const [adjusting, setAdjusting] = useState(false);
+  const [adjustError, setAdjustError] = useState<string | null>(null);
   const profiles =
     workflow.query.data?.filter((profile) => profile.gpuId === gpu.stableId) ??
     [];
@@ -98,32 +126,38 @@ export function GpuProfilePanel({
     Object.keys(edits).length === 0 &&
     !loadDisabled &&
     !profileMutationPending &&
-    !workflow.correct.isPending;
+    !adjusting;
   async function load(profile: GpuTuningProfile) {
-    const corrections = await onLoad?.(profile, profile.settings);
+    const corrections = await onLoad?.(profile);
     if (corrections?.length) setReview({ profile, corrections });
   }
   // Approved corrections are saved first and stay saved whatever the GPU later reports.
   async function adjustAndApply() {
-    if (!canAdjust || !review) return;
-    let corrected: GpuTuningProfile;
+    if (!canAdjust || !review || !onLoad) return;
+    setAdjusting(true);
+    setAdjustError(null);
+    let next: ProfileRangeCorrection[] | undefined;
     try {
-      corrected = await workflow.correct.mutateAsync({
-        profileId: review.profile.id,
-        corrections: review.corrections,
-      });
-    } catch {
+      next = await onLoad(review.profile, review.corrections);
+    } catch (error) {
+      setAdjustError(error instanceof Error ? error.message : String(error));
       return;
+    } finally {
+      setAdjusting(false);
     }
-    setReview(null);
+    const corrected = {
+      ...review.profile,
+      settings: correctedSettings(review.profile.settings, review.corrections),
+    };
+    void workflow.refresh();
+    setReview(next?.length ? { profile: corrected, corrections: next } : null);
     setCorrectedNotice(
       `Saved the approved corrections to "${corrected.name}". The saved profile does not confirm GPU settings; check each setting's application outcome.`,
     );
-    await load(corrected);
   }
   function closeReview() {
     setReview(null);
-    workflow.correct.reset();
+    setAdjustError(null);
   }
   return (
     <section
@@ -178,11 +212,10 @@ export function GpuProfilePanel({
           className="space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (canSave)
+            if (canSave && gpu.stableId)
               workflow.save.mutate({
-                gpuId: gpu.id,
+                gpuId: gpu.stableId,
                 name: name.trim(),
-                ...(appliedDefaults.length > 0 && { appliedDefaults }),
               });
           }}
         >
@@ -242,10 +275,10 @@ export function GpuProfilePanel({
               profile.
             </p>
           )}
-          {workflow.correct.error && (
+          {adjustError && (
             <p role="alert" className="text-sm text-destructive">
               The corrected profile could not be saved, so no GPU settings were
-              changed. {workflow.correct.error.message}
+              changed. {adjustError}
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -254,15 +287,13 @@ export function GpuProfilePanel({
               disabled={!canAdjust}
               onClick={() => void adjustAndApply()}
             >
-              {workflow.correct.isPending && (
-                <LoaderCircle className="animate-spin" />
-              )}
+              {adjusting && <LoaderCircle className="animate-spin" />}
               Adjust profile and apply
             </Button>
             <Button
               type="button"
               variant="outline"
-              disabled={workflow.correct.isPending}
+              disabled={adjusting}
               onClick={closeReview}
             >
               Cancel
@@ -302,11 +333,12 @@ export function GpuProfilePanel({
           )}
         </div>
       )}
-      {workflow.save.error && workflow.save.variables?.gpuId === gpu.id && (
-        <p role="alert" className="text-sm text-destructive">
-          {workflow.save.error.message}
-        </p>
-      )}
+      {workflow.save.error &&
+        workflow.save.variables?.gpuId === gpu.stableId && (
+          <p role="alert" className="text-sm text-destructive">
+            {workflow.save.error.message}
+          </p>
+        )}
     </section>
   );
 }

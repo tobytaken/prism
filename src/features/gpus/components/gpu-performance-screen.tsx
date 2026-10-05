@@ -1,6 +1,7 @@
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
 import { TuningStoreProblemAlert } from "./tuning-store-problem-alert";
 import { GpuProfilePanel, GpuProfileAvailability } from "./gpu-profile-panel";
+import { profileApplication } from "@/features/gpus/lib/tuning-profiles";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import {
   useTuningEdits,
@@ -295,14 +296,9 @@ function GpuTelemetrySurface({
               loadDisabled={profileLoadingDisabled}
               onLoad={
                 onMutationAction
-                  ? (profile, settings) =>
+                  ? (profile, corrections) =>
                       editStore.apply(
-                        {
-                          kind: "applyProfile",
-                          gpuId: gpu.id,
-                          stableId: profile.gpuId,
-                          settings,
-                        },
+                        profileApplication(gpu, profile, corrections),
                         gpu,
                         onMutationAction,
                         { reviewCorrections: true },

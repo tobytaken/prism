@@ -11,7 +11,10 @@ const prismStub: PrismDesktopApi = {
     saveProfile: async () => {
       throw new Error("Profile saving is not configured in this test");
     },
-    correctProfile: async () => {
+    applyProfileById: async () => {
+      throw new Error("Profile application is not configured in this test");
+    },
+    correctAndApplyProfile: async () => {
       throw new Error("Profile correction is not configured in this test");
     },
     getInventory: async () => ({ gpus: [], warnings: [] }),

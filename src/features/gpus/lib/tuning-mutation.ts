@@ -16,15 +16,33 @@ export type TuningMutationHandler = (
   action: PerformanceMutationAction,
 ) => Promise<TuningMutationResult> | void;
 
+/** The failure to show for a rejected action; a rejected correction is shown in its review. */
+export function mutationErrorMessage(
+  error: Error | null,
+  action: PerformanceMutationAction | undefined,
+) {
+  if (action?.kind === "applyProfile" && action.corrections) return null;
+  return error?.message ?? null;
+}
+
 export async function runTuningMutation(
   action: PerformanceMutationAction,
 ): Promise<TuningMutationResult> {
   switch (action.kind) {
     case "applyProfile": {
-      const result = await api.applyGpuProfile({
-        gpuId: action.stableId,
-        settings: action.settings,
-      });
+      const result = action.corrections
+        ? (
+            await api.correctAndApplyGpuProfile({
+              profileId: action.profileId!,
+              corrections: action.corrections,
+            })
+          ).application
+        : action.profileId
+          ? await api.applyGpuProfileById({ profileId: action.profileId })
+          : await api.applyGpuProfile({
+              gpuId: action.stableId,
+              settings: action.settings,
+            });
       return {
         ...(result.power && { power: result.power }),
         ...(result.graphics && { graphics: result.graphics }),
@@ -64,8 +82,8 @@ export async function runTuningMutation(
         action.kind === "setClockOffsets"
           ? await api.setGpuClockOffsets(
               action.gpuId,
-              offsetValue(action.graphicsOffsetMHz),
-              offsetValue(action.memoryOffsetMHz),
+              action.graphicsOffsetMHz,
+              action.memoryOffsetMHz,
             )
           : await api.resetGpuClockOffsets(action.gpuId);
       return {
@@ -74,10 +92,6 @@ export async function runTuningMutation(
       };
     }
   }
-}
-
-function offsetValue(offset: number | "default" | null) {
-  return offset === "default" ? 0 : offset;
 }
 
 function commandOutcome(response: GpuCommandResponse): TuningOutcome {

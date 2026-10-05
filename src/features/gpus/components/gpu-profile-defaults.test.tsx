@@ -6,13 +6,11 @@ import {
   createPerformanceGpu,
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
+import { createFakeDesktop } from "@/test/fake-desktop";
 import { renderWithQueryClient } from "@/test/query-client";
-import { captureProfileSettings } from "@/features/gpus/lib/tuning-profiles";
 import type {
   GpuPerformanceResponse,
   GpuTuningProfile,
-  ProfileApplicationResponse,
-  TuningOutcome,
 } from "@/features/gpus/types";
 import { GpuTuningPage } from "./gpu-tuning-page";
 
@@ -23,87 +21,13 @@ beforeEach(() => {
   );
 });
 
-// A stateful desktop API: current values, driver defaults, and stored profiles.
+// The daemon-backed desktop API: current values, driver defaults, stored profiles, and the
+// last applied tuning values that saving takes explicit default choices from.
 function fakeDesktopGpu(
   response: GpuPerformanceResponse = createPerformanceResponse(),
   profiles: GpuTuningProfile[] = [],
 ) {
-  const gpu = () => response.gpus[0];
-  const succeeded: TuningOutcome = { status: "succeeded", error: null };
-  vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
-    structuredClone(response),
-  );
-  vi.spyOn(window.prism.gpu, "listProfiles").mockImplementation(async () =>
-    structuredClone(profiles),
-  );
-  const save = vi
-    .spyOn(window.prism.gpu, "saveProfile")
-    .mockImplementation(async ({ gpuId, name, appliedDefaults }) => {
-      const owner = response.gpus.find((device) => device.id === gpuId)!;
-      const profile: GpuTuningProfile = {
-        id: `profile-${profiles.length + 1}`,
-        name,
-        gpuId: owner.stableId!,
-        settings: captureProfileSettings(owner, appliedDefaults),
-      };
-      profiles.push(profile);
-      return structuredClone(profile);
-    });
-  const setPower = vi
-    .spyOn(window.prism.gpu, "setPowerLimit")
-    .mockImplementation(async (_gpuId, watts) => {
-      gpu().power.currentLimitWatts = watts;
-      return { success: true, error: null };
-    });
-  const resetPower = vi
-    .spyOn(window.prism.gpu, "resetPowerLimit")
-    .mockImplementation(async () => {
-      gpu().power.currentLimitWatts = gpu().power.defaultLimitWatts;
-      return { success: true, error: null };
-    });
-  const setClocks = vi
-    .spyOn(window.prism.gpu, "setClockOffsets")
-    .mockImplementation(async (_gpuId, graphics, memory) => {
-      if (graphics != null) gpu().clocks.graphics.currentOffsetMHz = graphics;
-      if (memory != null) gpu().clocks.memory.currentOffsetMHz = memory;
-      return {
-        graphics: graphics == null ? null : succeeded,
-        memory: memory == null ? null : succeeded,
-      };
-    });
-  const apply = vi
-    .spyOn(window.prism.gpu, "applyProfile")
-    .mockImplementation(async ({ settings }) => {
-      const { powerLimitWatts, graphicsOffsetMHz } = settings;
-      const power =
-        powerLimitWatts?.kind === "default"
-          ? gpu().power.defaultLimitWatts
-          : powerLimitWatts?.value;
-      const graphics =
-        graphicsOffsetMHz?.kind === "default" ? 0 : graphicsOffsetMHz?.value;
-      const outcome = (included: unknown, value: TuningOutcome) =>
-        included ? value : null;
-      if (powerLimitWatts && power == null) {
-        const blocked: TuningOutcome = {
-          status: "unattempted",
-          error:
-            "Power limit: the default is unavailable. Refresh the GPU readings and try again.",
-        };
-        return {
-          power: blocked,
-          graphics: outcome(graphicsOffsetMHz, blocked),
-          memory: null,
-        } satisfies ProfileApplicationResponse;
-      }
-      if (power != null) gpu().power.currentLimitWatts = power;
-      if (graphics != null) gpu().clocks.graphics.currentOffsetMHz = graphics;
-      return {
-        power: outcome(powerLimitWatts, succeeded),
-        graphics: outcome(graphicsOffsetMHz, succeeded),
-        memory: null,
-      };
-    });
-  return { profiles, save, setPower, resetPower, setClocks, apply };
+  return createFakeDesktop({ response, profiles });
 }
 
 const powerRegion = () => screen.getByRole("region", { name: "Power" });
@@ -133,7 +57,7 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
     within(powerRegion()).getByRole("button", { name: "Apply" }),
   );
   await screen.findByText("Power limit: Applied");
-  expect(fake.setPower).toHaveBeenCalledWith("GPU-123", 575);
+  expect(fake.setPowerLimit).toHaveBeenCalledWith("GPU-123", 575);
   expect(within(powerRegion()).queryByText("Uses default")).toBeNull();
   await saveProfile(user, "Fixed");
   await waitFor(() => expect(fake.profiles).toHaveLength(1));
@@ -156,15 +80,15 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
     within(powerRegion()).getByRole("button", { name: "Apply" }),
   );
   await screen.findByText("Uses default");
-  expect(fake.resetPower).toHaveBeenCalledTimes(1);
+  expect(fake.resetPowerLimit).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("Unapplied changes")).toBeNull();
   expect(screen.getByText("Changes not saved to profile")).toBeInTheDocument();
   await saveProfile(user, "Default");
   await waitFor(() => expect(fake.profiles).toHaveLength(2));
-  expect(fake.save).toHaveBeenLastCalledWith({
+  // The daemon takes the default choice from its own record of the applied request.
+  expect(fake.saveProfile).toHaveBeenLastCalledWith({
     gpuId: "GPU-123",
     name: "Default",
-    appliedDefaults: ["powerLimitWatts"],
   });
   expect(fake.profiles[1].settings).toEqual({
     powerLimitWatts: { kind: "default" },
@@ -182,15 +106,13 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
   );
   await user.click(screen.getByRole("button", { name: "Load profile" }));
   await waitFor(() =>
-    expect(fake.apply).toHaveBeenLastCalledWith({
-      gpuId: "GPU-123",
-      settings: {
-        powerLimitWatts: { kind: "value", value: 575 },
-        graphicsOffsetMHz: { kind: "value", value: 120 },
-      },
+    expect(fake.applyProfileById).toHaveBeenLastCalledWith({
+      profileId: "profile-1",
     }),
   );
-  expect(response.gpus[0].power.currentLimitWatts).toBe(575);
+  await waitFor(() =>
+    expect(response.gpus[0].power.currentLimitWatts).toBe(575),
+  );
   await user.selectOptions(
     screen.getByRole("combobox", { name: "Saved profile" }),
     "profile-2",
@@ -243,7 +165,7 @@ it("treats switching between a number and Use default as an unapplied edit even 
   );
   await user.click(screen.getByRole("button", { name: "Apply all" }));
   await screen.findByText("Uses default");
-  expect(fake.resetPower).toHaveBeenCalledTimes(1);
+  expect(fake.resetPowerLimit).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Changes not saved to profile")).toBeInTheDocument();
 
   const power = screen.getByRole("spinbutton", { name: "Power limit" });
@@ -255,7 +177,7 @@ it("treats switching between a number and Use default as an unapplied edit even 
     within(powerRegion()).getByRole("button", { name: "Apply" }),
   );
   await screen.findByText("Power limit: Applied");
-  expect(fake.setPower).toHaveBeenCalledWith("GPU-123", 575);
+  expect(fake.setPowerLimit).toHaveBeenCalledWith("GPU-123", 575);
   expect(screen.queryByText("Uses default")).toBeNull();
   expect(screen.queryByText("Changes not saved to profile")).toBeNull();
   await saveProfile(user, "Fixed again");
@@ -295,12 +217,8 @@ it("preserves explicit default choices after loading, saving, and reloading, wit
 
   await user.click(screen.getByRole("button", { name: "Load profile" }));
   await screen.findByText("Power limit: Applied");
-  expect(fake.apply).toHaveBeenCalledWith({
-    gpuId: "GPU-123",
-    settings: {
-      powerLimitWatts: { kind: "default" },
-      graphicsOffsetMHz: { kind: "default" },
-    },
+  expect(fake.applyProfileById).toHaveBeenCalledWith({
+    profileId: "defaults",
   });
   expect(screen.getAllByText("Uses default")).toHaveLength(2);
   await waitFor(() =>
@@ -355,9 +273,9 @@ it("blocks loading when a requested default is unavailable, without changing inc
   ).toBeInTheDocument();
   expect(response.gpus[0].power.currentLimitWatts).toBe(475);
   expect(response.gpus[0].clocks.graphics.currentOffsetMHz).toBe(120);
-  expect(fake.setPower).not.toHaveBeenCalled();
-  expect(fake.resetPower).not.toHaveBeenCalled();
-  expect(fake.setClocks).not.toHaveBeenCalled();
+  expect(fake.setPowerLimit).not.toHaveBeenCalled();
+  expect(fake.resetPowerLimit).not.toHaveBeenCalled();
+  expect(fake.setClockOffsets).not.toHaveBeenCalled();
   expect(screen.getByText("Use default (not applied)")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
 
@@ -365,8 +283,9 @@ it("blocks loading when a requested default is unavailable, without changing inc
   await user.click(
     screen.getByRole("button", { name: "Retry power limit change" }),
   );
-  await waitFor(() => expect(fake.apply).toHaveBeenCalledTimes(2));
-  expect(fake.apply).toHaveBeenLastCalledWith({
+  await waitFor(() => expect(fake.applyProfile).toHaveBeenCalledTimes(1));
+  expect(fake.applyProfileById).toHaveBeenCalledTimes(1);
+  expect(fake.applyProfile).toHaveBeenLastCalledWith({
     gpuId: "GPU-123",
     settings: { powerLimitWatts: { kind: "default" } },
   });
@@ -388,11 +307,11 @@ it("keeps failed default offset edits for retry through Apply all while failed f
   const user = userEvent.setup();
   const response = createPerformanceResponse();
   const fake = fakeDesktopGpu(response);
-  fake.setClocks.mockResolvedValueOnce({
+  fake.setClockOffsets.mockResolvedValueOnce({
     graphics: { status: "failed", error: "Graphics write denied" },
     memory: null,
   });
-  vi.spyOn(window.prism.gpu, "setFanSpeed").mockResolvedValue({
+  fake.setFanSpeed.mockResolvedValue({
     success: false,
     error: "Fan write denied",
   });
@@ -419,7 +338,7 @@ it("keeps failed default offset edits for retry through Apply all while failed f
   expect(
     screen.getByText("Fan 1: Failed — Fan write denied"),
   ).toBeInTheDocument();
-  expect(fake.setClocks).toHaveBeenCalledWith("GPU-123", 0, null);
+  expect(fake.setClockOffsets).toHaveBeenCalledWith("GPU-123", "default", null);
   expect(response.gpus[0].clocks.graphics.currentOffsetMHz).toBe(120);
   expect(
     within(clockRegion()).getByText("Use default (not applied)"),
@@ -460,7 +379,7 @@ it("does not request a power default that falls outside the current range after 
   await screen.findByText(
     /Power limit: Not attempted — The default for this control is unavailable or outside its current range/,
   );
-  expect(fake.resetPower).not.toHaveBeenCalled();
+  expect(fake.resetPowerLimit).not.toHaveBeenCalled();
   expect(response.gpus[0].power.currentLimitWatts).toBe(475);
   expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
 });

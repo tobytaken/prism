@@ -8,8 +8,11 @@ import type {
 } from "@/features/drivers/types";
 import type {
   ApplyGpuConfigRequest,
+  ApplyGpuProfileByIdRequest,
   ApplyGpuProfileRequest,
   CorrectGpuProfileRequest,
+  CorrectedProfileApplication,
+  OffsetInstruction,
   ProfileApplicationResponse,
   ClockOffsetResponse,
   GpuCommandResponse,
@@ -59,11 +62,16 @@ const prismApi = {
       ipcRenderer.invoke("prism:gpu:listProfiles") as Promise<
         GpuTuningProfile[]
       >,
-    correctProfile: (request: CorrectGpuProfileRequest) =>
+    applyProfileById: (request: ApplyGpuProfileByIdRequest) =>
       ipcRenderer.invoke(
-        "prism:gpu:correctProfile",
+        "prism:gpu:applyProfileById",
         request,
-      ) as Promise<GpuTuningProfile>,
+      ) as Promise<ProfileApplicationResponse>,
+    correctAndApplyProfile: (request: CorrectGpuProfileRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:correctAndApplyProfile",
+        request,
+      ) as Promise<CorrectedProfileApplication>,
     saveProfile: (request: SaveGpuProfileRequest) =>
       ipcRenderer.invoke(
         "prism:gpu:saveProfile",
@@ -113,8 +121,8 @@ const prismApi = {
       }) as Promise<GpuCommandResponse>,
     setClockOffsets: (
       gpuId: string,
-      graphicsOffsetMHz: number | null,
-      memoryOffsetMHz: number | null,
+      graphicsOffsetMHz: OffsetInstruction,
+      memoryOffsetMHz: OffsetInstruction,
     ) =>
       ipcRenderer.invoke("prism:gpu:setClockOffsets", {
         gpuId,

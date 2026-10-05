@@ -248,8 +248,10 @@ export interface GpuProfileSettings {
 }
 
 export interface GpuTuningProfile {
+  /** Opaque, assigned by the daemon. */
   id: string;
   name: string;
+  /** The owning GPU's UUID. */
   gpuId: string;
   settings: GpuProfileSettings;
 }
@@ -257,10 +259,13 @@ export interface GpuTuningProfile {
 export type ProfileSettingKey = keyof GpuProfileSettings;
 
 export interface SaveGpuProfileRequest {
+  /** The owning GPU's UUID. The daemon captures its current values. */
   gpuId: string;
   name: string;
-  /** Settings whose successfully applied instruction was an explicit default request. */
-  appliedDefaults?: ProfileSettingKey[];
+}
+
+export interface ApplyGpuProfileByIdRequest {
+  profileId: string;
 }
 
 export interface ApplyGpuProfileRequest {
@@ -288,3 +293,12 @@ export interface CorrectGpuProfileRequest {
   profileId: string;
   corrections: ProfileRangeCorrection[];
 }
+
+export interface CorrectedProfileApplication {
+  /** The profile as saved with the corrections, whatever the application's outcome. */
+  profile: GpuTuningProfile;
+  application: ProfileApplicationResponse;
+}
+
+/** A live clock offset: MHz, an explicit request for the default, or null to leave it unchanged. */
+export type OffsetInstruction = number | "default" | null;

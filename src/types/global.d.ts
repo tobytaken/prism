@@ -1,7 +1,10 @@
 import type {
   ApplyGpuConfigRequest,
+  ApplyGpuProfileByIdRequest,
   ApplyGpuProfileRequest,
   CorrectGpuProfileRequest,
+  CorrectedProfileApplication,
+  OffsetInstruction,
   ProfileApplicationResponse,
   ClockOffsetResponse,
   GpuCommandResponse,
@@ -21,11 +24,18 @@ import type {
 
 export interface PrismDesktopApi {
   gpu: {
+    /** The caller's own profiles. */
     listProfiles(): Promise<GpuTuningProfile[]>;
+    /** Save as new, from the GPU's current values. */
     saveProfile(request: SaveGpuProfileRequest): Promise<GpuTuningProfile>;
-    correctProfile(
+    applyProfileById(
+      request: ApplyGpuProfileByIdRequest,
+    ): Promise<ProfileApplicationResponse>;
+    /** Saves reviewed range corrections, then applies the corrected profile. */
+    correctAndApplyProfile(
       request: CorrectGpuProfileRequest,
-    ): Promise<GpuTuningProfile>;
+    ): Promise<CorrectedProfileApplication>;
+    /** Applies profile instructions without a saved profile, such as a retry of some of them. */
     applyProfile(
       request: ApplyGpuProfileRequest,
     ): Promise<ProfileApplicationResponse>;
@@ -53,8 +63,8 @@ export interface PrismDesktopApi {
     ): Promise<GpuCommandResponse>;
     setClockOffsets(
       gpuId: string,
-      graphicsOffsetMHz: number | null,
-      memoryOffsetMHz: number | null,
+      graphicsOffsetMHz: OffsetInstruction,
+      memoryOffsetMHz: OffsetInstruction,
     ): Promise<ClockOffsetResponse>;
     resetClockOffsets(gpuId: string): Promise<ClockOffsetResponse>;
   };

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
-import { GpuProfileStore } from "./gpu-profile-store";
+import { PROFILE_FILE_NAME, ProfileFileImport } from "./profile-file-import";
 import { daemonStatusNotification } from "./daemon-events";
 import {
   isProfileSetting,
@@ -9,9 +9,7 @@ import {
 } from "@/features/gpus/lib/tuning-profiles";
 import type {
   CorrectGpuProfileRequest,
-  GpuPerformanceResponse,
   GpuDaemonStatus,
-  ProfileSettingKey,
 } from "@/features/gpus/types";
 
 import {
@@ -54,8 +52,8 @@ type MutationActionPayload =
   | { gpuId: string; fanIndex: number }
   | {
       gpuId: string;
-      graphicsOffsetMHz: number | null;
-      memoryOffsetMHz: number | null;
+      graphicsOffsetMHz: number | "default" | null;
+      memoryOffsetMHz: number | "default" | null;
     }
   | Record<string, unknown>;
 
@@ -280,8 +278,10 @@ function isNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function isNullableNumber(value: unknown): value is number | null {
-  return value === null || isNumber(value);
+function isOffsetInstruction(
+  value: unknown,
+): value is number | "default" | null {
+  return value === null || value === "default" || Number.isSafeInteger(value);
 }
 
 function validateGpuTarget(payload: unknown): payload is { gpuId: string } {
@@ -328,15 +328,15 @@ function validateClockOffsetPayload(payload: unknown): payload is Extract<
   MutationActionPayload,
   {
     gpuId: string;
-    graphicsOffsetMHz: number | null;
-    memoryOffsetMHz: number | null;
+    graphicsOffsetMHz: number | "default" | null;
+    memoryOffsetMHz: number | "default" | null;
   }
 > {
   return (
     isObject(payload) &&
     isString(payload.gpuId) &&
-    isNullableNumber(payload.graphicsOffsetMHz) &&
-    isNullableNumber(payload.memoryOffsetMHz)
+    isOffsetInstruction(payload.graphicsOffsetMHz) &&
+    isOffsetInstruction(payload.memoryOffsetMHz)
   );
 }
 
@@ -374,6 +374,10 @@ function validateDriverJobPayload(
   return isObject(payload) && isString(payload.jobId);
 }
 
+function hasOnlyKeys(value: Record<string, unknown>, keys: string[]) {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
 const CORRECTION_KEYS = ["setting", "savedValue", "proposedValue", "bound"];
 
 // A correction only moves a saved value to the bound it exceeded; it is never a free-form edit.
@@ -382,9 +386,7 @@ function validateCorrectProfilePayload(
 ): payload is CorrectGpuProfileRequest {
   if (
     !isObject(payload) ||
-    Object.keys(payload).some(
-      (key) => key !== "profileId" && key !== "corrections",
-    ) ||
+    !hasOnlyKeys(payload, ["profileId", "corrections"]) ||
     !isString(payload.profileId) ||
     !payload.profileId.trim() ||
     !Array.isArray(payload.corrections) ||
@@ -395,7 +397,7 @@ function validateCorrectProfilePayload(
   return payload.corrections.every((correction: unknown) => {
     if (
       !isObject(correction) ||
-      Object.keys(correction).some((key) => !CORRECTION_KEYS.includes(key)) ||
+      !hasOnlyKeys(correction, CORRECTION_KEYS) ||
       !isProfileSettingKey(correction.setting) ||
       settings.has(correction.setting) ||
       !Number.isSafeInteger(correction.savedValue) ||
@@ -419,8 +421,24 @@ function isAllowedExternalUrl(url: string) {
 export function registerIpc(getMainWindow: MainWindowGetter) {
   let subscribed = false;
   let latestStatus: GpuDaemonStatus | undefined;
+  let profileImport: ProfileFileImport | undefined;
+  // A failed import keeps the file and is attempted again on the next connection or listing.
+  const importProfileFile = async () => {
+    try {
+      profileImport ??= new ProfileFileImport(
+        path.join(app.getPath("userData"), PROFILE_FILE_NAME),
+        (profiles) => backend.invoke("gpu.importProfiles", { profiles }),
+      );
+      await profileImport.run();
+    } catch (error) {
+      process.stderr.write(
+        `Failed to import GPU tuning profiles into the Prism daemon: ${String(error)}\n`,
+      );
+    }
+  };
   const backend = new RustBackendClient((status) => {
     latestStatus = status;
+    if (status.reachable && status.managedByDaemon) void importProfileFile();
     if (subscribed)
       getMainWindow()?.webContents.send("prism:daemon:statusChanged", status);
   });
@@ -447,16 +465,16 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       subscribed = false;
     },
   );
-  let profileStore: GpuProfileStore | undefined;
-  const getProfileStore = () =>
-    (profileStore ??= new GpuProfileStore(
-      path.join(app.getPath("userData"), "gpu-tuning-profiles.json"),
-    ));
-
-  ipcMain.handle("prism:gpu:listProfiles", async (event) => {
-    assertTrustedSender(event, getMainWindow);
-    return getProfileStore().list();
-  });
+  ipcMain.handle(
+    "prism:gpu:listProfiles",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid listProfiles payload");
+      // The app's own profile file joins the daemon's list before the first one is shown.
+      await importProfileFile();
+      return backend.invoke("gpu.listProfiles");
+    },
+  );
 
   ipcMain.handle("prism:gpu:applyProfile", async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow);
@@ -464,9 +482,7 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       !isObject(payload) ||
       !isString(payload.gpuId) ||
       !payload.gpuId.trim() ||
-      Object.keys(payload).some(
-        (key) => key !== "gpuId" && key !== "settings",
-      ) ||
+      !hasOnlyKeys(payload, ["gpuId", "settings"]) ||
       !isObject(payload.settings) ||
       Array.isArray(payload.settings) ||
       Object.keys(payload.settings).length === 0 ||
@@ -481,13 +497,29 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
   });
 
   ipcMain.handle(
-    "prism:gpu:correctProfile",
+    "prism:gpu:applyProfileById",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["profileId"]) ||
+        !isString(payload.profileId) ||
+        !payload.profileId.trim()
+      ) {
+        throw new Error("Invalid applyProfileById payload");
+      }
+      return backend.invoke("gpu.applyProfileById", payload);
+    },
+  );
+
+  ipcMain.handle(
+    "prism:gpu:correctAndApplyProfile",
     async (event, payload: unknown) => {
       assertTrustedSender(event, getMainWindow);
       if (!validateCorrectProfilePayload(payload)) {
-        throw new Error("Invalid correctProfile payload");
+        throw new Error("Invalid correctAndApplyProfile payload");
       }
-      return getProfileStore().correct(payload.profileId, payload.corrections);
+      return backend.invoke("gpu.correctAndApplyProfile", payload);
     },
   );
 
@@ -495,30 +527,15 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     assertTrustedSender(event, getMainWindow);
     if (
       !isObject(payload) ||
+      !hasOnlyKeys(payload, ["gpuId", "name"]) ||
       !isString(payload.gpuId) ||
       !payload.gpuId.trim() ||
       !isString(payload.name) ||
-      !payload.name.trim() ||
-      (payload.appliedDefaults !== undefined &&
-        (!Array.isArray(payload.appliedDefaults) ||
-          !payload.appliedDefaults.every(isProfileSettingKey) ||
-          new Set(payload.appliedDefaults).size !==
-            payload.appliedDefaults.length))
+      !payload.name.trim()
     ) {
       throw new Error("Invalid saveProfile payload");
     }
-    const performance =
-      await backend.invoke<GpuPerformanceResponse>("gpu.getPerformance");
-    const gpu = performance.gpus.find((device) => device.id === payload.gpuId);
-    if (!gpu)
-      throw new Error(
-        "The owning GPU is unavailable. Refresh the GPU readings and try again.",
-      );
-    return getProfileStore().save(
-      payload.name,
-      gpu,
-      payload.appliedDefaults as ProfileSettingKey[] | undefined,
-    );
+    return backend.invoke("gpu.saveProfileAsNew", payload);
   });
 
   ipcMain.handle("prism:gpu:getInventory", async (event) => {
