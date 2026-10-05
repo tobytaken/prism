@@ -8,6 +8,7 @@ import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store
 
 import correctedProfileApplication from "@/test/contracts/corrected-profile-application.json";
 import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
+import gpuTuningStates from "@/test/contracts/gpu-tuning-states.json";
 import type { CorrectGpuProfileRequest } from "@/features/gpus/types";
 import type { PrismDesktopApi } from "@/types/global";
 
@@ -189,16 +190,51 @@ describe("preload bridge", () => {
     const prism = await loadPrismApi();
     const [profile] = gpuTuningProfiles;
     mocks.invoke.mockResolvedValue(profile);
-    expect(
-      await prism.gpu.saveProfile({ gpuId: "GPU-123", name: "Quiet" }),
-    ).toEqual(profile);
-    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:saveProfile", {
-      gpuId: "GPU-123",
-      name: "Quiet",
-    });
+    const save = { gpuId: "GPU-123", name: "Quiet", revision: "r1" };
+    expect(await prism.gpu.saveProfile(save)).toEqual(profile);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:saveProfile",
+      save,
+    );
+    const saveToCurrent = { gpuId: "GPU-123", revision: "r1" };
+    expect(await prism.gpu.saveProfileToCurrent(saveToCurrent)).toEqual(
+      profile,
+    );
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:saveProfileToCurrent",
+      saveToCurrent,
+    );
     mocks.invoke.mockResolvedValue(gpuTuningProfiles);
     expect(await prism.gpu.listProfiles()).toEqual(gpuTuningProfiles);
     expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:listProfiles");
+    mocks.invoke.mockResolvedValue(gpuTuningStates);
+    expect(await prism.gpu.getTuningStates()).toEqual(gpuTuningStates);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:getTuningStates");
+  });
+
+  it("subscribes to tuning state changes alongside daemon status, keeping the daemon subscription until both leave", async () => {
+    const prism = await loadPrismApi();
+    const states = vi.fn();
+    const unsubscribeStates = prism.gpu.onTuningStateChanged(states);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(
+      "prism:daemon:subscribe",
+    );
+    const [channel, handler] = mocks.on.mock.calls[0];
+    expect(channel).toBe("prism:gpu:tuningStateChanged");
+    handler({}, gpuTuningStates[0]);
+    handler({}, { ...gpuTuningStates[0], revision: 7 });
+    expect(states).toHaveBeenCalledExactlyOnceWith(gpuTuningStates[0]);
+    const unsubscribeStatus = prism.gpu.onDaemonStatusChanged(vi.fn());
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    unsubscribeStates();
+    unsubscribeStates();
+    expect(mocks.removeListener).toHaveBeenCalledExactlyOnceWith(
+      channel,
+      handler,
+    );
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    unsubscribeStatus();
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:daemon:unsubscribe");
   });
 
   it("returns individual clock application outcomes without turning partial failure into success", async () => {

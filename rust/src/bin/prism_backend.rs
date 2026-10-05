@@ -2,14 +2,21 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
 
 use prism_rust::bridge::{handle_request, invalid_request_response, BridgeRequest};
+use prism_rust::daemon_client::SessionNotification;
 
 fn main() {
     let stdin = io::stdin();
     let stdout = Arc::new(Mutex::new(io::stdout()));
     let notification_output = Arc::clone(&stdout);
-    let _session = prism_rust::daemon_client::start_session(move |status| {
-        let notification =
-            serde_json::json!({ "method": "daemon.statusChanged", "params": status });
+    let _session = prism_rust::daemon_client::start_session(move |notification| {
+        let notification = match notification {
+            SessionNotification::DaemonStatus(status) => {
+                serde_json::json!({ "method": "daemon.statusChanged", "params": status })
+            }
+            SessionNotification::TuningState(state) => {
+                serde_json::json!({ "method": "gpu.tuningStateChanged", "params": state })
+            }
+        };
         let _ = writeln!(notification_output.lock().unwrap(), "{notification}");
     });
     let reader = BufReader::new(stdin.lock());

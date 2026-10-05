@@ -513,6 +513,15 @@ impl FakeSession {
         let request = serde_json::from_value(request).unwrap();
         serde_json::to_value(self.send(request)).unwrap()
     }
+
+    /// The events pushed to this session so far, as protocol JSON, oldest first.
+    pub fn pushed_events(&self) -> Vec<serde_json::Value> {
+        let mut events = vec![];
+        while let Ok(event) = self.session.recv_timeout(Duration::from_millis(50)) {
+            events.push(serde_json::to_value(event).unwrap());
+        }
+        events
+    }
 }
 
 pub struct InFlightRequest {

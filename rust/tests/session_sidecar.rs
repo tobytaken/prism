@@ -138,6 +138,21 @@ fn sidecar_forwards_notifications_reconnects_and_closes_its_session_when_stdin_c
         lines.recv_timeout(Duration::from_secs(2)).unwrap()["params"]["tuningStore"]["status"],
         "healthy"
     );
+    let states: serde_json::Value = serde_json::from_str(include_str!(
+        "../../src/test/contracts/gpu-tuning-states.json"
+    ))
+    .unwrap();
+    write_frame(
+        &mut resumed,
+        &serde_json::json!({
+            "type": "event", "event": { "type": "tuningStateChanged", "payload": states[0] }
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap(),
+        serde_json::json!({ "method": "gpu.tuningStateChanged", "params": states[0] })
+    );
     writeln!(sidecar.0.stdin.as_mut().unwrap(), "{}", serde_json::json!({"id": 9, "method": "gpu.setPowerLimit", "params": {"gpuId": "GPU-123", "limitWatts": 450}})).unwrap();
     writeln!(sidecar.0.stdin.as_mut().unwrap(), "{}", serde_json::json!({"id": 10, "method": "gpu.setPowerLimit", "params": {"gpuId": "GPU-123", "limitWatts": 451}})).unwrap();
     let one = read_frame::<SessionRequest>(&mut resumed).unwrap().unwrap();

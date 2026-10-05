@@ -1,0 +1,22 @@
+[
+  {
+    "gpuId": "GPU-123",
+    "revision": "4f1c2b9d0e8a7c35",
+    "reported": {
+      "powerLimitWatts": 300,
+      "graphicsOffsetMHz": -100,
+      "memoryOffsetMHz": null
+    },
+    "currentProfile": { "id": "quiet-flatpak", "name": "Quiet (2)" }
+  },
+  {
+    "gpuId": "GPU-456",
+    "revision": "a0b1c2d3e4f50617",
+    "reported": {
+      "powerLimitWatts": 450,
+      "graphicsOffsetMHz": 0,
+      "memoryOffsetMHz": 0
+    },
+    "currentProfile": null
+  }
+]

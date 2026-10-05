@@ -1,6 +1,11 @@
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
 import { TuningStoreProblemAlert } from "./tuning-store-problem-alert";
-import { GpuProfilePanel, GpuProfileAvailability } from "./gpu-profile-panel";
+import {
+  GpuProfileAvailability,
+  GpuProfileFeedback,
+  GpuProfileSelector,
+  useGpuProfileSelector,
+} from "./gpu-profile-selector";
 import { profileApplication } from "@/features/gpus/lib/tuning-profiles";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import {
@@ -184,7 +189,7 @@ export function GpuPerformanceScreen({
             profiles={profiles}
             history={historyByGpuId[gpu.id]}
             controlsDisabled={daemonDisconnected}
-            profileLoadingDisabled={
+            profileApplicationDisabled={
               daemonStatus?.reachable !== true || pendingAction != null
             }
             readError={errorMessage}
@@ -202,7 +207,7 @@ function GpuTelemetrySurface({
   editStore,
   history,
   controlsDisabled,
-  profileLoadingDisabled,
+  profileApplicationDisabled,
   readError,
   pendingAction,
   onMutationAction,
@@ -212,11 +217,29 @@ function GpuTelemetrySurface({
   editStore: TuningEditStore;
   history?: GpuMetricHistory;
   controlsDisabled: boolean;
-  profileLoadingDisabled: boolean;
+  profileApplicationDisabled: boolean;
   readError: string | null;
   pendingAction: PerformanceMutationAction | null;
   onMutationAction?: TuningMutationHandler;
 }) {
+  const profileSelector = useGpuProfileSelector({
+    gpu,
+    workflow: profiles,
+    edits: editStore.devices[gpu.id]?.edits ?? {},
+    appliedDefaults: editStore.appliedDefaults(gpu.id),
+    readError,
+    pendingAction,
+    applyDisabled: profileApplicationDisabled,
+    onApply: onMutationAction
+      ? (profile, corrections) =>
+          editStore.apply(
+            profileApplication(gpu, profile, corrections),
+            gpu,
+            onMutationAction,
+            { reviewCorrections: true },
+          )
+      : undefined,
+  });
   const headlineMetrics = [
     {
       label: "Power",
@@ -266,6 +289,7 @@ function GpuTelemetrySurface({
         </div>
 
         <div className="flex shrink-0 items-center gap-4">
+          {profileSelector && <GpuProfileSelector selector={profileSelector} />}
           <div className="hidden items-center divide-x divide-border/70 border-x border-border/70 md:flex">
             {headlineMetrics.map((metric) => (
               <div key={metric.label} className="px-4 py-1.5">
@@ -284,28 +308,9 @@ function GpuTelemetrySurface({
 
       <section className="relative overflow-hidden px-5 py-7">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/70 to-transparent" />
-        {profiles && (
-          <div className="mb-7">
-            <GpuProfilePanel
-              gpu={gpu}
-              workflow={profiles}
-              edits={editStore.devices[gpu.id]?.edits ?? {}}
-              appliedDefaults={editStore.appliedDefaults(gpu.id)}
-              readError={readError}
-              pendingAction={pendingAction}
-              loadDisabled={profileLoadingDisabled}
-              onLoad={
-                onMutationAction
-                  ? (profile, corrections) =>
-                      editStore.apply(
-                        profileApplication(gpu, profile, corrections),
-                        gpu,
-                        onMutationAction,
-                        { reviewCorrections: true },
-                      )
-                  : undefined
-              }
-            />
+        {profileSelector && (
+          <div className="mb-7 empty:hidden">
+            <GpuProfileFeedback selector={profileSelector} />
           </div>
         )}
         <div className="flex flex-col gap-8 xl:flex-row">

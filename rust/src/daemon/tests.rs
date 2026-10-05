@@ -1369,7 +1369,7 @@ fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_wo
 
 #[test]
 fn a_tuning_store_from_a_newer_schema_version_is_treated_as_unreadable_and_preserved() {
-    let newer: &[u8] = b"{\"schemaVersion\": 3, \"users\": []}";
+    let newer: &[u8] = b"{\"schemaVersion\": 4, \"users\": []}";
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[(TUNING_STORE, newer)],

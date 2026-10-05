@@ -11,8 +11,9 @@ use crate::gpu::{
     GpuPerformanceResponse,
 };
 use crate::protocol::{
-    GpuTuningProfile, ProfileImportResponse, ProfileRangeCorrection, ProfileSetting,
-    ProfileSettingKey, ProfileSettings, RangeBound,
+    CurrentProfile, GpuTuningProfile, GpuTuningState, ProfileImportResponse,
+    ProfileRangeCorrection, ProfileSetting, ProfileSettingKey, ProfileSettings, RangeBound,
+    ReportedTuningValues,
 };
 
 impl From<TuningStoreWriteError> for GpuCommandError {
@@ -168,7 +169,115 @@ fn name_taken(profiles: &[GpuTuningProfile], gpu_id: &str, name: &str) -> bool {
         .any(|profile| profile.gpu_id == gpu_id && profile.name.to_lowercase() == name)
 }
 
+/// FNV-1a: a stable digest, so a revision means the same state across daemon restarts.
+fn digest(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
 impl TuningDocument {
+    /// The GPU's tuning state, read from the GPU's fresh readings. Its revision covers the
+    /// reported values that saving captures, the recorded last applied tuning values and the
+    /// current profile, so it changes whenever any of them does.
+    pub fn tuning_state(&self, gpu: &GpuPerformanceDevice) -> GpuTuningState {
+        let uuid = gpu.stable_id.clone().unwrap_or_default();
+        let reported: Vec<_> = ProfileSettingKey::ALL
+            .into_iter()
+            .map(|key| {
+                let reading = reading(gpu, key);
+                (reading.support, reading.current, reading.default)
+            })
+            .collect();
+        let current_id = self.current_profiles.get(&uuid);
+        let state = serde_json::json!({
+            "reported": reported,
+            "lastApplied": self.last_applied.get(&uuid),
+            "currentProfile": current_id,
+        });
+        GpuTuningState {
+            revision: format!("{:016x}", digest(state.to_string().as_bytes())),
+            reported: ReportedTuningValues {
+                power_limit_watts: reading(gpu, ProfileSettingKey::PowerLimitWatts).current,
+                graphics_offset_mhz: reading(gpu, ProfileSettingKey::GraphicsOffsetMhz).current,
+                memory_offset_mhz: reading(gpu, ProfileSettingKey::MemoryOffsetMhz).current,
+            },
+            current_profile: current_id
+                .and_then(|id| self.any_profile(id))
+                .map(|profile| CurrentProfile {
+                    id: profile.id.clone(),
+                    name: profile.name.clone(),
+                }),
+            gpu_id: uuid,
+        }
+    }
+
+    /// Rejects a save unless the caller saw the GPU's tuning state as it is now.
+    pub fn check_revision(
+        &self,
+        gpu: &GpuPerformanceDevice,
+        seen: &str,
+    ) -> Result<(), GpuCommandError> {
+        if self.tuning_state(gpu).revision == seen {
+            return Ok(());
+        }
+        Err(GpuCommandError::new(
+            GpuCommandErrorCode::InvalidArgument,
+            "The GPU's values changed since you last looked. Review them and save again.",
+        ))
+    }
+
+    /// Overwrites the GPU's current profile with these settings, provided the caller owns it.
+    pub fn save_to_current(
+        &mut self,
+        peer: &SessionPeer,
+        uuid: &str,
+        settings: ProfileSettings,
+    ) -> Result<GpuTuningProfile, GpuCommandError> {
+        let no_current = || {
+            GpuCommandError::new(
+                GpuCommandErrorCode::InvalidArgument,
+                "This GPU has no current profile. Save as a new profile instead.",
+            )
+        };
+        let id = self
+            .current_profiles
+            .get(uuid)
+            .ok_or_else(no_current)?
+            .clone();
+        let current = self
+            .any_profile(&id)
+            .filter(|profile| profile.gpu_id == uuid)
+            .ok_or_else(no_current)?
+            .name
+            .clone();
+        let own = self
+            .users
+            .iter_mut()
+            .filter(|user| user.uid == peer.uid && user.username == peer.username)
+            .flat_map(|user| user.profiles.iter_mut())
+            .find(|profile| profile.id == id);
+        let Some(profile) = own else {
+            return Err(GpuCommandError::new(
+                GpuCommandErrorCode::NoPermission,
+                format!(
+                    "The current profile \"{current}\" belongs to another user, so you can't save \
+                     over it. Save as a new profile instead."
+                ),
+            ));
+        };
+        profile.settings = settings;
+        Ok(profile.clone())
+    }
+
+    /// Any user's profile with this id; ids are unique across users.
+    fn any_profile(&self, id: &str) -> Option<&GpuTuningProfile> {
+        self.users
+            .iter()
+            .flat_map(|user| &user.profiles)
+            .find(|profile| profile.id == id)
+    }
+
     pub fn profiles_of(&self, peer: &SessionPeer) -> Vec<GpuTuningProfile> {
         self.user(peer.uid, &peer.username)
             .map(|user| user.profiles.clone())
@@ -239,12 +348,7 @@ impl TuningDocument {
             skipped: vec![],
         };
         for mut profile in profiles {
-            let exists = self
-                .users
-                .iter()
-                .flat_map(|user| &user.profiles)
-                .any(|existing| existing.id == profile.id);
-            if exists {
+            if self.any_profile(&profile.id).is_some() {
                 response.skipped.push(profile.id);
                 continue;
             }

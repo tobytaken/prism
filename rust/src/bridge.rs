@@ -17,7 +17,7 @@ use crate::gpu::{
 };
 use crate::protocol::{
     CorrectAndApplyProfileRequest, ImportProfilesRequest, LiveClockOffsetsRequest,
-    ProfileIdRequest, SaveProfileAsNewRequest,
+    ProfileIdRequest, SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -58,11 +58,23 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
         "gpu.listProfiles" => daemon_client::list_gpu_profiles()
             .map_err(BridgeError::from)
             .and_then(serialize_result),
+        "gpu.getTuningStates" => daemon_client::get_gpu_tuning_states()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
         "gpu.saveProfileAsNew" => parse_and_serialize_result::<SaveProfileAsNewRequest, _, _>(
             request.params,
             "gpu.saveProfileAsNew",
             |request| daemon_client::save_gpu_profile_as_new(request).map_err(BridgeError::from),
         ),
+        "gpu.saveProfileToCurrent" => {
+            parse_and_serialize_result::<SaveToCurrentProfileRequest, _, _>(
+                request.params,
+                "gpu.saveProfileToCurrent",
+                |request| {
+                    daemon_client::save_gpu_profile_to_current(request).map_err(BridgeError::from)
+                },
+            )
+        }
         "gpu.applyProfileById" => parse_and_serialize_result::<ProfileIdRequest, _, _>(
             request.params,
             "gpu.applyProfileById",

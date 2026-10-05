@@ -8,6 +8,8 @@ mod tuning;
 mod tuning_store;
 
 #[cfg(test)]
+mod current_profile_tests;
+#[cfg(test)]
 mod harness;
 #[cfg(test)]
 mod profile_tests;

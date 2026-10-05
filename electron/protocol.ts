@@ -21,10 +21,7 @@ export function registerAppProtocol(rendererName: string) {
       return new Response("Not Found", { status: 404 });
     }
 
-    const rendererRoot = path.resolve(
-      __dirname,
-      `../renderer/${rendererName}`,
-    );
+    const rendererRoot = path.resolve(__dirname, `../renderer/${rendererName}`);
     const decodedPath = decodePath(requestUrl.pathname);
     const relativePath =
       decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");

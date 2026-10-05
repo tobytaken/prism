@@ -2,7 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
 import { PROFILE_FILE_NAME, ProfileFileImport } from "./profile-file-import";
-import { daemonStatusNotification } from "./daemon-events";
+import {
+  daemonStatusNotification,
+  tuningStateNotification,
+} from "./daemon-events";
 import {
   isProfileSetting,
   isProfileSettingKey,
@@ -10,6 +13,7 @@ import {
 import type {
   CorrectGpuProfileRequest,
   GpuDaemonStatus,
+  GpuTuningState,
 } from "@/features/gpus/types";
 
 import {
@@ -70,7 +74,10 @@ class RustBackendClient {
   private socketPath =
     process.env.PRISM_SOCKET_PATH ?? "/run/prism/prismd.sock";
 
-  constructor(private readonly onStatus: (status: GpuDaemonStatus) => void) {}
+  constructor(
+    private readonly onStatus: (status: GpuDaemonStatus) => void,
+    private readonly onTuningState: (state: GpuTuningState) => void,
+  ) {}
 
   start() {
     this.ensureStarted();
@@ -222,6 +229,11 @@ class RustBackendClient {
     if (notification) {
       this.socketPath = notification.socketPath;
       this.onStatus(notification);
+      return;
+    }
+    const tuningState = tuningStateNotification(value);
+    if (tuningState) {
+      this.onTuningState(tuningState);
       return;
     }
     if (
@@ -436,12 +448,21 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       );
     }
   };
-  const backend = new RustBackendClient((status) => {
-    latestStatus = status;
-    if (status.reachable && status.managedByDaemon) void importProfileFile();
-    if (subscribed)
-      getMainWindow()?.webContents.send("prism:daemon:statusChanged", status);
-  });
+  const backend = new RustBackendClient(
+    (status) => {
+      latestStatus = status;
+      if (status.reachable && status.managedByDaemon) void importProfileFile();
+      if (subscribed)
+        getMainWindow()?.webContents.send("prism:daemon:statusChanged", status);
+    },
+    (state) => {
+      if (subscribed)
+        getMainWindow()?.webContents.send(
+          "prism:gpu:tuningStateChanged",
+          state,
+        );
+    },
+  );
 
   ipcMain.handle(
     "prism:daemon:subscribe",
@@ -523,20 +544,47 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     },
   );
 
+  ipcMain.handle(
+    "prism:gpu:getTuningStates",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid getTuningStates payload");
+      return backend.invoke("gpu.getTuningStates");
+    },
+  );
+
   ipcMain.handle("prism:gpu:saveProfile", async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow);
     if (
       !isObject(payload) ||
-      !hasOnlyKeys(payload, ["gpuId", "name"]) ||
+      !hasOnlyKeys(payload, ["gpuId", "name", "revision"]) ||
       !isString(payload.gpuId) ||
       !payload.gpuId.trim() ||
       !isString(payload.name) ||
-      !payload.name.trim()
+      !payload.name.trim() ||
+      !isString(payload.revision)
     ) {
       throw new Error("Invalid saveProfile payload");
     }
     return backend.invoke("gpu.saveProfileAsNew", payload);
   });
+
+  ipcMain.handle(
+    "prism:gpu:saveProfileToCurrent",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["gpuId", "revision"]) ||
+        !isString(payload.gpuId) ||
+        !payload.gpuId.trim() ||
+        !isString(payload.revision)
+      ) {
+        throw new Error("Invalid saveProfileToCurrent payload");
+      }
+      return backend.invoke("gpu.saveProfileToCurrent", payload);
+    },
+  );
 
   ipcMain.handle("prism:gpu:getInventory", async (event) => {
     assertTrustedSender(event, getMainWindow);

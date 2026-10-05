@@ -7,11 +7,38 @@ import {
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
 import { createFakeDesktop } from "@/test/fake-desktop";
+import {
+  chooseProfile,
+  findProfileControls,
+  openProfileMenu,
+  profileEntry,
+  profileSelector,
+  saveAsNew,
+  saveAsNewAvailability,
+} from "@/test/profile-selector";
 import { renderWithQueryClient } from "@/test/query-client";
 import type { GpuTuningProfile } from "@/features/gpus/types";
 import { GpuTuningPage } from "./gpu-tuning-page";
 import { GpuPerformancePage } from "./gpu-performance-page";
 import { MemoryRouter } from "react-router-dom";
+
+function renderPerformancePage() {
+  return renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
+}
+
+const quiet: GpuTuningProfile = {
+  id: "quiet",
+  name: "Quiet",
+  gpuId: "GPU-123",
+  settings: {
+    powerLimitWatts: { kind: "value", value: 475 },
+    graphicsOffsetMHz: { kind: "value", value: 120 },
+  },
+};
 
 describe("GPU tuning profiles", () => {
   beforeEach(() => {
@@ -21,58 +48,34 @@ describe("GPU tuning profiles", () => {
     );
   });
 
-  it("saves current configured values without Apply and selects retained profiles after page reload", async () => {
+  it("saves current configured values without Apply as the current profile, which survives a page reload", async () => {
     const user = userEvent.setup();
     const fake = createFakeDesktop();
-    const first = renderWithQueryClient(
-      <MemoryRouter>
-        <GpuPerformancePage />
-      </MemoryRouter>,
-    );
-    await user.type(
-      await screen.findByRole("textbox", { name: "Profile name" }),
-      "Quiet",
-    );
-    await user.click(screen.getByRole("button", { name: "Save profile" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("combobox", { name: "Saved profile" }),
-      ).toHaveValue("profile-1"),
-    );
-    expect(
-      within(screen.getByRole("region", { name: /profiles/ })).getByText(
-        "475 W",
-      ),
-    ).toBeInTheDocument();
+    const first = renderPerformancePage();
+    await saveAsNew(user, "Quiet");
+    await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
     expect(
       screen.queryByText("Changes not saved to profile"),
     ).not.toBeInTheDocument();
-    first.unmount();
-    renderWithQueryClient(
-      <MemoryRouter>
-        <GpuPerformancePage />
-      </MemoryRouter>,
+    await openProfileMenu(user);
+    expect(profileEntry("Quiet")).toHaveTextContent(
+      "Power limit 475 W · Graphics offset 120 MHz",
     );
-    const select = await screen.findByRole("combobox", {
-      name: "Saved profile",
-    });
-    await screen.findByRole("option", { name: "Quiet" });
-    await user.selectOptions(select, "profile-1");
-    expect(select).toHaveValue("profile-1");
+    expect(profileEntry("Quiet")).toBeChecked();
+    first.unmount();
+
+    renderPerformancePage();
+    await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
     expect(fake.liveWrites()).toBe(0);
     expect(fake.saveProfile).toHaveBeenCalledExactlyOnceWith({
       gpuId: "GPU-123",
       name: "Quiet",
+      revision: expect.any(String),
     });
     expect(fake.profiles[0].settings).toEqual({
       powerLimitWatts: { kind: "value", value: 475 },
       graphicsOffsetMHz: { kind: "value", value: 120 },
     });
-    expect(
-      within(screen.getByRole("region", { name: /profiles/ })).getByText(
-        "120 MHz",
-      ),
-    ).toBeInTheDocument();
   });
 
   it("blocks unresolved profile-setting edits and saves refreshed actual values after explicit discard", async () => {
@@ -82,33 +85,28 @@ describe("GPU tuning profiles", () => {
       fake.gpu.power.currentLimitWatts = 450;
       return { success: false, error: "Power denied" };
     });
-    renderWithQueryClient(<GpuTuningPage />);
-    await user.type(
-      await screen.findByRole("textbox", { name: "Profile name" }),
-      "Actual",
-    );
-    const save = screen.getByRole("button", { name: "Save profile" });
-    expect(save).toBeEnabled();
+    renderPerformancePage();
+    await findProfileControls();
+    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
     const power = screen.getByRole("spinbutton", { name: "Power limit" });
     await user.clear(power);
     await user.type(power, "500");
-    expect(save).toBeDisabled();
-    expect(
-      screen.getByText(
-        /Apply or discard unapplied power-limit or clock-offset changes/,
-      ),
-    ).toBeInTheDocument();
+    const blocked = await saveAsNewAvailability(user);
+    expect(blocked.enabled).toBe(false);
+    expect(blocked.text).toContain(
+      "Apply or discard unapplied power-limit or clock-offset changes before saving a profile.",
+    );
     const section = power.closest("section")!;
     await user.click(within(section).getByRole("button", { name: "Apply" }));
     await screen.findByText("Power limit: Failed — Power denied");
-    expect(save).toBeDisabled();
+    expect((await saveAsNewAvailability(user)).enabled).toBe(false);
     expect(power).toHaveValue(500);
     await user.click(
       screen.getByRole("button", { name: "Discard power limit change" }),
     );
     expect(power).toHaveValue(450);
-    expect(save).toBeEnabled();
-    await user.click(save);
+    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
+    await saveAsNew(user, "Actual");
     await waitFor(() => expect(fake.profiles).toHaveLength(1));
     expect(fake.profiles[0].settings.powerLimitWatts).toEqual({
       kind: "value",
@@ -116,51 +114,38 @@ describe("GPU tuning profiles", () => {
     });
   });
 
-  it("compares applied profile settings separately from drafts and lets failed fan edits coexist with saving", async () => {
+  it("compares applied values with the current profile separately from drafts and lets failed fan edits coexist with saving", async () => {
     const user = userEvent.setup();
     const fake = createFakeDesktop({
-      profiles: [
-        {
-          id: "quiet",
-          name: "Quiet",
-          gpuId: "GPU-123",
-          settings: {
-            powerLimitWatts: { kind: "value", value: 475 },
-            graphicsOffsetMHz: { kind: "value", value: 120 },
-          },
-        },
-      ],
+      profiles: [quiet],
+      currentProfiles: { "GPU-123": "quiet" },
     });
     fake.setFanSpeed.mockResolvedValue({
       success: false,
       error: "Fan denied",
     });
-    const save = fake.saveProfile;
-    renderWithQueryClient(<GpuTuningPage />);
-    await screen.findByRole("option", { name: "Quiet" });
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Saved profile" }),
-      "quiet",
-    );
-    await user.type(
-      screen.getByRole("textbox", { name: "Profile name" }),
-      "New",
-    );
+    renderPerformancePage();
+    await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
     const fan = screen.getByRole("spinbutton", { name: "Fan 1 manual target" });
     await user.clear(fan);
     await user.type(fan, "65");
-    expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
+    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
     await user.click(screen.getByRole("button", { name: "Set Manual" }));
     await screen.findByText("Fan 1: Failed — Fan denied");
     expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
     expect(
       screen.queryByText("Changes not saved to profile"),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Save profile" }));
+    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
+    await saveAsNew(user, "New");
     await waitFor(() =>
-      expect(save).toHaveBeenCalledWith({ gpuId: "GPU-123", name: "New" }),
+      expect(fake.saveProfile).toHaveBeenCalledWith({
+        gpuId: "GPU-123",
+        name: "New",
+        revision: expect.any(String),
+      }),
     );
+    await waitFor(() => expect(profileSelector()).toHaveTextContent("New"));
     const power = screen.getByRole("spinbutton", { name: "Power limit" });
     await user.clear(power);
     await user.type(power, "500");
@@ -173,7 +158,7 @@ describe("GPU tuning profiles", () => {
     await screen.findByText("Changes not saved to profile");
     expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
     expect(fan).toHaveValue(65);
-    expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
+    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
   });
 
   it.each(["Performance", "Apply all"])(
@@ -192,19 +177,9 @@ describe("GPU tuning profiles", () => {
         },
       );
       fake.setFanSpeed.mockReturnValue(fanResult);
-      renderWithQueryClient(
-        surface === "Performance" ? (
-          <MemoryRouter>
-            <GpuPerformancePage />
-          </MemoryRouter>
-        ) : (
-          <GpuTuningPage />
-        ),
-      );
-      await user.type(
-        await screen.findByRole("textbox", { name: "Profile name" }),
-        "Quiet",
-      );
+      if (surface === "Performance") renderPerformancePage();
+      else renderWithQueryClient(<GpuTuningPage />);
+      await findProfileControls();
       const fan = screen.getByRole("spinbutton", {
         name: "Fan 1 manual target",
       });
@@ -225,14 +200,12 @@ describe("GPU tuning profiles", () => {
           ).toBeDisabled();
         }
         expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
-        expect(
-          screen.getByRole("button", { name: "Save profile" }),
-        ).toBeEnabled();
-        await user.click(screen.getByRole("button", { name: "Save profile" }));
+        await saveAsNew(user, "Quiet");
         await waitFor(() =>
           expect(save).toHaveBeenCalledWith({
             gpuId: "GPU-123",
             name: "Quiet",
+            revision: expect.any(String),
           }),
         );
         expect(fan).toHaveValue(65);
@@ -243,39 +216,34 @@ describe("GPU tuning profiles", () => {
     },
   );
 
-  it("keeps ownership separate for identical-model GPUs and retains absent GPU profiles as unavailable", async () => {
+  it("keeps the current profile with its GPU when identical-model GPUs reorder, and retains absent GPU profiles as unavailable", async () => {
     const user = userEvent.setup();
     const first = createPerformanceGpu();
     const second = createPerformanceGpu({ id: "GPU-456", stableId: "GPU-456" });
     const response = createPerformanceResponse({ gpus: [first, second] });
-    const profile: GpuTuningProfile = {
-      id: "quiet",
-      name: "Quiet",
-      gpuId: "GPU-123",
-      settings: { powerLimitWatts: { kind: "value", value: 475 } },
-    };
-    createFakeDesktop({ response, profiles: [profile] });
-    renderWithQueryClient(<GpuTuningPage />);
-    const firstPanel = await screen.findByRole("region", {
-      name: /profiles \(GPU-123\)/,
+    createFakeDesktop({
+      response,
+      profiles: [
+        {
+          ...quiet,
+          settings: { powerLimitWatts: quiet.settings.powerLimitWatts! },
+        },
+      ],
     });
-    const secondPanel = screen.getByRole("region", {
-      name: /profiles \(GPU-456\)/,
-    });
-    await within(firstPanel).findByRole("option", { name: "Quiet" });
-    expect(
-      within(secondPanel).queryByRole("option", { name: "Quiet" }),
-    ).not.toBeInTheDocument();
-    await user.selectOptions(within(firstPanel).getByRole("combobox"), "quiet");
+    renderPerformancePage();
+    const menu = await openProfileMenu(user, "GPU-456");
+    expect(within(menu).queryByRole("menuitemradio")).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await chooseProfile(user, "Quiet");
+    await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
     response.gpus = [second, first];
     await waitFor(() =>
-      expect(screen.getAllByRole("region")[0]).toHaveAccessibleName(/GPU-456/),
+      expect(
+        screen.getAllByRole("group", { name: /profiles \(/ })[0],
+      ).toHaveAccessibleName(/GPU-456/),
     );
-    expect(
-      within(
-        screen.getByRole("region", { name: /profiles \(GPU-123\)/ }),
-      ).getByRole("combobox"),
-    ).toHaveValue("quiet");
+    expect(profileSelector()).toHaveTextContent("Quiet");
+    expect(profileSelector("GPU-456")).toHaveTextContent("No current profile");
     response.gpus = [second];
     const unavailable = await screen.findByRole("region", {
       name: "Unavailable GPU profiles",
@@ -284,22 +252,13 @@ describe("GPU tuning profiles", () => {
     expect(
       within(unavailable).getByText(/Owning GPU absent.*GPU-123/),
     ).toBeInTheDocument();
-    expect(
-      within(
-        screen.getByRole("region", { name: /profiles \(GPU-456\)/ }),
-      ).queryByRole("option", { name: "Quiet" }),
-    ).not.toBeInTheDocument();
     response.gpus = [first, second];
     await waitFor(() =>
       expect(
         screen.queryByRole("region", { name: "Unavailable GPU profiles" }),
       ).not.toBeInTheDocument(),
     );
-    expect(
-      within(
-        screen.getByRole("region", { name: /profiles \(GPU-123\)/ }),
-      ).getByRole("combobox"),
-    ).toHaveValue("quiet");
+    await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
   });
 
   it.each([
@@ -308,7 +267,7 @@ describe("GPU tuning profiles", () => {
       gpu: createPerformanceGpu({
         power: { support: "unknown", reason: "Power probe failed" },
       }),
-      reason: /Power limit: support is unknown.*Power probe failed/,
+      reason: "Power limit: support is unknown. Power probe failed",
     },
     {
       label: "unknown memory support",
@@ -317,7 +276,7 @@ describe("GPU tuning profiles", () => {
           memory: { support: "unknown", reason: "Memory probe failed" },
         },
       }),
-      reason: /Memory clock offset: support is unknown.*Memory probe failed/,
+      reason: "Memory clock offset: support is unknown. Memory probe failed",
     },
     {
       label: "unavailable configured power",
@@ -328,7 +287,7 @@ describe("GPU tuning profiles", () => {
         },
       }),
       reason:
-        /Power limit: current configured value is unavailable.*Power read failed/,
+        "Power limit: current configured value is unavailable. Power read failed",
     },
     {
       label: "unavailable graphics offset",
@@ -341,7 +300,7 @@ describe("GPU tuning profiles", () => {
         },
       }),
       reason:
-        /Graphics clock offset: current configured value is unavailable.*Graphics read failed/,
+        "Graphics clock offset: current configured value is unavailable. Graphics read failed",
     },
     {
       label: "unavailable supported memory offset",
@@ -355,7 +314,7 @@ describe("GPU tuning profiles", () => {
         },
       }),
       reason:
-        /Memory clock offset: current configured value is unavailable.*Memory read failed/,
+        "Memory clock offset: current configured value is unavailable. Memory read failed",
     },
     {
       label: "no supported profile settings",
@@ -363,96 +322,69 @@ describe("GPU tuning profiles", () => {
         power: { support: "unsupported" },
         clocks: { graphics: { support: "unsupported" } },
       }),
-      reason: /no supported profile settings/,
+      reason: "no supported profile settings",
     },
   ])("explains why saving is blocked for $label", async ({ gpu, reason }) => {
     const user = userEvent.setup();
     const { saveProfile: save } = createFakeDesktop({
       response: createPerformanceResponse({ gpus: [gpu] }),
     });
-    renderWithQueryClient(<GpuTuningPage />);
-    const panel = await screen.findByRole("region", { name: /profiles/ });
-    await user.type(
-      within(panel).getByRole("textbox", { name: "Profile name" }),
-      "Quiet",
-    );
-    expect(
-      within(panel).getByRole("button", { name: "Save profile" }),
-    ).toBeDisabled();
-    expect(within(panel).getByText(reason)).toBeInTheDocument();
+    renderPerformancePage();
+    const availability = await saveAsNewAvailability(user);
+    expect(availability.enabled).toBe(false);
+    expect(availability.text).toContain(reason);
     expect(save).not.toHaveBeenCalled();
   });
 
-  it("blocks saving and marks comparison unavailable when polling loses a selected profile's reading", async () => {
+  it("blocks saving and marks comparison unavailable when polling loses a reading of the current profile", async () => {
     const user = userEvent.setup();
     const response = createPerformanceResponse();
     const profile: GpuTuningProfile = {
-      id: "quiet",
-      name: "Quiet",
-      gpuId: "GPU-123",
+      ...quiet,
       settings: { powerLimitWatts: { kind: "value", value: 475 } },
     };
-    createFakeDesktop({ response, profiles: [profile] });
-    renderWithQueryClient(<GpuTuningPage />);
-    await screen.findByRole("option", { name: "Quiet" });
-    await user.selectOptions(screen.getByRole("combobox"), "quiet");
-    await user.type(
-      screen.getByRole("textbox", { name: "Profile name" }),
-      "New",
-    );
+    createFakeDesktop({
+      response,
+      profiles: [profile],
+      currentProfiles: { "GPU-123": "quiet" },
+    });
+    renderPerformancePage();
+    await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
     response.gpus[0].power.currentLimitWatts = null;
     response.gpus[0].power.currentValueError = "Power read lost";
-    await screen.findByText(
-      "Profile comparison is unavailable until current settings can be read.",
+    await waitFor(async () =>
+      expect((await saveAsNewAvailability(user)).text).toContain(
+        "Profile comparison is unavailable until current settings can be read.",
+      ),
     );
-    expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+    expect((await saveAsNewAvailability(user)).enabled).toBe(false);
     expect(
       screen.queryByText("Changes not saved to profile"),
     ).not.toBeInTheDocument();
     response.gpus[0].power.currentLimitWatts = 450;
     response.gpus[0].power.currentValueError = null;
     await screen.findByText("Changes not saved to profile");
-    expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
+    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
   });
 
   it.each([
-    [
-      "Performance",
-      () => (
-        <MemoryRouter>
-          <GpuPerformancePage />
-        </MemoryRouter>
-      ),
-    ],
-    ["Tuning", () => <GpuTuningPage />],
+    ["Performance", renderPerformancePage],
+    ["Tuning", () => renderWithQueryClient(<GpuTuningPage />)],
   ])(
     "shows profile features as unavailable, with the reason, on the %s page for a GPU without a stable identity",
-    async (_page, page) => {
+    async (_page, render) => {
       const fake = createFakeDesktop({
         response: createPerformanceResponse({
           gpus: [createPerformanceGpu({ id: "nvidia-0", stableId: null })],
         }),
-        profiles: [
-          {
-            id: "quiet",
-            name: "Quiet",
-            gpuId: "GPU-123",
-            settings: { powerLimitWatts: { kind: "value", value: 450 } },
-          },
-        ],
+        profiles: [{ ...quiet, id: "other" }],
       });
-      renderWithQueryClient(page());
-      const panel = await screen.findByRole("region", {
-        name: /profiles \(nvidia-0\)/,
-      });
-      expect(
-        within(panel).getByText("GPU tuning profiles unavailable"),
-      ).toBeInTheDocument();
-      expect(within(panel).getByRole("status")).toHaveTextContent(
-        "This GPU reports no stable identity (UUID), so a profile can't be tied to it.",
+      render();
+      const controls = await findProfileControls("nvidia-0");
+      expect(within(controls).getByRole("status")).toHaveTextContent(
+        "Profiles unavailable: this GPU reports no stable identity (UUID), so a profile can't be tied to it.",
       );
-      expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
-      expect(within(panel).queryByRole("button")).not.toBeInTheDocument();
+      expect(within(controls).queryByRole("button")).not.toBeInTheDocument();
       expect(fake.saveProfile).not.toHaveBeenCalled();
       expect(fake.applyProfileById).not.toHaveBeenCalled();
     },

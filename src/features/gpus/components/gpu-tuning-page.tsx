@@ -8,7 +8,10 @@ import {
 } from "@/features/gpus/lib/tuning-mutation";
 import { useGpuDaemonStatus } from "@/features/gpus/hooks/use-gpu-daemon-status";
 import { useGpuPerformance } from "@/features/gpus/hooks/use-gpu-performance";
-import { useGpuProfiles } from "@/features/gpus/hooks/use-gpu-profiles";
+import {
+  TUNING_STATES_QUERY_KEY,
+  useGpuProfiles,
+} from "@/features/gpus/hooks/use-gpu-profiles";
 
 import {
   GpuTuningScreen,
@@ -26,8 +29,12 @@ export function GpuTuningPage() {
     PerformanceMutationAction
   >({
     mutationFn: runTuningMutation,
+    // A write can change the GPU's current profile and the revision a save must carry.
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["gpu-performance"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["gpu-performance"] }),
+        queryClient.invalidateQueries({ queryKey: TUNING_STATES_QUERY_KEY }),
+      ]);
     },
   });
   const reapplyMutation = useMutation({

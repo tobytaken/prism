@@ -6,6 +6,14 @@ import {
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
 import { createFakeDesktop as createDesktop } from "@/test/fake-desktop";
+import {
+  chooseProfile,
+  openProfileMenu,
+  profileAvailability,
+  profileEntry,
+  profileSelector,
+  saveAsNewAvailability,
+} from "@/test/profile-selector";
 import { renderWithQueryClient } from "@/test/query-client";
 import { MemoryRouter } from "react-router-dom";
 import { GpuPerformancePage } from "./gpu-performance-page";
@@ -51,14 +59,8 @@ function renderPerformancePage() {
   );
 }
 
-function profilePanel() {
-  return screen.getByRole("region", { name: /profiles \(GPU-123\)/ });
-}
-
 async function openReview(user: ReturnType<typeof userEvent.setup>) {
-  await screen.findByRole("option", { name: "Quiet" });
-  await user.selectOptions(screen.getByRole("combobox"), "quiet");
-  await user.click(screen.getByRole("button", { name: "Load profile" }));
+  await chooseProfile(user, "Quiet");
   return screen.findByRole("region", { name: "Review profile corrections" });
 }
 
@@ -93,14 +95,15 @@ it("collects every out-of-range setting into one review, and Cancel changes neit
   ).toEqual(["Adjust profile and apply", "Cancel"]);
   expect(screen.queryByText(/Not attempted/)).not.toBeInTheDocument();
   expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Load profile" })).toBeDisabled();
+  expect((await profileAvailability(user, "Quiet")).enabled).toBe(false);
 
   await user.click(within(review).getByRole("button", { name: "Cancel" }));
   expect(
     screen.queryByRole("region", { name: "Review profile corrections" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Load profile" })).toBeEnabled();
+  expect((await profileAvailability(user, "Quiet")).enabled).toBe(true);
+  expect(profileSelector()).toHaveTextContent("No current profile");
   expect(fake.correctAndApplyProfile).not.toHaveBeenCalled();
   expect(fake.applyProfileById).toHaveBeenCalledExactlyOnceWith({
     profileId: "quiet",
@@ -161,12 +164,18 @@ it.each([
     expect(
       screen.queryByRole("region", { name: "Review profile corrections" }),
     ).not.toBeInTheDocument();
-    expect(await within(profilePanel()).findByText("280 W")).toBeVisible();
+    await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
     await waitFor(() =>
       expect(
         screen.queryByText("Changes not saved to profile"),
       ).not.toBeInTheDocument(),
     );
+    await openProfileMenu(user);
+    expect(profileEntry("Quiet")).toHaveTextContent(
+      "Power limit 280 W · Graphics offset -200 MHz · Memory offset 500 MHz",
+    );
+    expect(profileEntry("Quiet")).toBeChecked();
+    await user.keyboard("{Escape}");
     expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
     expect(fake.liveWrites()).toBe(0);
   },
@@ -220,12 +229,10 @@ it("keeps the corrected profile after partial application failure and reload, wi
   expect(fake.gpu.power.currentLimitWatts).toBe(280);
   expect(fake.gpu.clocks.graphics.currentOffsetMHz).toBe(120);
   expect(fake.gpu.clocks.memory.currentOffsetMHz).toBe(0);
-  await waitFor(() =>
-    expect(screen.getByText("Changes not saved to profile")).toBeVisible(),
-  );
+  // Applied only in part, the corrected profile doesn't become current.
+  expect(profileSelector()).toHaveTextContent("No current profile");
   expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
-  await user.type(screen.getByRole("textbox", { name: "Profile name" }), "New");
-  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  expect((await saveAsNewAvailability(user)).enabled).toBe(false);
   expect(
     screen.getByRole("button", { name: "Retry graphics clock offset change" }),
   ).toBeEnabled();
@@ -246,10 +253,11 @@ it("keeps the corrected profile after partial application failure and reload, wi
 
   unmount();
   renderPerformancePage();
-  await screen.findByRole("option", { name: "Quiet" });
-  await user.selectOptions(screen.getByRole("combobox"), "quiet");
-  expect(within(profilePanel()).getByText("280 W")).toBeVisible();
-  expect(within(profilePanel()).getByText("-200 MHz")).toBeVisible();
+  const menu = await openProfileMenu(user);
+  await within(menu).findByRole("menuitemradio", { name: /^Quiet\b/ });
+  expect(profileEntry("Quiet")).toHaveTextContent(
+    "Power limit 280 W · Graphics offset -200 MHz",
+  );
   expect(fake.correctAndApplyProfile).toHaveBeenCalledTimes(1);
 });
 

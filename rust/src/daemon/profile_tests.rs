@@ -2,7 +2,9 @@
 
 use serde_json::{json, Value};
 
-use super::harness::{tunable_gpu, tunable_gpu_with_id, FakeGpuBackend, Harness, Setter};
+use super::harness::{
+    tunable_gpu, tunable_gpu_with_id, FakeGpuBackend, FakeSession, Harness, Setter,
+};
 use super::tuning_store::TUNING_STORE_FILE_NAME;
 use crate::gpu::{ControlSupport, TuningStoreProblem};
 use crate::protocol::{DaemonRequest, DaemonResponse};
@@ -12,8 +14,17 @@ fn list(response: Value) -> Vec<Value> {
     response["payload"].as_array().unwrap().clone()
 }
 
-fn save_as_new(gpu_id: &str, name: &str) -> Value {
-    json!({ "type": "save_profile_as_new", "payload": { "gpuId": gpu_id, "name": name } })
+/// Save as new, carrying the GPU's revision as the session currently sees it.
+fn save_as_new(session: &FakeSession, gpu_id: &str, name: &str) -> Value {
+    let states = session.send_json(json!({ "type": "get_tuning_states" }));
+    let revision = states["payload"]
+        .as_array()
+        .and_then(|states| states.iter().find(|state| state["gpuId"] == gpu_id))
+        .map_or(json!(""), |state| state["revision"].clone());
+    json!({
+        "type": "save_profile_as_new",
+        "payload": { "gpuId": gpu_id, "name": name, "revision": revision }
+    })
 }
 
 fn apply_by_id(profile_id: &str) -> Value {
@@ -40,7 +51,7 @@ const LIST: fn() -> Value = || json!({ "type": "list_profiles" });
 fn users_see_only_their_own_profiles_and_a_reused_uid_with_another_username_inherits_none() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    let quiet = saved(alice.send_json(save_as_new("GPU-123", "Quiet")));
+    let quiet = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
 
     assert_eq!(list(alice.send_json(LIST())), vec![quiet.clone()]);
     let bob = daemon.user(1001, "bob");
@@ -56,7 +67,7 @@ fn users_see_only_their_own_profiles_and_a_reused_uid_with_another_username_inhe
     assert!(daemon.gpus.writes().is_empty());
 
     // The new owner of the uid saves under the same name without touching alice's profile.
-    saved(carol.send_json(save_as_new("GPU-123", "Quiet")));
+    saved(carol.send_json(save_as_new(&carol, "GPU-123", "Quiet")));
     assert_eq!(list(alice.send_json(LIST())), vec![quiet]);
 }
 
@@ -71,7 +82,7 @@ fn save_as_new_captures_applied_known_values_and_keeps_explicit_default_requests
         "payload": { "gpuId": "GPU-123", "graphicsOffsetMHz": "default", "memoryOffsetMHz": 40 }
     }));
 
-    let profile = saved(alice.send_json(save_as_new("GPU-123", "  Defaults  ")));
+    let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "  Defaults  ")));
     assert_eq!(profile["name"], "Defaults");
     assert_eq!(profile["gpuId"], "GPU-123");
     assert_eq!(
@@ -87,7 +98,7 @@ fn save_as_new_captures_applied_known_values_and_keeps_explicit_default_requests
     alice.send_json(json!({
         "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 575 }
     }));
-    let fixed = saved(alice.send_json(save_as_new("GPU-123", "Fixed")));
+    let fixed = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Fixed")));
     assert_eq!(
         fixed["settings"]["powerLimitWatts"],
         json!({ "kind": "value", "value": 575 })
@@ -98,7 +109,7 @@ fn save_as_new_captures_applied_known_values_and_keeps_explicit_default_requests
         "type": "apply_profile",
         "payload": { "gpuId": "GPU-123", "settings": { "powerLimitWatts": { "kind": "default" } } }
     }));
-    let again = saved(alice.send_json(save_as_new("GPU-123", "Default again")));
+    let again = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Default again")));
     assert_eq!(
         again["settings"]["powerLimitWatts"],
         json!({ "kind": "default" })
@@ -108,7 +119,7 @@ fn save_as_new_captures_applied_known_values_and_keeps_explicit_default_requests
     daemon
         .gpus
         .update("GPU-123", |gpu| gpu.power.current_limit_watts = Some(500));
-    let outside = saved(alice.send_json(save_as_new("GPU-123", "Outside")));
+    let outside = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Outside")));
     assert_eq!(
         outside["settings"]["powerLimitWatts"],
         json!({ "kind": "value", "value": 500 })
@@ -127,7 +138,7 @@ fn a_failed_manual_write_does_not_replace_the_recorded_request() {
         "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 575 }
     }));
 
-    let profile = saved(alice.send_json(save_as_new("GPU-123", "Quiet")));
+    let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
     assert_eq!(
         profile["settings"]["powerLimitWatts"],
         json!({ "kind": "default" })
@@ -162,7 +173,7 @@ fn save_as_new_blocks_on_unknown_support_or_unavailable_values_and_saves_nothing
     ] {
         let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
         let alice = daemon.user(1000, "alice");
-        let response = alice.send_json(save_as_new("GPU-123", "Quiet"));
+        let response = alice.send_json(save_as_new(&alice, "GPU-123", "Quiet"));
         assert_eq!(error_message(&response), reason);
         assert_eq!(list(alice.send_json(LIST())), Vec::<Value>::new());
     }
@@ -174,11 +185,8 @@ fn unsupported_settings_are_omitted_from_a_saved_profile() {
     gpu.clocks.memory.support = ControlSupport::Unsupported;
     gpu.clocks.memory.current_offset_mhz = None;
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
-    let profile = saved(
-        daemon
-            .user(1000, "alice")
-            .send_json(save_as_new("GPU-123", "Quiet")),
-    );
+    let alice = daemon.user(1000, "alice");
+    let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
     assert_eq!(
         profile["settings"],
         json!({
@@ -195,18 +203,18 @@ fn names_are_trimmed_and_unique_per_gpu_regardless_of_letter_case() {
         tunable_gpu_with_id("GPU-456"),
     ]));
     let alice = daemon.user(1000, "alice");
-    saved(alice.send_json(save_as_new("GPU-123", "Quiet")));
+    saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
 
-    let clash = alice.send_json(save_as_new("GPU-123", " QUIET "));
+    let clash = alice.send_json(save_as_new(&alice, "GPU-123", " QUIET "));
     assert_eq!(
         error_message(&clash),
         "A profile named \"QUIET\" already exists for this GPU. Choose another name."
     );
     assert_eq!(
-        error_message(&alice.send_json(save_as_new("GPU-123", "   "))),
+        error_message(&alice.send_json(save_as_new(&alice, "GPU-123", "   "))),
         "Enter a name for the profile."
     );
-    let other_gpu = saved(alice.send_json(save_as_new("GPU-456", "Quiet")));
+    let other_gpu = saved(alice.send_json(save_as_new(&alice, "GPU-456", "Quiet")));
     assert_eq!(other_gpu["gpuId"], "GPU-456");
     let names: Vec<_> = list(alice.send_json(LIST()))
         .into_iter()
@@ -360,7 +368,7 @@ fn profiles_and_recorded_default_requests_survive_a_daemon_restart_and_a_reboot(
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
     alice.send_json(json!({ "type": "reset_power_limit", "payload": { "gpuId": "GPU-123" } }));
-    let quiet = saved(alice.send_json(save_as_new("GPU-123", "Quiet")));
+    let quiet = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
     drop(alice);
 
     daemon.restart();
@@ -371,7 +379,7 @@ fn profiles_and_recorded_default_requests_survive_a_daemon_restart_and_a_reboot(
     daemon.reboot();
     let alice = daemon.user(1000, "alice");
     assert_eq!(list(alice.send_json(LIST())), vec![quiet]);
-    let after_reboot = saved(alice.send_json(save_as_new("GPU-123", "After reboot")));
+    let after_reboot = saved(alice.send_json(save_as_new(&alice, "GPU-123", "After reboot")));
     assert_eq!(
         after_reboot["settings"]["powerLimitWatts"],
         json!({ "kind": "default" })
@@ -386,7 +394,7 @@ fn profiles_and_recorded_default_requests_survive_a_daemon_restart_and_a_reboot(
 fn importing_keeps_ids_skips_existing_ones_and_suffixes_a_same_gpu_name_clash() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    let existing = saved(alice.send_json(save_as_new("GPU-123", "Quiet")));
+    let existing = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
     let file = json!([
         { "id": "flatpak-quiet", "name": "quiet", "gpuId": "GPU-123",
           "settings": { "powerLimitWatts": { "kind": "value", "value": 400 } } },
@@ -461,7 +469,7 @@ fn profile_requests_for_a_gpu_without_a_stable_identity_are_rejected() {
     let alice = daemon.user(1000, "alice");
 
     for gpu_id in ["nvidia-0", ""] {
-        let response = alice.send_json(save_as_new(gpu_id, "Quiet"));
+        let response = alice.send_json(save_as_new(&alice, gpu_id, "Quiet"));
         assert_eq!(
             error_message(&response),
             "Profiles are unavailable because this GPU's stable identity (UUID) could not be \
@@ -490,7 +498,7 @@ fn an_unhealthy_store_refuses_profile_requests_and_is_preserved() {
     let alice = daemon.user(1000, "alice");
     for request in [
         LIST(),
-        save_as_new("GPU-123", "Quiet"),
+        save_as_new(&alice, "GPU-123", "Quiet"),
         apply_by_id("quiet"),
     ] {
         let response = alice.send_json(request);

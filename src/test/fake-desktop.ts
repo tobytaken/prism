@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { vi, type MockInstance } from "vitest";
 
 import {
   captureProfileSettings,
@@ -11,6 +11,7 @@ import type {
   GpuPerformanceResponse,
   GpuProfileSettings,
   GpuTuningProfile,
+  GpuTuningState,
   OffsetInstruction,
   ProfileApplicationResponse,
   ProfileRangeCorrection,
@@ -29,6 +30,8 @@ const SETTINGS: Record<ProfileSettingKey, Setting> = {
 };
 
 const REFRESH = "Refresh the GPU readings and try again.";
+const STALE =
+  "The GPU's values changed since you last looked. Review them and save again.";
 
 type Control = {
   label: string;
@@ -71,22 +74,70 @@ const succeeded: TuningOutcome = { status: "succeeded", error: null };
 
 /**
  * A stateful stand-in for the desktop API backed by the daemon: GPU readings that writes change,
- * the caller's profiles, and each GPU's last applied tuning values. Profile application follows
- * the daemon's validation, range corrections and per-setting outcomes. Every method is a spy, so
- * tests can assert calls or override one response.
+ * the caller's profiles, other users' profiles, each GPU's current profile and last applied
+ * tuning values, and the revision that guards saves. Profile application follows the daemon's
+ * validation, range corrections and per-setting outcomes. Every method is a spy, so tests can
+ * assert calls or override one response.
  */
 export function createFakeDesktop({
   response = createPerformanceResponse(),
   profiles = [],
+  otherUsersProfiles = [],
+  currentProfiles = {},
 }: {
   response?: GpuPerformanceResponse;
   profiles?: GpuTuningProfile[];
+  /** Profiles the caller can't list, which can still be a GPU's current profile. */
+  otherUsersProfiles?: GpuTuningProfile[];
+  /** Each GPU's current profile id, by GPU UUID. */
+  currentProfiles?: Record<string, string>;
 } = {}) {
   /** Setters that fail with this message on every GPU until removed. */
   const failures: Partial<Record<Setting, string>> = {};
   /** Last applied tuning values per GPU UUID, as the daemon records them. */
   const lastApplied: Record<string, GpuProfileSettings> = {};
+  const tuningStateListeners = new Set<(state: GpuTuningState) => void>();
   let nextId = profiles.length + 1;
+
+  function tuningState(gpu: GpuPerformanceDevice): GpuTuningState {
+    const gpuId = gpu.stableId!;
+    const reported = {
+      powerLimitWatts: gpu.power.currentLimitWatts,
+      graphicsOffsetMHz: gpu.clocks.graphics.currentOffsetMHz,
+      memoryOffsetMHz: gpu.clocks.memory.currentOffsetMHz,
+    };
+    const controls = PROFILE_SETTING_KEYS.map((key) => {
+      const { support, default: resolved } = control(gpu, key);
+      return [support, reported[key], resolved];
+    });
+    const currentId = currentProfiles[gpuId];
+    const current = [...profiles, ...otherUsersProfiles].find(
+      (profile) => profile.id === currentId,
+    );
+    return {
+      gpuId,
+      revision: JSON.stringify([controls, lastApplied[gpuId], currentId]),
+      reported,
+      currentProfile: current ? { id: current.id, name: current.name } : null,
+    };
+  }
+  function owner(gpuId: string) {
+    const owners = response.gpus.filter((gpu) => gpu.stableId === gpuId);
+    if (owners.length !== 1)
+      throw new Error(
+        `Profiles are unavailable because this GPU's stable identity (UUID) could not be verified. ${REFRESH}`,
+      );
+    return owners[0];
+  }
+  function checkRevision(gpu: GpuPerformanceDevice, revision: string) {
+    if (tuningState(gpu).revision !== revision) throw new Error(STALE);
+  }
+  function capture(gpu: GpuPerformanceDevice) {
+    const defaults = Object.entries(lastApplied[gpu.stableId!] ?? {})
+      .filter(([, setting]) => setting.kind === "default")
+      .map(([key]) => key as ProfileSettingKey);
+    return captureProfileSettings(gpu, defaults);
+  }
 
   const byId = (gpuId: string) => response.gpus.find((gpu) => gpu.id === gpuId);
   const record = (
@@ -111,7 +162,25 @@ export function createFakeDesktop({
     return null;
   };
 
+  /** Applies the settings; a saved profile's application also updates the current profile. */
   function applySettings(
+    gpuId: string,
+    settings: GpuProfileSettings,
+    profileId?: string,
+  ): ProfileApplicationResponse {
+    const result = writeSettings(gpuId, settings);
+    const outcomes = Object.values(result).filter(
+      (outcome): outcome is TuningOutcome =>
+        outcome != null && "status" in outcome,
+    );
+    const applied = outcomes.filter(({ status }) => status === "succeeded");
+    if (profileId && applied.length === outcomes.length)
+      currentProfiles[gpuId] = profileId;
+    else if (profileId && applied.length) delete currentProfiles[gpuId];
+    return result;
+  }
+
+  function writeSettings(
     gpuId: string,
     settings: GpuProfileSettings,
   ): ProfileApplicationResponse {
@@ -278,14 +347,50 @@ export function createFakeDesktop({
     listProfiles: vi
       .spyOn(api, "listProfiles")
       .mockImplementation(async () => structuredClone(profiles)),
+    getTuningStates: vi
+      .spyOn(api, "getTuningStates")
+      .mockImplementation(async () =>
+        response.gpus
+          .filter(
+            (gpu) =>
+              gpu.stableId?.trim() &&
+              response.gpus.filter((other) => other.stableId === gpu.stableId)
+                .length === 1,
+          )
+          .map(tuningState),
+      ),
+    onTuningStateChanged: vi
+      .spyOn(api, "onTuningStateChanged")
+      .mockImplementation((listener) => {
+        tuningStateListeners.add(listener);
+        return () => tuningStateListeners.delete(listener);
+      }),
+    saveProfileToCurrent: vi
+      .spyOn(api, "saveProfileToCurrent")
+      .mockImplementation(async ({ gpuId, revision }) => {
+        const gpu = owner(gpuId);
+        checkRevision(gpu, revision);
+        const currentId = currentProfiles[gpuId];
+        const current = profiles.find((profile) => profile.id === currentId);
+        const others = otherUsersProfiles.find(
+          (profile) => profile.id === currentId,
+        );
+        if (others)
+          throw new Error(
+            `The current profile "${others.name}" belongs to another user, so you can't save over it. Save as a new profile instead.`,
+          );
+        if (!current)
+          throw new Error(
+            "This GPU has no current profile. Save as a new profile instead.",
+          );
+        current.settings = capture(gpu);
+        return structuredClone(current);
+      }),
     saveProfile: vi
       .spyOn(api, "saveProfile")
-      .mockImplementation(async ({ gpuId, name }) => {
-        const owners = response.gpus.filter((gpu) => gpu.stableId === gpuId);
-        if (owners.length !== 1)
-          throw new Error(
-            `Profiles are unavailable because this GPU's stable identity (UUID) could not be verified. ${REFRESH}`,
-          );
+      .mockImplementation(async ({ gpuId, name, revision }) => {
+        const gpu = owner(gpuId);
+        checkRevision(gpu, revision);
         const trimmed = name.trim();
         if (
           profiles.some(
@@ -297,16 +402,14 @@ export function createFakeDesktop({
           throw new Error(
             `A profile named "${trimmed}" already exists for this GPU. Choose another name.`,
           );
-        const defaults = Object.entries(lastApplied[gpuId] ?? {})
-          .filter(([, setting]) => setting.kind === "default")
-          .map(([key]) => key as ProfileSettingKey);
         const saved: GpuTuningProfile = {
           id: `profile-${nextId++}`,
           name: trimmed,
           gpuId,
-          settings: captureProfileSettings(owners[0], defaults),
+          settings: capture(gpu),
         };
         profiles.push(saved);
+        currentProfiles[gpuId] = saved.id;
         return structuredClone(saved);
       }),
     applyProfile: vi
@@ -318,7 +421,7 @@ export function createFakeDesktop({
       .spyOn(api, "applyProfileById")
       .mockImplementation(async ({ profileId }) => {
         const { gpuId, settings } = profile(profileId);
-        return applySettings(gpuId, settings);
+        return applySettings(gpuId, settings, profileId);
       }),
     correctAndApplyProfile: vi
       .spyOn(api, "correctAndApplyProfile")
@@ -336,7 +439,7 @@ export function createFakeDesktop({
         saved.settings = settings;
         return {
           profile: structuredClone(saved),
-          application: applySettings(saved.gpuId, settings),
+          application: applySettings(saved.gpuId, settings, profileId),
         };
       }),
     setPowerLimit: vi
@@ -397,6 +500,39 @@ export function createFakeDesktop({
       }),
   };
 
+  // Like the daemon, every write or save pushes the tuning state of each GPU it changed.
+  const identifiedStates = () =>
+    new Map(
+      response.gpus
+        .filter((gpu) => gpu.stableId?.trim())
+        .map((gpu) => [gpu.stableId!, JSON.stringify(tuningState(gpu))]),
+    );
+  for (const spy of [
+    spies.saveProfile,
+    spies.saveProfileToCurrent,
+    spies.applyProfile,
+    spies.applyProfileById,
+    spies.correctAndApplyProfile,
+    spies.setPowerLimit,
+    spies.resetPowerLimit,
+    spies.setClockOffsets,
+    spies.resetClockOffsets,
+  ] as unknown as MockInstance<(...args: unknown[]) => Promise<unknown>>[]) {
+    const write = spy.getMockImplementation()!;
+    spy.mockImplementation(async (...args) => {
+      const before = identifiedStates();
+      try {
+        return await write(...args);
+      } finally {
+        for (const [gpuId, state] of identifiedStates())
+          if (before.get(gpuId) !== state) {
+            const changed = JSON.parse(state) as GpuTuningState;
+            for (const listener of tuningStateListeners) listener(changed);
+          }
+      }
+    });
+  }
+
   return {
     response,
     /** The first GPU, as the fake's readings report it. */
@@ -404,9 +540,15 @@ export function createFakeDesktop({
       return response.gpus[0];
     },
     profiles,
+    currentProfiles,
     failures,
     lastApplied,
     ...spies,
+    /** Pushes the GPU's tuning state to the app, as the daemon does after another session's change. */
+    pushTuningState(gpuId: string) {
+      const state = tuningState(owner(gpuId));
+      for (const listener of tuningStateListeners) listener(state);
+    },
     /** How many live tuning writes the app requested. */
     liveWrites: () =>
       spies.setPowerLimit.mock.calls.length +
