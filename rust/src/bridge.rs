@@ -16,8 +16,8 @@ use crate::gpu::{
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 use crate::protocol::{
-    CorrectAndApplyProfileRequest, ImportProfilesRequest, LiveClockOffsetsRequest, ProfileRequest,
-    SaveProfileAsNewRequest,
+    CorrectAndApplyProfileRequest, ImportProfilesRequest, LiveClockOffsetsRequest,
+    ProfileIdRequest, SaveProfileAsNewRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +63,7 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
             "gpu.saveProfileAsNew",
             |request| daemon_client::save_gpu_profile_as_new(request).map_err(BridgeError::from),
         ),
-        "gpu.applyProfileById" => parse_and_serialize_result::<ProfileRequest, _, _>(
+        "gpu.applyProfileById" => parse_and_serialize_result::<ProfileIdRequest, _, _>(
             request.params,
             "gpu.applyProfileById",
             |request| daemon_client::apply_gpu_profile_by_id(request).map_err(BridgeError::from),

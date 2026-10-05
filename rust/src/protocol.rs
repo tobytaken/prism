@@ -45,7 +45,7 @@ pub enum ProfileSetting {
     Default {},
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProfileSettings {
     #[serde(
@@ -201,7 +201,7 @@ pub struct SaveProfileAsNewRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProfileRequest {
+pub struct ProfileIdRequest {
     pub profile_id: String,
 }
 
@@ -255,7 +255,7 @@ pub enum DaemonRequest {
     ResetClockOffsets(GpuTargetRequest),
     ListProfiles,
     SaveProfileAsNew(SaveProfileAsNewRequest),
-    ApplyProfileById(ProfileRequest),
+    ApplyProfileById(ProfileIdRequest),
     CorrectAndApplyProfile(CorrectAndApplyProfileRequest),
     ImportProfiles(ImportProfilesRequest),
     GetDriverStatus,

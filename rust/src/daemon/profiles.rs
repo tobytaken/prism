@@ -109,11 +109,7 @@ pub(super) fn capture_settings(
     let blocked =
         |message: String| GpuCommandError::new(GpuCommandErrorCode::InvalidArgument, message);
     let refresh = "Refresh the GPU readings and try again.";
-    let mut settings = ProfileSettings {
-        power_limit_watts: None,
-        graphics_offset_mhz: None,
-        memory_offset_mhz: None,
-    };
+    let mut settings = ProfileSettings::default();
     for key in ProfileSettingKey::ALL {
         let reading = reading(gpu, key);
         match reading.support {
@@ -319,14 +315,7 @@ impl TuningDocument {
 
     /// Records successfully applied manual instructions as the GPU's last applied tuning values.
     pub fn record_applied(&mut self, uuid: &str, applied: &[(ProfileSettingKey, ProfileSetting)]) {
-        let settings = self
-            .last_applied
-            .entry(uuid.to_string())
-            .or_insert(ProfileSettings {
-                power_limit_watts: None,
-                graphics_offset_mhz: None,
-                memory_offset_mhz: None,
-            });
+        let settings = self.last_applied.entry(uuid.to_string()).or_default();
         for (key, setting) in applied {
             settings.set(*key, *setting);
         }

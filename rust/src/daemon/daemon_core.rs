@@ -189,9 +189,8 @@ impl DaemonCore {
         self.write(&gpu_id.clone(), move |backend| {
             let (result, applied) = write(backend);
             if !applied.is_empty() {
-                match uuid_of(&backend.performance(), &gpu_id) {
-                    Some(uuid) => record_applied(&store, &uuid, &applied),
-                    None => {}
+                if let Some(uuid) = uuid_of(&backend.performance(), &gpu_id) {
+                    record_applied(&store, &uuid, &applied);
                 }
             }
             result

@@ -15,7 +15,7 @@ use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
     CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
     GpuTuningProfile, ImportProfilesRequest, LiveClockOffsetsRequest, ProfileApplicationResponse,
-    ProfileImportResponse, ProfileRequest, SaveProfileAsNewRequest,
+    ProfileIdRequest, ProfileImportResponse, SaveProfileAsNewRequest,
 };
 
 mod session;
@@ -50,7 +50,7 @@ pub fn save_gpu_profile_as_new(
 }
 
 pub fn apply_gpu_profile_by_id(
-    request: ProfileRequest,
+    request: ProfileIdRequest,
 ) -> Result<ProfileApplicationResponse, GpuCommandError> {
     match send_request(DaemonRequest::ApplyProfileById(request))? {
         DaemonResponse::ProfileApplication(response) => Ok(response),
