@@ -12,8 +12,12 @@ use crate::drivers::{
 use crate::gpu::{
     collect_inventory, collect_performance, ApplyGpuConfigRequest, GpuCommandError,
     GpuCommandErrorCode, GpuDaemonStatus, GpuInventoryResponse, GpuMutationResponse,
-    GpuPerformanceResponse, GpuTargetRequest, ResetGpuConfigRequest, SetGpuClockOffsetsRequest,
-    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+    GpuPerformanceResponse, GpuTargetRequest, ResetGpuConfigRequest, SetGpuFanModeAutoRequest,
+    SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+};
+use crate::protocol::{
+    CorrectAndApplyProfileRequest, ImportProfilesRequest, LiveClockOffsetsRequest, ProfileRequest,
+    SaveProfileAsNewRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +55,33 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
                 |request| daemon_client::apply_gpu_profile(request).map_err(BridgeError::from),
             )
         }
+        "gpu.listProfiles" => daemon_client::list_gpu_profiles()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
+        "gpu.saveProfileAsNew" => parse_and_serialize_result::<SaveProfileAsNewRequest, _, _>(
+            request.params,
+            "gpu.saveProfileAsNew",
+            |request| daemon_client::save_gpu_profile_as_new(request).map_err(BridgeError::from),
+        ),
+        "gpu.applyProfileById" => parse_and_serialize_result::<ProfileRequest, _, _>(
+            request.params,
+            "gpu.applyProfileById",
+            |request| daemon_client::apply_gpu_profile_by_id(request).map_err(BridgeError::from),
+        ),
+        "gpu.correctAndApplyProfile" => {
+            parse_and_serialize_result::<CorrectAndApplyProfileRequest, _, _>(
+                request.params,
+                "gpu.correctAndApplyProfile",
+                |request| {
+                    daemon_client::correct_and_apply_gpu_profile(request).map_err(BridgeError::from)
+                },
+            )
+        }
+        "gpu.importProfiles" => parse_and_serialize_result::<ImportProfilesRequest, _, _>(
+            request.params,
+            "gpu.importProfiles",
+            |request| daemon_client::import_gpu_profiles(request).map_err(BridgeError::from),
+        ),
         "gpu.getInventory" => serialize_result(get_gpu_inventory()),
         "gpu.getPerformance" => serialize_result(get_gpu_performance()),
         "gpu.getDaemonStatus" => serialize_result(get_gpu_daemon_status()),
@@ -84,7 +115,7 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
             "gpu.setFanModeAuto",
             set_gpu_fan_mode_auto,
         ),
-        "gpu.setClockOffsets" => parse_and_serialize_result::<SetGpuClockOffsetsRequest, _, _>(
+        "gpu.setClockOffsets" => parse_and_serialize_result::<LiveClockOffsetsRequest, _, _>(
             request.params,
             "gpu.setClockOffsets",
             set_gpu_clock_offsets,
@@ -274,7 +305,7 @@ fn set_gpu_fan_mode_auto(
 }
 
 fn set_gpu_clock_offsets(
-    request: SetGpuClockOffsetsRequest,
+    request: LiveClockOffsetsRequest,
 ) -> Result<crate::protocol::ClockOffsetResponse, BridgeError> {
     daemon_client::set_gpu_clock_offsets(request).map_err(|error| BridgeError {
         code: "command_failed".into(),

@@ -1,6 +1,7 @@
 mod backend;
 mod daemon_core;
 mod host;
+mod profiles;
 mod queue;
 mod session;
 mod tuning;
@@ -8,6 +9,8 @@ mod tuning_store;
 
 #[cfg(test)]
 mod harness;
+#[cfg(test)]
+mod profile_tests;
 #[cfg(test)]
 mod tests;
 
@@ -148,7 +151,8 @@ fn handle_connection(
     let request: DaemonRequest =
         serde_json::from_slice(&request).map_err(|error| error.to_string())?;
     let response = match authorize_request(config, stream, &request) {
-        Ok(()) => core.handle(request),
+        Ok(Some(peer)) => core.handle_for_peer(&peer, request),
+        Ok(None) => core.handle(request),
         Err(error) => DaemonResponse::Error(error),
     };
     let payload = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
@@ -257,16 +261,19 @@ fn handle_session_connection(
     result
 }
 
+/// The authorized caller, or none for a status probe, which anyone may send.
 fn authorize_request(
     config: &PrismDaemonConfig,
     stream: &UnixStream,
     request: &DaemonRequest,
-) -> Result<(), GpuCommandError> {
+) -> Result<Option<SessionPeer>, GpuCommandError> {
     if matches!(request, DaemonRequest::GetDaemonStatus) {
-        return Ok(());
+        return Ok(None);
     }
 
-    config.authorize(&resolve_peer(config, stream)?)
+    let peer = resolve_peer(config, stream)?;
+    config.authorize(&peer)?;
+    Ok(Some(peer))
 }
 
 fn resolve_peer(

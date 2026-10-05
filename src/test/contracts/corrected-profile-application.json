@@ -1,0 +1,16 @@
+{
+  "profile": {
+    "id": "quiet",
+    "name": "Quiet",
+    "gpuId": "GPU-123",
+    "settings": {
+      "powerLimitWatts": { "kind": "value", "value": 280 },
+      "memoryOffsetMHz": { "kind": "value", "value": 40 }
+    }
+  },
+  "application": {
+    "power": { "status": "succeeded", "error": null },
+    "graphics": null,
+    "memory": { "status": "failed", "error": "Memory write denied" }
+  }
+}

@@ -12,7 +12,10 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 use super::daemon_core::LEGACY_STATE_FILE_NAME;
-use super::{Clock, CoreDependencies, DaemonBackend, DaemonCore, HostShutdownSignal};
+use super::{
+    Clock, CoreDependencies, DaemonBackend, DaemonCore, DaemonSession, HostShutdownSignal,
+    SessionPeer, SessionPolicy,
+};
 use crate::drivers::DriverService;
 use crate::gpu::{
     ApplyGpuConfigRequest, ControlSupport, FanControlMode, GpuCommandError, GpuCommandErrorCode,
@@ -347,6 +350,7 @@ pub struct Harness {
     persistent_dir: TempDir,
     boot_dir: TempDir,
     boot_id: String,
+    boots: u32,
     core: Option<Arc<DaemonCore>>,
 }
 
@@ -378,6 +382,7 @@ impl Harness {
             persistent_dir,
             boot_dir: tempfile::tempdir().unwrap(),
             boot_id: "boot-1".into(),
+            boots: 1,
             core: None,
         };
         harness.start_core();
@@ -387,6 +392,16 @@ impl Harness {
     /// Simulates a daemon restart: drops the core and starts a new one on the same directories.
     pub fn restart(&mut self) {
         self.core = None;
+        self.start_core();
+    }
+
+    /// Simulates a host reboot: the persistent directory survives, while the boot-scoped
+    /// directory starts empty under a new boot id.
+    pub fn reboot(&mut self) {
+        self.core = None;
+        self.boots += 1;
+        self.boot_dir = tempfile::tempdir().unwrap();
+        self.boot_id = format!("boot-{}", self.boots);
         self.start_core();
     }
 
@@ -402,6 +417,23 @@ impl Harness {
             host_shutting_down: Arc::clone(&self.host_shutting_down) as Arc<dyn HostShutdownSignal>,
             socket_path: PathBuf::from("/tmp/prismd-test.sock"),
         })));
+    }
+
+    /// Opens a session as this user, who is admitted as an administrator.
+    pub fn user(&self, uid: u32, username: &str) -> FakeSession {
+        let policy = SessionPolicy {
+            admin_group: "admins".into(),
+            admin_user: None,
+        };
+        let peer = SessionPeer {
+            uid,
+            username: username.into(),
+            groups: vec!["admins".into()],
+            primary_group: "users".into(),
+        };
+        let core = self.core();
+        let session = core.open_session(peer, &policy).unwrap();
+        FakeSession { core, session }
     }
 
     pub fn core(&self) -> Arc<DaemonCore> {
@@ -462,6 +494,24 @@ impl Harness {
 
     pub fn saved_state(&self) -> PersistedGpuState {
         serde_json::from_slice(&self.saved_state_bytes().expect("no saved state")).unwrap()
+    }
+}
+
+/// A user's session connection to the daemon.
+pub struct FakeSession {
+    core: Arc<DaemonCore>,
+    session: DaemonSession,
+}
+
+impl FakeSession {
+    pub fn send(&self, request: DaemonRequest) -> DaemonResponse {
+        self.core.handle_session(&self.session, request)
+    }
+
+    /// Sends a request built from protocol JSON and returns the response as protocol JSON.
+    pub fn send_json(&self, request: serde_json::Value) -> serde_json::Value {
+        let request = serde_json::from_value(request).unwrap();
+        serde_json::to_value(self.send(request)).unwrap()
     }
 }
 

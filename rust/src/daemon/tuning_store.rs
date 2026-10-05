@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -8,12 +9,12 @@ use serde::{Deserialize, Serialize};
 
 use super::session::{DaemonSession, SessionEvents, SessionPeer};
 use crate::gpu::{TuningStoreHealth, TuningStoreProblem};
-use crate::protocol::DaemonEvent;
+use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings};
 
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 1;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 2;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -26,12 +27,61 @@ type RawDocument = serde_json::Map<String, serde_json::Value>;
 /// Upgrades a document by one schema version: the first entry upgrades version 1 to 2, and so on.
 /// Bumping the schema version means adding its migration here.
 const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
-    TUNING_STORE_SCHEMA_VERSION as usize - 1] = [];
+    TUNING_STORE_SCHEMA_VERSION as usize - 1] = [
+    // Version 2 adds users' profiles and last applied tuning values, both empty until written.
+    Ok,
+];
 
-/// The tuning store's contents. It holds no user data yet.
+/// The tuning store's contents.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TuningDocument {}
+pub struct TuningDocument {
+    /// Each user's own state. A user is a uid together with its username, so a reused uid with
+    /// another username is a different user.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub users: Vec<UserState>,
+    /// Last applied tuning values per GPU UUID: the latest successful manual instruction for
+    /// each setting, keeping explicit default requests.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub last_applied: BTreeMap<String, ProfileSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UserState {
+    pub uid: u32,
+    pub username: String,
+    #[serde(default)]
+    pub profiles: Vec<GpuTuningProfile>,
+}
+
+impl TuningDocument {
+    pub fn user(&self, uid: u32, username: &str) -> Option<&UserState> {
+        self.users
+            .iter()
+            .find(|user| user.uid == uid && user.username == username)
+    }
+
+    /// The user's state, added if the user has none yet.
+    pub fn user_mut(&mut self, uid: u32, username: &str) -> &mut UserState {
+        let index = match self
+            .users
+            .iter()
+            .position(|user| user.uid == uid && user.username == username)
+        {
+            Some(index) => index,
+            None => {
+                self.users.push(UserState {
+                    uid,
+                    username: username.into(),
+                    profiles: vec![],
+                });
+                self.users.len() - 1
+            }
+        };
+        &mut self.users[index]
+    }
+}
 
 /// The daemon's tuning store: one versioned document, separate from the legacy saved
 /// configurations. It fails closed: a document it can't use is preserved untouched and never
@@ -110,20 +160,40 @@ impl std::fmt::Display for TuningStoreWriteError {
 }
 
 impl TuningStore {
+    /// Reads the document, unless the store is unhealthy.
+    pub fn read<T>(
+        &self,
+        read: impl FnOnce(&TuningDocument) -> T,
+    ) -> Result<T, TuningStoreWriteError> {
+        match &*self.state.lock().unwrap() {
+            StoreState::Healthy(document) => Ok(read(document)),
+            StoreState::Unhealthy { .. } => Err(TuningStoreWriteError::Unhealthy),
+        }
+    }
+
     /// Changes the document and writes it atomically at the current schema version. The change
     /// is kept only once it is on disk.
-    // Nothing writes the tuning store yet; profiles and startup choices will.
-    #[allow(dead_code)]
     pub fn update(
         &self,
         change: impl FnOnce(&mut TuningDocument),
     ) -> Result<(), TuningStoreWriteError> {
+        self.try_update(|document| {
+            change(document);
+            Ok::<_, TuningStoreWriteError>(())
+        })
+    }
+
+    /// Like `update`, but a change that fails leaves the document unchanged and unwritten.
+    pub fn try_update<T, E: From<TuningStoreWriteError>>(
+        &self,
+        change: impl FnOnce(&mut TuningDocument) -> Result<T, E>,
+    ) -> Result<T, E> {
         let mut state = self.state.lock().unwrap();
         let StoreState::Healthy(document) = &mut *state else {
-            return Err(TuningStoreWriteError::Unhealthy);
+            return Err(TuningStoreWriteError::Unhealthy.into());
         };
         let mut changed = document.clone();
-        change(&mut changed);
+        let result = change(&mut changed)?;
         if let Err(error) = write_atomically(&self.path, &serialize(&changed)) {
             *state = StoreState::Unhealthy {
                 problem: TuningStoreProblem::Unreadable,
@@ -131,10 +201,10 @@ impl TuningStore {
             };
             self.events
                 .publish(DaemonEvent::StoreHealthChanged(self.health_of(&state)));
-            return Err(TuningStoreWriteError::Io(error));
+            return Err(TuningStoreWriteError::Io(error).into());
         }
         *document = changed;
-        Ok(())
+        Ok(result)
     }
 }
 
@@ -289,7 +359,10 @@ mod tests {
 
         let written: serde_json::Value =
             serde_json::from_slice(&fs::read(store_path(&dir)).unwrap()).unwrap();
-        assert_eq!(written, serde_json::json!({ "schemaVersion": 1 }));
+        assert_eq!(
+            written,
+            serde_json::json!({ "schemaVersion": TUNING_STORE_SCHEMA_VERSION })
+        );
         assert_eq!(
             TuningStore::open(store_path(&dir)).health(),
             TuningStoreHealth::Healthy {}

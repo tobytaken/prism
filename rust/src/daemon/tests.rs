@@ -7,9 +7,12 @@ use super::tuning_store::{STAGED_FILE_SUFFIX, TUNING_STORE_FILE_NAME};
 use crate::gpu::{
     ApplyGpuConfigRequest, ClockRangeInput, ControlSupport, DesiredGpuConfig, GpuCommandErrorCode,
     GpuTargetRequest, PersistedGpuConfig, PersistedGpuState, ResetGpuConfigRequest,
-    SetGpuClockOffsetsRequest, SetGpuPowerLimitRequest, TuningStoreHealth, TuningStoreProblem,
+    SetGpuPowerLimitRequest, TuningStoreHealth, TuningStoreProblem,
 };
-use crate::protocol::{ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, ProfileSetting};
+use crate::protocol::{
+    ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, LiveClockOffsetsRequest,
+    OffsetInstruction, ProfileSetting,
+};
 
 #[test]
 fn fake_sessions_keep_their_callers_and_receive_store_health_alongside_one_shot_requests() {
@@ -714,10 +717,10 @@ fn live_offsets_report_partial_success_without_replacing_saved_configuration() {
     daemon
         .gpus
         .fail("GPU-123", Setter::MemoryOffset, "Memory write failed");
-    let response = daemon.send(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+    let response = daemon.send(DaemonRequest::SetClockOffsets(LiveClockOffsetsRequest {
         gpu_id: "GPU-123".into(),
-        graphics_offset_mhz: Some(150),
-        memory_offset_mhz: Some(80),
+        graphics_offset_mhz: Some(OffsetInstruction::Value(150)),
+        memory_offset_mhz: Some(OffsetInstruction::Value(80)),
     }));
     let json = serde_json::to_value(response).unwrap();
     assert_eq!(json["payload"]["graphics"]["status"], "succeeded");
@@ -746,10 +749,10 @@ fn live_offsets_stop_after_failure_and_leave_later_setting_unattempted() {
     daemon
         .gpus
         .fail("GPU-123", Setter::GraphicsOffset, "GPU unavailable");
-    let response = daemon.send(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+    let response = daemon.send(DaemonRequest::SetClockOffsets(LiveClockOffsetsRequest {
         gpu_id: "GPU-123".into(),
-        graphics_offset_mhz: Some(150),
-        memory_offset_mhz: Some(80),
+        graphics_offset_mhz: Some(OffsetInstruction::Value(150)),
+        memory_offset_mhz: Some(OffsetInstruction::Value(80)),
     }));
     let json = serde_json::to_value(response).unwrap();
     assert_eq!(json["payload"]["graphics"]["status"], "failed");
@@ -778,10 +781,10 @@ fn live_reset_reports_partial_outcomes_and_memory_only_retry_leaves_graphics_alo
     assert_eq!(json["payload"]["memory"]["status"], "failed");
 
     daemon.gpus.stop_failing("GPU-123", Setter::MemoryOffset);
-    let response = daemon.send(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+    let response = daemon.send(DaemonRequest::SetClockOffsets(LiveClockOffsetsRequest {
         gpu_id: "GPU-123".into(),
         graphics_offset_mhz: None,
-        memory_offset_mhz: Some(0),
+        memory_offset_mhz: Some(OffsetInstruction::Value(0)),
     }));
     let json = serde_json::to_value(response).unwrap();
     assert!(json["payload"]["graphics"].is_null());
@@ -1196,9 +1199,9 @@ fn writes_to_the_same_gpu_wait_for_the_write_in_progress() {
     let first = daemon.send_in_background(set_power("GPU-123", 400));
     gate.wait_until_entered();
     let mut second =
-        daemon.send_in_background(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+        daemon.send_in_background(DaemonRequest::SetClockOffsets(LiveClockOffsetsRequest {
             gpu_id: "GPU-123".into(),
-            graphics_offset_mhz: Some(60),
+            graphics_offset_mhz: Some(OffsetInstruction::Value(60)),
             memory_offset_mhz: None,
         }));
 
@@ -1336,9 +1339,9 @@ fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_wo
         panic!("expected a command response");
     };
     assert!(power.success);
-    let offsets = daemon.send(DaemonRequest::SetClockOffsets(SetGpuClockOffsetsRequest {
+    let offsets = daemon.send(DaemonRequest::SetClockOffsets(LiveClockOffsetsRequest {
         gpu_id: "GPU-123".into(),
-        graphics_offset_mhz: Some(150),
+        graphics_offset_mhz: Some(OffsetInstruction::Value(150)),
         memory_offset_mhz: None,
     }));
     let offsets = serde_json::to_value(offsets).unwrap();
@@ -1366,7 +1369,7 @@ fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_wo
 
 #[test]
 fn a_tuning_store_from_a_newer_schema_version_is_treated_as_unreadable_and_preserved() {
-    let newer: &[u8] = b"{\"schemaVersion\": 2, \"profiles\": []}";
+    let newer: &[u8] = b"{\"schemaVersion\": 3, \"users\": []}";
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[(TUNING_STORE, newer)],

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "6f1c3a52-8f0e-4c1b-9d1e-2b7a4c5d6e7f",
+    "name": "Quiet",
+    "gpuId": "GPU-123",
+    "settings": {
+      "powerLimitWatts": { "kind": "default" },
+      "graphicsOffsetMHz": { "kind": "value", "value": -100 },
+      "memoryOffsetMHz": { "kind": "value", "value": 0 }
+    }
+  },
+  {
+    "id": "quiet-flatpak",
+    "name": "Quiet (2)",
+    "gpuId": "GPU-123",
+    "settings": { "powerLimitWatts": { "kind": "value", "value": 300 } }
+  }
+]
