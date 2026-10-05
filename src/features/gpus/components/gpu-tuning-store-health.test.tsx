@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -107,5 +107,59 @@ describe("Tuning store health on Performance", () => {
     expect(
       screen.queryByRole("alert", { name: "Tuning store can't be used" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("updates the store problem from pushed events and unsubscribes when the page closes", async () => {
+    const probe = vi
+      .spyOn(window.prism.gpu, "getDaemonStatus")
+      .mockResolvedValue(connectedDaemonStatus);
+    let emit!: (status: GpuDaemonStatus) => void;
+    const unsubscribe = vi.fn();
+    vi.spyOn(window.prism.gpu, "onDaemonStatusChanged").mockImplementation(
+      (callback) => {
+        emit = callback;
+        return unsubscribe;
+      },
+    );
+    const page = renderPerformancePage();
+    await screen.findByRole("spinbutton", { name: "Power limit" });
+    act(() => emit(unreadableStatus));
+    expect(
+      await screen.findByRole("alert", { name: "Tuning store can't be used" }),
+    ).toBeInTheDocument();
+    act(() => emit(connectedDaemonStatus));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("alert", { name: "Tuning store can't be used" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(probe).toHaveBeenCalledTimes(1);
+    page.unmount();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a pushed store problem when an older status probe finishes later", async () => {
+    let finishProbe!: (status: GpuDaemonStatus) => void;
+    vi.spyOn(window.prism.gpu, "getDaemonStatus").mockReturnValue(
+      new Promise((resolve) => {
+        finishProbe = resolve;
+      }),
+    );
+    let emit!: (status: GpuDaemonStatus) => void;
+    vi.spyOn(window.prism.gpu, "onDaemonStatusChanged").mockImplementation(
+      (callback) => {
+        emit = callback;
+        return () => undefined;
+      },
+    );
+    renderPerformancePage();
+    act(() => emit(unreadableStatus));
+    await screen.findByRole("alert", { name: "Tuning store can't be used" });
+    await act(async () => {
+      finishProbe(connectedDaemonStatus);
+    });
+    expect(
+      screen.getByRole("alert", { name: "Tuning store can't be used" }),
+    ).toBeInTheDocument();
   });
 });

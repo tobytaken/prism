@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { isDaemonStatus } from "./daemon-events";
 
 import type {
   DriverAction,
@@ -21,8 +22,34 @@ import type {
   SaveGpuProfileRequest,
 } from "@/features/gpus/types";
 
+let statusSubscribers = 0;
+
+function onDaemonStatusChanged(callback: (status: GpuDaemonStatus) => void) {
+  const handler = (_event: Electron.IpcRendererEvent, status: unknown) => {
+    if (isDaemonStatus(status)) callback(status);
+  };
+  ipcRenderer.on("prism:daemon:statusChanged", handler);
+  if (++statusSubscribers === 1) {
+    void Promise.resolve(ipcRenderer.invoke("prism:daemon:subscribe")).catch(
+      () => undefined,
+    );
+  }
+  let subscribed = true;
+  return () => {
+    if (!subscribed) return;
+    subscribed = false;
+    ipcRenderer.removeListener("prism:daemon:statusChanged", handler);
+    if (--statusSubscribers === 0) {
+      void Promise.resolve(
+        ipcRenderer.invoke("prism:daemon:unsubscribe"),
+      ).catch(() => undefined);
+    }
+  };
+}
+
 const prismApi = {
   gpu: {
+    onDaemonStatusChanged,
     applyProfile: (request: ApplyGpuProfileRequest) =>
       ipcRenderer.invoke(
         "prism:gpu:applyProfile",

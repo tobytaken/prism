@@ -2,6 +2,7 @@ mod backend;
 mod daemon_core;
 mod host;
 mod queue;
+mod session;
 mod tuning;
 mod tuning_store;
 
@@ -12,27 +13,28 @@ mod tests;
 
 use std::env;
 use std::ffi::CString;
-use std::ffi::OsStr;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
 use users::{get_group_by_gid, get_group_by_name, get_user_by_uid, get_user_groups};
 
 use crate::drivers::DriverService;
+use crate::framing::{read_frame, write_frame, MAX_FRAME_BYTES};
 use crate::gpu::{GpuCommandError, GpuCommandErrorCode};
-use crate::protocol::{DaemonRequest, DaemonResponse};
+use crate::protocol::{DaemonRequest, DaemonResponse, SessionMessage, SessionRequest};
 
 pub use backend::{DaemonBackend, RealDaemonBackend};
 pub use daemon_core::{CoreDependencies, DaemonCore};
 pub use host::{read_boot_id, Clock, HostShutdownSignal, SystemClock, SystemdShutdownSignal};
+pub use session::{DaemonSession, SessionPeer, SessionPolicy};
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/prism/prismd.sock";
 pub const DEFAULT_STATE_DIR: &str = "/var/lib/prism";
@@ -68,11 +70,7 @@ struct PrismDaemonConfigFile {
     admin_user: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct PrismDaemonConfig {
-    admin_group: String,
-    admin_user: Option<String>,
-}
+type PrismDaemonConfig = SessionPolicy;
 
 #[derive(Debug, Clone, Copy)]
 struct PeerCredentials {
@@ -123,14 +121,29 @@ fn serve(listener: UnixListener, core: Arc<DaemonCore>, config: Arc<PrismDaemonC
 }
 
 fn handle_connection(
-    core: &DaemonCore,
+    core: &Arc<DaemonCore>,
     config: &PrismDaemonConfig,
     stream: &mut UnixStream,
 ) -> Result<(), String> {
+    let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
+    // Bounded frames start with zero; legacy requests are unframed JSON.
+    if reader
+        .fill_buf()
+        .map_err(|error| error.to_string())?
+        .first()
+        == Some(&0)
+    {
+        return handle_session_connection(core, config, stream, reader);
+    }
     let mut request = Vec::new();
-    stream
+    reader
+        .take((MAX_FRAME_BYTES + 1) as u64)
         .read_to_end(&mut request)
         .map_err(|error| error.to_string())?;
+
+    if request.len() > MAX_FRAME_BYTES {
+        return Err("daemon request too large".into());
+    }
 
     let request: DaemonRequest =
         serde_json::from_slice(&request).map_err(|error| error.to_string())?;
@@ -148,6 +161,102 @@ fn handle_connection(
     Ok(())
 }
 
+fn handle_session_connection(
+    core: &Arc<DaemonCore>,
+    config: &SessionPolicy,
+    stream: &mut UnixStream,
+    mut reader: BufReader<UnixStream>,
+) -> Result<(), String> {
+    let opening: SessionRequest = read_frame(&mut reader)
+        .map_err(|error| error.to_string())?
+        .ok_or("missing session opening request")?;
+    let admitted = if opening.request == DaemonRequest::OpenSession {
+        resolve_peer(config, stream).and_then(|peer| core.open_session(peer, config))
+    } else {
+        Err(GpuCommandError::new(
+            GpuCommandErrorCode::InvalidArgument,
+            "the first session request must be OpenSession",
+        ))
+    };
+    let mut session = match admitted {
+        Ok(session) => session,
+        Err(error) => {
+            write_frame(
+                stream,
+                &SessionMessage::Response {
+                    id: opening.id,
+                    response: DaemonResponse::Error(error),
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+    };
+    write_frame(
+        stream,
+        &SessionMessage::Response {
+            id: opening.id,
+            response: core.handle_session(&session, DaemonRequest::GetDaemonStatus),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_secs(2)))
+        .map_err(|error| error.to_string())?;
+    let writer = Arc::new(Mutex::new(
+        stream.try_clone().map_err(|error| error.to_string())?,
+    ));
+    let events = session.take_events();
+    let event_writer = Arc::clone(&writer);
+    let pushing = thread::spawn(move || {
+        for event in events {
+            if write_frame(
+                &mut *event_writer.lock().unwrap(),
+                &SessionMessage::Event { event },
+            )
+            .is_err()
+            {
+                break;
+            }
+        }
+        let _ = event_writer
+            .lock()
+            .unwrap()
+            .shutdown(std::net::Shutdown::Both);
+    });
+    let result = loop {
+        match read_frame::<SessionRequest>(&mut reader) {
+            Ok(Some(request)) => {
+                let core = Arc::clone(core);
+                let writer = Arc::clone(&writer);
+                // The admitted caller remains attached to this connection. Requests can finish
+                // independently, so a slow GPU cannot delay EOF detection or other requests.
+                let peer = session.peer().clone();
+                thread::spawn(move || {
+                    let response = core.handle_for_peer(&peer, request.request);
+                    let mut stream = writer.lock().unwrap();
+                    if write_frame(
+                        &mut *stream,
+                        &SessionMessage::Response {
+                            id: request.id,
+                            response,
+                        },
+                    )
+                    .is_err()
+                    {
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                    }
+                });
+            }
+            Ok(None) => break Ok(()),
+            Err(error) => break Err(error.to_string()),
+        }
+    };
+    drop(session);
+    let _ = pushing.join();
+    result
+}
+
 fn authorize_request(
     config: &PrismDaemonConfig,
     stream: &UnixStream,
@@ -157,12 +266,15 @@ fn authorize_request(
         return Ok(());
     }
 
+    config.authorize(&resolve_peer(config, stream)?)
+}
+
+fn resolve_peer(
+    config: &SessionPolicy,
+    stream: &UnixStream,
+) -> Result<SessionPeer, GpuCommandError> {
     let credentials = peer_credentials(stream)
         .map_err(|error| GpuCommandError::new(GpuCommandErrorCode::Io, error.to_string()))?;
-
-    if credentials.uid == 0 {
-        return Ok(());
-    }
 
     let user = get_user_by_uid(credentials.uid).ok_or_else(|| {
         GpuCommandError::new(
@@ -171,40 +283,35 @@ fn authorize_request(
         )
     })?;
 
-    if let Some(admin_user) = config.admin_user.as_deref() {
-        if user.name() == OsStr::new(admin_user) {
-            return Ok(());
-        }
-    }
-
-    let groups = get_user_groups(user.name(), credentials.gid).ok_or_else(|| {
-        GpuCommandError::new(
-            GpuCommandErrorCode::NoPermission,
-            format!(
-                "Unable to resolve group membership for user {}",
-                user.name().to_string_lossy()
-            ),
-        )
-    })?;
-
-    if groups
-        .iter()
-        .any(|group| group.name() == OsStr::new(&config.admin_group))
-    {
-        return Ok(());
-    }
+    let username = user.name().to_string_lossy().into_owned();
+    let groups = if credentials.uid == 0 || config.admin_user.as_deref() == Some(&username) {
+        vec![]
+    } else {
+        get_user_groups(user.name(), credentials.gid)
+            .ok_or_else(|| {
+                GpuCommandError::new(
+                    GpuCommandErrorCode::NoPermission,
+                    format!(
+                        "Unable to resolve group membership for user {}",
+                        user.name().to_string_lossy()
+                    ),
+                )
+            })?
+            .iter()
+            .map(|group| group.name().to_string_lossy().into_owned())
+            .collect()
+    };
 
     let primary_group = get_group_by_gid(credentials.gid)
         .map(|group| group.name().to_string_lossy().into_owned())
         .unwrap_or_else(|| credentials.gid.to_string());
 
-    Err(GpuCommandError::new(
-        GpuCommandErrorCode::NoPermission,
-        format!(
-            "User {} is not allowed to access prismd (primary group: {primary_group})",
-            user.name().to_string_lossy()
-        ),
-    ))
+    Ok(SessionPeer {
+        uid: credentials.uid,
+        username,
+        groups,
+        primary_group,
+    })
 }
 
 fn load_config(paths: &DaemonPaths) -> Result<PrismDaemonConfig, std::io::Error> {

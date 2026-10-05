@@ -36,6 +36,44 @@ describe("preload bridge", () => {
     mocks.removeListener.mockReset();
   });
 
+  it("subscribes to daemon status events and removes the exact listener on unsubscribe", async () => {
+    const prism = await loadPrismApi();
+    const callback = vi.fn();
+    const unsubscribe = prism.gpu.onDaemonStatusChanged(callback);
+    expect(mocks.invoke).toHaveBeenCalledWith("prism:daemon:subscribe");
+    const [channel, handler] = mocks.on.mock.calls[0];
+    expect(channel).toBe("prism:daemon:statusChanged");
+    handler({}, unhealthyStoreStatus);
+    expect(callback).toHaveBeenCalledWith(unhealthyStoreStatus);
+    handler(
+      {},
+      { ...unhealthyStoreStatus, tuningStore: { status: "unhealthy" } },
+    );
+    expect(callback).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    expect(mocks.removeListener).toHaveBeenCalledWith(channel, handler);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:daemon:unsubscribe");
+  });
+
+  it("keeps other daemon listeners subscribed and makes cleanup idempotent", async () => {
+    const prism = await loadPrismApi();
+    const first = vi.fn();
+    const second = vi.fn();
+    const unsubscribeFirst = prism.gpu.onDaemonStatusChanged(first);
+    const unsubscribeSecond = prism.gpu.onDaemonStatusChanged(second);
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    unsubscribeFirst();
+    unsubscribeFirst();
+    expect(mocks.removeListener).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    const handler = mocks.on.mock.calls[1][1];
+    handler({}, unhealthyStoreStatus);
+    expect(second).toHaveBeenCalledWith(unhealthyStoreStatus);
+    expect(first).not.toHaveBeenCalled();
+    unsubscribeSecond();
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:daemon:unsubscribe");
+  });
+
   it("transports stable ownership and included profile values without hiding partial outcomes or transport failures", async () => {
     const prism = await loadPrismApi();
     const request = {

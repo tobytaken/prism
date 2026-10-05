@@ -14,6 +14,7 @@ use super::host::{Clock, HostShutdownSignal};
 use super::queue::{GpuOperationQueues, PendingOperation};
 use super::tuning::{apply_live_offsets, apply_profile, reset_live_offsets};
 use super::tuning_store::{TuningStore, TUNING_STORE_FILE_NAME};
+use super::{DaemonSession, SessionPeer, SessionPolicy};
 
 pub(super) const LEGACY_STATE_FILE_NAME: &str = "state.json";
 
@@ -42,6 +43,31 @@ pub struct DaemonCore {
 }
 
 impl DaemonCore {
+    pub fn open_session(
+        &self,
+        peer: SessionPeer,
+        policy: &SessionPolicy,
+    ) -> Result<DaemonSession, GpuCommandError> {
+        policy.authorize(&peer)?;
+        Ok(self.tuning_store.subscribe(peer))
+    }
+
+    pub fn handle_session(
+        &self,
+        session: &DaemonSession,
+        request: DaemonRequest,
+    ) -> DaemonResponse {
+        self.handle_for_peer(session.peer(), request)
+    }
+
+    pub(super) fn handle_for_peer(
+        &self,
+        _peer: &SessionPeer,
+        request: DaemonRequest,
+    ) -> DaemonResponse {
+        self.handle(request)
+    }
+
     /// Loads saved state and reapplies legacy saved configurations, as every daemon start does.
     pub fn start(dependencies: CoreDependencies) -> Self {
         let legacy_configs = Arc::new(LegacyConfigStore::load(
@@ -73,6 +99,10 @@ impl DaemonCore {
     pub fn handle(&self, request: DaemonRequest) -> DaemonResponse {
         let drivers = &self.dependencies.drivers;
         match request {
+            DaemonRequest::OpenSession => DaemonResponse::Error(GpuCommandError::new(
+                GpuCommandErrorCode::InvalidArgument,
+                "OpenSession requires a framed connection",
+            )),
             DaemonRequest::GetInventory => {
                 DaemonResponse::Inventory(self.inventory(&self.legacy_configs.snapshot()))
             }

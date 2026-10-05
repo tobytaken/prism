@@ -125,6 +125,7 @@ pub struct ProfileRangeCorrection {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
+    OpenSession,
     GetInventory,
     GetPerformance,
     GetDaemonStatus,
@@ -158,4 +159,90 @@ pub enum DaemonResponse {
     DriverStatus(DriverStatusResponse),
     DriverJob(DriverJob),
     Error(GpuCommandError),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionRequest {
+    pub id: u64,
+    pub request: DaemonRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum SessionMessage {
+    Response { id: u64, response: DaemonResponse },
+    Event { event: DaemonEvent },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "type",
+    content = "payload",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub enum DaemonEvent {
+    StoreHealthChanged(crate::gpu::TuningStoreHealth),
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+    use crate::framing::{read_frame, write_frame};
+
+    #[test]
+    fn session_frames_round_trip_and_keep_response_ids_separate_from_events() {
+        let request = SessionRequest {
+            id: 42,
+            request: DaemonRequest::GetDaemonStatus,
+        };
+        let event: SessionMessage = serde_json::from_str(include_str!(
+            "../../src/test/contracts/session-store-health.json"
+        ))
+        .unwrap();
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &request).unwrap();
+        write_frame(&mut bytes, &event).unwrap();
+        let mut reader = std::io::Cursor::new(bytes);
+        assert_eq!(
+            read_frame::<SessionRequest>(&mut reader).unwrap(),
+            Some(request)
+        );
+        assert_eq!(
+            read_frame::<SessionMessage>(&mut reader).unwrap(),
+            Some(event.clone())
+        );
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            serde_json::json!({
+                "type": "event", "event": {"type": "storeHealthChanged", "payload": {"status": "healthy"}}
+            })
+        );
+        assert!(read_frame::<SessionMessage>(&mut reader).unwrap().is_none());
+    }
+
+    #[test]
+    fn session_frames_reject_truncation_oversize_and_malformed_payloads() {
+        for bytes in [
+            vec![0, 0],
+            vec![0, 0, 0, 0],
+            vec![0, 16, 0, 1],
+            vec![0, 0, 0, 4, b'{'],
+        ] {
+            assert!(read_frame::<SessionRequest>(&mut std::io::Cursor::new(bytes)).is_err());
+        }
+        for malformed in [
+            serde_json::json!({"id": -1, "request": {"type": "get_daemon_status"}}),
+            serde_json::json!({"id": 1, "request": {"type": "unknown"}}),
+            serde_json::json!({"id": 1, "request": null}),
+            serde_json::json!({"id": 1, "request": {"type": "get_daemon_status"}, "uid": 0}),
+        ] {
+            let mut bytes = Vec::new();
+            write_frame(&mut bytes, &malformed).unwrap();
+            assert!(read_frame::<SessionRequest>(&mut std::io::Cursor::new(bytes)).is_err());
+        }
+        let malformed = serde_json::json!({"type": "event", "event": {"type": "storeHealthChanged", "payload": {"status": "healthy", "problem": "unreadable"}}});
+        assert!(serde_json::from_value::<SessionMessage>(malformed).is_err());
+    }
 }

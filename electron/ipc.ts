@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
 import { GpuProfileStore } from "./gpu-profile-store";
+import { daemonStatusNotification } from "./daemon-events";
 import {
   isProfileSetting,
   isProfileSettingKey,
@@ -9,6 +10,7 @@ import {
 import type {
   CorrectGpuProfileRequest,
   GpuPerformanceResponse,
+  GpuDaemonStatus,
   ProfileSettingKey,
 } from "@/features/gpus/types";
 
@@ -65,6 +67,16 @@ class RustBackendClient {
   private reader: readline.Interface | null = null;
   private nextId = 0;
   private pending = new Map<number, PendingRequest>();
+  private restartTimer: NodeJS.Timeout | undefined;
+  private disposed = false;
+  private socketPath =
+    process.env.PRISM_SOCKET_PATH ?? "/run/prism/prismd.sock";
+
+  constructor(private readonly onStatus: (status: GpuDaemonStatus) => void) {}
+
+  start() {
+    this.ensureStarted();
+  }
 
   async invoke<T>(method: string, params?: unknown): Promise<T> {
     this.ensureStarted();
@@ -95,6 +107,8 @@ class RustBackendClient {
   }
 
   dispose() {
+    this.disposed = true;
+    clearTimeout(this.restartTimer);
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
       pending.reject(new Error("Prism backend stopped"));
@@ -102,15 +116,18 @@ class RustBackendClient {
     this.pending.clear();
     this.reader?.close();
     this.reader = null;
-    this.child?.kill();
+    const child = this.child;
     this.child = null;
+    child?.kill();
   }
 
   private ensureStarted() {
+    if (this.disposed) throw new Error("Prism backend stopped");
     if (this.child && this.child.exitCode === null && !this.child.killed) {
       return;
     }
 
+    clearTimeout(this.restartTimer);
     const backend = this.spawnBackend();
     this.child = backend;
 
@@ -125,15 +142,32 @@ class RustBackendClient {
       const reason = new Error(
         `Prism backend exited unexpectedly (code=${code ?? "null"} signal=${signal ?? "null"})`,
       );
-      for (const pending of this.pending.values()) {
-        clearTimeout(pending.timeout);
-        pending.reject(reason);
-      }
-      this.pending.clear();
-      this.reader?.close();
-      this.reader = null;
-      this.child = null;
+      this.handleStopped(backend, reason);
     });
+    backend.on("error", (error) => this.handleStopped(backend, error));
+  }
+
+  private handleStopped(
+    backend: ChildProcessWithoutNullStreams,
+    reason: Error,
+  ) {
+    if (this.child !== backend || this.disposed) return;
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(reason);
+    }
+    this.pending.clear();
+    this.reader?.close();
+    this.reader = null;
+    this.child = null;
+    this.onStatus({
+      reachable: false,
+      managedByDaemon: false,
+      socketPath: this.socketPath,
+      message: reason.message,
+      tuningStore: null,
+    });
+    this.restartTimer = setTimeout(() => this.ensureStarted(), 250);
   }
 
   private spawnBackend() {
@@ -176,15 +210,29 @@ class RustBackendClient {
       return;
     }
 
-    let response: SidecarResponse;
+    let value: unknown;
     try {
-      response = JSON.parse(line) as SidecarResponse;
+      value = JSON.parse(line);
     } catch (error) {
       process.stderr.write(
         `[prism_backend] invalid JSON response: ${String(error)}\n`,
       );
       return;
     }
+
+    const notification = daemonStatusNotification(value);
+    if (notification) {
+      this.socketPath = notification.socketPath;
+      this.onStatus(notification);
+      return;
+    }
+    if (
+      !isObject(value) ||
+      !Number.isSafeInteger(value.id) ||
+      typeof value.id !== "number"
+    )
+      return;
+    const response = value as SidecarResponse;
 
     const pending = this.pending.get(response.id);
     if (!pending) {
@@ -214,6 +262,9 @@ function assertTrustedSender(
 
   if (event.sender.id !== window.webContents.id) {
     throw new Error("Untrusted IPC sender");
+  }
+  if (event.senderFrame && event.senderFrame !== window.webContents.mainFrame) {
+    throw new Error("Untrusted IPC sender frame");
   }
 }
 
@@ -366,7 +417,36 @@ function isAllowedExternalUrl(url: string) {
 }
 
 export function registerIpc(getMainWindow: MainWindowGetter) {
-  const backend = new RustBackendClient();
+  let subscribed = false;
+  let latestStatus: GpuDaemonStatus | undefined;
+  const backend = new RustBackendClient((status) => {
+    latestStatus = status;
+    if (subscribed)
+      getMainWindow()?.webContents.send("prism:daemon:statusChanged", status);
+  });
+
+  ipcMain.handle(
+    "prism:daemon:subscribe",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid daemon subscription payload");
+      subscribed = true;
+      backend.start();
+      if (latestStatus)
+        getMainWindow()?.webContents.send(
+          "prism:daemon:statusChanged",
+          latestStatus,
+        );
+    },
+  );
+  ipcMain.handle(
+    "prism:daemon:unsubscribe",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid daemon subscription payload");
+      subscribed = false;
+    },
+  );
   let profileStore: GpuProfileStore | undefined;
   const getProfileStore = () =>
     (profileStore ??= new GpuProfileStore(

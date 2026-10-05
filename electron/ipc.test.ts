@@ -11,7 +11,9 @@ import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
 import profileOutcomes from "@/test/contracts/profile-outcomes.json";
 import profileCorrections from "@/test/contracts/profile-corrections.json";
 import tuningObservations from "@/test/contracts/tuning-observations.json";
+import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store.json";
 import { createPerformanceResponse } from "@/test/gpu-fixtures";
+import { connectedDaemonStatus } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
 
 const mocks = vi.hoisted(() => ({
@@ -52,6 +54,136 @@ describe("registerIpc", () => {
     });
     mocks.openExternal.mockReset();
     mocks.spawn.mockReset();
+  });
+
+  it("forwards validated id-less notifications to the subscribed renderer without consuming a pending response", async () => {
+    const child = createBackendChild({ success: true });
+    mocks.spawn.mockReturnValue(child);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      child.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: unhealthyStoreStatus })}\n`,
+      );
+      expect(send).toHaveBeenCalledWith(
+        "prism:daemon:statusChanged",
+        unhealthyStoreStatus,
+      );
+      expect(
+        await callHandler("prism:gpu:getDaemonStatus", trustedEvent()),
+      ).toEqual({ success: true });
+      await callHandler("prism:daemon:unsubscribe", trustedEvent());
+      send.mockClear();
+      child.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: unhealthyStoreStatus })}\n`,
+      );
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each(["subscribe", "unsubscribe"])(
+    "validates the sender and payload of daemon %s",
+    async (method) => {
+      const dispose = registerIpc(getMainWindow);
+      try {
+        const channel = `prism:daemon:${method}`;
+        await expect(callHandler(channel, untrustedEvent())).rejects.toThrow(
+          "Untrusted IPC sender",
+        );
+        await expect(
+          callHandler(channel, trustedEvent(), { uid: 0 }),
+        ).rejects.toThrow("Invalid daemon subscription payload");
+        expect(mocks.spawn).not.toHaveBeenCalled();
+      } finally {
+        dispose();
+      }
+    },
+  );
+
+  it("ignores malformed notification payloads and envelopes", async () => {
+    const child = createBackendChild();
+    mocks.spawn.mockReturnValue(child);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      for (const value of [
+        null,
+        [],
+        { method: "daemon.statusChanged", params: null },
+        {
+          method: "daemon.statusChanged",
+          params: { ...unhealthyStoreStatus, reachable: "true" },
+        },
+        {
+          method: "daemon.statusChanged",
+          params: {
+            ...unhealthyStoreStatus,
+            tuningStore: {
+              status: "unhealthy",
+              problem: "unknown",
+              path: "/store",
+              detail: "problem",
+            },
+          },
+        },
+        {
+          method: "daemon.statusChanged",
+          params: unhealthyStoreStatus,
+          id: 99,
+        },
+        { method: "unknown", params: unhealthyStoreStatus },
+      ])
+        child.stdout.write(`${JSON.stringify(value)}\n`);
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("reports a sidecar crash, restarts its session, and cancels restart on disposal", async () => {
+    vi.useFakeTimers();
+    const first = createBackendChild();
+    const second = createBackendChild();
+    mocks.spawn.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      first.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: connectedDaemonStatus })}\n`,
+      );
+      first.emit("exit", 1, null);
+      expect(send).toHaveBeenLastCalledWith(
+        "prism:daemon:statusChanged",
+        expect.objectContaining({ reachable: false, tuningStore: null }),
+      );
+      await vi.advanceTimersByTimeAsync(250);
+      expect(mocks.spawn).toHaveBeenCalledTimes(2);
+      second.stdout.write(
+        `${JSON.stringify({ method: "daemon.statusChanged", params: connectedDaemonStatus })}\n`,
+      );
+      expect(send).toHaveBeenLastCalledWith(
+        "prism:daemon:statusChanged",
+        connectedDaemonStatus,
+      );
+      second.emit("exit", 1, null);
+      dispose();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(mocks.spawn).toHaveBeenCalledTimes(2);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("forwards profile application to backend validation and preserves each outcome", async () => {

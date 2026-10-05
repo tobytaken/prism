@@ -556,9 +556,9 @@ impl GpuDaemonStatus {
 /// Whether the daemon can use its persistent tuning store. An unhealthy store is preserved
 /// untouched: startup and automatic writes are suspended, and manual live tuning keeps working.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "status", rename_all = "camelCase")]
+#[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
 pub enum TuningStoreHealth {
-    Healthy,
+    Healthy {},
     Unhealthy {
         problem: TuningStoreProblem,
         path: String,
@@ -1145,7 +1145,7 @@ mod tests {
             "tuningStore": { "status": "healthy" }
         });
         let status: GpuDaemonStatus = serde_json::from_value(healthy.clone()).unwrap();
-        assert_eq!(status.tuning_store, Some(TuningStoreHealth::Healthy));
+        assert_eq!(status.tuning_store, Some(TuningStoreHealth::Healthy {}));
         assert_eq!(serde_json::to_value(status).unwrap(), healthy);
 
         let mut older = healthy;
