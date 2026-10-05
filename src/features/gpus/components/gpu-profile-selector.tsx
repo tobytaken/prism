@@ -38,6 +38,7 @@ import type {
   ProfileSettingKey,
 } from "@/features/gpus/types";
 import type { PerformanceMutationAction } from "./gpu-tuning-screen";
+import { GpuManageProfilesDialog } from "./gpu-manage-profiles-dialog";
 
 /**
  * Applies the saved profile, first saving any reviewed corrections to it. Resolves with proposed
@@ -85,7 +86,9 @@ export function useGpuProfileSelector({
   const uuid = gpu.stableId?.trim() ? gpu.stableId : null;
   const profiles =
     workflow.query.data?.filter((profile) => profile.gpuId === uuid) ?? [];
-  const current = (uuid && workflow.stateOf(uuid)?.currentProfile) || null;
+  const tuningState = uuid ? workflow.stateOf(uuid) : undefined;
+  const current = tuningState?.currentProfile ?? null;
+  const currentProfileKnown = !!tuningState && !workflow.states.error;
   // Another user's current profile is shown by name only; its values aren't visible.
   const ownCurrent = profiles.find((profile) => profile.id === current?.id);
   const comparison =
@@ -168,6 +171,7 @@ export function useGpuProfileSelector({
     workflow,
     profiles,
     current,
+    currentProfileKnown,
     ownCurrent,
     comparison,
     saveBlocker,
@@ -224,6 +228,7 @@ export function GpuProfileSelector({
 
 function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
   const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const {
     gpu,
     workflow,
@@ -315,6 +320,12 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
           >
             Save as new…
           </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={workflow.query.isPending || !!workflow.query.error}
+            onSelect={() => setManageOpen(true)}
+          >
+            Manage profiles…
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <SaveAsNewDialog
@@ -322,6 +333,15 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
         open={saveAsOpen}
         onOpenChange={setSaveAsOpen}
       />
+      {manageOpen && (
+        <GpuManageProfilesDialog
+          profiles={profiles}
+          current={current}
+          currentProfileKnown={selector.currentProfileKnown}
+          workflow={workflow}
+          onOpenChange={setManageOpen}
+        />
+      )}
     </>
   );
 }

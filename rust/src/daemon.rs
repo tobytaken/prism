@@ -12,6 +12,8 @@ mod current_profile_tests;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]
+mod manage_profile_tests;
+#[cfg(test)]
 mod profile_tests;
 #[cfg(test)]
 mod tests;

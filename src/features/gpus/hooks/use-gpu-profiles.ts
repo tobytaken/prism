@@ -5,6 +5,8 @@ import {
   listGpuProfiles,
   saveGpuProfile,
   saveGpuProfileToCurrent,
+  renameGpuProfile,
+  deleteGpuProfile,
 } from "@/features/gpus/api";
 import { PROFILE_SETTING_KEYS } from "@/features/gpus/lib/tuning-profiles";
 import type {
@@ -70,11 +72,21 @@ export function useGpuProfiles() {
       saveGpuProfileToCurrent(revisionFor(gpu)),
     onSettled: refresh,
   });
+  const rename = useMutation({
+    mutationFn: renameGpuProfile,
+    onSettled: refresh,
+  });
+  const remove = useMutation({
+    mutationFn: deleteGpuProfile,
+    onSettled: refresh,
+  });
   return {
     query,
     states,
     saveAsNew,
     saveToCurrent,
+    rename,
+    remove,
     stateOf(gpuId: string) {
       return states.data?.find((state) => state.gpuId === gpuId);
     },

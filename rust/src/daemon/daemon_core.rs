@@ -101,14 +101,38 @@ impl DaemonCore {
             DaemonRequest::SaveToCurrentProfile(request) => self
                 .save_to_current_profile(peer, request)
                 .map(DaemonResponse::Profile),
+            DaemonRequest::RenameProfile(request) => {
+                let peer = peer.clone();
+                self.update_profile(
+                    &peer.clone(),
+                    &request.profile_id.clone(),
+                    move |document| {
+                        document.rename_profile(&peer, &request.profile_id, &request.name)
+                    },
+                )
+                .map(DaemonResponse::Profile)
+            }
+            DaemonRequest::DeleteProfile(request) => {
+                let peer = peer.clone();
+                self.update_profile(
+                    &peer.clone(),
+                    &request.profile_id.clone(),
+                    move |document| document.delete_profile(&peer, &request.profile_id),
+                )
+                .map(|()| {
+                    DaemonResponse::Command(DaemonCommandResponse {
+                        success: true,
+                        error: None,
+                    })
+                })
+            }
             DaemonRequest::ApplyProfileById(request) => self
                 .tuning_store
                 .read(|document| document.profile_of(peer, &request.profile_id))
                 .map_err(GpuCommandError::from)
                 .and_then(|profile| profile)
-                .map(|profile| {
-                    DaemonResponse::ProfileApplication(self.apply_saved_profile(profile))
-                }),
+                .and_then(|profile| self.apply_saved_profile(peer, profile))
+                .map(DaemonResponse::ProfileApplication),
             DaemonRequest::CorrectAndApplyProfile(request) => self
                 .correct_and_apply_profile(peer, request)
                 .map(DaemonResponse::CorrectedProfileApplication),
@@ -119,6 +143,20 @@ impl DaemonCore {
             request => Ok(self.handle(request)),
         };
         response.unwrap_or_else(DaemonResponse::Error)
+    }
+
+    /// Edits a saved profile on its GPU's queue, without changing any GPU controls.
+    fn update_profile<T: Send + 'static>(
+        &self,
+        peer: &SessionPeer,
+        profile_id: &str,
+        change: impl FnOnce(&mut TuningDocument) -> Result<T, GpuCommandError> + Send + 'static,
+    ) -> Result<T, GpuCommandError> {
+        let profile = self
+            .tuning_store
+            .read(|document| document.profile_of(peer, profile_id))??;
+        let store = Arc::clone(&self.tuning_store);
+        self.tracked_write(&profile.gpu_id, move |_| store.try_update(change))
     }
 
     // Saving runs on the GPU's queue, so it captures the values after any write queued before it.
@@ -199,7 +237,7 @@ impl DaemonCore {
         let profile = self.tuning_store.try_update(|document| {
             document.correct_profile(peer, &request.profile_id, &request.corrections)
         })?;
-        let application = self.apply_saved_profile(profile.clone());
+        let application = self.apply_saved_profile(peer, profile.clone())?;
         Ok(CorrectedProfileApplication {
             profile,
             application,
@@ -209,55 +247,35 @@ impl DaemonCore {
     /// Applies the profile. Applied in full, it becomes the GPU's current profile; applied in
     /// part, the GPU is left with no current profile; when nothing was applied, the previous
     /// current profile stays.
-    fn apply_saved_profile(&self, profile: GpuTuningProfile) -> ProfileApplicationResponse {
-        self.apply_profile_settings(
-            ApplyGpuProfileRequest {
-                gpu_id: profile.gpu_id,
-                settings: profile.settings,
-            },
-            Some(profile.id),
-        )
+    fn apply_saved_profile(
+        &self,
+        peer: &SessionPeer,
+        profile: GpuTuningProfile,
+    ) -> Result<ProfileApplicationResponse, GpuCommandError> {
+        let store = Arc::clone(&self.tuning_store);
+        let peer = peer.clone();
+        self.tracked_write(&profile.gpu_id, move |backend| {
+            // A profile can be deleted or edited while this application waits on the GPU's queue.
+            let profile = store.read(|document| document.profile_of(&peer, &profile.id))??;
+            Ok(apply_recorded_profile(
+                backend,
+                &store,
+                ApplyGpuProfileRequest {
+                    gpu_id: profile.gpu_id,
+                    settings: profile.settings,
+                },
+                Some(profile.id),
+            ))
+        })
     }
 
     fn apply_profile_settings(
         &self,
         request: ApplyGpuProfileRequest,
-        profile_id: Option<String>,
     ) -> ProfileApplicationResponse {
         let store = Arc::clone(&self.tuning_store);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
-            let uuid = request.gpu_id.clone();
-            let settings = request.settings.clone();
-            let response = apply_profile(backend, request);
-            let outcomes = [
-                (ProfileSettingKey::PowerLimitWatts, &response.power),
-                (ProfileSettingKey::GraphicsOffsetMhz, &response.graphics),
-                (ProfileSettingKey::MemoryOffsetMhz, &response.memory),
-            ];
-            let included = outcomes.iter().filter(|(_, outcome)| outcome.is_some());
-            let applied: Vec<_> = outcomes
-                .iter()
-                .filter(|(_, outcome)| succeeded(outcome))
-                .filter_map(|(key, _)| settings.get(*key).map(|setting| (*key, setting)))
-                .collect();
-            let current = match profile_id {
-                Some(id) if applied.len() == included.count() => CurrentProfileChange::Become(id),
-                Some(_) if !applied.is_empty() => CurrentProfileChange::Clear,
-                _ => CurrentProfileChange::Keep,
-            };
-            record(&store, &uuid, |document| {
-                document.record_applied(&uuid, &applied);
-                match current {
-                    CurrentProfileChange::Become(id) => {
-                        document.current_profiles.insert(uuid.clone(), id);
-                    }
-                    CurrentProfileChange::Clear => {
-                        document.current_profiles.remove(&uuid);
-                    }
-                    CurrentProfileChange::Keep => {}
-                }
-            });
-            response
+            apply_recorded_profile(backend, &store, request, None)
         })
     }
 
@@ -349,7 +367,7 @@ impl DaemonCore {
                 DaemonResponse::Performance(self.dependencies.backend.performance())
             }
             DaemonRequest::ApplyProfile(request) => {
-                DaemonResponse::ProfileApplication(self.apply_profile_settings(request, None))
+                DaemonResponse::ProfileApplication(self.apply_profile_settings(request))
             }
             DaemonRequest::GetDaemonStatus => {
                 DaemonResponse::DaemonStatus(GpuDaemonStatus::connected(
@@ -416,6 +434,8 @@ impl DaemonCore {
             | DaemonRequest::GetTuningStates
             | DaemonRequest::SaveProfileAsNew(_)
             | DaemonRequest::SaveToCurrentProfile(_)
+            | DaemonRequest::RenameProfile(_)
+            | DaemonRequest::DeleteProfile(_)
             | DaemonRequest::ApplyProfileById(_)
             | DaemonRequest::CorrectAndApplyProfile(_)
             | DaemonRequest::ImportProfiles(_) => DaemonResponse::Error(GpuCommandError::new(
@@ -601,6 +621,47 @@ impl DaemonCore {
     fn inventory(&self, state: &PersistedGpuState) -> GpuInventoryResponse {
         self.dependencies.backend.inventory(state)
     }
+}
+
+/// Applies settings and records successful manual instructions and the resulting current profile.
+fn apply_recorded_profile(
+    backend: &dyn DaemonBackend,
+    store: &TuningStore,
+    request: ApplyGpuProfileRequest,
+    profile_id: Option<String>,
+) -> ProfileApplicationResponse {
+    let uuid = request.gpu_id.clone();
+    let settings = request.settings.clone();
+    let response = apply_profile(backend, request);
+    let outcomes = [
+        (ProfileSettingKey::PowerLimitWatts, &response.power),
+        (ProfileSettingKey::GraphicsOffsetMhz, &response.graphics),
+        (ProfileSettingKey::MemoryOffsetMhz, &response.memory),
+    ];
+    let included = outcomes.iter().filter(|(_, outcome)| outcome.is_some());
+    let applied: Vec<_> = outcomes
+        .iter()
+        .filter(|(_, outcome)| succeeded(outcome))
+        .filter_map(|(key, _)| settings.get(*key).map(|setting| (*key, setting)))
+        .collect();
+    let current = match profile_id {
+        Some(id) if applied.len() == included.count() => CurrentProfileChange::Become(id),
+        Some(_) if !applied.is_empty() => CurrentProfileChange::Clear,
+        _ => CurrentProfileChange::Keep,
+    };
+    record(store, &uuid, |document| {
+        document.record_applied(&uuid, &applied);
+        match current {
+            CurrentProfileChange::Become(id) => {
+                document.current_profiles.insert(uuid.clone(), id);
+            }
+            CurrentProfileChange::Clear => {
+                document.current_profiles.remove(&uuid);
+            }
+            CurrentProfileChange::Keep => {}
+        }
+    });
+    response
 }
 
 /// What a profile application does to the GPU's current profile.

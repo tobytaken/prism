@@ -116,7 +116,11 @@ export function createFakeDesktop({
     );
     return {
       gpuId,
-      revision: JSON.stringify([controls, lastApplied[gpuId], currentId]),
+      revision: JSON.stringify([
+        controls,
+        lastApplied[gpuId],
+        current ? { id: current.id, name: current.name } : null,
+      ]),
       reported,
       currentProfile: current ? { id: current.id, name: current.name } : null,
     };
@@ -347,6 +351,36 @@ export function createFakeDesktop({
     listProfiles: vi
       .spyOn(api, "listProfiles")
       .mockImplementation(async () => structuredClone(profiles)),
+    renameProfile: vi
+      .spyOn(api, "renameProfile")
+      .mockImplementation(async ({ profileId, name }) => {
+        const saved = profile(profileId);
+        const trimmed = name.trim();
+        if (!trimmed) throw new Error("Enter a name for the profile.");
+        if (
+          profiles.some(
+            (other) =>
+              other.id !== profileId &&
+              other.gpuId === saved.gpuId &&
+              other.name.toLowerCase() === trimmed.toLowerCase(),
+          )
+        )
+          throw new Error(
+            `A profile named "${trimmed}" already exists for this GPU. Choose another name.`,
+          );
+        saved.name = trimmed;
+        return structuredClone(saved);
+      }),
+    deleteProfile: vi
+      .spyOn(api, "deleteProfile")
+      .mockImplementation(async ({ profileId }) => {
+        profile(profileId);
+        const index = profiles.findIndex((profile) => profile.id === profileId);
+        profiles.splice(index, 1);
+        for (const [gpuId, currentId] of Object.entries(currentProfiles))
+          if (currentId === profileId) delete currentProfiles[gpuId];
+        return { success: true, error: null };
+      }),
     getTuningStates: vi
       .spyOn(api, "getTuningStates")
       .mockImplementation(async () =>
@@ -510,6 +544,8 @@ export function createFakeDesktop({
   for (const spy of [
     spies.saveProfile,
     spies.saveProfileToCurrent,
+    spies.renameProfile,
+    spies.deleteProfile,
     spies.applyProfile,
     spies.applyProfileById,
     spies.correctAndApplyProfile,

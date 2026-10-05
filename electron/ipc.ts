@@ -553,6 +553,34 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     },
   );
 
+  ipcMain.handle("prism:gpu:deleteProfile", async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow);
+    if (
+      !isObject(payload) ||
+      !hasOnlyKeys(payload, ["profileId"]) ||
+      !isString(payload.profileId) ||
+      !payload.profileId.trim()
+    ) {
+      throw new Error("Invalid deleteProfile payload");
+    }
+    return backend.invoke("gpu.deleteProfile", payload);
+  });
+
+  ipcMain.handle("prism:gpu:renameProfile", async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow);
+    if (
+      !isObject(payload) ||
+      !hasOnlyKeys(payload, ["profileId", "name"]) ||
+      !isString(payload.profileId) ||
+      !payload.profileId.trim() ||
+      !isString(payload.name) ||
+      !payload.name.trim()
+    ) {
+      throw new Error("Invalid renameProfile payload");
+    }
+    return backend.invoke("gpu.renameProfile", payload);
+  });
+
   ipcMain.handle("prism:gpu:saveProfile", async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow);
     if (

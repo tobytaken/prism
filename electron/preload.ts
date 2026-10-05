@@ -25,6 +25,8 @@ import type {
   GpuTuningState,
   SaveGpuProfileRequest,
   SaveToCurrentProfileRequest,
+  RenameGpuProfileRequest,
+  GpuProfileIdRequest,
 } from "@/features/gpus/types";
 
 let daemonSubscribers = 0;
@@ -82,6 +84,16 @@ const prismApi = {
       ipcRenderer.invoke("prism:gpu:listProfiles") as Promise<
         GpuTuningProfile[]
       >,
+    renameProfile: (request: RenameGpuProfileRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:renameProfile",
+        request,
+      ) as Promise<GpuTuningProfile>,
+    deleteProfile: (request: GpuProfileIdRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:deleteProfile",
+        request,
+      ) as Promise<GpuCommandResponse>,
     applyProfileById: (request: ApplyGpuProfileByIdRequest) =>
       ipcRenderer.invoke(
         "prism:gpu:applyProfileById",

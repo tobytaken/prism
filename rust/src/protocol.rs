@@ -252,6 +252,13 @@ pub struct ProfileIdRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RenameProfileRequest {
+    pub profile_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CorrectAndApplyProfileRequest {
     pub profile_id: String,
     /// The reviewed corrections; each must still match the profile's saved value.
@@ -302,6 +309,8 @@ pub enum DaemonRequest {
     GetTuningStates,
     SaveProfileAsNew(SaveProfileAsNewRequest),
     SaveToCurrentProfile(SaveToCurrentProfileRequest),
+    RenameProfile(RenameProfileRequest),
+    DeleteProfile(ProfileIdRequest),
     ApplyProfileById(ProfileIdRequest),
     CorrectAndApplyProfile(CorrectAndApplyProfileRequest),
     ImportProfiles(ImportProfilesRequest),
@@ -432,6 +441,27 @@ mod session_tests {
             serde_json::from_value::<SessionMessage>(json).unwrap(),
             event
         );
+    }
+
+    #[test]
+    fn profile_management_requests_round_trip_and_reject_client_supplied_ownership() {
+        for request in [
+            serde_json::json!({ "type": "rename_profile", "payload": { "profileId": "quiet", "name": "Silent" } }),
+            serde_json::json!({ "type": "delete_profile", "payload": { "profileId": "quiet" } }),
+        ] {
+            let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), request);
+            let mut malformed = request;
+            malformed["payload"]["uid"] = serde_json::json!(0);
+            assert!(serde_json::from_value::<DaemonRequest>(malformed).is_err());
+        }
+        for malformed in [
+            serde_json::json!({ "type": "rename_profile", "payload": { "profileId": "quiet" } }),
+            serde_json::json!({ "type": "rename_profile", "payload": { "profileId": "quiet", "name": 7 } }),
+            serde_json::json!({ "type": "delete_profile", "payload": { "profileId": 7 } }),
+        ] {
+            assert!(serde_json::from_value::<DaemonRequest>(malformed).is_err());
+        }
     }
 
     #[test]

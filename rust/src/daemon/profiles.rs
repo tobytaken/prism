@@ -162,11 +162,18 @@ pub(super) fn profile_name(name: &str) -> Result<String, GpuCommandError> {
     Ok(name.to_string())
 }
 
-fn name_taken(profiles: &[GpuTuningProfile], gpu_id: &str, name: &str) -> bool {
+fn name_taken(
+    profiles: &[GpuTuningProfile],
+    gpu_id: &str,
+    name: &str,
+    except_id: Option<&str>,
+) -> bool {
     let name = name.to_lowercase();
-    profiles
-        .iter()
-        .any(|profile| profile.gpu_id == gpu_id && profile.name.to_lowercase() == name)
+    profiles.iter().any(|profile| {
+        Some(profile.id.as_str()) != except_id
+            && profile.gpu_id == gpu_id
+            && profile.name.to_lowercase() == name
+    })
 }
 
 /// FNV-1a: a stable digest, so a revision means the same state across daemon restarts.
@@ -190,10 +197,16 @@ impl TuningDocument {
             })
             .collect();
         let current_id = self.current_profiles.get(&uuid);
+        let current_profile = current_id
+            .and_then(|id| self.any_profile(id))
+            .map(|profile| CurrentProfile {
+                id: profile.id.clone(),
+                name: profile.name.clone(),
+            });
         let state = serde_json::json!({
             "reported": reported,
             "lastApplied": self.last_applied.get(&uuid),
-            "currentProfile": current_id,
+            "currentProfile": current_profile,
         });
         GpuTuningState {
             revision: format!("{:016x}", digest(state.to_string().as_bytes())),
@@ -202,12 +215,7 @@ impl TuningDocument {
                 graphics_offset_mhz: reading(gpu, ProfileSettingKey::GraphicsOffsetMhz).current,
                 memory_offset_mhz: reading(gpu, ProfileSettingKey::MemoryOffsetMhz).current,
             },
-            current_profile: current_id
-                .and_then(|id| self.any_profile(id))
-                .map(|profile| CurrentProfile {
-                    id: profile.id.clone(),
-                    name: profile.name.clone(),
-                }),
+            current_profile,
             gpu_id: uuid,
         }
     }
@@ -305,7 +313,7 @@ impl TuningDocument {
         profile: GpuTuningProfile,
     ) -> Result<GpuTuningProfile, GpuCommandError> {
         let profiles = &mut self.user_mut(peer.uid, &peer.username).profiles;
-        if name_taken(profiles, &profile.gpu_id, &profile.name) {
+        if name_taken(profiles, &profile.gpu_id, &profile.name, None) {
             return Err(GpuCommandError::new(
                 GpuCommandErrorCode::InvalidArgument,
                 format!(
@@ -316,6 +324,47 @@ impl TuningDocument {
         }
         profiles.push(profile.clone());
         Ok(profile)
+    }
+
+    /// Renames only the caller's profile, preserving its id and every reference to it.
+    pub fn rename_profile(
+        &mut self,
+        peer: &SessionPeer,
+        profile_id: &str,
+        name: &str,
+    ) -> Result<GpuTuningProfile, GpuCommandError> {
+        let profile = self.profile_of(peer, profile_id)?;
+        let name = profile_name(name)?;
+        let profiles = &mut self.user_mut(peer.uid, &peer.username).profiles;
+        if name_taken(profiles, &profile.gpu_id, &name, Some(profile_id)) {
+            return Err(GpuCommandError::new(
+                GpuCommandErrorCode::InvalidArgument,
+                format!(
+                    "A profile named \"{name}\" already exists for this GPU. Choose another name."
+                ),
+            ));
+        }
+        let profile = profiles
+            .iter_mut()
+            .find(|profile| profile.id == profile_id)
+            .unwrap();
+        profile.name = name;
+        Ok(profile.clone())
+    }
+
+    /// Removes only the caller's profile and its current-profile references, leaving all
+    /// current and last applied tuning values unchanged.
+    pub fn delete_profile(
+        &mut self,
+        peer: &SessionPeer,
+        profile_id: &str,
+    ) -> Result<(), GpuCommandError> {
+        self.profile_of(peer, profile_id)?;
+        self.user_mut(peer.uid, &peer.username)
+            .profiles
+            .retain(|profile| profile.id != profile_id);
+        self.current_profiles.retain(|_, id| id != profile_id);
+        Ok(())
     }
 
     /// Adds the profiles under the caller, keeping their ids. A profile whose id already exists
@@ -356,7 +405,7 @@ impl TuningDocument {
             let base = profile.name.trim().to_string();
             profile.name = base.clone();
             let mut suffix = 2;
-            while name_taken(own, &profile.gpu_id, &profile.name) {
+            while name_taken(own, &profile.gpu_id, &profile.name, None) {
                 profile.name = format!("{base} ({suffix})");
                 suffix += 1;
             }

@@ -17,6 +17,8 @@ import type {
   GpuTuningState,
   SaveGpuProfileRequest,
   SaveToCurrentProfileRequest,
+  RenameGpuProfileRequest,
+  GpuProfileIdRequest,
 } from "@/features/gpus/types";
 import type {
   DriverAction,
@@ -28,6 +30,8 @@ export interface PrismDesktopApi {
   gpu: {
     /** The caller's own profiles. */
     listProfiles(): Promise<GpuTuningProfile[]>;
+    renameProfile(request: RenameGpuProfileRequest): Promise<GpuTuningProfile>;
+    deleteProfile(request: GpuProfileIdRequest): Promise<GpuCommandResponse>;
     /** Save as new, from the GPU's current values; the new profile becomes current. */
     saveProfile(request: SaveGpuProfileRequest): Promise<GpuTuningProfile>;
     /** Overwrites the GPU's current profile, if the caller owns it, with its current values. */

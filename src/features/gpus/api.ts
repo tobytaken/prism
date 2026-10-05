@@ -11,10 +11,22 @@ import type {
   ResetGpuConfigRequest,
   SaveGpuProfileRequest,
   SaveToCurrentProfileRequest,
+  RenameGpuProfileRequest,
+  GpuProfileIdRequest,
 } from "@/features/gpus/types";
 
 export function listGpuProfiles() {
   return window.prism.gpu.listProfiles();
+}
+
+export function renameGpuProfile(request: RenameGpuProfileRequest) {
+  return window.prism.gpu.renameProfile(request);
+}
+
+export async function deleteGpuProfile(request: GpuProfileIdRequest) {
+  const response = await window.prism.gpu.deleteProfile(request);
+  if (!response.success)
+    throw new Error(response.error ?? "Failed to delete the profile.");
 }
 
 export function applyGpuProfile(request: ApplyGpuProfileRequest) {
