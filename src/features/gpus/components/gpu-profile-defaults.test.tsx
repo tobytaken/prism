@@ -15,6 +15,7 @@ import {
   profileSelector,
   saveAsNew,
   saveAsNewAvailability,
+  switchWithoutSaving,
 } from "@/test/profile-selector";
 import { renderWithQueryClient } from "@/test/query-client";
 import type {
@@ -101,6 +102,9 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
   expect(fake.resetPowerLimit).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("Unapplied changes")).toBeNull();
   expect(screen.getByText("Changes not saved to profile")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "Current profile saved values" }),
+  ).not.toBeInTheDocument();
   await saveProfile(user, "Default");
   await waitFor(() => expect(fake.profiles).toHaveLength(2));
   // The daemon takes the default choice from its own record of the applied request.
@@ -119,7 +123,11 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
 
   // A driver update changes the reported default.
   response.gpus[0].power.defaultLimitWatts = 520;
+  await waitFor(() =>
+    expect(profileSelector()).toHaveTextContent("Changes not saved to profile"),
+  );
   await chooseProfile(user, "Fixed");
+  await switchWithoutSaving(user);
   await waitFor(() =>
     expect(fake.applyProfileById).toHaveBeenLastCalledWith({
       profileId: "profile-1",
