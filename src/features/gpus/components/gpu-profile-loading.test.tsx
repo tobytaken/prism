@@ -21,7 +21,6 @@ import type {
   GpuTuningProfile,
   ProfileApplicationResponse,
 } from "@/features/gpus/types";
-import { GpuTuningPage } from "./gpu-tuning-page";
 import { GpuPerformancePage } from "./gpu-performance-page";
 import { MemoryRouter, RouterProvider } from "react-router-dom";
 import { appRouter } from "@/app/router";
@@ -52,7 +51,6 @@ beforeEach(() => {
 it("saves a profile, changes live values, and applies the current profile again without touching omitted settings", async () => {
   const user = userEvent.setup();
   const fake = createFakeDesktop();
-  const savedConfig = vi.spyOn(window.prism.gpu, "applyConfig");
   renderWithQueryClient(<RouterProvider router={appRouter} />);
   await user.click(screen.getByRole("link", { name: "Performance" }));
   await saveAsNew(user, "Quiet");
@@ -82,7 +80,6 @@ it("saves a profile, changes live values, and applies the current profile again 
   ).toBeInTheDocument();
   expect(fake.gpu.cooling.fans[0].mode).toBe("auto");
   expect(fake.gpu.clocks.memory.currentOffsetMHz).toBeNull();
-  expect(savedConfig).not.toHaveBeenCalled();
   expect(fake.profiles[0].settings.powerLimitWatts).toEqual({
     kind: "value",
     value: 475,
@@ -383,7 +380,12 @@ it.each(["Apply", "Apply all"])(
     };
     fake.applyProfileById.mockResolvedValue(blocked);
     fake.applyProfile.mockResolvedValue(blocked);
-    if (button === "Apply all") renderWithQueryClient(<GpuTuningPage />);
+    if (button === "Apply all")
+      renderWithQueryClient(
+        <MemoryRouter>
+          <GpuPerformancePage />
+        </MemoryRouter>,
+      );
     else renderPerformancePage();
     await chooseProfile(user, "Quiet");
     await screen.findByText("Power limit: Not attempted — Power range changed");

@@ -428,7 +428,7 @@ describe("registerIpc", () => {
         {
           gpuId: "GPU-123",
           settings: { powerLimitWatts: value(450) },
-          reapplySaved: true,
+          unexpected: true,
         },
       ]) {
         await expect(
@@ -882,14 +882,6 @@ describe("registerIpc", () => {
         }),
       ).rejects.toThrow("Invalid setClockOffsets payload");
     }
-    await expect(
-      callHandler("prism:gpu:resetConfig", trustedEvent(), { gpuId: 123 }),
-    ).rejects.toThrow("Invalid resetConfig payload");
-    await expect(
-      callHandler("prism:gpu:applyConfig", trustedEvent(), {
-        powerLimitWatts: "450",
-      }),
-    ).rejects.toThrow("Invalid applyConfig payload");
     await expect(
       callHandler("prism:drivers:startAction", trustedEvent(), {
         action: "removeEverything",

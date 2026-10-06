@@ -10,9 +10,8 @@ use crate::drivers::{
     StartDriverActionRequest,
 };
 use crate::gpu::{
-    collect_inventory, collect_performance, ApplyGpuConfigRequest, GpuCommandError,
-    GpuCommandErrorCode, GpuDaemonStatus, GpuInventoryResponse, GpuMutationResponse,
-    GpuPerformanceResponse, GpuTargetRequest, ResetGpuConfigRequest, SetGpuFanModeAutoRequest,
+    collect_inventory, collect_performance, GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus,
+    GpuInventoryResponse, GpuPerformanceResponse, GpuTargetRequest, SetGpuFanModeAutoRequest,
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 use crate::protocol::{
@@ -56,6 +55,17 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
                 |request| daemon_client::apply_gpu_profile(request).map_err(BridgeError::from),
             )
         }
+        "gpu.getMigrationState" => daemon_client::get_migration_state()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
+        "gpu.dismissMigrationNotice" => daemon_client::dismiss_migration_notice()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
+        "gpu.adoptMigratedProfile" => parse_and_serialize_result::<ProfileIdRequest, _, _>(
+            request.params,
+            "gpu.adoptMigratedProfile",
+            |request| daemon_client::adopt_migrated_profile(request).map_err(BridgeError::from),
+        ),
         "gpu.getStartupState" => daemon_client::get_startup_state()
             .map_err(BridgeError::from)
             .and_then(serialize_result),
@@ -126,16 +136,6 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
         "gpu.getInventory" => serialize_result(get_gpu_inventory()),
         "gpu.getPerformance" => serialize_result(get_gpu_performance()),
         "gpu.getDaemonStatus" => serialize_result(get_gpu_daemon_status()),
-        "gpu.applyConfig" => parse_and_serialize::<ApplyGpuConfigRequest, _, _>(
-            request.params,
-            "gpu.applyConfig",
-            apply_gpu_config,
-        ),
-        "gpu.resetConfig" => parse_and_serialize::<ResetGpuConfigRequest, _, _>(
-            request.params,
-            "gpu.resetConfig",
-            reset_gpu_config,
-        ),
         "gpu.setPowerLimit" => parse_and_serialize_result::<SetGpuPowerLimitRequest, _, _>(
             request.params,
             "gpu.setPowerLimit",
@@ -212,20 +212,6 @@ pub fn invalid_request_response(message: impl Into<String>) -> BridgeResponse {
             message: message.into(),
         }),
     }
-}
-
-fn parse_and_serialize<T, F, R>(
-    params: Option<Value>,
-    method: &str,
-    handler: F,
-) -> Result<Value, BridgeError>
-where
-    T: DeserializeOwned,
-    R: Serialize,
-    F: FnOnce(T) -> R,
-{
-    let payload = parse_params(params, method)?;
-    serialize_result(handler(payload))
 }
 
 fn parse_and_serialize_result<T, F, R>(
@@ -307,18 +293,6 @@ fn get_gpu_performance() -> GpuPerformanceResponse {
 
 fn get_gpu_daemon_status() -> GpuDaemonStatus {
     daemon_client::get_daemon_status()
-}
-
-fn apply_gpu_config(request: ApplyGpuConfigRequest) -> GpuMutationResponse {
-    if request.reapply_saved {
-        daemon_client::reapply_saved_gpu_config()
-    } else {
-        daemon_client::apply_gpu_config(request)
-    }
-}
-
-fn reset_gpu_config(request: ResetGpuConfigRequest) -> GpuMutationResponse {
-    daemon_client::reset_gpu_config(request)
 }
 
 fn set_gpu_power_limit(
@@ -454,7 +428,7 @@ mod tests {
     fn mutation_methods_require_params() {
         let response = handle_request(BridgeRequest {
             id: 8,
-            method: "gpu.applyConfig".into(),
+            method: "gpu.setPowerLimit".into(),
             params: None,
         });
 
@@ -505,28 +479,6 @@ mod tests {
             params: None,
         });
         assert_eq!(response.error.expect("error").code, "invalid_request");
-    }
-
-    #[test]
-    fn reapply_saved_config_returns_mutation_response_when_daemon_is_unavailable() {
-        std::env::set_var(
-            "PRISM_SOCKET_PATH",
-            "/tmp/prism-bridge-test-missing/prismd.sock",
-        );
-
-        let response = handle_request(BridgeRequest {
-            id: 10,
-            method: "gpu.applyConfig".into(),
-            params: Some(json!({ "reapplySaved": true })),
-        });
-
-        std::env::remove_var("PRISM_SOCKET_PATH");
-
-        let result = response.result.expect("result");
-        assert!(response.error.is_none());
-        assert_eq!(result["success"], false);
-        assert_eq!(result["inventory"], serde_json::Value::Null);
-        assert_eq!(result["error"]["code"], "daemonUnavailable");
     }
 
     #[test]

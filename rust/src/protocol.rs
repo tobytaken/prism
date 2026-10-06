@@ -2,9 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
 use crate::gpu::{
-    ApplyGpuConfigRequest, GpuCommandError, GpuDaemonStatus, GpuInventoryResponse,
-    GpuMutationResponse, GpuPerformanceResponse, GpuTargetRequest, ResetGpuConfigRequest,
-    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+    GpuCommandError, GpuDaemonStatus, GpuInventoryResponse, GpuPerformanceResponse,
+    GpuTargetRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -380,16 +379,16 @@ pub enum DaemonRequest {
     GetInventory,
     GetPerformance,
     GetDaemonStatus,
-    ApplyConfig(ApplyGpuConfigRequest),
     ApplyProfile(ApplyGpuProfileRequest),
-    ResetConfig(ResetGpuConfigRequest),
-    ReapplySavedConfig,
     SetPowerLimit(SetGpuPowerLimitRequest),
     ResetPowerLimit(GpuTargetRequest),
     SetFanSpeed(SetGpuFanSpeedRequest),
     SetFanModeAuto(SetGpuFanModeAutoRequest),
     SetClockOffsets(LiveClockOffsetsRequest),
     ResetClockOffsets(GpuTargetRequest),
+    GetMigrationState,
+    AdoptMigratedProfile(ProfileIdRequest),
+    DismissMigrationNotice,
     GetStartupState,
     SetStartupBehavior(SetStartupBehaviorRequest),
     SetStartupProfile(SetStartupProfileRequest),
@@ -416,10 +415,10 @@ pub enum DaemonResponse {
     Inventory(GpuInventoryResponse),
     Performance(GpuPerformanceResponse),
     DaemonStatus(GpuDaemonStatus),
-    Mutation(GpuMutationResponse),
     Command(DaemonCommandResponse),
     ClockOffsets(ClockOffsetResponse),
     ProfileApplication(ProfileApplicationResponse),
+    MigrationState(MigrationState),
     StartupState(StartupState),
     Profiles(Vec<GpuTuningProfile>),
     Profile(GpuTuningProfile),
@@ -692,4 +691,27 @@ mod session_tests {
         let malformed = serde_json::json!({"type": "event", "event": {"type": "storeHealthChanged", "payload": {"status": "healthy", "problem": "unreadable"}}});
         assert!(serde_json::from_value::<SessionMessage>(malformed).is_err());
     }
+}
+
+/// Ownerless profiles are readable by every authorized caller, separately from their own.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MigrationState {
+    pub profiles: Vec<GpuTuningProfile>,
+    pub can_adopt: bool,
+    pub notice: Option<MigrationNotice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MigrationNotice {
+    pub dropped: Vec<DroppedLegacyConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DroppedLegacyConfig {
+    pub key: String,
+    pub values: serde_json::Value,
+    pub reason: String,
 }

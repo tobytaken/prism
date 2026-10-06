@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-screen";
+import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-controls";
 import { retryTuningAction } from "@/features/gpus/lib/tuning-intentions";
 import type {
   TuningMutationHandler,

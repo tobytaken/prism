@@ -7,7 +7,6 @@ import type {
   DriverStatusResponse,
 } from "@/features/drivers/types";
 import type {
-  ApplyGpuConfigRequest,
   ApplyGpuProfileByIdRequest,
   ApplyGpuProfileRequest,
   CorrectGpuProfileRequest,
@@ -18,9 +17,7 @@ import type {
   GpuCommandResponse,
   GpuDaemonStatus,
   GpuInventoryResponse,
-  GpuMutationResponse,
   GpuPerformanceResponse,
-  ResetGpuConfigRequest,
   GpuTuningProfile,
   GpuTuningState,
   SaveGpuProfileRequest,
@@ -29,6 +26,7 @@ import type {
   GpuProfileIdRequest,
   StartupBehavior,
   StartupState,
+  MigrationState,
   SetStartupProfileRequest,
 } from "@/features/gpus/types";
 
@@ -72,6 +70,19 @@ function onTuningStateChanged(callback: (state: GpuTuningState) => void) {
 
 const prismApi = {
   gpu: {
+    getMigrationState: () =>
+      ipcRenderer.invoke(
+        "prism:gpu:getMigrationState",
+      ) as Promise<MigrationState>,
+    adoptMigratedProfile: (request: { profileId: string }) =>
+      ipcRenderer.invoke(
+        "prism:gpu:adoptMigratedProfile",
+        request,
+      ) as Promise<GpuTuningProfile>,
+    dismissMigrationNotice: () =>
+      ipcRenderer.invoke(
+        "prism:gpu:dismissMigrationNotice",
+      ) as Promise<GpuCommandResponse>,
     getStartupState: () =>
       ipcRenderer.invoke("prism:gpu:getStartupState") as Promise<StartupState>,
     setStartupBehavior: (request: { behavior: StartupBehavior }) =>
@@ -146,16 +157,6 @@ const prismApi = {
       ipcRenderer.invoke(
         "prism:gpu:getDaemonStatus",
       ) as Promise<GpuDaemonStatus>,
-    applyConfig: (request: ApplyGpuConfigRequest) =>
-      ipcRenderer.invoke(
-        "prism:gpu:applyConfig",
-        request,
-      ) as Promise<GpuMutationResponse>,
-    resetConfig: (request: ResetGpuConfigRequest) =>
-      ipcRenderer.invoke(
-        "prism:gpu:resetConfig",
-        request,
-      ) as Promise<GpuMutationResponse>,
     setPowerLimit: (gpuId: string, limitWatts: number) =>
       ipcRenderer.invoke("prism:gpu:setPowerLimit", {
         gpuId,

@@ -1,5 +1,5 @@
 import * as api from "@/features/gpus/api";
-import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-screen";
+import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-controls";
 import type { TuningSetting } from "@/features/gpus/hooks/use-tuning-edits";
 import type {
   GpuCommandResponse,

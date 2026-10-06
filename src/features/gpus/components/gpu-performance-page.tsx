@@ -13,7 +13,7 @@ import {
 } from "@/features/gpus/hooks/use-gpu-profiles";
 
 import { GpuPerformanceScreen } from "./gpu-performance-screen";
-import type { PerformanceMutationAction } from "./gpu-tuning-screen";
+import type { PerformanceMutationAction } from "./gpu-tuning-controls";
 
 export function GpuPerformancePage() {
   const queryClient = useQueryClient();

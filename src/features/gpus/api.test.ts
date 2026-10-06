@@ -1,12 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  applyGpuConfig,
   getGpuDaemonStatus,
   getGpuInventory,
   getGpuPerformance,
   resetGpuClockOffsets,
-  resetGpuConfig,
   resetGpuPowerLimit,
   setGpuClockOffsets,
   setGpuFanModeAuto,
@@ -45,28 +43,6 @@ describe("GPU API bridge", () => {
     expect(getInventory).toHaveBeenCalledWith();
     expect(getPerformance).toHaveBeenCalledWith();
     expect(getDaemonStatus).toHaveBeenCalledWith();
-  });
-
-  it("delegates persisted config mutations", async () => {
-    const applyConfig = vi.spyOn(gpuApi, "applyConfig").mockResolvedValue({
-      success: true,
-      inventory: null,
-      error: null,
-    });
-    const resetConfig = vi.spyOn(gpuApi, "resetConfig").mockResolvedValue({
-      success: true,
-      inventory: null,
-      error: null,
-    });
-
-    await applyGpuConfig({ gpuId: "GPU-123", powerLimitWatts: 450 });
-    await resetGpuConfig({ gpuId: "GPU-123" });
-
-    expect(applyConfig).toHaveBeenCalledWith({
-      gpuId: "GPU-123",
-      powerLimitWatts: 450,
-    });
-    expect(resetConfig).toHaveBeenCalledWith({ gpuId: "GPU-123" });
   });
 
   it("delegates direct performance mutations", async () => {

@@ -1,4 +1,4 @@
-import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-screen";
+import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-controls";
 import type {
   ControlSupport,
   GpuPerformanceDevice,

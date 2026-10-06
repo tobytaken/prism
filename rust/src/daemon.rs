@@ -2,6 +2,7 @@ mod backend;
 mod boot_state;
 mod daemon_core;
 mod host;
+mod migration;
 mod possibly_stale;
 mod profiles;
 mod queue;
@@ -16,6 +17,8 @@ mod current_profile_tests;
 mod harness;
 #[cfg(test)]
 mod manage_profile_tests;
+#[cfg(test)]
+mod migration_tests;
 #[cfg(test)]
 mod profile_tests;
 #[cfg(test)]

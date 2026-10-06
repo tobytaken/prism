@@ -6,7 +6,7 @@ use crate::protocol::{
     TuningOutcomeStatus,
 };
 
-// Validate the entire profile before any live write. Named profiles never change saved configuration.
+// Validate the entire profile before any live write.
 pub(super) fn apply_profile(
     backend: &dyn DaemonBackend,
     request: ApplyGpuProfileRequest,

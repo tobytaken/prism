@@ -1,35 +1,12 @@
-import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
-import {
-  GpuProfileAvailability,
-  GpuProfileFeedback,
-  GpuProfileSelector,
-  useGpuProfileSelector,
-} from "./gpu-profile-selector";
-import { profileApplication } from "@/features/gpus/lib/tuning-profiles";
-import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import { TuningOutcomes, tuningSettingLabel } from "./tuning-outcomes";
 import { inTuningRange } from "@/features/gpus/lib/tuning-intentions";
-import { unavailableTuningReadback } from "@/features/gpus/lib/tuning-readback";
 import type { TuningMutationHandler } from "@/features/gpus/lib/tuning-mutation";
 import { type ReactNode } from "react";
-import {
-  AlertTriangle,
-  Clock3,
-  Cpu,
-  Gauge,
-  LoaderCircle,
-  RefreshCw,
-  RotateCcw,
-  ShieldAlert,
-  Wind,
-  Zap,
-} from "lucide-react";
+import { Clock3, Gauge, RotateCcw, Wind, Zap } from "lucide-react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
 import {
   useTuningEdits,
@@ -42,9 +19,7 @@ import type {
   CoolingInfo,
   ControlSupport,
   FanControlInfo,
-  GpuDaemonStatus,
   GpuPerformanceDevice,
-  GpuPerformanceResponse,
   PowerControlInfo,
   GpuProfileSettings,
   ProfileRangeCorrection,
@@ -94,259 +69,6 @@ export type PerformanceMutationAction =
       kind: "resetClockOffsets";
       gpuId: string;
     };
-
-const EMPTY_PERFORMANCE_GPUS: GpuPerformanceDevice[] = [];
-const EMPTY_WARNINGS: string[] = [];
-
-type GpuTuningScreenProps = {
-  profiles?: GpuProfileWorkflow;
-  inventory?: GpuPerformanceResponse;
-  daemonStatus?: GpuDaemonStatus;
-  isLoading: boolean;
-  errorMessage: string | null;
-  mutationErrorMessage: string | null;
-  reapplyPending: boolean;
-  reapplyErrorMessage: string | null;
-  pendingAction: PerformanceMutationAction | null;
-  onReapplySavedSettings: () => void;
-  onMutationAction: TuningMutationHandler;
-};
-
-export function GpuTuningScreen({
-  profiles,
-  inventory,
-  daemonStatus,
-  isLoading,
-  errorMessage,
-  mutationErrorMessage,
-  reapplyPending,
-  reapplyErrorMessage,
-  pendingAction,
-  onReapplySavedSettings,
-  onMutationAction,
-}: GpuTuningScreenProps) {
-  const editStore = useTuningEdits();
-  const gpus = inventory?.gpus ?? EMPTY_PERFORMANCE_GPUS;
-  const warnings = inventory?.warnings ?? EMPTY_WARNINGS;
-  const daemonDisconnected = daemonStatus?.reachable === false;
-  const daemonConnected = daemonStatus?.reachable === true;
-  const daemonMessage =
-    daemonStatus?.message ??
-    "Privileged GPU controls require prismd to be installed and reachable.";
-  const busy =
-    editStore.applyAllPending || pendingAction != null || reapplyPending;
-  const hasEdits = Object.values(editStore.devices).some(
-    (device) => Object.keys(device.edits).length > 0,
-  );
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Tuning</h1>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            disabled={!daemonConnected || !hasEdits || busy || isLoading}
-            onClick={() => void editStore.applyAll(gpus, onMutationAction)}
-          >
-            {editStore.applyAllPending && (
-              <LoaderCircle className="animate-spin" />
-            )}
-            Apply all
-          </Button>
-          {daemonConnected && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={onReapplySavedSettings}
-            >
-              {reapplyPending ? (
-                <LoaderCircle className="animate-spin" />
-              ) : (
-                <RefreshCw />
-              )}
-              Reapply Saved Settings
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {daemonDisconnected && daemonStatus && (
-        <Alert
-          variant="destructive"
-          className="border-destructive/50 bg-destructive/12"
-        >
-          <ShieldAlert className="text-destructive" />
-          <AlertTitle>Privileged GPU controls are unavailable</AlertTitle>
-          <AlertDescription className="text-destructive/90">
-            <div className="space-y-1">
-              <p>{daemonMessage}</p>
-              <p>
-                Controls stay visible so you can inspect what the driver exposes
-                on this system, but changes stay locked until prismd is
-                reachable.
-              </p>
-              <p className="font-mono text-xs text-destructive/80">
-                {daemonStatus.socketPath}
-              </p>
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {errorMessage && (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertTitle>Failed to load tuning controls</AlertTitle>
-          <AlertDescription>{errorMessage}</AlertDescription>
-        </Alert>
-      )}
-      {mutationErrorMessage && (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertTitle>Failed to apply change</AlertTitle>
-          <AlertDescription>{mutationErrorMessage}</AlertDescription>
-        </Alert>
-      )}
-      {reapplyErrorMessage && (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertTitle>Failed to reapply saved settings</AlertTitle>
-          <AlertDescription>{reapplyErrorMessage}</AlertDescription>
-        </Alert>
-      )}
-      {warnings.length > 0 && (
-        <Alert>
-          <AlertTriangle className="text-primary" />
-          <AlertTitle>Driver warnings</AlertTitle>
-          <AlertDescription className="space-y-1">
-            {warnings.map((warning) => (
-              <p key={warning}>{warning}</p>
-            ))}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <UnavailableGpuEdits
-        devices={editStore.devices}
-        gpus={gpus}
-        onDiscard={editStore.discard}
-        pending={busy}
-      />
-
-      {profiles && <GpuProfileAvailability workflow={profiles} gpus={gpus} />}
-
-      {isLoading && <GpuTuningSkeleton />}
-
-      {!isLoading && gpus.length === 0 && !errorMessage && (
-        <div className="rounded-xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-          <Cpu className="mx-auto size-8 text-muted-foreground" />
-          <p className="mt-4 text-sm font-medium">No supported GPUs detected</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Tuning controls are currently available for NVIDIA GPUs exposed
-            through NVML.
-          </p>
-        </div>
-      )}
-
-      {!isLoading && gpus.length > 0 && (
-        <div className="space-y-5">
-          {gpus.map((gpu) => (
-            <TuningGpuSection
-              key={gpu.id}
-              gpu={gpu}
-              profiles={profiles}
-              editStore={editStore}
-              readError={errorMessage}
-              pendingAction={pendingAction}
-              reapplyPending={reapplyPending}
-              controlsDisabled={daemonDisconnected || busy}
-              daemonDisconnected={daemonDisconnected}
-              profileApplicationDisabled={busy || !daemonConnected}
-              onMutationAction={onMutationAction}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TuningGpuSection({
-  gpu,
-  profiles,
-  editStore,
-  readError,
-  pendingAction,
-  reapplyPending,
-  controlsDisabled,
-  daemonDisconnected,
-  profileApplicationDisabled,
-  onMutationAction,
-}: {
-  gpu: GpuPerformanceDevice;
-  profiles?: GpuProfileWorkflow;
-  editStore: TuningEditStore;
-  readError: string | null;
-  pendingAction: PerformanceMutationAction | null;
-  reapplyPending: boolean;
-  controlsDisabled: boolean;
-  daemonDisconnected: boolean;
-  profileApplicationDisabled: boolean;
-  onMutationAction: TuningMutationHandler;
-}) {
-  const profileSelector = useGpuProfileSelector({
-    gpu,
-    workflow: profiles,
-    edits: editStore.devices[gpu.id]?.edits ?? {},
-    appliedDefaults: editStore.appliedDefaults(gpu.id),
-    readError,
-    pendingAction,
-    // Reapplying saved settings writes profile settings too.
-    profileWritePending: reapplyPending,
-    applyDisabled: profileApplicationDisabled,
-    onApply: (profile, corrections) =>
-      editStore.apply(
-        profileApplication(gpu, profile, corrections),
-        gpu,
-        onMutationAction,
-        { reviewCorrections: true },
-      ),
-  });
-  return (
-    <div className="standalone space-y-5 border-y border-border/80 py-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold tracking-tight">{gpu.name}</h2>
-          <p className="text-sm text-muted-foreground">
-            Adjust power, cooling, and clock offsets for this GPU.
-          </p>
-        </div>
-        {profileSelector && <GpuProfileSelector selector={profileSelector} />}
-      </div>
-      {profileSelector && <GpuProfileFeedback selector={profileSelector} />}
-      <fieldset
-        disabled={controlsDisabled}
-        aria-disabled={controlsDisabled}
-        className={cn(
-          "transition-opacity",
-          daemonDisconnected && "pointer-events-none opacity-45 saturate-50",
-        )}
-      >
-        <GpuTuningControls
-          gpu={readError ? unavailableTuningReadback(gpu, readError) : gpu}
-          showIdentity
-          editStore={editStore}
-          pendingAction={pendingAction}
-          onMutationAction={onMutationAction}
-        />
-      </fieldset>
-    </div>
-  );
-}
 
 export function GpuTuningControls({
   gpu,
@@ -1206,24 +928,6 @@ function DefaultChoiceNote({ choice }: { choice: DefaultChoice }) {
     <p className="mt-1 text-xs text-primary">
       {choice === "unapplied" ? "Use default (not applied)" : "Uses default"}
     </p>
-  );
-}
-
-function GpuTuningSkeleton() {
-  return (
-    <div
-      data-testid="gpu-tuning-skeleton"
-      className="space-y-5 overflow-hidden rounded-xl border border-border/80 bg-card/80 p-6"
-    >
-      <div className="space-y-3">
-        <Skeleton className="h-5 w-24 rounded-md" />
-        <Skeleton className="h-8 w-80 rounded-md" />
-        <Skeleton className="h-4 w-80 rounded-md" />
-      </div>
-      {Array.from({ length: 3 }).map((_, index) => (
-        <Skeleton key={index} className="h-56 rounded-xl" />
-      ))}
-    </div>
   );
 }
 

@@ -68,7 +68,6 @@ export interface GpuDevice {
       defaultWatts: number | null;
       minWatts: number | null;
       maxWatts: number | null;
-      desiredWatts: number | null;
     };
     gpuClockLock: {
       currentMinMHz: number | null;
@@ -96,34 +95,9 @@ export interface GpuDevice {
   };
 }
 
-export interface ClockRangeInput {
-  minMHz: number;
-  maxMHz: number;
-}
-
-export interface ApplyGpuConfigRequest {
-  gpuId?: string;
-  powerLimitWatts?: number;
-  gpuClockLock?: ClockRangeInput;
-  memoryClockLock?: ClockRangeInput;
-  graphicsOffsetMHz?: number;
-  memoryOffsetMHz?: number;
-  reapplySaved?: boolean;
-}
-
-export interface ResetGpuConfigRequest {
-  gpuId: string;
-}
-
 export interface GpuCommandError {
   code: GpuCommandErrorCode;
   message: string;
-}
-
-export interface GpuMutationResponse {
-  success: boolean;
-  inventory: GpuInventoryResponse | null;
-  error: GpuCommandError | null;
 }
 
 export interface GpuDaemonStatus {
@@ -356,4 +330,13 @@ export interface StartupState {
   outcomes: StartupOutcome[];
   /** GPU UUIDs whose last applied tuning values miss a manual write that couldn't be recorded. */
   possiblyStale: string[];
+}
+
+/** Host-held profiles and the caller's one-time upgrade notice. */
+export interface MigrationState {
+  profiles: GpuTuningProfile[];
+  canAdopt: boolean;
+  notice: {
+    dropped: { key: string; values: Record<string, unknown>; reason: string }[];
+  } | null;
 }

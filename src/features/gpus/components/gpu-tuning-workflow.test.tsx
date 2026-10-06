@@ -10,7 +10,6 @@ import {
 } from "@/test/gpu-fixtures";
 import { renderWithQueryClient } from "@/test/query-client";
 import { GpuPerformancePage } from "./gpu-performance-page";
-import { GpuTuningPage } from "./gpu-tuning-page";
 
 describe("GPU tuning observations", () => {
   beforeEach(() => {
@@ -28,7 +27,11 @@ describe("GPU tuning observations", () => {
     );
     const setPower = vi.spyOn(window.prism.gpu, "setPowerLimit");
     const setFan = vi.spyOn(window.prism.gpu, "setFanSpeed");
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -97,7 +100,11 @@ describe("GPU tuning observations", () => {
                 : { status: "succeeded", error: null },
         };
       });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -138,10 +145,7 @@ describe("GPU tuning observations", () => {
     expect(power).toHaveValue(500);
   });
 
-  it.each([
-    { name: "Tuning", Page: GpuTuningPage },
-    { name: "Performance", Page: GpuPerformancePage },
-  ])(
+  it.each([{ name: "Performance", Page: GpuPerformancePage }])(
     "keeps failed power intentions while failed readback is unknown and discard never writes ($name)",
     async ({ Page }) => {
       const user = userEvent.setup();
@@ -204,7 +208,11 @@ describe("GPU tuning observations", () => {
         if (fail) throw new Error("Fan acknowledgement lost");
         return { success: true, error: null };
       });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const second = await screen.findByRole("spinbutton", {
       name: "Fan 2 manual target",
     });
@@ -240,7 +248,11 @@ describe("GPU tuning observations", () => {
     vi.spyOn(window.prism.gpu, "getPerformance").mockImplementation(async () =>
       structuredClone(response),
     );
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     await screen.findAllByRole("spinbutton", { name: "Power limit" });
     const firstPower = screen.getAllByRole("spinbutton", {
       name: "Power limit",
@@ -315,7 +327,11 @@ describe("GPU tuning observations", () => {
         };
       },
     );
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const graphics = await screen.findByRole("spinbutton", {
       name: "Graphics clock offset",
     });
@@ -373,7 +389,11 @@ describe("GPU tuning observations", () => {
         return { success: true, error: null };
       },
     );
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -383,10 +403,7 @@ describe("GPU tuning observations", () => {
     await user.clear(fan);
     await user.type(fan, "65");
     await user.click(
-      within(screen.getByText("Power").closest("section")!).getByRole(
-        "button",
-        { name: "Apply" },
-      ),
+      within(power.closest("section")!).getByRole("button", { name: "Apply" }),
     );
     await screen.findByText("Power limit: Applied");
     expect(screen.getByText("Current limit 500 W")).toBeInTheDocument();
@@ -407,17 +424,18 @@ describe("GPU tuning observations", () => {
       success: false,
       error: "Power denied",
     });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
     await user.clear(power);
     await user.type(power, "500");
     await user.click(
-      within(screen.getByText("Power").closest("section")!).getByRole(
-        "button",
-        { name: "Apply" },
-      ),
+      within(power.closest("section")!).getByRole("button", { name: "Apply" }),
     );
     await screen.findByText("Power limit: Failed — Power denied");
     expect(power).toHaveValue(500);
@@ -475,7 +493,11 @@ describe("GPU tuning observations", () => {
         return { success: true, error: null };
       },
     );
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const fan = await screen.findByRole("spinbutton", {
       name: "Fan 1 manual target",
     });
@@ -513,7 +535,11 @@ describe("GPU tuning observations", () => {
     });
     vi.spyOn(window.prism.gpu, "getPerformance").mockResolvedValue(response);
 
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
 
     expect(
       await screen.findByText("Power read failed: GPU is lost"),
@@ -574,7 +600,11 @@ describe("GPU tuning observations", () => {
           memory: memory == null ? null : { status: "succeeded", error: null },
         };
       });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
 
     expect(
       await screen.findByText("Power probe failed: GPU lost"),
@@ -644,7 +674,11 @@ describe("GPU tuning observations", () => {
     response.gpus[0].clocks.graphics.currentOffsetMHz = null;
     vi.spyOn(window.prism.gpu, "getPerformance").mockResolvedValue(response);
 
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
 
     await screen.findByText("NVIDIA GeForce RTX 5090");
     for (const name of ["Power limit", "Graphics clock offset"]) {

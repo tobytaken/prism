@@ -360,24 +360,6 @@ function validateClockOffsetPayload(payload: unknown): payload is Extract<
   );
 }
 
-function validateApplyConfigPayload(payload: unknown) {
-  if (!isObject(payload)) {
-    return false;
-  }
-
-  return (
-    (payload.gpuId === undefined || isString(payload.gpuId)) &&
-    (payload.powerLimitWatts === undefined ||
-      isNumber(payload.powerLimitWatts)) &&
-    (payload.graphicsOffsetMHz === undefined ||
-      isNumber(payload.graphicsOffsetMHz)) &&
-    (payload.memoryOffsetMHz === undefined ||
-      isNumber(payload.memoryOffsetMHz)) &&
-    (payload.reapplySaved === undefined ||
-      typeof payload.reapplySaved === "boolean")
-  );
-}
-
 function validateDriverActionPayload(
   payload: unknown,
 ): payload is DriverActionPayload {
@@ -505,6 +487,27 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     },
   );
 
+  for (const method of ["getMigrationState", "dismissMigrationNotice"]) {
+    ipcMain.handle(`prism:gpu:${method}`, async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error(`Invalid ${method} payload`);
+      return backend.invoke(`gpu.${method}`);
+    });
+  }
+  ipcMain.handle(
+    "prism:gpu:adoptMigratedProfile",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["profileId"]) ||
+        !isString(payload.profileId) ||
+        !payload.profileId.trim()
+      )
+        throw new Error("Invalid adoptMigratedProfile payload");
+      return backend.invoke("gpu.adoptMigratedProfile", payload);
+    },
+  );
   ipcMain.handle(
     "prism:gpu:getStartupState",
     async (event, ...args: unknown[]) => {
@@ -691,22 +694,6 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
   ipcMain.handle("prism:gpu:getDaemonStatus", async (event) => {
     assertTrustedSender(event, getMainWindow);
     return backend.invoke("gpu.getDaemonStatus");
-  });
-
-  ipcMain.handle("prism:gpu:applyConfig", async (event, payload) => {
-    assertTrustedSender(event, getMainWindow);
-    if (!validateApplyConfigPayload(payload)) {
-      throw new Error("Invalid applyConfig payload");
-    }
-    return backend.invoke("gpu.applyConfig", payload);
-  });
-
-  ipcMain.handle("prism:gpu:resetConfig", async (event, payload) => {
-    assertTrustedSender(event, getMainWindow);
-    if (!validateGpuTarget(payload)) {
-      throw new Error("Invalid resetConfig payload");
-    }
-    return backend.invoke("gpu.resetConfig", payload);
   });
 
   ipcMain.handle("prism:gpu:setPowerLimit", async (event, payload) => {
