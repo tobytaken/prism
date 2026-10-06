@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 4;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 5;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -33,6 +33,9 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // Version 3 adds each GPU's current profile, none until a profile is applied or saved.
     Ok,
     // Version 4 adds host-wide startup choices, defaulting to Off with no designations.
+    Ok,
+    // Version 5 adds Restore last applied and the unclean-shutdown guard's record, absent until
+    // a boot restores last applied tuning values.
     Ok,
 ];
 
@@ -56,6 +59,16 @@ pub struct TuningDocument {
     /// or saved from it, whichever user owns it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub current_profiles: BTreeMap<String, String>,
+    /// The boot that restored last applied tuning values, until the host shuts down cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_attempt: Option<RestoreAttempt>,
+}
+
+/// The unclean-shutdown guard's record: a boot attempted to restore last applied tuning values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RestoreAttempt {
+    pub boot_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

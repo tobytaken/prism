@@ -13,6 +13,9 @@ export function StartupSettingsPanel() {
     performance.data?.gpus.filter(
       (gpu) => !gpu.stableId || !startup.profileOf(gpu.stableId),
     ) ?? [];
+  const possiblyStale = startup.query.data?.possiblyStale ?? [];
+  const gpuLabel = (gpuId: string) =>
+    `${performance.data?.gpus.find((gpu) => gpu.stableId === gpuId)?.name ?? "GPU"} (${gpuId})`;
   return (
     <section className="max-w-2xl space-y-6" aria-label="Startup settings">
       <div>
@@ -40,14 +43,19 @@ export function StartupSettingsPanel() {
         <legend className="sr-only">Startup behavior</legend>
         {(
           [
-            ["off", "Off"],
-            ["startupProfiles", "Startup profiles"],
+            ["off", "Off", null],
+            ["startupProfiles", "Startup profiles", null],
+            [
+              "restoreLastApplied",
+              "Restore last applied",
+              "Restores each setting's most recent manual value, including changes not saved to a profile. An unstable value could be restored on every boot, so after an unclean shutdown that followed a restore, Prism skips the restore once.",
+            ],
           ] as const
-        ).map(([value, label]) => (
+        ).map(([value, label, warning]) => (
           <label
             key={value}
             htmlFor={`${id}-${value}`}
-            className="flex items-center gap-3 rounded-lg border p-3 text-sm"
+            className="flex items-start gap-3 rounded-lg border p-3 text-sm"
           >
             <input
               id={`${id}-${value}`}
@@ -55,9 +63,20 @@ export function StartupSettingsPanel() {
               name={`${id}-behavior`}
               value={value}
               checked={behavior === value}
+              aria-describedby={warning ? `${id}-${value}-warning` : undefined}
               onChange={() => startup.setBehavior.mutate(value)}
             />
-            {label}
+            <span className="space-y-1">
+              <span className="block">{label}</span>
+              {warning && (
+                <span
+                  id={`${id}-${value}-warning`}
+                  className="block text-amber-600 dark:text-amber-400"
+                >
+                  {warning}
+                </span>
+              )}
+            </span>
           </label>
         ))}
       </fieldset>
@@ -74,6 +93,24 @@ export function StartupSettingsPanel() {
         <p className="text-sm text-muted-foreground">
           Existing saved startup settings continue to apply while Off.
         </p>
+      )}
+      {behavior === "restoreLastApplied" && possiblyStale.length > 0 && (
+        <div
+          role="status"
+          aria-label="Possibly stale"
+          className="space-y-2 rounded-lg border border-amber-500/50 p-3 text-sm"
+        >
+          <p className="font-medium">Restore last applied is possibly stale</p>
+          <ul className="space-y-1">
+            {possiblyStale.map((gpuId) => (
+              <li key={gpuId}>
+                {gpuLabel(gpuId)} — a recent change was not recorded for
+                startup. The next boot may restore older values until a later
+                change is recorded.
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {behavior === "startupProfiles" && (
         <div className="space-y-2 text-sm">

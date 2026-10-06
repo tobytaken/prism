@@ -18,6 +18,7 @@ use crate::protocol::{
 
 use super::backend::DaemonBackend;
 use super::host::{Clock, HostShutdownSignal};
+use super::possibly_stale::{PossiblyStale, POSSIBLY_STALE_FILE_NAME};
 use super::profiles::{capture_settings, new_profile_id, profile_name, uuid_of, verified_gpu};
 use super::queue::{GpuOperationQueues, PendingOperation};
 use super::tuning::{apply_live_offsets, apply_profile, reset_live_offsets};
@@ -49,6 +50,7 @@ pub struct DaemonCore {
     pub(super) tuning_store: Arc<TuningStore>,
     legacy_configs: Arc<LegacyConfigStore>,
     pub(super) boot_state: Arc<super::boot_state::BootState>,
+    possibly_stale: Arc<PossiblyStale>,
     pub(super) stopping: Arc<AtomicBool>,
     pub(super) startup_operations: Mutex<Vec<PendingOperation<()>>>,
 }
@@ -84,6 +86,7 @@ impl DaemonCore {
                 .map_err(GpuCommandError::from)
                 .and_then(|mut state| {
                     state.outcomes = self.boot_state.outcomes(peer)?;
+                    state.possibly_stale = self.possibly_stale.gpus();
                     Ok(DaemonResponse::StartupState(state))
                 }),
             DaemonRequest::SetStartupBehavior(request) => self
@@ -284,6 +287,7 @@ impl DaemonCore {
         profile: GpuTuningProfile,
     ) -> Result<ProfileApplicationResponse, GpuCommandError> {
         let store = Arc::clone(&self.tuning_store);
+        let stale = Arc::clone(&self.possibly_stale);
         let peer = peer.clone();
         self.tracked_write(&profile.gpu_id, move |backend| {
             // A profile can be deleted or edited while this application waits on the GPU's queue.
@@ -291,6 +295,7 @@ impl DaemonCore {
             Ok(apply_recorded_profile(
                 backend,
                 &store,
+                &stale,
                 ApplyGpuProfileRequest {
                     gpu_id: profile.gpu_id,
                     settings: profile.settings,
@@ -305,14 +310,15 @@ impl DaemonCore {
         request: ApplyGpuProfileRequest,
     ) -> ProfileApplicationResponse {
         let store = Arc::clone(&self.tuning_store);
+        let stale = Arc::clone(&self.possibly_stale);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
-            apply_recorded_profile(backend, &store, request, None)
+            apply_recorded_profile(backend, &store, &stale, request, None)
         })
     }
 
     /// Runs a live tuning change on the GPU's queue, then records the instructions it applied as
     /// that GPU's last applied tuning values.
-    fn live_write<T: Send + 'static>(
+    fn live_write<T: ManualWriteResponse + Send + 'static>(
         &self,
         gpu_id: String,
         write: impl FnOnce(&dyn DaemonBackend) -> (T, Vec<(ProfileSettingKey, ProfileSetting)>)
@@ -320,16 +326,17 @@ impl DaemonCore {
             + 'static,
     ) -> T {
         let store = Arc::clone(&self.tuning_store);
+        let stale = Arc::clone(&self.possibly_stale);
         self.tracked_write(&gpu_id.clone(), move |backend| {
-            let (result, applied) = write(backend);
+            let (mut response, applied) = write(backend);
             if !applied.is_empty() {
                 if let Some(uuid) = uuid_of(&backend.performance(), &gpu_id) {
-                    record(&store, &uuid, |document| {
-                        document.record_applied(&uuid, &applied)
-                    });
+                    if !record_manual(&store, &stale, &uuid, &applied, |_| {}) {
+                        response.not_recorded();
+                    }
                 }
             }
-            result
+            response
         })
     }
 
@@ -367,9 +374,13 @@ impl DaemonCore {
             &dependencies.boot_dir,
             &dependencies.boot_id,
         ));
+        let possibly_stale = Arc::new(PossiblyStale::open(
+            dependencies.persistent_dir.join(POSSIBLY_STALE_FILE_NAME),
+        ));
         let core = Self {
             dependencies,
             boot_state,
+            possibly_stale,
             stopping: Arc::default(),
             startup_operations: Mutex::default(),
             queues: GpuOperationQueues::default(),
@@ -395,6 +406,30 @@ impl DaemonCore {
         }
 
         core
+    }
+
+    /// Stops the daemon. Only a stop while the host shuts down marks this boot clean for the
+    /// unclean-shutdown guard; a daemon restart mid-boot records nothing.
+    pub fn stop(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
+        if !self.dependencies.host_shutting_down.host_shutting_down() {
+            return;
+        }
+        let boot_id = &self.dependencies.boot_id;
+        let restored_this_boot = self.tuning_store.read(|document| {
+            document
+                .restore_attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.boot_id == *boot_id)
+        });
+        if let Ok(true) = restored_this_boot {
+            if let Err(error) = self
+                .tuning_store
+                .update(|document| document.restore_attempt = None)
+            {
+                eprintln!("failed to record a clean shutdown after restoring last applied tuning values: {error}");
+            }
+        }
     }
 
     /// The service becomes ready only after all boot operations have finished. Request
@@ -444,20 +479,18 @@ impl DaemonCore {
                 let applied = ProfileSetting::Value {
                     value: i64::from(request.limit_watts),
                 };
-                DaemonResponse::Command(command_result(
-                    self.live_write(request.gpu_id.clone(), move |backend| {
-                        power_applied(backend.set_power_limit(request), applied)
-                    }),
-                ))
+                DaemonResponse::Command(self.live_write(request.gpu_id.clone(), move |backend| {
+                    power_applied(backend.set_power_limit(request), applied)
+                }))
             }
-            DaemonRequest::ResetPowerLimit(request) => DaemonResponse::Command(command_result(
-                self.live_write(request.gpu_id.clone(), move |backend| {
+            DaemonRequest::ResetPowerLimit(request) => {
+                DaemonResponse::Command(self.live_write(request.gpu_id.clone(), move |backend| {
                     power_applied(
                         backend.reset_power_limit(request),
                         ProfileSetting::Default {},
                     )
-                }),
-            )),
+                }))
+            }
             DaemonRequest::SetFanSpeed(request) => self
                 .live_command(request.gpu_id.clone(), move |backend| {
                     backend.set_fan_speed(request)
@@ -683,12 +716,13 @@ impl DaemonCore {
 fn apply_recorded_profile(
     backend: &dyn DaemonBackend,
     store: &TuningStore,
+    stale: &PossiblyStale,
     request: ApplyGpuProfileRequest,
     profile_id: Option<String>,
 ) -> ProfileApplicationResponse {
     let uuid = request.gpu_id.clone();
     let settings = request.settings.clone();
-    let response = apply_profile(backend, request);
+    let mut response = apply_profile(backend, request);
     let outcomes = [
         (ProfileSettingKey::PowerLimitWatts, &response.power),
         (ProfileSettingKey::GraphicsOffsetMhz, &response.graphics),
@@ -705,18 +739,18 @@ fn apply_recorded_profile(
         Some(_) if !applied.is_empty() => CurrentProfileChange::Clear,
         _ => CurrentProfileChange::Keep,
     };
-    record(store, &uuid, |document| {
-        document.record_applied(&uuid, &applied);
-        match current {
-            CurrentProfileChange::Become(id) => {
-                document.current_profiles.insert(uuid.clone(), id);
-            }
-            CurrentProfileChange::Clear => {
-                document.current_profiles.remove(&uuid);
-            }
-            CurrentProfileChange::Keep => {}
+    let recorded = record_manual(store, stale, &uuid, &applied, |document| match current {
+        CurrentProfileChange::Become(id) => {
+            document.current_profiles.insert(uuid.clone(), id);
         }
+        CurrentProfileChange::Clear => {
+            document.current_profiles.remove(&uuid);
+        }
+        CurrentProfileChange::Keep => {}
     });
+    if !recorded {
+        response.not_recorded();
+    }
     response
 }
 
@@ -743,12 +777,15 @@ fn succeeded(outcome: &Option<TuningOutcome>) -> bool {
 fn power_applied(
     result: Result<(), String>,
     setting: ProfileSetting,
-) -> (Result<(), String>, Vec<(ProfileSettingKey, ProfileSetting)>) {
+) -> (
+    DaemonCommandResponse,
+    Vec<(ProfileSettingKey, ProfileSetting)>,
+) {
     let applied = match result {
         Ok(()) => vec![(ProfileSettingKey::PowerLimitWatts, setting)],
         Err(_) => vec![],
     };
-    (result, applied)
+    (command_result(result), applied)
 }
 
 fn offsets_applied(
@@ -808,11 +845,67 @@ fn set_live_offsets(
     (response, applied)
 }
 
-/// Records what a write did. The write already happened, so failing to record it never fails
-/// the request.
-fn record(store: &TuningStore, uuid: &str, change: impl FnOnce(&mut TuningDocument)) {
-    if let Err(error) = store.update(change) {
-        eprintln!("failed to record the tuning state of {uuid}: {error}");
+const NOT_RECORDED: &str = "This change was not recorded for startup.";
+
+/// Records a manual write's successful instructions as the GPU's last applied tuning values,
+/// along with the rest of what it changed. The write already happened, so failing to record it
+/// never fails or undoes the write; its settings are marked possibly stale instead. Returns
+/// whether the record was written.
+fn record_manual(
+    store: &TuningStore,
+    stale: &PossiblyStale,
+    uuid: &str,
+    applied: &[(ProfileSettingKey, ProfileSetting)],
+    change: impl FnOnce(&mut TuningDocument),
+) -> bool {
+    let keys = applied.iter().map(|(key, _)| *key);
+    match store.update(|document| {
+        document.record_applied(uuid, applied);
+        change(document);
+    }) {
+        Ok(()) => {
+            stale.clear(uuid, keys);
+            true
+        }
+        Err(error) => {
+            eprintln!("failed to record the tuning state of {uuid}: {error}");
+            stale.mark(uuid, keys);
+            false
+        }
+    }
+}
+
+/// A manual write's response, which reports each setting that reached the GPU as succeeded even
+/// when its last applied tuning value couldn't be recorded.
+trait ManualWriteResponse {
+    fn not_recorded(&mut self);
+}
+
+impl ManualWriteResponse for DaemonCommandResponse {
+    fn not_recorded(&mut self) {
+        if self.success {
+            self.error = Some(NOT_RECORDED.into());
+        }
+    }
+}
+
+impl ManualWriteResponse for ClockOffsetResponse {
+    fn not_recorded(&mut self) {
+        not_recorded([&mut self.graphics, &mut self.memory]);
+    }
+}
+
+impl ManualWriteResponse for ProfileApplicationResponse {
+    fn not_recorded(&mut self) {
+        not_recorded([&mut self.power, &mut self.graphics, &mut self.memory]);
+    }
+}
+
+fn not_recorded<const N: usize>(outcomes: [&mut Option<TuningOutcome>; N]) {
+    for outcome in outcomes.into_iter().flatten() {
+        if outcome.status == TuningOutcomeStatus::Succeeded {
+            outcome.error = Some(NOT_RECORDED.into());
+        }
     }
 }
 

@@ -119,7 +119,7 @@ pub struct ProfileApplicationResponse {
     pub corrections: Vec<ProfileRangeCorrection>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProfileSettingKey {
     #[serde(rename = "powerLimitWatts")]
     PowerLimitWatts,
@@ -288,13 +288,14 @@ pub struct ProfileImportResponse {
     pub skipped: Vec<String>,
 }
 
-/// The host-wide choice for this stage of startup support.
+/// The host-wide choice of what the daemon puts into effect when the host starts.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum StartupBehavior {
     #[default]
     Off,
     StartupProfiles,
+    RestoreLastApplied,
 }
 
 impl StartupBehavior {
@@ -351,6 +352,10 @@ pub enum StartupOutcomeStatus {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartupOutcome {
     pub gpu_id: String,
+    /// The startup behavior this boot ran.
+    #[serde(default)]
+    pub behavior: StartupBehavior,
+    /// The startup profile applied, or none when restoring last applied tuning values.
     pub profile: Option<CurrentProfile>,
     pub status: StartupOutcomeStatus,
     pub reason: Option<String>,
@@ -363,6 +368,9 @@ pub struct StartupState {
     pub behavior: StartupBehavior,
     pub profiles: Vec<StartupProfile>,
     pub outcomes: Vec<StartupOutcome>,
+    /// GPU UUIDs whose last applied tuning values miss a manual write that couldn't be recorded.
+    #[serde(default)]
+    pub possibly_stale: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -512,7 +520,7 @@ mod session_tests {
             serde_json::json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123" } }),
             serde_json::json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": 7 } }),
             serde_json::json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": null, "uid": 0 } }),
-            serde_json::json!({ "type": "set_startup_behavior", "payload": { "behavior": "restoreLastApplied" } }),
+            serde_json::json!({ "type": "set_startup_behavior", "payload": { "behavior": "always" } }),
             serde_json::json!({ "type": "dismiss_startup_outcome", "payload": { "gpuId": "GPU-123", "username": "alice" } }),
         ] {
             assert!(

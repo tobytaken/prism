@@ -30,6 +30,7 @@ it("shows honest per-setting startup results, allows manual range review, and di
     startupOutcomes: [
       {
         gpuId: "GPU-123",
+        behavior: "startupProfiles",
         profile: { id: "quiet", name: "Quiet" },
         status: "failed",
         reason: "Driver rejected the offset.",
@@ -70,4 +71,29 @@ it("shows honest per-setting startup results, allows manual range review, and di
     ).not.toBeInTheDocument(),
   );
   expect(fake.startupOutcomes).toEqual([]);
+});
+
+it("names a restore of last applied values and explains a restore skipped after an unclean shutdown", async () => {
+  createFakeDesktop({
+    startupOutcomes: [
+      {
+        gpuId: "GPU-123",
+        behavior: "restoreLastApplied",
+        profile: null,
+        status: "notAttempted",
+        reason:
+          "Restoring last applied tuning values was skipped once because the host didn't shut down cleanly after the previous boot restored them.",
+        application: null,
+      },
+    ],
+  });
+  renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
+  const rows = await screen.findByRole("region", { name: "Startup outcomes" });
+  expect(rows).toHaveTextContent("Restore last applied — Not attempted");
+  expect(rows).toHaveTextContent(/didn't shut down cleanly/);
+  expect(rows).not.toHaveTextContent(/apply the profile manually/);
 });

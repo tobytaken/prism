@@ -33,7 +33,10 @@ export function StartupOutcomes({
             <div className="space-y-1">
               <h3 className="font-medium">{label}</h3>
               <p>
-                {outcome.profile?.name ?? "Startup"} —{" "}
+                {outcome.behavior === "restoreLastApplied"
+                  ? "Restore last applied"
+                  : (outcome.profile?.name ?? "Startup")}{" "}
+                —{" "}
                 {outcome.status === "applied"
                   ? "Applied"
                   : outcome.status === "failed"

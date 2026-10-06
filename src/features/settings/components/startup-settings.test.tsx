@@ -50,3 +50,40 @@ it("defaults startup behavior to Off and lists each GPU with no startup profile 
     screen.queryByText(/Second GPU.*nothing applied at startup/),
   ).not.toBeInTheDocument();
 });
+
+it("warns before restoring last applied values and marks GPUs whose values are possibly stale", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({ possiblyStale: ["GPU-123"] });
+  renderWithQueryClient(
+    <MemoryRouter>
+      <AppearanceProvider>
+        <SettingsPage />
+      </AppearanceProvider>
+    </MemoryRouter>,
+  );
+  await user.click(screen.getByRole("tab", { name: "Startup" }));
+  const restore = await screen.findByRole("radio", {
+    name: /Restore last applied/,
+  });
+  expect(restore).toHaveAccessibleDescription(
+    /an unstable value could be restored on every boot/i,
+  );
+  expect(screen.queryByText(/possibly stale/i)).not.toBeInTheDocument();
+  await user.click(restore);
+  await waitFor(() => expect(fake.startupBehavior).toBe("restoreLastApplied"));
+  expect(restore).toBeChecked();
+  const stale = await screen.findByRole("status", { name: "Possibly stale" });
+  expect(stale).toHaveTextContent(
+    /NVIDIA GeForce RTX 5090 \(GPU-123\).*not recorded for startup/,
+  );
+  expect(
+    screen.queryByText(/nothing applied at startup/),
+  ).not.toBeInTheDocument();
+
+  fake.possiblyStale.splice(0);
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("status", { name: "Possibly stale" }),
+    ).not.toBeInTheDocument(),
+  );
+});
