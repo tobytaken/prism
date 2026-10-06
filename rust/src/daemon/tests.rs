@@ -1060,7 +1060,7 @@ fn a_tuning_store_from_a_newer_schema_version_is_treated_as_unreadable_and_prese
 
 #[test]
 fn a_store_write_interrupted_by_a_crash_leaves_the_previous_document_in_use() {
-    let previous: &[u8] = b"{\"schemaVersion\": 5}";
+    let previous: &[u8] = b"{\"schemaVersion\": 6}";
     let daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[

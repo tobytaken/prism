@@ -523,7 +523,9 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       if (
         !isObject(payload) ||
         !hasOnlyKeys(payload, ["behavior"]) ||
-        (payload.behavior !== "off" && payload.behavior !== "startupProfiles")
+        (payload.behavior !== "off" &&
+          payload.behavior !== "startupProfiles" &&
+          payload.behavior !== "restoreLastApplied")
       )
         throw new Error("Invalid setStartupBehavior payload");
       return backend.invoke("gpu.setStartupBehavior", payload);

@@ -106,9 +106,11 @@ export function GpuManageProfilesDialog({
           <p className="text-sm">
             Startup behavior:{" "}
             {startup.query.data
-              ? startup.query.data.behavior === "off"
-                ? "Off"
-                : "Startup profiles"
+              ? {
+                  off: "Off",
+                  startupProfiles: "Startup profiles",
+                  restoreLastApplied: "Restore last applied",
+                }[startup.query.data.behavior]
               : "Unavailable"}
             .{" "}
             <Link className="underline" to="/settings">

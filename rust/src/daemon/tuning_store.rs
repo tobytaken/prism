@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 5;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 6;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -34,7 +34,10 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     Ok,
     // Version 4 adds host-wide startup choices, defaulting to Off with no designations.
     Ok,
-    // Version 5 imports legacy configurations with the current inventory during opening.
+    // Version 5 adds Restore last applied and the unclean-shutdown guard's record, absent until
+    // a boot restores last applied tuning values.
+    Ok,
+    // Version 6 imports legacy configurations with the current inventory during opening.
     Ok,
 ];
 
@@ -62,6 +65,16 @@ pub struct TuningDocument {
     /// or saved from it, whichever user owns it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub current_profiles: BTreeMap<String, String>,
+    /// The boot that restored last applied tuning values, until the host shuts down cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_attempt: Option<RestoreAttempt>,
+}
+
+/// The unclean-shutdown guard's record: a boot attempted to restore last applied tuning values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RestoreAttempt {
+    pub boot_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +89,13 @@ pub struct UserState {
 }
 
 impl TuningDocument {
+    /// Whether this boot restored last applied tuning values and hasn't yet shut down cleanly.
+    pub fn restored_in(&self, boot_id: &str) -> bool {
+        self.restore_attempt
+            .as_ref()
+            .is_some_and(|attempt| attempt.boot_id == boot_id)
+    }
+
     pub fn user(&self, uid: u32, username: &str) -> Option<&UserState> {
         self.users
             .iter()
@@ -342,7 +362,7 @@ fn load(
     }
     let document = serde_json::from_value(serde_json::Value::Object(document))
         .map_err(|error| unreadable(error.to_string()))?;
-    if version < 5 {
+    if version < 6 {
         super::migration::upgrade(path, document, inventory).map_err(unreadable)
     } else {
         super::migration::archive(path).map_err(unreadable)?;

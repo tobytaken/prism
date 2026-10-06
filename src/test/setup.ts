@@ -17,6 +17,7 @@ const prismStub: PrismDesktopApi = {
       behavior: "off",
       profiles: [],
       outcomes: [],
+      possiblyStale: [],
     }),
     setStartupBehavior: async () => ({ success: true, error: null }),
     setStartupProfile: async () => ({ success: true, error: null }),

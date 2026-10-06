@@ -1,4 +1,4 @@
-//! The schema-5 handoff from state.json to host-held startup profiles.
+//! The schema-6 handoff from state.json to host-held startup profiles.
 pub(super) const LEGACY_STATE_FILE_NAME: &str = "state.json";
 use super::profiles::new_profile_id;
 use super::session::SessionPeer;

@@ -308,14 +308,17 @@ export interface CorrectedProfileApplication {
 /** A live clock offset: MHz, an explicit request for the default, or null to leave it unchanged. */
 export type OffsetInstruction = number | "default" | null;
 
-/** Host-wide startup choices; Restore last applied is added in #37. */
-export type StartupBehavior = "off" | "startupProfiles";
+/** The host-wide choice of what the daemon puts into effect when the host starts. */
+export type StartupBehavior = "off" | "startupProfiles" | "restoreLastApplied";
 export interface SetStartupProfileRequest {
   gpuId: string;
   profileId: string | null;
 }
 export interface StartupOutcome {
   gpuId: string;
+  /** The startup behavior this boot ran. */
+  behavior: StartupBehavior;
+  /** The startup profile applied, or null when restoring last applied tuning values. */
   profile: CurrentProfile | null;
   status: "applied" | "failed" | "notAttempted";
   reason: string | null;
@@ -325,6 +328,8 @@ export interface StartupState {
   behavior: StartupBehavior;
   profiles: Array<{ gpuId: string; profile: CurrentProfile }>;
   outcomes: StartupOutcome[];
+  /** GPU UUIDs whose last applied tuning values miss a manual write that couldn't be recorded. */
+  possiblyStale: string[];
 }
 
 /** Host-held profiles and the caller's one-time upgrade notice. */

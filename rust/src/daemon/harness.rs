@@ -362,15 +362,26 @@ impl Harness {
         harness
     }
 
-    /// Simulates a daemon restart: drops the core and starts a new one on the same directories.
+    /// Simulates a daemon restart mid-boot: stops the core while the host keeps running and
+    /// starts a new one on the same directories.
     pub fn restart(&mut self) {
+        self.core().stop();
         self.core = None;
         self.start_core();
     }
 
-    /// Simulates a host reboot: the persistent directory survives, while the boot-scoped
-    /// directory starts empty under a new boot id.
+    /// Simulates a clean host reboot: the daemon is stopped while the host shuts down, the
+    /// persistent directory survives, and the boot-scoped directory starts empty under a new
+    /// boot id.
     pub fn reboot(&mut self) {
+        self.host_shutting_down.0.store(true, Ordering::SeqCst);
+        self.core().stop();
+        self.host_shutting_down.0.store(false, Ordering::SeqCst);
+        self.crash_and_reboot();
+    }
+
+    /// Simulates a host crash: the host restarts without stopping the daemon first.
+    pub fn crash_and_reboot(&mut self) {
         self.core = None;
         self.boots += 1;
         self.boot_dir = tempfile::tempdir().unwrap();

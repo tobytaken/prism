@@ -202,7 +202,7 @@ fn an_interrupted_archive_retries_without_migrating_or_overwriting_profiles_agai
         .user(1000, "alice")
         .send_json(json!({"type":"get_migration_state"}));
     let saved = daemon.persistent_file("tuning-state.json").unwrap();
-    // Simulate committing schema 5 but crashing before the legacy rename.
+    // Simulate committing schema 6 but crashing before the legacy rename.
     std::fs::rename(
         daemon.persistent_path("state.json.migrated"),
         daemon.persistent_path("state.json"),
@@ -252,7 +252,7 @@ fn unreadable_legacy_settings_are_preserved_and_block_startup_but_not_live_tunin
 }
 
 #[test]
-fn reopening_schema_five_preserves_the_original_archive_if_legacy_prism_recreated_state() {
+fn reopening_schema_six_preserves_the_original_archive_if_legacy_prism_recreated_state() {
     let original = br#"{"gpus":{"GPU-123":{"desired":{"powerLimitWatts":400,"gpuClockLock":{"minMhz":1500,"maxMhz":1800}}}}}"#;
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
@@ -278,5 +278,47 @@ fn reopening_schema_five_preserves_the_original_archive_if_legacy_prism_recreate
             .user(1000, "alice")
             .send_json(json!({"type":"get_migration_state"})),
         before
+    );
+}
+
+#[test]
+fn schema_five_restores_are_kept_when_legacy_settings_migrate() {
+    let store = br#"{"schemaVersion":5,"startupBehavior":"restoreLastApplied","lastApplied":{"GPU-123":{"powerLimitWatts":{"kind":"value","value":420}}}}"#;
+    let legacy = br#"{"gpus":{"GPU-123":{"desired":{"powerLimitWatts":400}}}}"#;
+    let mut daemon = Harness::start_with_persistent_files(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        &[("tuning-state.json", store), ("state.json", legacy)],
+    );
+    daemon.core().wait_for_startup();
+    let alice = daemon.user(1000, "alice");
+    let migration = alice.send_json(json!({"type":"get_migration_state"}));
+    assert_eq!(
+        migration["payload"]["profiles"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(400)
+    );
+    assert_eq!(
+        alice.send_json(json!({"type":"get_startup_state"}))["payload"]["behavior"],
+        "startupProfiles"
+    );
+    assert_eq!(
+        alice.send_json(
+            json!({"type":"set_startup_behavior","payload":{"behavior":"restoreLastApplied"}})
+        )["payload"]["success"],
+        true
+    );
+    drop(alice);
+    daemon.reboot();
+    daemon.core().wait_for_startup();
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
+        Some(420)
+    );
+    assert_eq!(
+        daemon.persistent_file("state.json.migrated").unwrap(),
+        legacy
     );
 }

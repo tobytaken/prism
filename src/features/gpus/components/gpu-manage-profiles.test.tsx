@@ -362,3 +362,11 @@ it("can designate and delete an absent GPU's startup profile with a startup-role
   await waitFor(() => expect(fake.profiles).toEqual([]));
   expect(fake.startupProfiles).toEqual({});
 });
+
+it("shows Restore last applied as the host-wide behavior in Manage profiles", async () => {
+  const user = userEvent.setup();
+  createFakeDesktop({ startupBehavior: "restoreLastApplied" });
+  renderPerformancePage();
+  const dialog = await manageProfiles(user);
+  expect(dialog).toHaveTextContent("Startup behavior: Restore last applied");
+});

@@ -89,6 +89,7 @@ export function createFakeDesktop({
   startupBehavior = "off",
   startupProfiles = {},
   startupOutcomes = [],
+  possiblyStale = [],
 }: {
   response?: GpuPerformanceResponse;
   profiles?: GpuTuningProfile[];
@@ -99,6 +100,8 @@ export function createFakeDesktop({
   startupBehavior?: StartupBehavior;
   startupProfiles?: Record<string, string>;
   startupOutcomes?: StartupOutcome[];
+  /** GPU UUIDs whose last applied tuning values the daemon reports as possibly stale. */
+  possiblyStale?: string[];
 } = {}) {
   /** Setters that fail with this message on every GPU until removed. */
   const failures: Partial<Record<Setting, string>> = {};
@@ -364,6 +367,7 @@ export function createFakeDesktop({
           return saved ? [{ gpuId, profile: { id, name: saved.name } }] : [];
         }),
         outcomes: structuredClone(startupOutcomes),
+        possiblyStale: [...possiblyStale],
       })),
     setStartupBehavior: vi
       .spyOn(api, "setStartupBehavior")
@@ -627,6 +631,7 @@ export function createFakeDesktop({
     currentProfiles,
     startupProfiles,
     startupOutcomes,
+    possiblyStale,
     get startupBehavior() {
       return startupBehavior;
     },
