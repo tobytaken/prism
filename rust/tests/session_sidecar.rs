@@ -153,6 +153,40 @@ fn sidecar_forwards_notifications_reconnects_and_closes_its_session_when_stdin_c
         lines.recv_timeout(Duration::from_secs(2)).unwrap(),
         serde_json::json!({ "method": "gpu.tuningStateChanged", "params": states[0] })
     );
+    let running: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../src/test/contracts/running-games.json")).unwrap();
+    for state in running {
+        let event = serde_json::json!({"type":"event", "event": {"type":"runningGamesChanged", "payload":state}});
+        let typed: SessionMessage = serde_json::from_value(event.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&typed).unwrap(), event);
+        write_frame(&mut resumed, &typed).unwrap();
+        assert_eq!(
+            lines.recv_timeout(Duration::from_secs(2)).unwrap(),
+            serde_json::json!({"method":"games.runningChanged", "params":state})
+        );
+        writeln!(
+            sidecar.0.stdin.as_mut().unwrap(),
+            "{}",
+            serde_json::json!({"id":8, "method":"games.getRunning"})
+        )
+        .unwrap();
+        let request = read_frame::<SessionRequest>(&mut resumed).unwrap().unwrap();
+        assert_eq!(request.request, DaemonRequest::GetRunningGames);
+        write_frame(
+            &mut resumed,
+            &SessionMessage::Response {
+                id: request.id,
+                response: DaemonResponse::RunningGames(
+                    serde_json::from_value(state.clone()).unwrap(),
+                ),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            lines.recv_timeout(Duration::from_secs(2)).unwrap(),
+            serde_json::json!({"id":8,"result":state})
+        );
+    }
     writeln!(sidecar.0.stdin.as_mut().unwrap(), "{}", serde_json::json!({"id": 9, "method": "gpu.setPowerLimit", "params": {"gpuId": "GPU-123", "limitWatts": 450}})).unwrap();
     writeln!(sidecar.0.stdin.as_mut().unwrap(), "{}", serde_json::json!({"id": 10, "method": "gpu.setPowerLimit", "params": {"gpuId": "GPU-123", "limitWatts": 451}})).unwrap();
     let one = read_frame::<SessionRequest>(&mut resumed).unwrap().unwrap();

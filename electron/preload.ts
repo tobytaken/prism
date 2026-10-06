@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { isDaemonStatus, isTuningState } from "./daemon-events";
+import {
+  isDaemonStatus,
+  isTuningState,
+  isRunningGamesState,
+} from "./daemon-events";
 
 import type {
   DriverAction,
@@ -33,6 +37,7 @@ import type {
   AddSteamGameRequest,
   GameRequest,
   GamesState,
+  RunningGamesState,
   SetAutomaticSwitchingRequest,
   SetGameProfileRequest,
   SteamApp,
@@ -201,6 +206,16 @@ const prismApi = {
       }) as Promise<ClockOffsetResponse>,
   },
   games: {
+    getRunning: () =>
+      ipcRenderer.invoke(
+        "prism:games:getRunning",
+      ) as Promise<RunningGamesState>,
+    onRunningChanged: (callback: (state: RunningGamesState) => void) =>
+      onDaemonEvent(
+        "prism:games:runningChanged",
+        isRunningGamesState,
+        callback,
+      ),
     listSteamApps: () =>
       ipcRenderer.invoke("prism:games:listSteamApps") as Promise<SteamApp[]>,
     get: () => ipcRenderer.invoke("prism:games:get") as Promise<GamesState>,

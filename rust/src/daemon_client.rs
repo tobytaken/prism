@@ -72,6 +72,14 @@ pub fn list_steam_apps() -> Result<Vec<SteamApp>, GpuCommandError> {
     }
 }
 
+pub fn get_running_games() -> Result<crate::protocol::RunningGamesState, GpuCommandError> {
+    match send_request(DaemonRequest::GetRunningGames)? {
+        DaemonResponse::RunningGames(state) => Ok(state),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("running games")),
+    }
+}
+
 pub fn get_games() -> Result<GamesState, GpuCommandError> {
     send_games_request(DaemonRequest::GetGames)
 }

@@ -1,3 +1,4 @@
+import runningGames from "@/test/contracts/running-games.json";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
@@ -110,6 +111,68 @@ describe("registerIpc", () => {
       }
     },
   );
+
+  it("reads the caller's running games and rejects extra arguments or an untrusted sender", async () => {
+    const child = createBackendChild(runningGames[0]);
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      expect(
+        await callHandler("prism:games:getRunning", trustedEvent()),
+      ).toEqual(runningGames[0]);
+      expect(sentRequests(child)).toEqual([{ method: "games.getRunning" }]);
+      await expect(
+        callHandler("prism:games:getRunning", untrustedEvent()),
+      ).rejects.toThrow("Untrusted IPC sender");
+      await expect(
+        callHandler("prism:games:getRunning", trustedEvent(), { uid: 0 }),
+      ).rejects.toThrow("Invalid running games payload");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("forwards only validated running game snapshots to subscribed renderers", async () => {
+    const child = createBackendChild();
+    mocks.spawn.mockReturnValue(child);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      for (const params of runningGames)
+        child.stdout.write(
+          `${JSON.stringify({ method: "games.runningChanged", params })}\n`,
+        );
+      expect(send.mock.calls).toEqual(
+        runningGames.map((state) => ["prism:games:runningChanged", state]),
+      );
+      send.mockClear();
+      for (const params of [
+        null,
+        { status: "available" },
+        {
+          status: "available",
+          games: [
+            { game: { kind: "steam", appId: 0 }, pid: 1, startTimeTicks: 1 },
+          ],
+        },
+        { ...runningGames[0], uid: 0 },
+      ])
+        child.stdout.write(
+          `${JSON.stringify({ method: "games.runningChanged", params })}\n`,
+        );
+      expect(send).not.toHaveBeenCalled();
+      await callHandler("prism:daemon:unsubscribe", trustedEvent());
+      child.stdout.write(
+        `${JSON.stringify({ method: "games.runningChanged", params: runningGames[0] })}\n`,
+      );
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
 
   it("forwards validated tuning state changes to the subscribed renderer", async () => {
     const child = createBackendChild();

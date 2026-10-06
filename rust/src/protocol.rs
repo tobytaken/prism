@@ -404,6 +404,24 @@ pub struct GameEntry {
     pub profiles: BTreeMap<String, String>,
 }
 
+/// A recognized game, identified by its earliest recognized process on this host boot.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunningGame {
+    pub game: GameId,
+    pub pid: u32,
+    /// Kernel clock ticks since boot, not wall-clock time.
+    pub start_time_ticks: u64,
+}
+
+/// Unavailable is deliberately distinct from a successful scan with no games.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
+pub enum RunningGamesState {
+    Available { games: Vec<RunningGame> },
+    Unavailable { reason: String },
+}
+
 /// The caller's game associations and automatic switching opt-in.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -473,6 +491,7 @@ pub enum DaemonRequest {
     ImportProfiles(ImportProfilesRequest),
     ListSteamApps,
     GetGames,
+    GetRunningGames,
     AddSteamGame(AddSteamGameRequest),
     SetGameProfile(SetGameProfileRequest),
     RemoveGame(GameRequest),
@@ -517,6 +536,7 @@ pub enum DaemonResponse {
     ProfileImport(ProfileImportResponse),
     SteamApps(Vec<SteamApp>),
     Games(GamesState),
+    RunningGames(RunningGamesState),
     DriverStatus(DriverStatusResponse),
     DriverJob(DriverJob),
     Error(GpuCommandError),
@@ -546,6 +566,7 @@ pub enum SessionMessage {
 pub enum DaemonEvent {
     StoreHealthChanged(crate::gpu::TuningStoreHealth),
     TuningStateChanged(GpuTuningState),
+    RunningGamesChanged(RunningGamesState),
 }
 
 #[cfg(test)]

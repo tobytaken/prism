@@ -192,6 +192,11 @@ impl TuningStore {
         )
     }
 
+    /// Builds a caller-scoped event for each session; None leaves that session unchanged.
+    pub fn publish_for_users(&self, event: impl Fn(u32) -> Option<DaemonEvent>) {
+        self.events.publish_for_users(event);
+    }
+
     /// Pushes the event to every open session.
     pub fn publish(&self, event: DaemonEvent) {
         self.events.publish(event);

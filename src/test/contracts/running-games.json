@@ -1,0 +1,17 @@
+[
+  {
+    "status": "available",
+    "games": [
+      {
+        "game": { "kind": "steam", "appId": 570 },
+        "pid": 123,
+        "startTimeTicks": 420
+      }
+    ]
+  },
+  { "status": "available", "games": [] },
+  {
+    "status": "unavailable",
+    "reason": "A complete host process scan could not be read. Recognition will retry automatically."
+  }
+]

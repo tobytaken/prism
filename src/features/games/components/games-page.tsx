@@ -1,3 +1,5 @@
+import { AutomaticSwitchingChoice } from "./automatic-switching-choice";
+import { useRunningGames } from "@/features/games/hooks/use-running-games";
 import { useId, useState } from "react";
 import { Plus } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -22,8 +24,8 @@ type GpuChoice = { uuid: string; label: string };
 
 /** Links the caller's games to their GPU tuning profiles, one profile per GPU. */
 export function GamesPage() {
-  const id = useId();
   const workflow = useGames();
+  const running = useRunningGames();
   const profiles = useQuery({
     queryKey: PROFILES_QUERY_KEY,
     queryFn: listGpuProfiles,
@@ -59,29 +61,14 @@ export function GamesPage() {
         </p>
       </div>
 
-      <div className="max-w-2xl space-y-1 rounded-lg border p-3 text-sm">
-        <label
-          htmlFor={`${id}-switching`}
-          className="flex items-center gap-3 font-medium"
-        >
-          <input
-            id={`${id}-switching`}
-            type="checkbox"
-            checked={state?.automaticSwitching ?? false}
-            disabled={!state || workflow.setAutomaticSwitching.isPending}
-            aria-describedby={`${id}-switching-note`}
-            onChange={(event) =>
-              workflow.setAutomaticSwitching.mutate(event.target.checked)
-            }
-          />
-          Switch profiles automatically while my games run
-        </label>
-        <p id={`${id}-switching-note`} className="text-muted-foreground">
-          Off by default, and only for your own games. You can link games while
-          it's off. Prism doesn't switch profiles for games yet; your choice and
-          links are kept for when it does.
-        </p>
+      <div className="max-w-2xl rounded-lg border p-3">
+        <AutomaticSwitchingChoice workflow={workflow} />
       </div>
+      {running?.status === "unavailable" && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Recognition unavailable. {running.reason}
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <Input
@@ -129,6 +116,12 @@ export function GamesPage() {
           <GameCard
             key={gameKey(game.game)}
             game={game}
+            running={
+              running?.status === "available" &&
+              running.games.some(
+                (entry) => gameKey(entry.game) === gameKey(game.game),
+              )
+            }
             gpus={gpus}
             profiles={profiles.data ?? []}
             profilesKnown={profiles.isSuccess}
@@ -149,12 +142,14 @@ export function GamesPage() {
 
 function GameCard({
   game,
+  running,
   gpus,
   profiles,
   profilesKnown,
   workflow,
 }: {
   game: GameEntry;
+  running: boolean;
   gpus: GpuChoice[];
   profiles: GpuTuningProfile[];
   profilesKnown: boolean;
@@ -175,6 +170,7 @@ function GameCard({
           <p className="text-xs text-muted-foreground">
             Steam app {game.game.appId}
           </p>
+          {running && <Badge>Running</Badge>}
           {!game.installed && (
             <Badge
               variant="outline"
