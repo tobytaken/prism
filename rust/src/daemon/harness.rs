@@ -76,6 +76,7 @@ pub enum Setter {
 #[derive(Default)]
 pub struct FakeGpuBackend {
     state: Mutex<FakeGpus>,
+    performance_gate: Mutex<Option<Gate>>,
 }
 
 #[derive(Default)]
@@ -156,6 +157,13 @@ impl FakeGpuBackend {
         gate
     }
 
+    /// Pauses the next hardware reading to exercise arrival/deadline races deterministically.
+    pub fn block_performance(&self) -> Gate {
+        let gate = Gate::default();
+        *self.performance_gate.lock().unwrap() = Some(gate.clone());
+        gate
+    }
+
     /// Every setter call so far, in the order the calls started.
     pub fn writes(&self) -> Vec<(String, Setter)> {
         self.state.lock().unwrap().writes.clone()
@@ -202,6 +210,10 @@ impl DaemonBackend for FakeGpuBackend {
     }
 
     fn performance(&self) -> GpuPerformanceResponse {
+        let gate = self.performance_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.pass();
+        }
         GpuPerformanceResponse {
             gpus: self.gpus(),
             warnings: vec![],
@@ -405,6 +417,14 @@ impl Harness {
         self.start_core();
     }
 
+    /// Simulates a new kernel boot id even when the runtime directory wasn't cleared.
+    pub fn reboot_with_retained_boot_state(&mut self) {
+        self.core = None;
+        self.boots += 1;
+        self.boot_id = format!("boot-{}", self.boots);
+        self.start_core();
+    }
+
     fn start_core(&mut self) {
         let persistent_dir = self.persistent_dir.path().to_path_buf();
         self.core = Some(Arc::new(DaemonCore::start(CoreDependencies {
@@ -486,6 +506,10 @@ impl Harness {
     /// A file's bytes in the persistent directory, if it exists.
     pub fn persistent_file(&self, name: &str) -> Option<Vec<u8>> {
         std::fs::read(self.persistent_dir.path().join(name)).ok()
+    }
+
+    pub fn boot_path(&self, name: &str) -> PathBuf {
+        self.boot_dir.path().join(name)
     }
 
     pub fn persistent_path(&self, name: &str) -> PathBuf {

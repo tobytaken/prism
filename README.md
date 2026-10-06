@@ -105,3 +105,11 @@ For Flatpak-host setups where group-based socket access is awkward, set `admin_u
 ```bash
 sudo systemctl restart prismd
 ```
+
+## Startup profiles
+
+Settings → Startup offers the host-wide **Off** (default) and **Startup profiles** choices. Use **Manage profiles…** in each GPU's Performance selector to choose its startup profile, or **No startup profile**. Anyone authorized to tune GPUs can change these choices; the latest change wins, and other users see the startup profile by name. A designation follows the profile's latest saved values and name, and deleting the profile clears the designation.
+
+The host daemon applies startup profiles once per kernel boot id without the app running. It reserves each designated GPU's operation queue, waits about 30 seconds for an absent GPU, and validates the entire profile before writing anything. The systemd service signals readiness after startup completes, before the display manager and user sessions become available. Unsupported or out-of-range settings skip the whole GPU; values are never clamped. Performance shows dismissible per-GPU startup outcomes, including per-setting partial failures. Dismissals belong to the user and last for that boot.
+
+The once-per-boot marker and outcomes live in `/run/prism/startup-state.json`. The service preserves this directory across stops and restarts. Unreadable tuning or boot state suspends startup profiles. As an interim compatibility rule, **Off** retains legacy saved-configuration reapplication on daemon starts while the tuning store is healthy; **Startup profiles** replaces that reapplication.

@@ -333,3 +333,22 @@ export interface CorrectedProfileApplication {
 
 /** A live clock offset: MHz, an explicit request for the default, or null to leave it unchanged. */
 export type OffsetInstruction = number | "default" | null;
+
+/** Host-wide startup choices; Restore last applied is added in #37. */
+export type StartupBehavior = "off" | "startupProfiles";
+export interface SetStartupProfileRequest {
+  gpuId: string;
+  profileId: string | null;
+}
+export interface StartupOutcome {
+  gpuId: string;
+  profile: CurrentProfile | null;
+  status: "applied" | "failed" | "notAttempted";
+  reason: string | null;
+  application: ProfileApplicationResponse | null;
+}
+export interface StartupState {
+  behavior: StartupBehavior;
+  profiles: Array<{ gpuId: string; profile: CurrentProfile }>;
+  outcomes: StartupOutcome[];
+}

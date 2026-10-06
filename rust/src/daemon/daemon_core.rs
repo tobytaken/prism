@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::drivers::{request_host_reboot, DriverService};
@@ -43,10 +44,13 @@ pub struct CoreDependencies {
 /// The daemon below the socket. Requests may arrive from several connections at once: reads
 /// never wait for tuning writes, and each GPU's writes run in order on that GPU's queue.
 pub struct DaemonCore {
-    dependencies: CoreDependencies,
-    queues: GpuOperationQueues,
-    tuning_store: Arc<TuningStore>,
+    pub(super) dependencies: CoreDependencies,
+    pub(super) queues: GpuOperationQueues,
+    pub(super) tuning_store: Arc<TuningStore>,
     legacy_configs: Arc<LegacyConfigStore>,
+    pub(super) boot_state: Arc<super::boot_state::BootState>,
+    pub(super) stopping: Arc<AtomicBool>,
+    pub(super) startup_operations: Mutex<Vec<PendingOperation<()>>>,
 }
 
 impl DaemonCore {
@@ -74,6 +78,33 @@ impl DaemonCore {
         request: DaemonRequest,
     ) -> DaemonResponse {
         let response = match request {
+            DaemonRequest::GetStartupState => self
+                .tuning_store
+                .read(|document| document.startup_state())
+                .map_err(GpuCommandError::from)
+                .and_then(|mut state| {
+                    state.outcomes = self.boot_state.outcomes(peer)?;
+                    Ok(DaemonResponse::StartupState(state))
+                }),
+            DaemonRequest::SetStartupBehavior(request) => self
+                .tuning_store
+                .update(|document| {
+                    document.startup_behavior = request.behavior;
+                })
+                .map_err(GpuCommandError::from)
+                .map(|()| startup_command()),
+            DaemonRequest::SetStartupProfile(request) => {
+                let store = Arc::clone(&self.tuning_store);
+                let peer = peer.clone();
+                self.tracked_write(&request.gpu_id.clone(), move |_| {
+                    store.try_update(|document| document.set_startup_profile(&peer, request))
+                })
+                .map(|()| startup_command())
+            }
+            DaemonRequest::DismissStartupOutcome(request) => self
+                .boot_state
+                .dismiss(peer, &request.gpu_id)
+                .map(|()| startup_command()),
             DaemonRequest::ListProfiles => self
                 .tuning_store
                 .read(|document| document.profiles_of(peer))
@@ -324,7 +355,7 @@ impl DaemonCore {
         })
     }
 
-    /// Loads saved state and reapplies legacy saved configurations, as every daemon start does.
+    /// Loads host state and reserves startup operations before serving any manual requests.
     pub fn start(dependencies: CoreDependencies) -> Self {
         let legacy_configs = Arc::new(LegacyConfigStore::load(
             dependencies.persistent_dir.join(LEGACY_STATE_FILE_NAME),
@@ -332,25 +363,46 @@ impl DaemonCore {
         let tuning_store = Arc::new(TuningStore::open(
             dependencies.persistent_dir.join(TUNING_STORE_FILE_NAME),
         ));
+        let boot_state = Arc::new(super::boot_state::BootState::open(
+            &dependencies.boot_dir,
+            &dependencies.boot_id,
+        ));
         let core = Self {
             dependencies,
+            boot_state,
+            stopping: Arc::default(),
+            startup_operations: Mutex::default(),
             queues: GpuOperationQueues::default(),
             tuning_store,
             legacy_configs,
         };
 
-        let outcome = core.reapply_legacy_configs();
-        if let (_, Err(error)) = core.legacy_configs.save() {
-            eprintln!("failed to save Prism daemon state on startup: {error}");
+        if let Err(error) = core.start_startup() {
+            eprintln!("Startup is suspended: {}", error.message);
         }
-        if let Err(error) = outcome {
-            eprintln!(
-                "failed to reapply one or more saved GPU settings on startup: {}",
-                error.message
-            );
+        // Interim rule until #38: Off retains legacy reapplication on every daemon start.
+        if matches!(
+            core.tuning_store.read(|document| document.startup_behavior),
+            Ok(crate::protocol::StartupBehavior::Off)
+        ) {
+            let outcome = core.reapply_legacy_configs();
+            if let (_, Err(error)) = core.legacy_configs.save() {
+                eprintln!("failed to save Prism daemon state on startup: {error}");
+            }
+            if let Err(error) = outcome {
+                eprintln!("failed to reapply saved GPU settings: {}", error.message);
+            }
         }
 
         core
+    }
+
+    /// The service becomes ready only after all boot operations have finished. Request
+    /// serving runs independently, so reads and unrelated GPUs stay available meanwhile.
+    pub fn wait_for_startup(&self) {
+        for pending in std::mem::take(&mut *self.startup_operations.lock().unwrap()) {
+            pending.wait();
+        }
     }
 
     pub fn handle(&self, request: DaemonRequest) -> DaemonResponse {
@@ -430,7 +482,11 @@ impl DaemonCore {
                     (response, applied)
                 }),
             ),
-            DaemonRequest::ListProfiles
+            DaemonRequest::GetStartupState
+            | DaemonRequest::SetStartupBehavior(_)
+            | DaemonRequest::SetStartupProfile(_)
+            | DaemonRequest::DismissStartupOutcome(_)
+            | DaemonRequest::ListProfiles
             | DaemonRequest::GetTuningStates
             | DaemonRequest::SaveProfileAsNew(_)
             | DaemonRequest::SaveToCurrentProfile(_)
@@ -862,4 +918,17 @@ fn save_state(path: &Path, state: &PersistedGpuState) -> Result<(), std::io::Err
     let payload = serde_json::to_vec_pretty(state)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
     fs::write(path, payload)
+}
+
+fn startup_command() -> DaemonResponse {
+    DaemonResponse::Command(DaemonCommandResponse {
+        success: true,
+        error: None,
+    })
+}
+
+impl Drop for DaemonCore {
+    fn drop(&mut self) {
+        self.stopping.store(true, Ordering::SeqCst);
+    }
 }

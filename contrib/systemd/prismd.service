@@ -1,14 +1,17 @@
 [Unit]
 Description=Prism GPU control daemon
-After=multi-user.target
+After=local-fs.target
+Before=display-manager.service systemd-user-sessions.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=root
 Group=root
 ExecStart=/usr/bin/prismd
 Restart=on-failure
 RuntimeDirectory=prism
+RuntimeDirectoryPreserve=yes
 StateDirectory=prism
 ConfigurationDirectory=prism
 

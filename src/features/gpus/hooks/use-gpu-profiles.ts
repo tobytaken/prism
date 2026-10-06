@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useStartup } from "./use-startup";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGpuTuningStates,
@@ -20,6 +21,7 @@ export const TUNING_STATES_QUERY_KEY = ["gpu-tuning-states"];
 /** The caller's profiles, and each GPU's current profile and state revision from the daemon. */
 export function useGpuProfiles() {
   const queryClient = useQueryClient();
+  const startup = useStartup();
   const query = useQuery({ queryKey: PROFILES, queryFn: listGpuProfiles });
   // Polled at the readings' pace and updated by pushes, so it keeps up with the values on screen.
   const states = useQuery({
@@ -45,6 +47,7 @@ export function useGpuProfiles() {
     Promise.all([
       queryClient.invalidateQueries({ queryKey: PROFILES }),
       queryClient.invalidateQueries({ queryKey: TUNING_STATES_QUERY_KEY }),
+      startup.refresh(),
     ]);
   // The revision a save carries must cover the values on screen. A pushed or polled state can
   // be newer than the readings shown, and its revision would let unseen values be saved.
@@ -81,6 +84,7 @@ export function useGpuProfiles() {
     onSettled: refresh,
   });
   return {
+    startup,
     query,
     states,
     saveAsNew,

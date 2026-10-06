@@ -313,7 +313,7 @@ fn another_users_current_profile_is_shown_by_name_and_cannot_be_saved_over() {
 }
 
 #[test]
-fn the_current_profile_survives_a_daemon_restart_and_a_reboot() {
+fn the_current_profile_survives_a_daemon_restart_and_is_cleared_at_reboot_when_startup_is_off() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
     import(&alice, quiet_and_loud());
@@ -327,7 +327,7 @@ fn the_current_profile_survives_a_daemon_restart_and_a_reboot() {
 
     daemon.reboot();
     let alice = daemon.user(1000, "alice");
-    assert_eq!(current(&alice), json!({ "id": "quiet", "name": "Quiet" }));
+    assert_eq!(current(&alice), Value::Null);
 }
 
 #[test]

@@ -325,6 +325,18 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
               The current profile "{current.name}" belongs to another user.
             </MenuNote>
           )}
+          {workflow.startup.profileOf(selector.uuid ?? "") &&
+            !profiles.some(
+              (profile) =>
+                profile.id ===
+                workflow.startup.profileOf(selector.uuid ?? "")?.id,
+            ) && (
+              <MenuNote>
+                Startup profile: "
+                {workflow.startup.profileOf(selector.uuid ?? "")?.name}"
+                (another user's profile).
+              </MenuNote>
+            )}
           {profiles.length === 0 && (
             <MenuNote>No saved profiles for this GPU yet.</MenuNote>
           )}
@@ -340,7 +352,15 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
                 onSelect={() => void selector.choose(profile)}
                 className="flex-col items-start gap-0.5"
               >
-                <span className="font-medium">{profile.name}</span>{" "}
+                <span className="font-medium">
+                  {profile.name}
+                  {workflow.startup.profileOf(profile.gpuId)?.id ===
+                    profile.id && (
+                    <span className="ml-2" title="Startup profile">
+                      ★<span className="sr-only"> Startup profile</span>
+                    </span>
+                  )}
+                </span>{" "}
                 <span className="text-xs text-muted-foreground">
                   {describeSettings(profile.settings)}
                 </span>
@@ -355,6 +375,11 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
           )}
           <DropdownMenuSeparator />
           {saveBlocker && <MenuNote role="status">{saveBlocker}</MenuNote>}
+          {ownCurrent &&
+            workflow.startup.profileOf(ownCurrent.gpuId)?.id ===
+              ownCurrent.id && (
+              <MenuNote>Also changes the values applied at startup.</MenuNote>
+            )}
           {ownCurrent && (
             <DropdownMenuItem
               disabled={!canSave}
@@ -385,6 +410,8 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
       {manageOpen && (
         <GpuManageProfilesDialog
           profiles={profiles}
+          gpuId={selector.uuid!}
+          gpu={gpu}
           current={current}
           currentProfileKnown={selector.currentProfileKnown}
           workflow={workflow}
@@ -416,6 +443,13 @@ function SaveBeforeSwitchDialog({
             them before applying "{switchRequest?.profile.name}"?
           </DialogDescription>
         </DialogHeader>
+        {switchRequest &&
+          selector.workflow.startup.profileOf(switchRequest.current.gpuId)
+            ?.id === switchRequest.current.id && (
+            <p className="text-sm text-muted-foreground">
+              Also changes the values applied at startup.
+            </p>
+          )}
         {selector.reportedSettings && (
           <p className="text-sm">
             Reported values: {describeSettings(selector.reportedSettings)}
@@ -590,6 +624,12 @@ export function GpuProfileFeedback({
           <p className="text-sm">
             Saved in "{ownCurrent.name}":{" "}
             {describeSettings(ownCurrent.settings)}
+            {workflow.startup.profileOf(ownCurrent.gpuId)?.id ===
+              ownCurrent.id && (
+              <span className="block text-muted-foreground">
+                Also changes the values applied at startup.
+              </span>
+            )}
           </p>
           <Button
             type="button"
@@ -619,6 +659,12 @@ export function GpuProfileFeedback({
             current allowed ranges. Adjusting saves these values to the profile
             and then applies it. Cancel leaves the profile and GPU unchanged.
           </p>
+          {workflow.startup.profileOf(review.profile.gpuId)?.id ===
+            review.profile.id && (
+            <p className="text-sm text-muted-foreground">
+              Also changes the values applied at startup.
+            </p>
+          )}
           <ul className="list-disc space-y-1 pl-5 text-sm">
             {review.corrections.map((correction) => {
               const { label, unit } = SETTING_DISPLAY[correction.setting];
@@ -702,6 +748,7 @@ export function GpuProfileAvailability({
   workflow: GpuProfileWorkflow;
   gpus: GpuPerformanceDevice[];
 }) {
+  const [managingGpu, setManagingGpu] = useState<string | null>(null);
   const unavailable =
     workflow.query.data?.filter(
       (profile) => !gpus.some((gpu) => gpu.stableId === profile.gpuId),
@@ -713,6 +760,20 @@ export function GpuProfileAvailability({
           <AlertTitle>Failed to load GPU tuning profiles</AlertTitle>
           <AlertDescription>{workflow.query.error.message}</AlertDescription>
         </Alert>
+      )}
+      {managingGpu && (
+        <GpuManageProfilesDialog
+          profiles={
+            workflow.query.data?.filter(
+              (profile) => profile.gpuId === managingGpu,
+            ) ?? []
+          }
+          gpuId={managingGpu}
+          current={workflow.stateOf(managingGpu)?.currentProfile ?? null}
+          currentProfileKnown={!!workflow.stateOf(managingGpu)}
+          workflow={workflow}
+          onOpenChange={(open) => !open && setManagingGpu(null)}
+        />
       )}
       {unavailable.length > 0 && (
         <section
@@ -730,6 +791,14 @@ export function GpuProfileAvailability({
                 Owning GPU absent · {profile.gpuId}
               </span>
               <Button disabled>Apply profile</Button>
+              <Button
+                type="button"
+                variant="outline"
+                aria-label={`Manage profiles for ${profile.name} (${profile.gpuId})`}
+                onClick={() => setManagingGpu(profile.gpuId)}
+              >
+                Manage profiles…
+              </Button>
             </div>
           ))}
         </section>

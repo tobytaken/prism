@@ -442,3 +442,118 @@ fn stdin_close_exits_even_when_notification_output_is_blocked() {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[test]
+fn a_manual_write_can_wait_behind_startup_longer_than_the_old_two_second_timeout() {
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
+    let mut session = accept_session(&listener);
+    lines.recv_timeout(Duration::from_secs(2)).unwrap();
+    writeln!(sidecar.0.stdin.as_mut().unwrap(), "{}", json!({
+        "id": 9, "method": "gpu.setPowerLimit", "params": { "gpuId": "GPU-123", "limitWatts": 350 }
+    })).unwrap();
+    let request = read_frame::<SessionRequest>(&mut session).unwrap().unwrap();
+    std::thread::sleep(Duration::from_millis(2200));
+    write_frame(
+        &mut session,
+        &SessionMessage::Response {
+            id: request.id,
+            response: DaemonResponse::Command(prism_rust::protocol::DaemonCommandResponse {
+                success: true,
+                error: None,
+            }),
+        },
+    )
+    .unwrap();
+    let response = lines.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(
+        response,
+        json!({ "id": 9, "result": { "success": true, "error": null } })
+    );
+}
+
+#[test]
+fn startup_choices_and_outcomes_cross_the_sidecar_session() {
+    use prism_rust::protocol::{DaemonCommandResponse, StartupState};
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
+    let mut session = accept_session(&listener);
+    lines.recv_timeout(Duration::from_secs(2)).unwrap();
+    let state: StartupState =
+        serde_json::from_str(include_str!("../../src/test/contracts/startup-state.json")).unwrap();
+    for (id, method, params, expected, response) in [
+        (
+            9,
+            "gpu.getStartupState",
+            None,
+            json!({ "type": "get_startup_state" }),
+            DaemonResponse::StartupState(state.clone()),
+        ),
+        (
+            10,
+            "gpu.setStartupBehavior",
+            Some(json!({ "behavior": "startupProfiles" })),
+            json!({ "type": "set_startup_behavior", "payload": { "behavior": "startupProfiles" } }),
+            DaemonResponse::Command(DaemonCommandResponse {
+                success: true,
+                error: None,
+            }),
+        ),
+        (
+            11,
+            "gpu.setStartupProfile",
+            Some(json!({ "gpuId": "GPU-123", "profileId": null })),
+            json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": null } }),
+            DaemonResponse::Command(DaemonCommandResponse {
+                success: true,
+                error: None,
+            }),
+        ),
+        (
+            12,
+            "gpu.dismissStartupOutcome",
+            Some(json!({ "gpuId": "GPU-123" })),
+            json!({ "type": "dismiss_startup_outcome", "payload": { "gpuId": "GPU-123" } }),
+            DaemonResponse::Command(DaemonCommandResponse {
+                success: true,
+                error: None,
+            }),
+        ),
+    ] {
+        writeln!(
+            sidecar.0.stdin.as_mut().unwrap(),
+            "{}",
+            json!({ "id": id, "method": method, "params": params })
+        )
+        .unwrap();
+        let request = read_frame::<SessionRequest>(&mut session).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(request.request).unwrap(), expected);
+        let result = if id == 9 {
+            serde_json::to_value(&state).unwrap()
+        } else {
+            json!({ "success": true, "error": null })
+        };
+        write_frame(
+            &mut session,
+            &SessionMessage::Response {
+                id: request.id,
+                response,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            lines.recv_timeout(Duration::from_secs(2)).unwrap(),
+            json!({ "id": id, "result": result })
+        );
+    }
+}

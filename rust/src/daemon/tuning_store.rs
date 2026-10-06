@@ -9,12 +9,12 @@ use serde::{Deserialize, Serialize};
 
 use super::session::{DaemonSession, SessionEvents, SessionPeer};
 use crate::gpu::{TuningStoreHealth, TuningStoreProblem};
-use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings};
+use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBehavior};
 
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 3;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 4;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -32,12 +32,18 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     Ok,
     // Version 3 adds each GPU's current profile, none until a profile is applied or saved.
     Ok,
+    // Version 4 adds host-wide startup choices, defaulting to Off with no designations.
+    Ok,
 ];
 
 /// The tuning store's contents.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TuningDocument {
+    #[serde(default, skip_serializing_if = "StartupBehavior::is_off")]
+    pub startup_behavior: StartupBehavior,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub startup_profiles: BTreeMap<String, String>,
     /// Each user's own state. A user is a uid together with its username, so a reused uid with
     /// another username is a different user.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -229,7 +235,7 @@ fn serialize(document: &TuningDocument) -> Vec<u8> {
 
 /// Replaces the file so that readers, and the daemon after a crash, see either the previous or
 /// the new contents, never a mix.
-fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub(super) fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
     StagedFile::write(path, contents)?.commit()
 }
 

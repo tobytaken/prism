@@ -1320,8 +1320,7 @@ fn assert_unhealthy(daemon: &Harness, expected: TuningStoreProblem) {
 }
 
 // Acceptance scenario 11 from #8, as far as it exists so far: the file is preserved, manual
-// tuning works and the problem is reported. Startup behavior and automatic writes don't exist
-// yet; legacy saved-configuration reapplication still runs at every start until #38 retires it.
+// tuning works and the problem is reported. Startup and legacy reapplication are suspended.
 #[test]
 fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_working() {
     let corrupt: &[u8] = b"{\"schemaVersion\": 1, \"profiles\": [tru";
@@ -1369,7 +1368,7 @@ fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_wo
 
 #[test]
 fn a_tuning_store_from_a_newer_schema_version_is_treated_as_unreadable_and_preserved() {
-    let newer: &[u8] = b"{\"schemaVersion\": 4, \"users\": []}";
+    let newer: &[u8] = b"{\"schemaVersion\": 99, \"users\": []}";
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[(TUNING_STORE, newer)],

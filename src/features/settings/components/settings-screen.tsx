@@ -1,6 +1,7 @@
 import { Check, Info, Palette, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 
+import { StartupSettingsPanel } from "./startup-settings-panel";
 import { Separator } from "@/components/ui/separator";
 import {
   accentThemes,
@@ -18,7 +19,7 @@ type SettingsScreenProps = {
   onAccentPreferenceChange: (preference: AccentPreference) => void;
 };
 
-type SettingsTab = "appearance" | "daemon" | "about";
+type SettingsTab = "appearance" | "startup" | "daemon" | "about";
 
 const settingsTabs = [
   {
@@ -26,6 +27,7 @@ const settingsTabs = [
     label: "Appearance",
     icon: Palette,
   },
+  { id: "startup", label: "Startup", icon: ShieldCheck },
   {
     id: "daemon",
     label: "Daemon",
@@ -99,7 +101,11 @@ export function SettingsScreen({
 
         <main className="flex-1 overflow-y-auto">
           {activeTab === "appearance" && (
-            <div id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance">
+            <div
+              id="panel-appearance"
+              role="tabpanel"
+              aria-labelledby="tab-appearance"
+            >
               <AppearancePanel
                 accentPreference={accentPreference}
                 detectedAccent={detectedAccent}
@@ -107,6 +113,15 @@ export function SettingsScreen({
                 detectionErrorMessage={detectionErrorMessage}
                 onAccentPreferenceChange={onAccentPreferenceChange}
               />
+            </div>
+          )}
+          {activeTab === "startup" && (
+            <div
+              id="panel-startup"
+              role="tabpanel"
+              aria-labelledby="tab-startup"
+            >
+              <StartupSettingsPanel />
             </div>
           )}
           {activeTab === "daemon" && (
@@ -138,7 +153,9 @@ function AppearancePanel({
   detectionErrorMessage: string | null;
   onAccentPreferenceChange: (preference: AccentPreference) => void;
 }) {
-  const autoSwatch = detectedAccent ? accentThemes[detectedAccent].color : unresolvedAutoSwatch;
+  const autoSwatch = detectedAccent
+    ? accentThemes[detectedAccent].color
+    : unresolvedAutoSwatch;
 
   const autoSummary = getAutoSummary({
     detectedAccent,

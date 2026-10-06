@@ -18,6 +18,7 @@ use crate::gpu::{
 use crate::protocol::{
     CorrectAndApplyProfileRequest, ImportProfilesRequest, LiveClockOffsetsRequest,
     ProfileIdRequest, RenameProfileRequest, SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
+    SetStartupBehaviorRequest, SetStartupProfileRequest, StartupGpuRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +56,24 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
                 |request| daemon_client::apply_gpu_profile(request).map_err(BridgeError::from),
             )
         }
+        "gpu.getStartupState" => daemon_client::get_startup_state()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
+        "gpu.setStartupBehavior" => parse_and_serialize_result::<SetStartupBehaviorRequest, _, _>(
+            request.params,
+            "gpu.setStartupBehavior",
+            |request| daemon_client::set_startup_behavior(request).map_err(BridgeError::from),
+        ),
+        "gpu.setStartupProfile" => parse_and_serialize_result::<SetStartupProfileRequest, _, _>(
+            request.params,
+            "gpu.setStartupProfile",
+            |request| daemon_client::set_startup_profile(request).map_err(BridgeError::from),
+        ),
+        "gpu.dismissStartupOutcome" => parse_and_serialize_result::<StartupGpuRequest, _, _>(
+            request.params,
+            "gpu.dismissStartupOutcome",
+            |request| daemon_client::dismiss_startup_outcome(request).map_err(BridgeError::from),
+        ),
         "gpu.listProfiles" => daemon_client::list_gpu_profiles()
             .map_err(BridgeError::from)
             .and_then(serialize_result),
