@@ -1,5 +1,4 @@
-import { MigrationNotice } from "./migration-notice";
-import { StartupOutcomes } from "./startup-outcomes";
+import { GameTuningPanel } from "@/features/games/components/game-tuning-panel";
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
 import { TuningStoreProblemAlert } from "./tuning-store-problem-alert";
 import {
@@ -124,8 +123,7 @@ export function GpuPerformanceScreen({
         )}
       </div>
 
-      {profiles && <MigrationNotice workflow={profiles} />}
-      {profiles && <StartupOutcomes workflow={profiles} gpus={gpus} />}
+      {profiles && <GameTuningPanel workflow={profiles} gpus={gpus} />}
 
       {daemonDisconnected && daemonStatus && (
         <Alert

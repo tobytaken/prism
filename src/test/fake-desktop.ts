@@ -12,6 +12,7 @@ import type {
   GpuProfileSettings,
   GpuTuningProfile,
   GpuTuningState,
+  GpuDaemonStatus,
   OffsetInstruction,
   ProfileApplicationResponse,
   ProfileRangeCorrection,
@@ -21,7 +22,12 @@ import type {
   StartupBehavior,
   StartupOutcome,
 } from "@/features/gpus/types";
-import type { GameEntry, GameId, SteamApp } from "@/features/games/types";
+import type {
+  GameEntry,
+  GameId,
+  SteamApp,
+  RunningGamesState,
+} from "@/features/games/types";
 import { createPerformanceResponse } from "./gpu-fixtures";
 
 type Setting = "power" | "graphics" | "memory";
@@ -94,6 +100,7 @@ export function createFakeDesktop({
   steamApps = [],
   games = [],
   automaticSwitching = false,
+  runningGames = { status: "available", games: [] },
 }: {
   response?: GpuPerformanceResponse;
   profiles?: GpuTuningProfile[];
@@ -111,11 +118,22 @@ export function createFakeDesktop({
   /** The caller's game associations; installed is derived from steamApps. */
   games?: Omit<GameEntry, "installed">[];
   automaticSwitching?: boolean;
+  runningGames?: RunningGamesState;
 } = {}) {
   /** Setters that fail with this message on every GPU until removed. */
   const failures: Partial<Record<Setting, string>> = {};
   /** Last applied tuning values per GPU UUID, as the daemon records them. */
   const lastApplied: Record<string, GpuProfileSettings> = {};
+  const daemonListeners = new Set<(status: GpuDaemonStatus) => void>();
+  vi.spyOn(window.prism.gpu, "onDaemonStatusChanged").mockImplementation(
+    (listener) => {
+      daemonListeners.add(listener);
+      return () => {
+        daemonListeners.delete(listener);
+      };
+    },
+  );
+  const runningListeners = new Set<(state: RunningGamesState) => void>();
   const tuningStateListeners = new Set<(state: GpuTuningState) => void>();
   let nextId = profiles.length + 1;
 
@@ -384,6 +402,13 @@ export function createFakeDesktop({
   }
 
   const gamesApi = window.prism.games;
+  vi.spyOn(gamesApi, "getRunning").mockImplementation(async () => runningGames);
+  vi.spyOn(gamesApi, "onRunningChanged").mockImplementation((listener) => {
+    runningListeners.add(listener);
+    return () => {
+      runningListeners.delete(listener);
+    };
+  });
   const gameSpies = {
     listSteamApps: vi
       .spyOn(gamesApi, "listSteamApps")
@@ -392,9 +417,9 @@ export function createFakeDesktop({
           [...steamApps].sort((a, b) => a.name.localeCompare(b.name)),
         ),
       ),
-    getGames: vi.spyOn(gamesApi, "get").mockImplementation(async () =>
-      gamesState(),
-    ),
+    getGames: vi
+      .spyOn(gamesApi, "get")
+      .mockImplementation(async () => gamesState()),
     addSteamGame: vi
       .spyOn(gamesApi, "addSteamGame")
       .mockImplementation(async ({ appId }) => {
@@ -734,6 +759,13 @@ export function createFakeDesktop({
     },
     ...spies,
     ...gameSpies,
+    pushDaemonStatus(status: GpuDaemonStatus) {
+      for (const listener of daemonListeners) listener(status);
+    },
+    pushRunningGames(state: RunningGamesState) {
+      runningGames = state;
+      for (const listener of runningListeners) listener(state);
+    },
     /** Pushes the GPU's tuning state to the app, as the daemon does after another session's change. */
     pushTuningState(gpuId: string) {
       const state = tuningState(owner(gpuId));

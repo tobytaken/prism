@@ -139,6 +139,9 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
         "games.listSteamApps" => daemon_client::list_steam_apps()
             .map_err(BridgeError::from)
             .and_then(serialize_result),
+        "games.getRunning" => daemon_client::get_running_games()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
         "games.get" => daemon_client::get_games()
             .map_err(BridgeError::from)
             .and_then(serialize_result),

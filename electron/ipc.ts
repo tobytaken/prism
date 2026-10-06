@@ -1,3 +1,4 @@
+import type { RunningGamesState } from "@/features/games/types";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
@@ -5,6 +6,7 @@ import { PROFILE_FILE_NAME, ProfileFileImport } from "./profile-file-import";
 import {
   daemonStatusNotification,
   tuningStateNotification,
+  runningGamesNotification,
 } from "./daemon-events";
 import {
   isProfileSetting,
@@ -77,6 +79,7 @@ class RustBackendClient {
   constructor(
     private readonly onStatus: (status: GpuDaemonStatus) => void,
     private readonly onTuningState: (state: GpuTuningState) => void,
+    private readonly onRunningGames: (state: RunningGamesState) => void,
   ) {}
 
   start() {
@@ -240,6 +243,11 @@ class RustBackendClient {
     if (notification) {
       this.socketPath = notification.socketPath;
       this.onStatus(notification);
+      return;
+    }
+    const runningGames = runningGamesNotification(value);
+    if (runningGames) {
+      this.onRunningGames(runningGames);
       return;
     }
     const tuningState = tuningStateNotification(value);
@@ -472,6 +480,10 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
           state,
         );
     },
+    (state) => {
+      if (subscribed)
+        getMainWindow()?.webContents.send("prism:games:runningChanged", state);
+    },
   );
 
   ipcMain.handle(
@@ -590,6 +602,14 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       assertTrustedSender(event, getMainWindow);
       if (args.length) throw new Error("Invalid listSteamApps payload");
       return backend.invoke("games.listSteamApps");
+    },
+  );
+  ipcMain.handle(
+    "prism:games:getRunning",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid running games payload");
+      return backend.invoke("games.getRunning");
     },
   );
   ipcMain.handle("prism:games:get", async (event, ...args: unknown[]) => {

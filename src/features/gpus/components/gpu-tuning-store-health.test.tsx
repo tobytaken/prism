@@ -113,12 +113,16 @@ describe("Tuning store health on Performance", () => {
     const probe = vi
       .spyOn(window.prism.gpu, "getDaemonStatus")
       .mockResolvedValue(connectedDaemonStatus);
-    let emit!: (status: GpuDaemonStatus) => void;
-    const unsubscribe = vi.fn();
+    const listeners = new Set<(status: GpuDaemonStatus) => void>();
+    const emit = (status: GpuDaemonStatus) => {
+      for (const listener of listeners) listener(status);
+    };
     vi.spyOn(window.prism.gpu, "onDaemonStatusChanged").mockImplementation(
       (callback) => {
-        emit = callback;
-        return unsubscribe;
+        listeners.add(callback);
+        return () => {
+          listeners.delete(callback);
+        };
       },
     );
     const page = renderPerformancePage();
@@ -135,7 +139,7 @@ describe("Tuning store health on Performance", () => {
     );
     expect(probe).toHaveBeenCalledTimes(1);
     page.unmount();
-    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(listeners.size).toBe(0);
   });
 
   it("keeps a pushed store problem when an older status probe finishes later", async () => {

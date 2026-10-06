@@ -48,6 +48,7 @@ pub struct DaemonCore {
     pub(super) tuning_store: Arc<TuningStore>,
     pub(super) boot_state: Arc<super::boot_state::BootState>,
     possibly_stale: Arc<PossiblyStale>,
+    pub(super) recognition: Mutex<super::recognition::Recognition>,
     pub(super) stopping: Arc<AtomicBool>,
     pub(super) startup_operations: Mutex<Vec<PendingOperation<()>>>,
 }
@@ -197,6 +198,9 @@ impl DaemonCore {
                 .map(DaemonResponse::ProfileImport),
             DaemonRequest::ListSteamApps => self.steam_apps(peer).map(DaemonResponse::SteamApps),
             DaemonRequest::GetGames => self.games(peer),
+            DaemonRequest::GetRunningGames => Ok(DaemonResponse::RunningGames(
+                self.recognition.lock().unwrap().for_uid(peer.uid),
+            )),
             DaemonRequest::AddSteamGame(request) => self.add_steam_game(peer, request.app_id),
             DaemonRequest::SetGameProfile(request) => self.set_game_profile(peer, request),
             DaemonRequest::RemoveGame(request) => self.remove_game(peer, request.game),
@@ -410,6 +414,7 @@ impl DaemonCore {
             possibly_stale,
             stopping: Arc::default(),
             startup_operations: Mutex::default(),
+            recognition: Mutex::default(),
             queues: GpuOperationQueues::default(),
             tuning_store,
         };
@@ -418,6 +423,7 @@ impl DaemonCore {
             eprintln!("Startup is suspended: {}", error.message);
         }
 
+        core.scan_running_games();
         core
     }
 
@@ -533,6 +539,7 @@ impl DaemonCore {
             )),
             DaemonRequest::ListSteamApps
             | DaemonRequest::GetGames
+            | DaemonRequest::GetRunningGames
             | DaemonRequest::AddSteamGame(_)
             | DaemonRequest::SetGameProfile(_)
             | DaemonRequest::RemoveGame(_)

@@ -48,7 +48,7 @@ pub(super) struct SessionEvents(Mutex<Subscribers>);
 #[derive(Default)]
 struct Subscribers {
     next_id: u64,
-    senders: HashMap<u64, SyncSender<DaemonEvent>>,
+    senders: HashMap<u64, (u32, SyncSender<DaemonEvent>)>,
 }
 
 impl SessionEvents {
@@ -58,7 +58,7 @@ impl SessionEvents {
         let mut subscribers = self.0.lock().unwrap();
         subscribers.next_id += 1;
         let id = subscribers.next_id;
-        subscribers.senders.insert(id, sender);
+        subscribers.senders.insert(id, (peer.uid, sender));
         DaemonSession {
             id,
             peer,
@@ -67,13 +67,19 @@ impl SessionEvents {
         }
     }
 
+    pub fn publish_for_users(&self, event: impl Fn(u32) -> Option<DaemonEvent>) {
+        self.0.lock().unwrap().senders.retain(|_, (uid, sender)| {
+            event(*uid).is_none_or(|event| sender.try_send(event).is_ok())
+        });
+    }
+
     pub fn publish(&self, event: DaemonEvent) {
         // Disconnect a stalled session instead of holding up the serialized store owner.
         self.0
             .lock()
             .unwrap()
             .senders
-            .retain(|_, sender| sender.try_send(event.clone()).is_ok());
+            .retain(|_, (_, sender)| sender.try_send(event.clone()).is_ok());
     }
 }
 

@@ -25,6 +25,7 @@ import type {
   AddSteamGameRequest,
   GameRequest,
   GamesState,
+  RunningGamesState,
   SetAutomaticSwitchingRequest,
   SetGameProfileRequest,
   SteamApp,
@@ -109,6 +110,8 @@ export interface PrismDesktopApi {
     /** Fully installed Steam apps, without compatibility tools or known non-game apps. */
     listSteamApps(): Promise<SteamApp[]>;
     get(): Promise<GamesState>;
+    getRunning(): Promise<RunningGamesState>;
+    onRunningChanged(callback: (state: RunningGamesState) => void): () => void;
     addSteamGame(request: AddSteamGameRequest): Promise<GamesState>;
     setProfile(request: SetGameProfileRequest): Promise<GamesState>;
     remove(request: GameRequest): Promise<GamesState>;

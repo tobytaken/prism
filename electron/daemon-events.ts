@@ -1,3 +1,4 @@
+import type { RunningGamesState } from "@/features/games/types";
 import type {
   GpuDaemonStatus,
   GpuTuningState,
@@ -96,4 +97,53 @@ export function tuningStateNotification(
   ) {
     return value.params;
   }
+}
+
+export function isRunningGamesState(
+  value: unknown,
+): value is RunningGamesState {
+  if (!isRecord(value)) return false;
+  if (value.status === "unavailable")
+    return (
+      hasKeys(value, ["status", "reason"]) && typeof value.reason === "string"
+    );
+  return (
+    value.status === "available" &&
+    hasKeys(value, ["status", "games"]) &&
+    Array.isArray(value.games) &&
+    value.games.every(
+      (entry: unknown) =>
+        isRecord(entry) &&
+        hasKeys(entry, ["game", "pid", "startTimeTicks"]) &&
+        isRecord(entry.game) &&
+        hasKeys(entry.game, ["kind", "appId"]) &&
+        entry.game.kind === "steam" &&
+        positiveU32(entry.game.appId) &&
+        positiveU32(entry.pid) &&
+        Number.isSafeInteger(entry.startTimeTicks) &&
+        typeof entry.startTimeTicks === "number" &&
+        entry.startTimeTicks >= 0,
+    )
+  );
+}
+
+function positiveU32(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= 0xffffffff
+  );
+}
+
+export function runningGamesNotification(
+  value: unknown,
+): RunningGamesState | undefined {
+  if (
+    isRecord(value) &&
+    hasKeys(value, ["method", "params"]) &&
+    value.method === "games.runningChanged" &&
+    isRunningGamesState(value.params)
+  )
+    return value.params;
 }

@@ -42,3 +42,16 @@ export interface GameRequest {
 export interface SetAutomaticSwitchingRequest {
   enabled: boolean;
 }
+
+/** A recognized game, using the earliest recognized process on this host boot. */
+export interface RunningGame {
+  game: GameId;
+  pid: number;
+  /** Kernel clock ticks since boot, not wall-clock time. */
+  startTimeTicks: number;
+}
+
+/** An unavailable scan does not establish whether any game ended. */
+export type RunningGamesState =
+  | { status: "available"; games: RunningGame[] }
+  | { status: "unavailable"; reason: string };

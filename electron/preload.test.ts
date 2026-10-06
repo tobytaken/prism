@@ -1,3 +1,4 @@
+import runningGames from "@/test/contracts/running-games.json";
 import startupState from "@/test/contracts/startup-state.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -299,6 +300,36 @@ describe("preload bridge", () => {
       "prism:gpu:dismissStartupOutcome",
       { gpuId: "GPU-123" },
     );
+  });
+
+  it("reads running games and validates pushed snapshots until unsubscribed", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValueOnce(runningGames[0]);
+    expect(await prism.games.getRunning()).toEqual(runningGames[0]);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:games:getRunning");
+    const changed = vi.fn();
+    const unsubscribe = prism.games.onRunningChanged(changed);
+    const [channel, handler] = mocks.on.mock.calls[0];
+    expect(channel).toBe("prism:games:runningChanged");
+    for (const state of runningGames) handler({}, state);
+    expect(changed.mock.calls).toEqual(runningGames.map((state) => [state]));
+    changed.mockClear();
+    for (const state of [
+      null,
+      { status: "available" },
+      { status: "unavailable", games: [] },
+      {
+        status: "available",
+        games: [
+          { game: { kind: "steam", appId: 570 }, pid: -1, startTimeTicks: 0 },
+        ],
+      },
+    ])
+      handler({}, state);
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
+    expect(mocks.removeListener).toHaveBeenCalledWith(channel, handler);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:daemon:unsubscribe");
   });
 
   it("subscribes to tuning state changes alongside daemon status, keeping the daemon subscription until both leave", async () => {

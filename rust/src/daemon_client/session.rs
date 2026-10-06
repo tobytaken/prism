@@ -116,6 +116,7 @@ impl Drop for SessionClient {
 pub enum SessionNotification {
     DaemonStatus(GpuDaemonStatus),
     TuningState(GpuTuningState),
+    RunningGames(crate::protocol::RunningGamesState),
 }
 
 /// One session for the sidecar's lifetime. Probes and driver requests remain one-shot.
@@ -229,6 +230,9 @@ fn connect_and_receive(
             SessionMessage::Event {
                 event: DaemonEvent::TuningStateChanged(state),
             } => publish(SessionNotification::TuningState(state)),
+            SessionMessage::Event {
+                event: DaemonEvent::RunningGamesChanged(state),
+            } => publish(SessionNotification::RunningGames(state)),
         }
     }
     Ok(())

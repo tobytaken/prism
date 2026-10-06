@@ -7,6 +7,7 @@ mod migration;
 mod possibly_stale;
 mod profiles;
 mod queue;
+mod recognition;
 mod session;
 mod startup;
 mod steam_library;
@@ -25,6 +26,8 @@ mod manage_profile_tests;
 mod migration_tests;
 #[cfg(test)]
 mod profile_tests;
+#[cfg(test)]
+mod recognition_tests;
 #[cfg(test)]
 mod restore_tests;
 #[cfg(test)]
@@ -118,6 +121,8 @@ pub fn run() -> Result<(), String> {
     });
 
     let core = Arc::new(core);
+    core.start_recognition()
+        .map_err(|error| error.to_string())?;
     let stopping = Arc::clone(&core);
     thread::Builder::new()
         .name("prismd-stop".into())
