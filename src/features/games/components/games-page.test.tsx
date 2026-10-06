@@ -245,3 +245,35 @@ it("explains an empty Steam library and an add that the daemon rejects", async (
     ),
   ).toBeInTheDocument();
 });
+
+it("shows a rejected change until a later change succeeds", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    profiles: structuredClone([quiet]),
+    steamApps: [dota, portal],
+    games: [
+      { game: { kind: "steam", appId: 570 }, name: "Dota 2", profiles: {} },
+      { game: { kind: "steam", appId: 620 }, name: "Portal 2", profiles: {} },
+    ],
+  });
+  fake.setGameProfile.mockRejectedValueOnce(
+    new Error("The GPU tuning profile no longer exists."),
+  );
+  renderApp();
+  await screen.findByRole("article", { name: "Dota 2" });
+  await waitFor(() =>
+    expect(picker("Dota 2", "NVIDIA GeForce RTX 5090")).toBeEnabled(),
+  );
+  await user.selectOptions(
+    picker("Dota 2", "NVIDIA GeForce RTX 5090"),
+    "Quiet",
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The GPU tuning profile no longer exists.",
+  );
+  await user.click(screen.getByRole("button", { name: "Remove Portal 2" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("article", { name: "Portal 2" })).toBeNull(),
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

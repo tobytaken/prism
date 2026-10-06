@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type {
@@ -9,9 +10,12 @@ import type {
 
 export const GAMES_QUERY_KEY = ["games"];
 
+type Change = "setProfile" | "remove" | "setAutomaticSwitching";
+
 /** The caller's game associations and automatic switching opt-in, from the daemon. */
 export function useGames() {
   const client = useQueryClient();
+  const [latest, setLatest] = useState<Change | null>(null);
   const query = useQuery({
     queryKey: GAMES_QUERY_KEY,
     queryFn: () => window.prism.games.get(),
@@ -29,23 +33,29 @@ export function useGames() {
   const setProfile = useMutation({
     mutationFn: (request: SetGameProfileRequest) =>
       window.prism.games.setProfile(request),
+    onMutate: () => setLatest("setProfile"),
     ...changed,
   });
   const remove = useMutation({
     mutationFn: (game: GameId) => window.prism.games.remove({ game }),
+    onMutate: () => setLatest("remove"),
     ...changed,
   });
   const setAutomaticSwitching = useMutation({
     mutationFn: (enabled: boolean) =>
       window.prism.games.setAutomaticSwitching({ enabled }),
+    onMutate: () => setLatest("setAutomaticSwitching"),
     ...changed,
   });
+  const changes = { setProfile, remove, setAutomaticSwitching };
   return {
     query,
     addSteamGame,
     setProfile,
     remove,
     setAutomaticSwitching,
+    /** The latest change's error, so an earlier failure isn't shown after a later change. */
+    changeError: latest ? changes[latest].error : null,
     refresh: () => client.invalidateQueries({ queryKey: GAMES_QUERY_KEY }),
     /** The games linked to the profile on any GPU. */
     linkedTo(profileId: string): GameEntry[] {

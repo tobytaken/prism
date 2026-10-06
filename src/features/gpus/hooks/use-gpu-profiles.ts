@@ -55,7 +55,6 @@ export function useGpuProfiles() {
       queryClient.invalidateQueries({ queryKey: PROFILES_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: TUNING_STATES_QUERY_KEY }),
       startup.refresh(),
-      games.refresh(),
     ]);
   // The revision a save carries must cover the values on screen. A pushed or polled state can
   // be newer than the readings shown, and its revision would let unseen values be saved.
@@ -87,9 +86,10 @@ export function useGpuProfiles() {
     mutationFn: renameGpuProfile,
     onSettled: refresh,
   });
+  // Deleting a profile also removes its game associations.
   const remove = useMutation({
     mutationFn: deleteGpuProfile,
-    onSettled: refresh,
+    onSettled: () => Promise.all([refresh(), games.refresh()]),
   });
   return {
     migration,

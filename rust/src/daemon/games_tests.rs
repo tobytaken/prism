@@ -140,14 +140,33 @@ fn installed_steam_apps_are_listed_from_every_library_of_the_callers_package_fla
         "Steamworks Common Redistributables",
         4,
     );
-    // The Debian layout, without any extra library folders.
+    // The Debian layout, whose library list can also live under config/.
     app(&daemon, DEBIAN_ROOT, 440, "Team Fortress 2", 4);
+    let debian_list = format!("{DEBIAN_ROOT}/steamapps/libraryfolders.vdf");
+    library_folders(&daemon, DEBIAN_ROOT, &[DEBIAN_ROOT, "/srv/steam"]);
+    let config_list = daemon.host_path(&format!("{DEBIAN_ROOT}/config/libraryfolders.vdf"));
+    std::fs::create_dir_all(config_list.parent().unwrap()).unwrap();
+    std::fs::rename(daemon.host_path(&debian_list), config_list).unwrap();
+    app(&daemon, "/srv/steam", 292030, "The Witcher 3", 4);
+    // Flatpak Steam records paths as it sees them inside its sandbox, whose home is its
+    // persisted data directory.
     library_folders(
         &daemon,
         FLATPAK_ROOT,
-        &[FLATPAK_ROOT, "/run/media/alice/External/SteamLibrary"],
+        &[
+            "/home/alice/.local/share/Steam",
+            "/home/alice/Games/SteamLibrary",
+            "/run/media/alice/External/SteamLibrary",
+        ],
     );
     app(&daemon, FLATPAK_ROOT, 570, "Dota 2", 4);
+    app(
+        &daemon,
+        "/home/alice/.var/app/com.valvesoftware.Steam/Games/SteamLibrary",
+        367520,
+        "Hollow Knight",
+        4,
+    );
     app(
         &daemon,
         "/run/media/alice/External/SteamLibrary",
@@ -170,9 +189,11 @@ fn installed_steam_apps_are_listed_from_every_library_of_the_callers_package_fla
             { "appId": 1086940, "name": "Baldur's Gate 3" },
             { "appId": 570, "name": "Dota 2" },
             { "appId": 1145360, "name": "Hades" },
+            { "appId": 367520, "name": "Hollow Knight" },
             { "appId": 620, "name": "Portal 2" },
             { "appId": 413150, "name": "Stardew Valley" },
-            { "appId": 440, "name": "Team Fortress 2" }
+            { "appId": 440, "name": "Team Fortress 2" },
+            { "appId": 292030, "name": "The Witcher 3" }
         ])
     );
     assert_eq!(

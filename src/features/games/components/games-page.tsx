@@ -6,7 +6,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { gameKey, useGames } from "@/features/games/hooks/use-games";
+import {
+  gameKey,
+  useGames,
+  type GamesWorkflow,
+} from "@/features/games/hooks/use-games";
 import type { GameEntry } from "@/features/games/types";
 import { listGpuProfiles } from "@/features/gpus/api";
 import { useGpuPerformance } from "@/features/gpus/hooks/use-gpu-performance";
@@ -19,7 +23,7 @@ type GpuChoice = { uuid: string; label: string };
 /** Links the caller's games to their GPU tuning profiles, one profile per GPU. */
 export function GamesPage() {
   const id = useId();
-  const games = useGames();
+  const workflow = useGames();
   const profiles = useQuery({
     queryKey: PROFILES_QUERY_KEY,
     queryFn: listGpuProfiles,
@@ -27,7 +31,7 @@ export function GamesPage() {
   const performance = useGpuPerformance();
   const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
-  const state = games.query.data;
+  const state = workflow.query.data;
   const gpus = gpuChoices(
     performance.data?.gpus ?? [],
     profiles.data ?? [],
@@ -41,10 +45,6 @@ export function GamesPage() {
         game.name.toLowerCase().includes(term) ||
         String(game.game.appId).includes(term),
     ) ?? [];
-  const changeError =
-    games.setProfile.error ??
-    games.remove.error ??
-    games.setAutomaticSwitching.error;
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -68,10 +68,10 @@ export function GamesPage() {
             id={`${id}-switching`}
             type="checkbox"
             checked={state?.automaticSwitching ?? false}
-            disabled={!state || games.setAutomaticSwitching.isPending}
+            disabled={!state || workflow.setAutomaticSwitching.isPending}
             aria-describedby={`${id}-switching-note`}
             onChange={(event) =>
-              games.setAutomaticSwitching.mutate(event.target.checked)
+              workflow.setAutomaticSwitching.mutate(event.target.checked)
             }
           />
           Switch profiles automatically while my games run
@@ -98,15 +98,15 @@ export function GamesPage() {
         </Button>
       </div>
 
-      {games.query.isPending && <p role="status">Reading your games…</p>}
-      {games.query.error && (
+      {workflow.query.isPending && <p role="status">Reading your games…</p>}
+      {workflow.query.error && (
         <p role="alert" className="text-sm text-destructive">
-          {games.query.error.message}
+          {workflow.query.error.message}
         </p>
       )}
-      {changeError && (
+      {workflow.changeError && (
         <p role="alert" className="text-sm text-destructive">
-          {changeError.message}
+          {workflow.changeError.message}
         </p>
       )}
       {profiles.error && (
@@ -132,14 +132,14 @@ export function GamesPage() {
             gpus={gpus}
             profiles={profiles.data ?? []}
             profilesKnown={profiles.isSuccess}
-            games={games}
+            workflow={workflow}
           />
         ))}
       </div>
       {adding && state && (
         <AddSteamGameDialog
           added={state.games}
-          games={games}
+          workflow={workflow}
           onOpenChange={setAdding}
         />
       )}
@@ -152,16 +152,16 @@ function GameCard({
   gpus,
   profiles,
   profilesKnown,
-  games,
+  workflow,
 }: {
   game: GameEntry;
   gpus: GpuChoice[];
   profiles: GpuTuningProfile[];
   profilesKnown: boolean;
-  games: ReturnType<typeof useGames>;
+  workflow: GamesWorkflow;
 }) {
   const id = useId();
-  const pending = games.setProfile.isPending || games.remove.isPending;
+  const pending = workflow.setProfile.isPending || workflow.remove.isPending;
   return (
     <article
       aria-labelledby={`${id}-name`}
@@ -190,7 +190,7 @@ function GameCard({
           size="sm"
           disabled={pending}
           aria-label={`Remove ${game.name}`}
-          onClick={() => games.remove.mutate(game.game)}
+          onClick={() => workflow.remove.mutate(game.game)}
         >
           Remove
         </Button>
@@ -212,7 +212,7 @@ function GameCard({
               value={linked}
               disabled={pending || !profilesKnown}
               onChange={(event) =>
-                games.setProfile.mutate({
+                workflow.setProfile.mutate({
                   game: game.game,
                   gpuId: gpu.uuid,
                   profileId: event.target.value || null,
@@ -247,7 +247,7 @@ function GameCard({
 function gpuChoices(
   present: { name: string; stableId: string | null }[],
   profiles: GpuTuningProfile[],
-  games: GameEntry[],
+  associations: GameEntry[],
 ): GpuChoice[] {
   const choices = new Map<string, string>();
   for (const gpu of present)
@@ -255,7 +255,7 @@ function gpuChoices(
       choices.set(gpu.stableId, `${gpu.name} (${gpu.stableId})`);
   const absent = [
     ...profiles.map((profile) => profile.gpuId),
-    ...games.flatMap((game) => Object.keys(game.profiles)),
+    ...associations.flatMap((game) => Object.keys(game.profiles)),
   ];
   for (const uuid of absent)
     if (!choices.has(uuid)) choices.set(uuid, `absent GPU (${uuid})`);

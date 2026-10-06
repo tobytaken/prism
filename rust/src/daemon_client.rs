@@ -285,15 +285,7 @@ fn request_timeout(request: &DaemonRequest) -> Duration {
             | DaemonRequest::SetStartupProfile(_)
     ) {
         Duration::from_secs(35)
-    } else if matches!(
-        request,
-        DaemonRequest::ListSteamApps
-            | DaemonRequest::GetGames
-            | DaemonRequest::AddSteamGame(_)
-            | DaemonRequest::SetGameProfile(_)
-            | DaemonRequest::RemoveGame(_)
-            | DaemonRequest::SetAutomaticSwitching(_)
-    ) {
+    } else if request.is_game_request() {
         // Reading Steam libraries can wait on slow or removable disks.
         Duration::from_secs(10)
     } else {

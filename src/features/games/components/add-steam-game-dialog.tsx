@@ -17,11 +17,11 @@ import type { GameEntry } from "@/features/games/types";
 /** Lists the caller's installed Steam apps that aren't on the Games page yet. */
 export function AddSteamGameDialog({
   added,
-  games,
+  workflow,
   onOpenChange,
 }: {
   added: GameEntry[];
-  games: GamesWorkflow;
+  workflow: GamesWorkflow;
   onOpenChange: (open: boolean) => void;
 }) {
   const apps = useQuery({
@@ -34,11 +34,11 @@ export function AddSteamGameDialog({
     apps.data?.filter(
       (app) => !added.some((game) => game.game.appId === app.appId),
     ) ?? [];
-  const pending = games.addSteamGame.isPending;
+  const pending = workflow.addSteamGame.isPending;
   async function add(appId: number) {
     if (pending) return;
     try {
-      await games.addSteamGame.mutateAsync(appId);
+      await workflow.addSteamGame.mutateAsync(appId);
       onOpenChange(false);
     } catch {
       // The mutation's error is shown in the dialog.
@@ -49,7 +49,7 @@ export function AddSteamGameDialog({
       open
       onOpenChange={(open) => {
         if (!pending) {
-          games.addSteamGame.reset();
+          workflow.addSteamGame.reset();
           onOpenChange(open);
         }
       }}
@@ -82,9 +82,9 @@ export function AddSteamGameDialog({
             Every installed Steam game is already on your Games page.
           </p>
         )}
-        {games.addSteamGame.error && (
+        {workflow.addSteamGame.error && (
           <p role="alert" className="text-sm text-destructive">
-            {games.addSteamGame.error.message}
+            {workflow.addSteamGame.error.message}
           </p>
         )}
         {available.length > 0 && (
@@ -107,7 +107,7 @@ export function AddSteamGameDialog({
                   aria-label={`Add ${app.name}`}
                   onClick={() => void add(app.appId)}
                 >
-                  {pending && games.addSteamGame.variables === app.appId && (
+                  {pending && workflow.addSteamGame.variables === app.appId && (
                     <LoaderCircle className="animate-spin" />
                   )}
                   Add

@@ -484,6 +484,21 @@ pub enum DaemonRequest {
     RequestHostReboot,
 }
 
+impl DaemonRequest {
+    /// Game requests, which read the caller's Steam libraries.
+    pub fn is_game_request(&self) -> bool {
+        matches!(
+            self,
+            Self::ListSteamApps
+                | Self::GetGames
+                | Self::AddSteamGame(_)
+                | Self::SetGameProfile(_)
+                | Self::RemoveGame(_)
+                | Self::SetAutomaticSwitching(_)
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonResponse {

@@ -399,15 +399,11 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
                 <span className="text-xs text-muted-foreground">
                   {describeSettings(profile.settings)}
                 </span>
-                {workflow.games.linkedTo(profile.id).length > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    Games:{" "}
-                    {workflow.games
-                      .linkedTo(profile.id)
-                      .map((game) => game.name)
-                      .join(", ")}
-                  </span>
-                )}
+                <LinkedGames
+                  names={workflow.games
+                    .linkedTo(profile.id)
+                    .map((game) => game.name)}
+                />
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
@@ -464,6 +460,15 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
       )}
       <SaveBeforeSwitchDialog selector={selector} />
     </>
+  );
+}
+
+function LinkedGames({ names }: { names: string[] }) {
+  if (!names.length) return null;
+  return (
+    <span className="text-xs text-muted-foreground">
+      Games: {names.join(", ")}
+    </span>
   );
 }
 

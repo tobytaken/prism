@@ -29,15 +29,15 @@ pub struct GameAssociation {
 impl DaemonCore {
     /// The caller's associations, with whether each game is installed now.
     pub(super) fn games(&self, peer: &SessionPeer) -> Result<DaemonResponse, GpuCommandError> {
-        let installed = self.steam_apps(peer);
+        let installed = self.steam_apps(peer)?;
         Ok(DaemonResponse::Games(
             self.tuning_store
                 .read(|document| document.games_state(peer, &installed))?,
         ))
     }
 
-    pub(super) fn steam_apps(&self, peer: &SessionPeer) -> Vec<SteamApp> {
-        installed_steam_apps(&self.dependencies.host_root, &peer.home)
+    pub(super) fn steam_apps(&self, peer: &SessionPeer) -> Result<Vec<SteamApp>, GpuCommandError> {
+        installed_steam_apps(&self.dependencies.host_root, peer)
     }
 
     /// Adds an installed Steam app, named from its manifest. Adding it again keeps its links.
@@ -47,7 +47,7 @@ impl DaemonCore {
         app_id: u32,
     ) -> Result<DaemonResponse, GpuCommandError> {
         let app = self
-            .steam_apps(peer)
+            .steam_apps(peer)?
             .into_iter()
             .find(|app| app.app_id == app_id)
             .ok_or_else(|| {

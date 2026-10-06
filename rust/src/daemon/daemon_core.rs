@@ -195,7 +195,7 @@ impl DaemonCore {
                 .tuning_store
                 .try_update(|document| document.import_profiles(peer, request.profiles))
                 .map(DaemonResponse::ProfileImport),
-            DaemonRequest::ListSteamApps => Ok(DaemonResponse::SteamApps(self.steam_apps(peer))),
+            DaemonRequest::ListSteamApps => self.steam_apps(peer).map(DaemonResponse::SteamApps),
             DaemonRequest::GetGames => self.games(peer),
             DaemonRequest::AddSteamGame(request) => self.add_steam_game(peer, request.app_id),
             DaemonRequest::SetGameProfile(request) => self.set_game_profile(peer, request),
