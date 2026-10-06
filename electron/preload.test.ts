@@ -10,6 +10,7 @@ import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store
 import correctedProfileApplication from "@/test/contracts/corrected-profile-application.json";
 import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
 import gpuTuningStates from "@/test/contracts/gpu-tuning-states.json";
+import gamesState from "@/test/contracts/games-state.json";
 import type { CorrectGpuProfileRequest } from "@/features/gpus/types";
 import type { PrismDesktopApi } from "@/types/global";
 
@@ -236,6 +237,45 @@ describe("preload bridge", () => {
     mocks.invoke.mockResolvedValue(gpuTuningStates);
     expect(await prism.gpu.getTuningStates()).toEqual(gpuTuningStates);
     expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:getTuningStates");
+  });
+
+  it("exposes game requests and preserves the daemon's games, Steam apps and errors", async () => {
+    const prism = await loadPrismApi();
+    const apps = [{ appId: 570, name: "Dota 2" }];
+    const dota = { kind: "steam", appId: 570 } as const;
+    mocks.invoke.mockResolvedValueOnce(apps);
+    expect(await prism.games.listSteamApps()).toEqual(apps);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:games:listSteamApps");
+    mocks.invoke.mockResolvedValue(gamesState);
+    expect(await prism.games.get()).toEqual(gamesState);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:games:get");
+    expect(await prism.games.addSteamGame({ appId: 570 })).toEqual(gamesState);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:games:addSteamGame", {
+      appId: 570,
+    });
+    const link = { game: dota, gpuId: "GPU-123", profileId: null };
+    expect(await prism.games.setProfile(link)).toEqual(gamesState);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:games:setProfile",
+      link,
+    );
+    expect(await prism.games.remove({ game: dota })).toEqual(gamesState);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:games:remove", {
+      game: dota,
+    });
+    expect(await prism.games.setAutomaticSwitching({ enabled: true })).toEqual(
+      gamesState,
+    );
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:games:setAutomaticSwitching",
+      { enabled: true },
+    );
+    mocks.invoke.mockRejectedValue(
+      new Error("Steam app 570 isn't installed in your Steam libraries."),
+    );
+    await expect(prism.games.addSteamGame({ appId: 570 })).rejects.toThrow(
+      "isn't installed",
+    );
   });
 
   it("forwards host-wide startup choices, explicit clearing, and outcome dismissals", async () => {

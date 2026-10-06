@@ -290,6 +290,102 @@ fn profile_management_crosses_the_sidecar_session_by_id_and_preserves_daemon_err
 }
 
 #[test]
+fn game_requests_cross_the_sidecar_session_and_preserve_daemon_errors() {
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
+    let mut session = accept_session(&listener);
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["method"],
+        "daemon.statusChanged"
+    );
+    let state: serde_json::Value =
+        serde_json::from_str(include_str!("../../src/test/contracts/games-state.json")).unwrap();
+    let games = || DaemonResponse::Games(serde_json::from_value(state.clone()).unwrap());
+    let dota = json!({ "kind": "steam", "appId": 570 });
+    let apps = json!([{ "appId": 570, "name": "Dota 2" }]);
+    for (id, method, params, expected, response, reply) in [
+        (
+            20,
+            "games.listSteamApps",
+            None,
+            json!({ "type": "list_steam_apps" }),
+            DaemonResponse::SteamApps(serde_json::from_value(apps.clone()).unwrap()),
+            json!({ "result": apps }),
+        ),
+        (
+            21,
+            "games.get",
+            None,
+            json!({ "type": "get_games" }),
+            games(),
+            json!({ "result": state }),
+        ),
+        (
+            22,
+            "games.addSteamGame",
+            Some(json!({ "appId": 570 })),
+            json!({ "type": "add_steam_game", "payload": { "appId": 570 } }),
+            games(),
+            json!({ "result": state }),
+        ),
+        (
+            23,
+            "games.setProfile",
+            Some(json!({ "game": dota, "gpuId": "GPU-123", "profileId": null })),
+            json!({ "type": "set_game_profile", "payload": { "game": dota, "gpuId": "GPU-123", "profileId": null } }),
+            games(),
+            json!({ "result": state }),
+        ),
+        (
+            24,
+            "games.remove",
+            Some(json!({ "game": dota })),
+            json!({ "type": "remove_game", "payload": { "game": dota } }),
+            games(),
+            json!({ "result": state }),
+        ),
+        (
+            25,
+            "games.setAutomaticSwitching",
+            Some(json!({ "enabled": true })),
+            json!({ "type": "set_automatic_switching", "payload": { "enabled": true } }),
+            DaemonResponse::Error(prism_rust::gpu::GpuCommandError::new(
+                prism_rust::gpu::GpuCommandErrorCode::Io,
+                "Failed to write Prism's tuning store.",
+            )),
+            json!({ "error": { "code": "io", "message": "Failed to write Prism's tuning store." } }),
+        ),
+    ] {
+        let mut request = json!({ "id": id, "method": method });
+        if let Some(params) = params {
+            request["params"] = params;
+        }
+        writeln!(sidecar.0.stdin.as_mut().unwrap(), "{request}").unwrap();
+        let received = read_frame::<SessionRequest>(&mut session).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(received.request).unwrap(), expected);
+        write_frame(
+            &mut session,
+            &SessionMessage::Response {
+                id: received.id,
+                response,
+            },
+        )
+        .unwrap();
+        let mut expected_reply = reply;
+        expected_reply["id"] = json!(id);
+        assert_eq!(
+            lines.recv_timeout(Duration::from_secs(2)).unwrap(),
+            expected_reply
+        );
+    }
+}
+
+#[test]
 fn stdin_close_interrupts_a_daemon_that_has_not_answered_the_session_opening() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("prismd.sock");

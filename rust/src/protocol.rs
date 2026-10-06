@@ -715,6 +715,55 @@ mod session_tests {
     }
 
     #[test]
+    fn game_payloads_round_trip_the_shared_contract_and_reject_client_ownership() {
+        let state: serde_json::Value =
+            serde_json::from_str(include_str!("../../src/test/contracts/games-state.json"))
+                .unwrap();
+        let typed: GamesState = serde_json::from_value(state.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(DaemonResponse::Games(typed)).unwrap(),
+            serde_json::json!({ "type": "games", "payload": state })
+        );
+        assert_eq!(
+            serde_json::to_value(DaemonResponse::SteamApps(vec![SteamApp {
+                app_id: 570,
+                name: "Dota 2".into()
+            }]))
+            .unwrap(),
+            serde_json::json!({ "type": "steam_apps", "payload": [{ "appId": 570, "name": "Dota 2" }] })
+        );
+        for request in [
+            serde_json::json!({ "type": "list_steam_apps" }),
+            serde_json::json!({ "type": "get_games" }),
+            serde_json::json!({ "type": "add_steam_game", "payload": { "appId": 570 } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123", "profileId": "quiet" } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123", "profileId": null } }),
+            serde_json::json!({ "type": "remove_game", "payload": { "game": { "kind": "steam", "appId": 570 } } }),
+            serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": true } }),
+        ] {
+            let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), request);
+        }
+        for malformed in [
+            serde_json::json!({ "type": "add_steam_game", "payload": { "appId": "570" } }),
+            serde_json::json!({ "type": "add_steam_game", "payload": { "appId": -1 } }),
+            serde_json::json!({ "type": "add_steam_game", "payload": { "appId": 570, "name": "Dota 2" } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123" } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "program", "appId": 570 }, "gpuId": "GPU-123", "profileId": null } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570, "uid": 0 }, "gpuId": "GPU-123", "profileId": null } }),
+            serde_json::json!({ "type": "remove_game", "payload": { "game": { "kind": "steam" } } }),
+            serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": "yes" } }),
+            serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": true, "uid": 0 } }),
+            serde_json::json!({ "type": "get_games", "payload": { "uid": 0 } }),
+        ] {
+            assert!(
+                serde_json::from_value::<DaemonRequest>(malformed.clone()).is_err(),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
     fn live_clock_offsets_accept_numbers_default_requests_and_null_for_unchanged() {
         let request: LiveClockOffsetsRequest = serde_json::from_value(serde_json::json!({
             "gpuId": "GPU-123", "graphicsOffsetMHz": "default", "memoryOffsetMHz": null

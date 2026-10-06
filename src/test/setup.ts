@@ -69,6 +69,22 @@ const prismStub: PrismDesktopApi = {
       memory: null,
     }),
   },
+  games: {
+    listSteamApps: async () => [],
+    get: async () => ({ automaticSwitching: false, games: [] }),
+    addSteamGame: async () => {
+      throw new Error("Adding games is not configured in this test");
+    },
+    setProfile: async () => {
+      throw new Error("Game associations are not configured in this test");
+    },
+    remove: async () => {
+      throw new Error("Removing games is not configured in this test");
+    },
+    setAutomaticSwitching: async () => {
+      throw new Error("Automatic switching is not configured in this test");
+    },
+  },
   drivers: {
     getStatus: async () => ({
       host: {
