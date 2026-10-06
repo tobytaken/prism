@@ -57,9 +57,14 @@ export function GpuManageProfilesDialog({
     ? startupProfileWarning(designated, gpu)
     : null;
   const startupKnown = startup.query.isSuccess;
+  const gamesKnown = workflow.games.query.isSuccess;
   const canDelete =
     startupKnown &&
+    gamesKnown &&
     (currentProfileKnown || (!gpu && workflow.states.isSuccess));
+  const linkedGames = deleting
+    ? workflow.games.linkedTo(deleting.id).map((game) => game.name)
+    : [];
   const pending =
     workflow.rename.isPending ||
     workflow.remove.isPending ||
@@ -152,6 +157,13 @@ export function GpuManageProfilesDialog({
             This choice is host-wide; the latest change wins. Changes take
             effect at the next host boot.
           </p>
+          <p className="text-sm">
+            Link games to your profiles on{" "}
+            <Link className="underline" to="/games">
+              Games
+            </Link>
+            .
+          </p>
           {startupWarning && (
             <p className="text-sm text-amber-600">{startupWarning}</p>
           )}
@@ -173,9 +185,11 @@ export function GpuManageProfilesDialog({
         )}
         {!canDelete && (
           <p role="status" className="text-sm text-muted-foreground">
-            {startupKnown
-              ? "Deletion is unavailable until this GPU's current profile can be read. Try again once the Prism daemon is available."
-              : "Deletion is unavailable until startup choices can be read. Try again once the Prism daemon is available."}
+            {!startupKnown
+              ? "Deletion is unavailable until startup choices can be read. Try again once the Prism daemon is available."
+              : !gamesKnown
+                ? "Deletion is unavailable until game associations can be read. Try again once the Prism daemon is available."
+                : "Deletion is unavailable until this GPU's current profile can be read. Try again once the Prism daemon is available."}
           </p>
         )}
         <ul className="max-h-80 space-y-3 overflow-y-auto">
@@ -304,6 +318,8 @@ export function GpuManageProfilesDialog({
                   "This is the startup profile. After deletion, this GPU will have no startup profile. "}
                 {!gpu &&
                   "The GPU is absent. Any current-profile designation for this profile will be cleared. "}
+                {linkedGames.length > 0 &&
+                  `It's linked to ${new Intl.ListFormat("en").format(linkedGames)}. Those links will be removed, and ${linkedGames.length === 1 ? "the game" : "the games"} will leave this GPU unchanged. `}
                 Current tuning values will stay unchanged.
               </DialogDescription>
             </DialogHeader>

@@ -399,6 +399,15 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
                 <span className="text-xs text-muted-foreground">
                   {describeSettings(profile.settings)}
                 </span>
+                {workflow.games.linkedTo(profile.id).length > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    Games:{" "}
+                    {workflow.games
+                      .linkedTo(profile.id)
+                      .map((game) => game.name)
+                      .join(", ")}
+                  </span>
+                )}
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>

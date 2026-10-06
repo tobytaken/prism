@@ -1,5 +1,5 @@
 import {
-  BookCopy,
+  Gamepad2,
   Gem,
   Gauge,
   HardDriveDownload,
@@ -17,7 +17,7 @@ const navigation = [
   { label: "Overview", to: "/", icon: LayoutGrid },
   { label: "Drivers", to: "/drivers", icon: HardDriveDownload },
   { label: "Performance", to: "/performance", icon: Gauge },
-  { label: "Profiles", to: "/profiles", icon: BookCopy },
+  { label: "Games", to: "/games", icon: Gamepad2 },
   { label: "Settings", to: "/settings", icon: Settings2 },
 ] as const;
 
@@ -64,7 +64,9 @@ export function AppShell() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-foreground">Prism</p>
-                  <p className="text-xs text-muted-foreground">Linux GPU Manager</p>
+                  <p className="text-xs text-muted-foreground">
+                    Linux GPU Manager
+                  </p>
                 </div>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useMigration } from "./use-migration";
 import { useStartup } from "./use-startup";
+import { useGames } from "@/features/games/hooks/use-games";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGpuTuningStates,
@@ -16,7 +17,7 @@ import type {
   GpuTuningState,
 } from "@/features/gpus/types";
 
-const PROFILES = ["gpu-profiles"];
+export const PROFILES_QUERY_KEY = ["gpu-profiles"];
 export const TUNING_STATES_QUERY_KEY = ["gpu-tuning-states"];
 
 /** The caller's profiles, and each GPU's current profile and state revision from the daemon. */
@@ -24,7 +25,11 @@ export function useGpuProfiles() {
   const queryClient = useQueryClient();
   const startup = useStartup();
   const migration = useMigration();
-  const query = useQuery({ queryKey: PROFILES, queryFn: listGpuProfiles });
+  const games = useGames();
+  const query = useQuery({
+    queryKey: PROFILES_QUERY_KEY,
+    queryFn: listGpuProfiles,
+  });
   // Polled at the readings' pace and updated by pushes, so it keeps up with the values on screen.
   const states = useQuery({
     queryKey: TUNING_STATES_QUERY_KEY,
@@ -47,9 +52,10 @@ export function useGpuProfiles() {
   );
   const refresh = () =>
     Promise.all([
-      queryClient.invalidateQueries({ queryKey: PROFILES }),
+      queryClient.invalidateQueries({ queryKey: PROFILES_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: TUNING_STATES_QUERY_KEY }),
       startup.refresh(),
+      games.refresh(),
     ]);
   // The revision a save carries must cover the values on screen. A pushed or polled state can
   // be newer than the readings shown, and its revision would let unseen values be saved.
@@ -88,6 +94,7 @@ export function useGpuProfiles() {
   return {
     migration,
     startup,
+    games,
     query,
     states,
     saveAsNew,

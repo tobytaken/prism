@@ -370,3 +370,93 @@ it("shows Restore last applied as the host-wide behavior in Manage profiles", as
   const dialog = await manageProfiles(user);
   expect(dialog).toHaveTextContent("Startup behavior: Restore last applied");
 });
+
+it("lists each profile's linked games in the selector menu and links Manage profiles to the Games page", async () => {
+  const user = userEvent.setup();
+  const loud = { ...quiet, id: "loud", name: "Loud" };
+  createFakeDesktop({
+    profiles: structuredClone([quiet, loud]),
+    steamApps: [{ appId: 570, name: "Dota 2" }],
+    games: [
+      {
+        game: { kind: "steam", appId: 570 },
+        name: "Dota 2",
+        profiles: { "GPU-123": "quiet" },
+      },
+      {
+        game: { kind: "steam", appId: 620 },
+        name: "Portal 2",
+        profiles: { "GPU-123": "quiet" },
+      },
+    ],
+  });
+  renderPerformancePage();
+  await openProfileMenu(user);
+  await waitFor(() =>
+    expect(profileEntry("Quiet")).toHaveTextContent("Games: Dota 2, Portal 2"),
+  );
+  expect(profileEntry("Loud")).not.toHaveTextContent("Games:");
+  await user.keyboard("{Escape}");
+  const dialog = await manageProfiles(user);
+  expect(within(dialog).getByRole("link", { name: "Games" })).toHaveAttribute(
+    "href",
+    "/games",
+  );
+});
+
+it("mentions linked games when confirming a deletion and removes the profile's links", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    response: createPerformanceResponse({
+      gpus: [
+        createPerformanceGpu(),
+        createPerformanceGpu({ id: "GPU-456", stableId: "GPU-456" }),
+      ],
+    }),
+    profiles: structuredClone([
+      quiet,
+      { ...quiet, id: "loud", name: "Loud", gpuId: "GPU-456" },
+    ]),
+    steamApps: [{ appId: 570, name: "Dota 2" }],
+    games: [
+      {
+        game: { kind: "steam", appId: 570 },
+        name: "Dota 2",
+        profiles: { "GPU-123": "quiet", "GPU-456": "loud" },
+      },
+    ],
+  });
+  renderPerformancePage();
+  const dialog = await manageProfiles(user);
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Delete Quiet" }),
+  );
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: 'Delete "Quiet"?',
+  });
+  expect(confirmation).toHaveTextContent(
+    "It's linked to Dota 2. Those links will be removed, and the game will leave this GPU unchanged.",
+  );
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Delete profile" }),
+  );
+  await waitFor(() =>
+    expect(fake.games[0].profiles).toEqual({ "GPU-456": "loud" }),
+  );
+});
+
+it("waits for game associations to be known before allowing deletion", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({ profiles: [structuredClone(quiet)] });
+  fake.getGames.mockRejectedValue(new Error("The daemon is unavailable."));
+  renderPerformancePage();
+  const dialog = await manageProfiles(user);
+  await waitFor(() =>
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "Deletion is unavailable until game associations can be read. Try again once the Prism daemon is available.",
+    ),
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Delete Quiet" }),
+  ).toBeDisabled();
+});

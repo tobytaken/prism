@@ -21,6 +21,7 @@ import type {
   StartupBehavior,
   StartupOutcome,
 } from "@/features/gpus/types";
+import type { GameEntry, GameId, SteamApp } from "@/features/games/types";
 import { createPerformanceResponse } from "./gpu-fixtures";
 
 type Setting = "power" | "graphics" | "memory";
@@ -90,6 +91,9 @@ export function createFakeDesktop({
   startupProfiles = {},
   startupOutcomes = [],
   possiblyStale = [],
+  steamApps = [],
+  games = [],
+  automaticSwitching = false,
 }: {
   response?: GpuPerformanceResponse;
   profiles?: GpuTuningProfile[];
@@ -102,6 +106,11 @@ export function createFakeDesktop({
   startupOutcomes?: StartupOutcome[];
   /** GPU UUIDs whose last applied tuning values the daemon reports as possibly stale. */
   possiblyStale?: string[];
+  /** Fully installed Steam apps in the caller's libraries. */
+  steamApps?: SteamApp[];
+  /** The caller's game associations; installed is derived from steamApps. */
+  games?: Omit<GameEntry, "installed">[];
+  automaticSwitching?: boolean;
 } = {}) {
   /** Setters that fail with this message on every GPU until removed. */
   const failures: Partial<Record<Setting, string>> = {};
@@ -354,6 +363,84 @@ export function createFakeDesktop({
     };
   }
 
+  const sameGame = (a: GameId, b: GameId) =>
+    a.kind === b.kind && a.appId === b.appId;
+  /** The caller's games by name, each installed while its Steam app is, as the daemon reports. */
+  function gamesState() {
+    return structuredClone({
+      automaticSwitching,
+      games: games
+        .map((game) => {
+          const app = steamApps.find(({ appId }) => appId === game.game.appId);
+          return { ...game, name: app?.name ?? game.name, installed: !!app };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    });
+  }
+  function association(game: GameId) {
+    const found = games.find((entry) => sameGame(entry.game, game));
+    if (!found) throw new Error("This game is no longer on your Games page.");
+    return found;
+  }
+
+  const gamesApi = window.prism.games;
+  const gameSpies = {
+    listSteamApps: vi
+      .spyOn(gamesApi, "listSteamApps")
+      .mockImplementation(async () =>
+        structuredClone(
+          [...steamApps].sort((a, b) => a.name.localeCompare(b.name)),
+        ),
+      ),
+    getGames: vi.spyOn(gamesApi, "get").mockImplementation(async () =>
+      gamesState(),
+    ),
+    addSteamGame: vi
+      .spyOn(gamesApi, "addSteamGame")
+      .mockImplementation(async ({ appId }) => {
+        const app = steamApps.find((app) => app.appId === appId);
+        if (!app)
+          throw new Error(
+            `Steam app ${appId} isn't installed in your Steam libraries.`,
+          );
+        if (!games.some(({ game }) => game.appId === appId))
+          games.push({
+            game: { kind: "steam", appId },
+            name: app.name,
+            profiles: {},
+          });
+        return gamesState();
+      }),
+    setGameProfile: vi
+      .spyOn(gamesApi, "setProfile")
+      .mockImplementation(async ({ game, gpuId, profileId }) => {
+        if (profileId !== null) {
+          const linked = profile(profileId);
+          if (linked.gpuId !== gpuId)
+            throw new Error(
+              `The profile "${linked.name}" belongs to another GPU.`,
+            );
+        }
+        const entry = association(game);
+        if (profileId === null) delete entry.profiles[gpuId];
+        else entry.profiles[gpuId] = profileId;
+        return gamesState();
+      }),
+    removeGame: vi
+      .spyOn(gamesApi, "remove")
+      .mockImplementation(async ({ game }) => {
+        const index = games.findIndex((entry) => sameGame(entry.game, game));
+        if (index >= 0) games.splice(index, 1);
+        return gamesState();
+      }),
+    setAutomaticSwitching: vi
+      .spyOn(gamesApi, "setAutomaticSwitching")
+      .mockImplementation(async ({ enabled }) => {
+        automaticSwitching = enabled;
+        return gamesState();
+      }),
+  };
+
   const api = window.prism.gpu;
   const spies = {
     getStartupState: vi
@@ -431,6 +518,9 @@ export function createFakeDesktop({
           if (currentId === profileId) delete currentProfiles[gpuId];
         for (const [gpuId, startupId] of Object.entries(startupProfiles))
           if (startupId === profileId) delete startupProfiles[gpuId];
+        for (const game of games)
+          for (const [gpuId, linkedId] of Object.entries(game.profiles))
+            if (linkedId === profileId) delete game.profiles[gpuId];
         return { success: true, error: null };
       }),
     getTuningStates: vi
@@ -637,7 +727,13 @@ export function createFakeDesktop({
     },
     failures,
     lastApplied,
+    steamApps,
+    games,
+    get automaticSwitching() {
+      return automaticSwitching;
+    },
     ...spies,
+    ...gameSpies,
     /** Pushes the GPU's tuning state to the app, as the daemon does after another session's change. */
     pushTuningState(gpuId: string) {
       const state = tuningState(owner(gpuId));
