@@ -44,6 +44,10 @@ export function GpuManageProfilesDialog({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<GpuTuningProfile | null>(null);
+  const ownerless =
+    workflow.migration.query.data?.profiles.filter(
+      (profile) => profile.gpuId === gpuId,
+    ) ?? [];
   const startup = workflow.startup;
   const startupProfile = startup.profileOf(gpuId);
   const designated = profiles.find(
@@ -130,7 +134,10 @@ export function GpuManageProfilesDialog({
             {startupProfile &&
               !profiles.some((profile) => profile.id === startupProfile.id) && (
                 <option value={startupProfile.id} disabled>
-                  {startupProfile.name} (another user's profile)
+                  {startupProfile.name}{" "}
+                  {ownerless.some((profile) => profile.id === startupProfile.id)
+                    ? "(read-only, no owner)"
+                    : "(another user's profile)"}
                 </option>
               )}
             {profiles.map((profile) => (
@@ -157,7 +164,7 @@ export function GpuManageProfilesDialog({
             </p>
           )}
         </div>
-        {profiles.length === 0 && (
+        {profiles.length === 0 && ownerless.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No saved profiles for this GPU yet.
           </p>
@@ -170,6 +177,14 @@ export function GpuManageProfilesDialog({
           </p>
         )}
         <ul className="max-h-80 space-y-3 overflow-y-auto">
+          {ownerless.map((profile) => (
+            <li key={profile.id} className="space-y-2 rounded-lg border p-3">
+              <p className="text-sm font-medium">{profile.name}</p>
+              <p className="text-xs text-muted-foreground">
+                Read-only · This migrated profile has no owner.
+              </p>
+            </li>
+          ))}
           {profiles.map((profile) => (
             <li key={profile.id} className="space-y-2 rounded-lg border p-3">
               <div className="flex items-center justify-between gap-3">

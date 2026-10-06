@@ -6,9 +6,8 @@ use std::time::Duration;
 use crate::daemon::DEFAULT_SOCKET_PATH;
 use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
 use crate::gpu::{
-    ApplyGpuConfigRequest, GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus,
-    GpuInventoryResponse, GpuMutationResponse, GpuPerformanceResponse, GpuTargetRequest,
-    ResetGpuConfigRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
+    GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus, GpuInventoryResponse,
+    GpuPerformanceResponse, GpuTargetRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
     SetGpuPowerLimitRequest,
 };
 use crate::protocol::{
@@ -149,33 +148,6 @@ pub fn get_daemon_status() -> GpuDaemonStatus {
     }
 }
 
-pub fn apply_gpu_config(request: ApplyGpuConfigRequest) -> GpuMutationResponse {
-    match send_request(DaemonRequest::ApplyConfig(request)) {
-        Ok(DaemonResponse::Mutation(response)) => response,
-        Ok(DaemonResponse::Error(error)) => GpuMutationResponse::failure(error),
-        Ok(_) => GpuMutationResponse::failure(unexpected_response_error("mutation")),
-        Err(error) => GpuMutationResponse::failure(error),
-    }
-}
-
-pub fn reset_gpu_config(request: ResetGpuConfigRequest) -> GpuMutationResponse {
-    match send_request(DaemonRequest::ResetConfig(request)) {
-        Ok(DaemonResponse::Mutation(response)) => response,
-        Ok(DaemonResponse::Error(error)) => GpuMutationResponse::failure(error),
-        Ok(_) => GpuMutationResponse::failure(unexpected_response_error("mutation")),
-        Err(error) => GpuMutationResponse::failure(error),
-    }
-}
-
-pub fn reapply_saved_gpu_config() -> GpuMutationResponse {
-    match send_request(DaemonRequest::ReapplySavedConfig) {
-        Ok(DaemonResponse::Mutation(response)) => response,
-        Ok(DaemonResponse::Error(error)) => GpuMutationResponse::failure(error),
-        Ok(_) => GpuMutationResponse::failure(unexpected_response_error("mutation")),
-        Err(error) => GpuMutationResponse::failure(error),
-    }
-}
-
 pub fn set_gpu_power_limit(
     request: SetGpuPowerLimitRequest,
 ) -> Result<DaemonCommandResponse, GpuCommandError> {
@@ -254,10 +226,7 @@ pub fn request_host_reboot() -> Result<(), String> {
 fn request_timeout(request: &DaemonRequest) -> Duration {
     if matches!(
         request,
-        DaemonRequest::ApplyConfig(_)
-            | DaemonRequest::ApplyProfile(_)
-            | DaemonRequest::ResetConfig(_)
-            | DaemonRequest::ReapplySavedConfig
+        DaemonRequest::ApplyProfile(_)
             | DaemonRequest::SetPowerLimit(_)
             | DaemonRequest::ResetPowerLimit(_)
             | DaemonRequest::SetFanSpeed(_)
@@ -399,4 +368,26 @@ pub fn dismiss_startup_outcome(
     request: StartupGpuRequest,
 ) -> Result<DaemonCommandResponse, GpuCommandError> {
     send_gpu_command(DaemonRequest::DismissStartupOutcome(request))
+}
+
+pub fn get_migration_state() -> Result<crate::protocol::MigrationState, GpuCommandError> {
+    match send_request(DaemonRequest::GetMigrationState)? {
+        DaemonResponse::MigrationState(state) => Ok(state),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("migration state")),
+    }
+}
+
+pub fn adopt_migrated_profile(
+    request: ProfileIdRequest,
+) -> Result<GpuTuningProfile, GpuCommandError> {
+    match send_request(DaemonRequest::AdoptMigratedProfile(request))? {
+        DaemonResponse::Profile(profile) => Ok(profile),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("adopted profile")),
+    }
+}
+
+pub fn dismiss_migration_notice() -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::DismissMigrationNotice)
 }

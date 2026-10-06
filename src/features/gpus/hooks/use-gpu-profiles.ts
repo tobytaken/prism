@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useMigration } from "./use-migration";
 import { useStartup } from "./use-startup";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -22,6 +23,7 @@ export const TUNING_STATES_QUERY_KEY = ["gpu-tuning-states"];
 export function useGpuProfiles() {
   const queryClient = useQueryClient();
   const startup = useStartup();
+  const migration = useMigration();
   const query = useQuery({ queryKey: PROFILES, queryFn: listGpuProfiles });
   // Polled at the readings' pace and updated by pushes, so it keeps up with the values on screen.
   const states = useQuery({
@@ -84,6 +86,7 @@ export function useGpuProfiles() {
     onSettled: refresh,
   });
   return {
+    migration,
     startup,
     query,
     states,

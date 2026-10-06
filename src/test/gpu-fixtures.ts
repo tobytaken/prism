@@ -81,7 +81,6 @@ export function createInventoryGpu(
           defaultWatts: 575,
           minWatts: 300,
           maxWatts: 575,
-          desiredWatts: 450,
         },
         gpuClockLock: {
           currentMinMHz: 1_800,

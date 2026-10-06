@@ -24,7 +24,6 @@ import type {
 } from "@/features/gpus/types";
 import { MemoryRouter } from "react-router-dom";
 import { GpuPerformancePage } from "./gpu-performance-page";
-import { GpuTuningPage } from "./gpu-tuning-page";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -164,7 +163,11 @@ it("treats switching between a number and Use default as an unapplied edit even 
     ],
     { "GPU-123": "fixed" },
   );
-  renderWithQueryClient(<GpuTuningPage />);
+  renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
   await waitFor(() => expect(profileSelector()).toHaveTextContent("Fixed"));
   expect(screen.queryByText("Changes not saved to profile")).toBeNull();
 
@@ -339,7 +342,11 @@ it("keeps failed default offset edits for retry through Apply all while failed f
     success: false,
     error: "Fan write denied",
   });
-  renderWithQueryClient(<GpuTuningPage />);
+  renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
   await user.click(
     await screen.findByRole("button", {
       name: "Use default graphics clock offset",
@@ -390,7 +397,11 @@ it("does not request a power default that falls outside the current range after 
   const user = userEvent.setup();
   const response = createPerformanceResponse();
   const fake = fakeDesktopGpu(response);
-  renderWithQueryClient(<GpuTuningPage />);
+  renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
   await user.click(
     await screen.findByRole("button", { name: "Use default power limit" }),
   );

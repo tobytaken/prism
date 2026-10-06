@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +14,7 @@ import type {
   TuningOutcome,
 } from "@/features/gpus/types";
 import { renderWithQueryClient } from "@/test/query-client";
-import { GpuTuningPage } from "./gpu-tuning-page";
+import { GpuPerformancePage } from "./gpu-performance-page";
 
 describe("Apply all tuning changes", () => {
   beforeEach(() => {
@@ -26,8 +27,12 @@ describe("Apply all tuning changes", () => {
   it("applies outstanding power, clock, and fan edits without a selected profile", async () => {
     const user = userEvent.setup();
     const response = createPerformanceResponse();
-    const fake = fakeDesktopGpuApi(response);
-    renderWithQueryClient(<GpuTuningPage />);
+    fakeDesktopGpuApi(response);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -55,7 +60,6 @@ describe("Apply all tuning changes", () => {
     expect(screen.getByText("Current speed 65%")).toBeInTheDocument();
     expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
     await waitFor(() => expect(applyAll).toBeDisabled());
-    expect(fake.applyConfig).not.toHaveBeenCalled();
   });
 
   it("retains failed and unattempted clock edits for retry or discard", async () => {
@@ -80,7 +84,11 @@ describe("Apply all tuning changes", () => {
       status: "failed",
       error: "Graphics denied",
     });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const graphics = await screen.findByRole("spinbutton", {
       name: "Graphics clock offset",
     });
@@ -120,7 +128,11 @@ describe("Apply all tuning changes", () => {
       status: "failed",
       error: "Fan denied",
     });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -177,7 +189,11 @@ describe("Apply all tuning changes", () => {
     const user = userEvent.setup();
     const response = createPerformanceResponse();
     const fake = fakeDesktopGpuApi(response);
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -201,7 +217,7 @@ describe("Apply all tuning changes", () => {
     expect(power).toHaveValue(475);
   });
 
-  it("locks Apply all, individual controls, and saved reapplication until the batch settles", async () => {
+  it("locks Apply all and individual controls until the batch settles", async () => {
     const user = userEvent.setup();
     const response = createPerformanceResponse();
     const fake = fakeDesktopGpuApi(response);
@@ -215,7 +231,11 @@ describe("Apply all tuning changes", () => {
         watts;
       return { success: true, error: null };
     });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -233,9 +253,6 @@ describe("Apply all tuning changes", () => {
     expect(
       screen.getByRole("button", { name: "Discard fan 1 change" }),
     ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Reapply Saved Settings" }),
-    ).toBeDisabled();
     await user.click(applyAll);
     await user.click(screen.getByRole("button", { name: "Set Manual" }));
     expect(fake.setPower).toHaveBeenCalledTimes(1);
@@ -243,7 +260,6 @@ describe("Apply all tuning changes", () => {
     finishPower();
     await screen.findByText("Fan 1: Applied");
     expect(fake.setFan).toHaveBeenCalledTimes(1);
-    expect(fake.applyConfig).not.toHaveBeenCalled();
     await waitFor(() => expect(power).toBeEnabled());
   });
 
@@ -263,7 +279,11 @@ describe("Apply all tuning changes", () => {
       gpus: [first, second, untouched],
     });
     const fake = fakeDesktopGpuApi(response);
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const powers = await screen.findAllByRole("spinbutton", {
       name: "Power limit",
     });
@@ -308,7 +328,6 @@ describe("Apply all tuning changes", () => {
     expect(second.power.currentLimitWatts).toBe(475);
     expect(untouched.power.currentLimitWatts).toBe(475);
     expect(fake.setFan).toHaveBeenCalledTimes(1);
-    expect(fake.applyConfig).not.toHaveBeenCalled();
   });
 
   it("can discard unattempted edits while their GPU remains absent", async () => {
@@ -316,7 +335,11 @@ describe("Apply all tuning changes", () => {
     const gpu = createPerformanceGpu();
     const response = createPerformanceResponse({ gpus: [gpu] });
     const fake = fakeDesktopGpuApi(response);
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -349,7 +372,11 @@ describe("Apply all tuning changes", () => {
         watts;
       throw new Error("Acknowledgement lost");
     });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -398,7 +425,11 @@ describe("Apply all tuning changes", () => {
           .cooling.fans.find((fan) => fan.index === index)!.mode = "auto";
         return { success: true, error: null };
       });
-    renderWithQueryClient(<GpuTuningPage />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <GpuPerformancePage />
+      </MemoryRouter>,
+    );
     const power = await screen.findByRole("spinbutton", {
       name: "Power limit",
     });
@@ -478,7 +509,6 @@ function fakeDesktopGpuApi(response: GpuPerformanceResponse) {
       fan.mode = "manual";
       return { success: true, error: null };
     });
-  const applyConfig = vi.spyOn(window.prism.gpu, "applyConfig");
   return {
     fail(gpuId: string, setting: TuningSetting, outcome: TuningOutcome) {
       failures.set(`${gpuId}:${setting}`, outcome);
@@ -489,6 +519,5 @@ function fakeDesktopGpuApi(response: GpuPerformanceResponse) {
     setPower,
     setOffsets,
     setFan,
-    applyConfig,
   };
 }

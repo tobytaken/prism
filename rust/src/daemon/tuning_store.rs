@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 4;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 5;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -34,12 +34,18 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     Ok,
     // Version 4 adds host-wide startup choices, defaulting to Off with no designations.
     Ok,
+    // Version 5 imports legacy configurations with the current inventory during opening.
+    Ok,
 ];
 
 /// The tuning store's contents.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TuningDocument {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ownerless_profiles: Vec<GpuTuningProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_migration: Option<super::migration::LegacyMigration>,
     #[serde(default, skip_serializing_if = "StartupBehavior::is_off")]
     pub startup_behavior: StartupBehavior,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -65,6 +71,8 @@ pub struct UserState {
     pub username: String,
     #[serde(default)]
     pub profiles: Vec<GpuTuningProfile>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub migration_notice_dismissed: bool,
 }
 
 impl TuningDocument {
@@ -87,6 +95,7 @@ impl TuningDocument {
                     uid,
                     username: username.into(),
                     profiles: vec![],
+                    migration_notice_dismissed: false,
                 });
                 self.users.len() - 1
             }
@@ -113,8 +122,19 @@ enum StoreState {
 }
 
 impl TuningStore {
+    #[cfg(test)]
     pub fn open(path: PathBuf) -> Self {
-        let state = match load(&path) {
+        Self::open_with_inventory(path, || crate::gpu::GpuPerformanceResponse {
+            gpus: vec![],
+            warnings: vec![],
+        })
+    }
+
+    pub fn open_with_inventory(
+        path: PathBuf,
+        inventory: impl FnOnce() -> crate::gpu::GpuPerformanceResponse,
+    ) -> Self {
+        let state = match load(&path, inventory) {
             Ok(document) => StoreState::Healthy(document),
             Err((problem, detail)) => {
                 eprintln!(
@@ -225,7 +245,7 @@ impl TuningStore {
     }
 }
 
-fn serialize(document: &TuningDocument) -> Vec<u8> {
+pub(super) fn serialize(document: &TuningDocument) -> Vec<u8> {
     let serde_json::Value::Object(mut contents) = serde_json::to_value(document).unwrap() else {
         unreachable!("the tuning document is a JSON object");
     };
@@ -284,11 +304,17 @@ fn parent_dir(path: &Path) -> &Path {
 type LoadError = (TuningStoreProblem, String);
 
 /// Reads the document, treating a missing one as empty.
-fn load(path: &Path) -> Result<TuningDocument, LoadError> {
+fn load(
+    path: &Path,
+    inventory: impl FnOnce() -> crate::gpu::GpuPerformanceResponse,
+) -> Result<TuningDocument, LoadError> {
     let unreadable = |detail: String| (TuningStoreProblem::Unreadable, detail);
     let contents = match fs::read(path) {
         Ok(contents) => contents,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(TuningDocument::default()),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return super::migration::upgrade(path, TuningDocument::default(), inventory)
+                .map_err(unreadable);
+        }
         Err(error) => return Err(unreadable(error.to_string())),
     };
     let mut document: RawDocument =
@@ -314,8 +340,14 @@ fn load(path: &Path) -> Result<TuningDocument, LoadError> {
     for migrate in &MIGRATIONS[version as usize - 1..] {
         document = migrate(document).map_err(unreadable)?;
     }
-    serde_json::from_value(serde_json::Value::Object(document))
-        .map_err(|error| unreadable(error.to_string()))
+    let document = serde_json::from_value(serde_json::Value::Object(document))
+        .map_err(|error| unreadable(error.to_string()))?;
+    if version < 5 {
+        super::migration::upgrade(path, document, inventory).map_err(unreadable)
+    } else {
+        super::migration::archive(path).map_err(unreadable)?;
+        Ok(document)
+    }
 }
 
 #[cfg(test)]

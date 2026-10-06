@@ -38,7 +38,7 @@ import type {
   ProfileRangeCorrection,
   ProfileSettingKey,
 } from "@/features/gpus/types";
-import type { PerformanceMutationAction } from "./gpu-tuning-screen";
+import type { PerformanceMutationAction } from "./gpu-tuning-controls";
 import { GpuManageProfilesDialog } from "./gpu-manage-profiles-dialog";
 
 /**
@@ -93,6 +93,10 @@ export function useGpuProfileSelector({
   const uuid = gpu.stableId?.trim() ? gpu.stableId : null;
   const profiles =
     workflow.query.data?.filter((profile) => profile.gpuId === uuid) ?? [];
+  const ownerless =
+    workflow.migration.query.data?.profiles.filter(
+      (profile) => profile.gpuId === uuid,
+    ) ?? [];
   const tuningState = uuid ? workflow.stateOf(uuid) : undefined;
   const current = tuningState?.currentProfile ?? null;
   const currentProfileKnown = !!tuningState && !workflow.states.error;
@@ -206,6 +210,7 @@ export function useGpuProfileSelector({
     uuid,
     workflow,
     profiles,
+    ownerless,
     current,
     currentProfileKnown,
     ownCurrent,
@@ -282,6 +287,7 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
     gpu,
     workflow,
     profiles,
+    ownerless,
     current,
     ownCurrent,
     comparison,
@@ -322,7 +328,10 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
           <DropdownMenuLabel>Profiles for this GPU</DropdownMenuLabel>
           {current && !ownCurrent && (
             <MenuNote>
-              The current profile "{current.name}" belongs to another user.
+              The current profile "{current.name}"{" "}
+              {ownerless.some((profile) => profile.id === current.id)
+                ? "is read-only and has no owner."
+                : "belongs to another user."}
             </MenuNote>
           )}
           {workflow.startup.profileOf(selector.uuid ?? "") &&
@@ -334,16 +343,42 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
               <MenuNote>
                 Startup profile: "
                 {workflow.startup.profileOf(selector.uuid ?? "")?.name}"
-                (another user's profile).
+                {ownerless.some(
+                  (profile) =>
+                    profile.id ===
+                    workflow.startup.profileOf(selector.uuid ?? "")?.id,
+                )
+                  ? "(read-only, no owner)."
+                  : "(another user's profile)."}
               </MenuNote>
             )}
-          {profiles.length === 0 && (
+          {profiles.length === 0 && ownerless.length === 0 && (
             <MenuNote>No saved profiles for this GPU yet.</MenuNote>
           )}
           {profiles.length > 0 && applyBlocker && (
             <MenuNote role="status">{applyBlocker}</MenuNote>
           )}
           <DropdownMenuRadioGroup value={ownCurrent?.id ?? ""}>
+            {ownerless.map((profile) => (
+              <DropdownMenuRadioItem
+                key={profile.id}
+                value={profile.id}
+                disabled
+                className="flex-col items-start gap-0.5"
+              >
+                <span>
+                  {profile.name}
+                  {workflow.startup.profileOf(profile.gpuId)?.id ===
+                    profile.id && " ★"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Read-only · Previous startup settings
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {describeSettings(profile.settings)}
+                </span>
+              </DropdownMenuRadioItem>
+            ))}
             {profiles.map((profile) => (
               <DropdownMenuRadioItem
                 key={profile.id}
@@ -750,7 +785,10 @@ export function GpuProfileAvailability({
 }) {
   const [managingGpu, setManagingGpu] = useState<string | null>(null);
   const unavailable =
-    workflow.query.data?.filter(
+    [
+      ...(workflow.query.data ?? []),
+      ...(workflow.migration.query.data?.profiles ?? []),
+    ].filter(
       (profile) => !gpus.some((gpu) => gpu.stableId === profile.gpuId),
     ) ?? [];
   return (

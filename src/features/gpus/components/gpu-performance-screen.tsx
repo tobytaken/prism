@@ -1,3 +1,4 @@
+import { MigrationNotice } from "./migration-notice";
 import { StartupOutcomes } from "./startup-outcomes";
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
 import { TuningStoreProblemAlert } from "./tuning-store-problem-alert";
@@ -27,6 +28,7 @@ import {
 import { Link } from "react-router-dom";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
@@ -49,7 +51,7 @@ import { cn } from "@/lib/utils";
 import {
   GpuTuningControls,
   type PerformanceMutationAction,
-} from "./gpu-tuning-screen";
+} from "./gpu-tuning-controls";
 import type {
   GpuDaemonStatus,
   GpuPerformanceDevice,
@@ -93,6 +95,10 @@ export function GpuPerformanceScreen({
   const gpus = inventory?.gpus ?? EMPTY_PERFORMANCE_GPUS;
   const warnings = inventory?.warnings ?? EMPTY_WARNINGS;
   const historyByGpuId = useGpuMetricHistory();
+  const busy = editStore.applyAllPending || pendingAction != null;
+  const hasEdits = Object.values(editStore.devices).some(
+    (device) => Object.keys(device.edits).length > 0,
+  );
   const daemonDisconnected = daemonStatus?.reachable === false;
   const daemonMessage =
     daemonStatus?.message ??
@@ -104,8 +110,21 @@ export function GpuPerformanceScreen({
         <div className="max-w-3xl space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight">Performance</h1>
         </div>
+        {onMutationAction && (
+          <Button
+            type="button"
+            size="sm"
+            disabled={
+              daemonStatus?.reachable !== true || !hasEdits || busy || isLoading
+            }
+            onClick={() => void editStore.applyAll(gpus, onMutationAction)}
+          >
+            Apply all
+          </Button>
+        )}
       </div>
 
+      {profiles && <MigrationNotice workflow={profiles} />}
       {profiles && <StartupOutcomes workflow={profiles} gpus={gpus} />}
 
       {daemonDisconnected && daemonStatus && (
@@ -163,7 +182,7 @@ export function GpuPerformanceScreen({
         devices={editStore.devices}
         gpus={gpus}
         onDiscard={editStore.discard}
-        pending={pendingAction != null}
+        pending={busy}
       />
       {profiles && <GpuProfileAvailability workflow={profiles} gpus={gpus} />}
 
@@ -193,7 +212,7 @@ export function GpuPerformanceScreen({
             history={historyByGpuId[gpu.id]}
             controlsDisabled={daemonDisconnected}
             profileApplicationDisabled={
-              daemonStatus?.reachable !== true || pendingAction != null
+              daemonStatus?.reachable !== true || busy
             }
             readError={errorMessage}
             pendingAction={pendingAction}

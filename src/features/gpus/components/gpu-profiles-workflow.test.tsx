@@ -18,7 +18,6 @@ import {
 } from "@/test/profile-selector";
 import { renderWithQueryClient } from "@/test/query-client";
 import type { GpuTuningProfile } from "@/features/gpus/types";
-import { GpuTuningPage } from "./gpu-tuning-page";
 import { GpuPerformancePage } from "./gpu-performance-page";
 import { MemoryRouter } from "react-router-dom";
 
@@ -178,7 +177,12 @@ describe("GPU tuning profiles", () => {
       );
       fake.setFanSpeed.mockReturnValue(fanResult);
       if (surface === "Performance") renderPerformancePage();
-      else renderWithQueryClient(<GpuTuningPage />);
+      else
+        renderWithQueryClient(
+          <MemoryRouter>
+            <GpuPerformancePage />
+          </MemoryRouter>,
+        );
       await findProfileControls();
       const fan = screen.getByRole("spinbutton", {
         name: "Fan 1 manual target",
@@ -367,10 +371,7 @@ describe("GPU tuning profiles", () => {
     expect((await saveAsNewAvailability(user)).enabled).toBe(true);
   });
 
-  it.each([
-    ["Performance", renderPerformancePage],
-    ["Tuning", () => renderWithQueryClient(<GpuTuningPage />)],
-  ])(
+  it.each([["Performance", renderPerformancePage]])(
     "shows profile features as unavailable, with the reason, on the %s page for a GPU without a stable identity",
     async (_page, render) => {
       const fake = createFakeDesktop({

@@ -283,6 +283,7 @@ impl TuningDocument {
         self.users
             .iter()
             .flat_map(|user| &user.profiles)
+            .chain(&self.ownerless_profiles)
             .find(|profile| profile.id == id)
     }
 

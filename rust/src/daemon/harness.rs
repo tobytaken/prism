@@ -11,16 +11,15 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-use super::daemon_core::LEGACY_STATE_FILE_NAME;
+use super::migration::LEGACY_STATE_FILE_NAME;
 use super::{
     Clock, CoreDependencies, DaemonBackend, DaemonCore, DaemonSession, HostShutdownSignal,
     SessionPeer, SessionPolicy,
 };
 use crate::drivers::DriverService;
 use crate::gpu::{
-    ApplyGpuConfigRequest, ControlSupport, FanControlMode, GpuCommandError, GpuCommandErrorCode,
-    GpuDaemonStatus, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
-    GpuTargetRequest, PersistedGpuState, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
+    ControlSupport, FanControlMode, GpuDaemonStatus, GpuInventoryResponse, GpuPerformanceDevice,
+    GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 use crate::protocol::{DaemonRequest, DaemonResponse};
@@ -68,8 +67,6 @@ pub enum Setter {
     FanModeAuto,
     GraphicsOffset,
     MemoryOffset,
-    ApplyConfig,
-    ResetConfig,
 }
 
 /// A stateful fake of the host's GPUs. Setters change the values that performance reads report.
@@ -85,7 +82,6 @@ struct FakeGpus {
     failures: HashMap<(String, Setter), String>,
     gates: HashMap<(String, Setter), Gate>,
     writes: Vec<(String, Setter)>,
-    applied_configs: Vec<ApplyGpuConfigRequest>,
 }
 
 impl FakeGpuBackend {
@@ -169,10 +165,6 @@ impl FakeGpuBackend {
         self.state.lock().unwrap().writes.clone()
     }
 
-    pub fn applied_configs(&self) -> Vec<ApplyGpuConfigRequest> {
-        self.state.lock().unwrap().applied_configs.clone()
-    }
-
     fn write(
         &self,
         id: &str,
@@ -202,7 +194,7 @@ impl FakeGpuBackend {
 }
 
 impl DaemonBackend for FakeGpuBackend {
-    fn inventory(&self, _persisted_state: &PersistedGpuState) -> GpuInventoryResponse {
+    fn inventory(&self) -> GpuInventoryResponse {
         GpuInventoryResponse {
             gpus: vec![],
             warnings: vec![],
@@ -218,37 +210,6 @@ impl DaemonBackend for FakeGpuBackend {
             gpus: self.gpus(),
             warnings: vec![],
         }
-    }
-
-    fn apply(&self, request: &ApplyGpuConfigRequest) -> Result<(), GpuCommandError> {
-        let id = request.gpu_id.clone().unwrap_or_default();
-        self.write(&id, Setter::ApplyConfig, |gpu| {
-            if let Some(limit) = request.power_limit_watts {
-                gpu.power.current_limit_watts = Some(limit);
-            }
-            if let Some(offset) = request.graphics_offset_mhz {
-                gpu.clocks.graphics.current_offset_mhz = Some(offset);
-            }
-            if let Some(offset) = request.memory_offset_mhz {
-                gpu.clocks.memory.current_offset_mhz = Some(offset);
-            }
-        })
-        .map_err(|message| GpuCommandError::new(GpuCommandErrorCode::Internal, message))?;
-        self.state
-            .lock()
-            .unwrap()
-            .applied_configs
-            .push(request.clone());
-        Ok(())
-    }
-
-    fn reset(&self, gpu_id: &str) -> Result<(), GpuCommandError> {
-        self.write(gpu_id, Setter::ResetConfig, |gpu| {
-            gpu.power.current_limit_watts = gpu.power.default_limit_watts;
-            gpu.clocks.graphics.current_offset_mhz = Some(0);
-            gpu.clocks.memory.current_offset_mhz = Some(0);
-        })
-        .map_err(|message| GpuCommandError::new(GpuCommandErrorCode::Internal, message))
     }
 
     fn set_power_limit(&self, request: SetGpuPowerLimitRequest) -> Result<(), String> {
@@ -514,10 +475,6 @@ impl Harness {
 
     pub fn persistent_path(&self, name: &str) -> PathBuf {
         self.persistent_dir.path().join(name)
-    }
-
-    pub fn saved_state(&self) -> PersistedGpuState {
-        serde_json::from_slice(&self.saved_state_bytes().expect("no saved state")).unwrap()
     }
 }
 

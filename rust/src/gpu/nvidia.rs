@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use nvml_wrapper::enum_wrappers::device::{Clock, PerformanceState, TemperatureSensor};
-use nvml_wrapper::enums::device::{DeviceArchitecture, FanControlPolicy, GpuLockedClocksSetting};
+use nvml_wrapper::enums::device::{DeviceArchitecture, FanControlPolicy};
 use nvml_wrapper::error::NvmlError;
 use nvml_wrapper::struct_wrappers::device::MemoryInfo as NvmlMemoryInfo;
 use nvml_wrapper::{cuda_driver_version_major, cuda_driver_version_minor, Device, Nvml};
@@ -9,13 +9,12 @@ use once_cell::sync::OnceCell;
 use thiserror::Error;
 
 use super::{
-    ApplyGpuConfigRequest, ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo,
-    ClockRangeInput, ComputeApi, ComputeInfo, ControlSupport, CoolingInfo, FanControlInfo,
-    FanControlMode, GpuCommandError, GpuCommandErrorCode, GpuControlInfo, GpuControlProvider,
-    GpuDevice, GpuInventoryProvider, GpuPerformanceDevice, GpuSupportedFeatures, GpuTargetRequest,
+    ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo, ComputeApi, ComputeInfo,
+    ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuControlInfo, GpuDevice,
+    GpuInventoryProvider, GpuPerformanceDevice, GpuSupportedFeatures, GpuTargetRequest,
     GpuTelemetryInfo, GpuVendor, InventoryContext, MemoryInfo, OffsetControl, PcieInfo,
-    PerformanceProviderOutput, PersistedGpuConfig, PowerControlInfo, PowerInfo, PowerLimitControl,
-    ProviderOutput, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
+    PerformanceProviderOutput, PowerControlInfo, PowerInfo, PowerLimitControl, ProviderOutput,
+    SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
     SetGpuPowerLimitRequest,
 };
 
@@ -68,17 +67,6 @@ struct ClockOffsetSnapshot {
     max_mhz: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NvidiaCapabilities {
-    power_limit_min_mw: Option<u32>,
-    power_limit_max_mw: Option<u32>,
-    power_limit_default_mw: Option<u32>,
-    supported_gpu_locked_clocks_mhz: Vec<u32>,
-    supported_memory_locked_clocks_mhz: Vec<u32>,
-    graphics_offset: Option<ClockOffsetSnapshot>,
-    memory_offset: Option<ClockOffsetSnapshot>,
-}
-
 struct TelemetryQueryResults {
     core_clock_mhz: Result<u32, NvmlError>,
     memory_clock_mhz: Result<u32, NvmlError>,
@@ -105,90 +93,6 @@ pub fn collect_nvidia_performance() -> PerformanceProviderOutput {
         Err(error) => PerformanceProviderOutput::warning(format!(
             "NVIDIA performance controls are unavailable on this system: {error}"
         )),
-    }
-}
-
-impl GpuControlProvider for NvmlNvidiaProvider {
-    fn apply_config(&self, request: &ApplyGpuConfigRequest) -> Result<(), GpuCommandError> {
-        let gpu_id = request.gpu_id.as_deref().ok_or_else(|| {
-            GpuCommandError::new(
-                GpuCommandErrorCode::InvalidArgument,
-                "gpuId is required when applying a GPU configuration",
-            )
-        })?;
-
-        let nvml = shared_nvml().map_err(map_nvml_error)?;
-        let mut device = find_device_by_uuid(&nvml, gpu_id)?;
-        let capabilities = query_capabilities(&device);
-
-        validate_apply_request(request, &capabilities)?;
-        enable_persistence_if_supported(&mut device)?;
-
-        if let Some(power_limit_watts) = request.power_limit_watts {
-            device
-                .set_power_management_limit(power_limit_watts.saturating_mul(1_000))
-                .map_err(map_nvml_error)?;
-        }
-
-        if let Some(clock_lock) = request.gpu_clock_lock {
-            device
-                .set_gpu_locked_clocks(GpuLockedClocksSetting::Numeric {
-                    min_clock_mhz: clock_lock.min_mhz,
-                    max_clock_mhz: clock_lock.max_mhz,
-                })
-                .map_err(map_nvml_error)?;
-        }
-
-        if let Some(clock_lock) = request.memory_clock_lock {
-            device
-                .set_mem_locked_clocks(clock_lock.min_mhz, clock_lock.max_mhz)
-                .map_err(map_nvml_error)?;
-        }
-
-        if let Some(offset) = request.graphics_offset_mhz {
-            device
-                .set_clock_offset(Clock::Graphics, OFFSET_POWER_STATE, offset)
-                .map_err(map_nvml_error)?;
-        }
-
-        if let Some(offset) = request.memory_offset_mhz {
-            device
-                .set_clock_offset(Clock::Memory, OFFSET_POWER_STATE, offset)
-                .map_err(map_nvml_error)?;
-        }
-
-        Ok(())
-    }
-
-    fn reset_config(&self, gpu_id: &str) -> Result<(), GpuCommandError> {
-        let nvml = shared_nvml().map_err(map_nvml_error)?;
-        let mut device = find_device_by_uuid(&nvml, gpu_id)?;
-        let capabilities = query_capabilities(&device);
-
-        enable_persistence_if_supported(&mut device)?;
-
-        if let Some(default_limit) = capabilities.power_limit_default_mw {
-            device
-                .set_power_management_limit(default_limit)
-                .map_err(map_nvml_error)?;
-        }
-
-        reset_if_supported(device.reset_gpu_locked_clocks())?;
-        reset_if_supported(device.reset_mem_locked_clocks())?;
-
-        if capabilities.graphics_offset.is_some() {
-            device
-                .set_clock_offset(Clock::Graphics, OFFSET_POWER_STATE, 0)
-                .map_err(map_nvml_error)?;
-        }
-
-        if capabilities.memory_offset.is_some() {
-            device
-                .set_clock_offset(Clock::Memory, OFFSET_POWER_STATE, 0)
-                .map_err(map_nvml_error)?;
-        }
-
-        Ok(())
     }
 }
 
@@ -343,11 +247,7 @@ fn collect_nvml_inventory(
                     memory_offset: query_offset(&device, Clock::Memory).ok(),
                 };
 
-                let persisted = context
-                    .persisted_state
-                    .and_then(|state| state.record_for(&snapshot.id));
-
-                output.gpus.push(map_snapshot(snapshot, context, persisted));
+                output.gpus.push(map_snapshot(snapshot, context));
             }
             Err(error) => output
                 .warnings
@@ -401,6 +301,7 @@ fn query_performance_device(
     let telemetry = query_telemetry(device, &name, &power, &cooling, warnings);
 
     GpuPerformanceDevice {
+        nvidia_index: Some(index),
         id,
         stable_id,
         vendor: GpuVendor::Nvidia,
@@ -775,14 +676,7 @@ fn format_performance_state(state: PerformanceState) -> Option<String> {
     }
 }
 
-fn map_snapshot(
-    snapshot: NvidiaSnapshot,
-    context: InventoryContext<'_>,
-    persisted: Option<&PersistedGpuConfig>,
-) -> GpuDevice {
-    let desired = persisted.map(|record| &record.desired);
-    let last_apply = persisted.and_then(|record| record.last_apply.as_ref());
-
+fn map_snapshot(snapshot: NvidiaSnapshot, context: InventoryContext<'_>) -> GpuDevice {
     let power_limit_supported =
         snapshot.min_power_limit_mw.is_some() && snapshot.max_power_limit_mw.is_some();
     let gpu_lock_supported = !snapshot.supported_gpu_locked_clocks_mhz.is_empty();
@@ -794,14 +688,6 @@ fn map_snapshot(
 
     if let Some(message) = context.daemon_warning {
         warnings.push(message.to_string());
-    }
-
-    if let Some(last_apply) = last_apply {
-        if !last_apply.success {
-            if let Some(message) = last_apply.message.as_ref() {
-                warnings.push(message.clone());
-            }
-        }
     }
 
     GpuDevice {
@@ -855,15 +741,10 @@ fn map_snapshot(
                 default_watts: snapshot.default_power_limit_mw.map(milliwatts_to_watts),
                 min_watts: snapshot.min_power_limit_mw.map(milliwatts_to_watts),
                 max_watts: snapshot.max_power_limit_mw.map(milliwatts_to_watts),
-                desired_watts: desired.and_then(|config| config.power_limit_watts),
             },
             gpu_clock_lock: ClockLockControl {
-                current_min_mhz: desired
-                    .and_then(|config| config.gpu_clock_lock)
-                    .map(|value| value.min_mhz),
-                current_max_mhz: desired
-                    .and_then(|config| config.gpu_clock_lock)
-                    .map(|value| value.max_mhz),
+                current_min_mhz: None,
+                current_max_mhz: None,
                 min_allowed_mhz: snapshot
                     .supported_gpu_locked_clocks_mhz
                     .iter()
@@ -877,12 +758,8 @@ fn map_snapshot(
                 supported: gpu_lock_supported,
             },
             memory_clock_lock: ClockLockControl {
-                current_min_mhz: desired
-                    .and_then(|config| config.memory_clock_lock)
-                    .map(|value| value.min_mhz),
-                current_max_mhz: desired
-                    .and_then(|config| config.memory_clock_lock)
-                    .map(|value| value.max_mhz),
+                current_min_mhz: None,
+                current_max_mhz: None,
                 min_allowed_mhz: snapshot
                     .supported_memory_locked_clocks_mhz
                     .iter()
@@ -940,153 +817,6 @@ fn query_offset(device: &Device<'_>, clock_type: Clock) -> Result<ClockOffsetSna
     })
 }
 
-fn query_capabilities(device: &Device<'_>) -> NvidiaCapabilities {
-    let power_limits = device.power_management_limit_constraints().ok();
-
-    NvidiaCapabilities {
-        power_limit_min_mw: power_limits.as_ref().map(|limits| limits.min_limit),
-        power_limit_max_mw: power_limits.as_ref().map(|limits| limits.max_limit),
-        power_limit_default_mw: device.power_management_limit_default().ok(),
-        supported_gpu_locked_clocks_mhz: supported_gpu_locked_clocks(device),
-        supported_memory_locked_clocks_mhz: device.supported_memory_clocks().unwrap_or_default(),
-        graphics_offset: query_offset(device, Clock::Graphics).ok(),
-        memory_offset: query_offset(device, Clock::Memory).ok(),
-    }
-}
-
-fn validate_apply_request(
-    request: &ApplyGpuConfigRequest,
-    capabilities: &NvidiaCapabilities,
-) -> Result<(), GpuCommandError> {
-    if let Some(power_limit_watts) = request.power_limit_watts {
-        let (min_limit, max_limit) = match (
-            capabilities.power_limit_min_mw,
-            capabilities.power_limit_max_mw,
-        ) {
-            (Some(min_limit), Some(max_limit)) => (min_limit, max_limit),
-            _ => {
-                return Err(GpuCommandError::new(
-                    GpuCommandErrorCode::NotSupported,
-                    "power limit changes are not supported on this GPU",
-                ));
-            }
-        };
-
-        let power_limit_mw = power_limit_watts.saturating_mul(1_000);
-        if power_limit_mw < min_limit || power_limit_mw > max_limit {
-            return Err(GpuCommandError::new(
-                GpuCommandErrorCode::InvalidArgument,
-                format!(
-                    "power limit must be between {} W and {} W",
-                    min_limit / 1000,
-                    max_limit / 1000
-                ),
-            ));
-        }
-    }
-
-    if let Some(clock_range) = request.gpu_clock_lock {
-        validate_discrete_clock_range(
-            "GPU clock lock",
-            clock_range,
-            &capabilities.supported_gpu_locked_clocks_mhz,
-        )?;
-    }
-
-    if let Some(clock_range) = request.memory_clock_lock {
-        validate_discrete_clock_range(
-            "memory clock lock",
-            clock_range,
-            &capabilities.supported_memory_locked_clocks_mhz,
-        )?;
-    }
-
-    if let Some(offset) = request.graphics_offset_mhz {
-        let Some(range) = capabilities.graphics_offset.as_ref() else {
-            return Err(GpuCommandError::new(
-                GpuCommandErrorCode::NotSupported,
-                "graphics clock offsets are not supported on this GPU",
-            ));
-        };
-
-        validate_offset_range("graphics offset", offset, range)?;
-    }
-
-    if let Some(offset) = request.memory_offset_mhz {
-        let Some(range) = capabilities.memory_offset.as_ref() else {
-            return Err(GpuCommandError::new(
-                GpuCommandErrorCode::NotSupported,
-                "memory clock offsets are not supported on this GPU",
-            ));
-        };
-
-        validate_offset_range("memory offset", offset, range)?;
-    }
-
-    Ok(())
-}
-
-fn validate_discrete_clock_range(
-    label: &str,
-    requested: ClockRangeInput,
-    supported_values: &[u32],
-) -> Result<(), GpuCommandError> {
-    if supported_values.is_empty() {
-        return Err(GpuCommandError::new(
-            GpuCommandErrorCode::NotSupported,
-            format!("{label} is not supported on this GPU"),
-        ));
-    }
-
-    if !supported_values.contains(&requested.min_mhz)
-        || !supported_values.contains(&requested.max_mhz)
-    {
-        let min_supported = supported_values.iter().min().copied().unwrap_or_default();
-        let max_supported = supported_values.iter().max().copied().unwrap_or_default();
-
-        return Err(GpuCommandError::new(
-            GpuCommandErrorCode::InvalidArgument,
-            format!(
-                "{label} values must match supported clocks between {min_supported} MHz and {max_supported} MHz"
-            ),
-        ));
-    }
-
-    Ok(())
-}
-
-fn validate_offset_range(
-    label: &str,
-    value: i32,
-    range: &ClockOffsetSnapshot,
-) -> Result<(), GpuCommandError> {
-    if value < range.min_mhz || value > range.max_mhz {
-        return Err(GpuCommandError::new(
-            GpuCommandErrorCode::InvalidArgument,
-            format!(
-                "{label} must be between {} MHz and {} MHz",
-                range.min_mhz, range.max_mhz
-            ),
-        ));
-    }
-
-    Ok(())
-}
-
-fn enable_persistence_if_supported(device: &mut Device<'_>) -> Result<(), GpuCommandError> {
-    match device.set_persistent(true) {
-        Ok(()) | Err(NvmlError::NotSupported) => Ok(()),
-        Err(error) => Err(map_nvml_error(error)),
-    }
-}
-
-fn reset_if_supported(result: Result<(), NvmlError>) -> Result<(), GpuCommandError> {
-    match result {
-        Ok(()) | Err(NvmlError::NotSupported) => Ok(()),
-        Err(error) => Err(map_nvml_error(error)),
-    }
-}
-
 fn with_device_mut<T>(
     gpu_id: &str,
     operation: impl FnOnce(&mut Device<'_>) -> Result<T, String>,
@@ -1127,22 +857,6 @@ fn parse_fallback_index(gpu_id: &str) -> Option<u32> {
         .and_then(|index| index.parse::<u32>().ok())
 }
 
-fn find_device_by_uuid<'a>(nvml: &'a Nvml, gpu_id: &str) -> Result<Device<'a>, GpuCommandError> {
-    let device_count = nvml.device_count().map_err(map_nvml_error)?;
-
-    for index in 0..device_count {
-        let device = nvml.device_by_index(index).map_err(map_nvml_error)?;
-        if device.uuid().ok().as_deref() == Some(gpu_id) {
-            return Ok(device);
-        }
-    }
-
-    Err(GpuCommandError::new(
-        GpuCommandErrorCode::NotFound,
-        format!("GPU '{gpu_id}' was not found"),
-    ))
-}
-
 fn query_optional_power_value(
     result: Result<u32, NvmlError>,
     device_name: &str,
@@ -1158,36 +872,6 @@ fn query_optional_power_value(
             ));
             None
         }
-    }
-}
-
-fn map_nvml_error(error: NvmlError) -> GpuCommandError {
-    match error {
-        NvmlError::NoPermission => GpuCommandError::new(
-            GpuCommandErrorCode::NoPermission,
-            "insufficient privileges to change GPU configuration",
-        ),
-        NvmlError::InvalidArg => GpuCommandError::new(
-            GpuCommandErrorCode::InvalidArgument,
-            "the requested GPU configuration is invalid",
-        ),
-        NvmlError::NotSupported => GpuCommandError::new(
-            GpuCommandErrorCode::NotSupported,
-            "the requested GPU configuration is not supported",
-        ),
-        NvmlError::GpuLost => GpuCommandError::new(
-            GpuCommandErrorCode::GpuLost,
-            "the GPU is no longer accessible",
-        ),
-        NvmlError::LibraryNotFound
-        | NvmlError::DriverNotLoaded
-        | NvmlError::LibRmVersionMismatch
-        | NvmlError::LibloadingError(_)
-        | NvmlError::FailedToLoadSymbol(_)
-        | NvmlError::FunctionNotFound => {
-            GpuCommandError::new(GpuCommandErrorCode::NvmlUnavailable, error.to_string())
-        }
-        _ => GpuCommandError::new(GpuCommandErrorCode::Internal, error.to_string()),
     }
 }
 
@@ -1231,13 +915,12 @@ fn milliwatts_to_watts(milliwatts: u32) -> u32 {
 mod tests {
     use super::{
         build_telemetry_info, bytes_to_mib, format_cuda_driver_version, map_mutation_error,
-        map_snapshot, milliwatts_to_watts, parse_fallback_index, validate_discrete_clock_range,
-        validate_offset_range, ClockOffsetSnapshot, NvidiaSnapshot, TelemetryQueryResults,
+        map_snapshot, milliwatts_to_watts, parse_fallback_index, ClockOffsetSnapshot,
+        NvidiaSnapshot, TelemetryQueryResults,
     };
     use crate::gpu::{
-        ClockRangeInput, ComputeApi, ControlSupport, CoolingInfo, DesiredGpuConfig, FanControlInfo,
-        FanControlMode, GpuApplyRecord, GpuCommandErrorCode, GpuVendor, InventoryContext,
-        PersistedGpuConfig, PersistedGpuState, PowerControlInfo,
+        ComputeApi, ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuVendor,
+        InventoryContext, PowerControlInfo,
     };
     use nvml_wrapper::enum_wrappers::device::PerformanceState;
     use nvml_wrapper::error::NvmlError;
@@ -1245,22 +928,6 @@ mod tests {
 
     #[test]
     fn maps_snapshot_into_vendor_agnostic_device() {
-        let mut state = PersistedGpuState::default();
-        state.gpus.insert(
-            "GPU-123".into(),
-            PersistedGpuConfig {
-                desired: DesiredGpuConfig {
-                    power_limit_watts: Some(450),
-                    gpu_clock_lock: Some(ClockRangeInput {
-                        min_mhz: 1800,
-                        max_mhz: 2400,
-                    }),
-                    ..Default::default()
-                },
-                last_apply: Some(GpuApplyRecord::failure("failed to reapply saved config")),
-            },
-        );
-
         let device = map_snapshot(
             NvidiaSnapshot {
                 id: "GPU-123".into(),
@@ -1300,10 +967,8 @@ mod tests {
             InventoryContext {
                 managed_by_daemon: true,
                 daemon_reachable: true,
-                persisted_state: Some(&state),
                 daemon_warning: None,
             },
-            state.record_for("GPU-123"),
         );
 
         assert_eq!(device.vendor, GpuVendor::Nvidia);
@@ -1311,12 +976,6 @@ mod tests {
         assert_eq!(device.power.enforced_limit_watts, Some(475));
         assert_eq!(device.compute.api, Some(ComputeApi::Cuda));
         assert_eq!(device.compute.capability.as_deref(), Some("12.0"));
-        assert_eq!(device.control.power_limit.desired_watts, Some(450));
-        assert!(device
-            .control
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("failed to reapply")));
     }
 
     #[test]
@@ -1324,37 +983,6 @@ mod tests {
         assert_eq!(bytes_to_mib(1_073_741_824), 1_024);
         assert_eq!(milliwatts_to_watts(475_000), 475);
         assert_eq!(format_cuda_driver_version(13_020), "13.2");
-    }
-
-    #[test]
-    fn validates_discrete_clock_range_against_supported_values() {
-        let error = validate_discrete_clock_range(
-            "GPU clock lock",
-            ClockRangeInput {
-                min_mhz: 1550,
-                max_mhz: 2400,
-            },
-            &[1500, 1800, 2400],
-        )
-        .expect_err("validation should fail");
-
-        assert_eq!(error.code, GpuCommandErrorCode::InvalidArgument);
-    }
-
-    #[test]
-    fn validates_offset_against_bounds() {
-        let error = validate_offset_range(
-            "graphics offset",
-            250,
-            &ClockOffsetSnapshot {
-                current_mhz: 0,
-                min_mhz: -200,
-                max_mhz: 200,
-            },
-        )
-        .expect_err("validation should fail");
-
-        assert_eq!(error.code, GpuCommandErrorCode::InvalidArgument);
     }
 
     #[test]

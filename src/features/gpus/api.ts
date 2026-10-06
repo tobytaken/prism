@@ -1,14 +1,11 @@
 import type {
-  ApplyGpuConfigRequest,
   ApplyGpuProfileByIdRequest,
   ApplyGpuProfileRequest,
   CorrectGpuProfileRequest,
   GpuDaemonStatus,
   GpuInventoryResponse,
-  GpuMutationResponse,
   GpuPerformanceResponse,
   OffsetInstruction,
-  ResetGpuConfigRequest,
   SaveGpuProfileRequest,
   SaveToCurrentProfileRequest,
   RenameGpuProfileRequest,
@@ -99,12 +96,4 @@ export function resetGpuClockOffsets(gpuId: string) {
 
 export function getGpuDaemonStatus() {
   return window.prism.gpu.getDaemonStatus() as Promise<GpuDaemonStatus>;
-}
-
-export function applyGpuConfig(request: ApplyGpuConfigRequest) {
-  return window.prism.gpu.applyConfig(request) as Promise<GpuMutationResponse>;
-}
-
-export function resetGpuConfig(request: ResetGpuConfigRequest) {
-  return window.prism.gpu.resetConfig(request) as Promise<GpuMutationResponse>;
 }

@@ -431,9 +431,9 @@ fn saving_renaming_and_deleting_follow_the_startup_link_across_boots() {
 }
 
 #[test]
-fn an_unhealthy_store_suspends_both_startup_profiles_and_legacy_reapplication() {
+fn an_unhealthy_store_preserves_legacy_settings_and_suspends_startup() {
+    use super::migration::{DesiredGpuConfig, PersistedGpuConfig, PersistedGpuState};
     use super::tuning_store::TUNING_STORE_FILE_NAME;
-    use crate::gpu::{DesiredGpuConfig, PersistedGpuConfig, PersistedGpuState};
     let mut legacy = PersistedGpuState::default();
     legacy.gpus.insert(
         "GPU-123".into(),
@@ -502,35 +502,6 @@ fn startup_outcome_dismissals_belong_to_the_user_survive_restart_and_reset_at_re
             .len(),
         1
     );
-}
-
-#[test]
-fn startup_profiles_replace_legacy_reapplication_while_off_keeps_the_interim_behavior() {
-    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
-    daemon.send_json(json!({ "type": "apply_config", "payload": { "gpuId": "GPU-123", "powerLimitWatts": 250 } }));
-    daemon
-        .gpus
-        .update("GPU-123", |gpu| gpu.power.current_limit_watts = Some(475));
-    daemon.restart();
-    assert_eq!(
-        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
-        Some(250)
-    );
-    let alice = daemon.user(1000, "alice");
-    import(&alice, "quiet", "Quiet", 300);
-    designate(&alice, Some("quiet"));
-    enable(&alice);
-    drop(alice);
-    let legacy_writes = daemon.gpus.applied_configs().len();
-    daemon.reboot();
-    completed_startup(&daemon);
-    assert_eq!(
-        daemon.gpus.gpu("GPU-123").power.current_limit_watts,
-        Some(300)
-    );
-    assert_eq!(daemon.gpus.applied_configs().len(), legacy_writes);
-    daemon.restart();
-    assert_eq!(daemon.gpus.applied_configs().len(), legacy_writes);
 }
 
 #[test]

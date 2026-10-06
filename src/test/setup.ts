@@ -4,6 +4,15 @@ import type { PrismDesktopApi } from "@/types/global";
 
 const prismStub: PrismDesktopApi = {
   gpu: {
+    getMigrationState: async () => ({
+      profiles: [],
+      canAdopt: false,
+      notice: null,
+    }),
+    adoptMigratedProfile: async () => {
+      throw new Error("No migrated profile");
+    },
+    dismissMigrationNotice: async () => ({ success: true, error: null }),
     getStartupState: async () => ({
       behavior: "off",
       profiles: [],
@@ -46,8 +55,6 @@ const prismStub: PrismDesktopApi = {
       tuningStore: null,
     }),
     onDaemonStatusChanged: () => () => undefined,
-    applyConfig: async () => ({ success: true, inventory: null, error: null }),
-    resetConfig: async () => ({ success: true, inventory: null, error: null }),
     setPowerLimit: async () => ({ success: true, error: null }),
     resetPowerLimit: async () => ({ success: true, error: null }),
     setFanSpeed: async () => ({ success: true, error: null }),

@@ -136,8 +136,6 @@ describe("preload bridge", () => {
     await prism.gpu.getInventory();
     await prism.gpu.getPerformance();
     await prism.gpu.getDaemonStatus();
-    await prism.gpu.applyConfig({ gpuId: "GPU-123", powerLimitWatts: 450 });
-    await prism.gpu.resetConfig({ gpuId: "GPU-123" });
     await prism.gpu.setPowerLimit("GPU-123", 450);
     await prism.gpu.resetPowerLimit("GPU-123");
     await prism.gpu.setFanSpeed("GPU-123", 0, 60);
@@ -150,8 +148,6 @@ describe("preload bridge", () => {
       ["prism:gpu:getInventory"],
       ["prism:gpu:getPerformance"],
       ["prism:gpu:getDaemonStatus"],
-      ["prism:gpu:applyConfig", { gpuId: "GPU-123", powerLimitWatts: 450 }],
-      ["prism:gpu:resetConfig", { gpuId: "GPU-123" }],
       ["prism:gpu:setPowerLimit", { gpuId: "GPU-123", limitWatts: 450 }],
       ["prism:gpu:resetPowerLimit", { gpuId: "GPU-123" }],
       [

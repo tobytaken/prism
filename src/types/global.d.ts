@@ -1,5 +1,4 @@
 import type {
-  ApplyGpuConfigRequest,
   ApplyGpuProfileByIdRequest,
   ApplyGpuProfileRequest,
   CorrectGpuProfileRequest,
@@ -10,9 +9,7 @@ import type {
   GpuCommandResponse,
   GpuDaemonStatus,
   GpuInventoryResponse,
-  GpuMutationResponse,
   GpuPerformanceResponse,
-  ResetGpuConfigRequest,
   GpuTuningProfile,
   GpuTuningState,
   SaveGpuProfileRequest,
@@ -21,6 +18,7 @@ import type {
   GpuProfileIdRequest,
   StartupBehavior,
   StartupState,
+  MigrationState,
   SetStartupProfileRequest,
 } from "@/features/gpus/types";
 import type {
@@ -31,6 +29,11 @@ import type {
 
 export interface PrismDesktopApi {
   gpu: {
+    getMigrationState(): Promise<MigrationState>;
+    adoptMigratedProfile(request: {
+      profileId: string;
+    }): Promise<GpuTuningProfile>;
+    dismissMigrationNotice(): Promise<GpuCommandResponse>;
     getStartupState(): Promise<StartupState>;
     setStartupBehavior(request: {
       behavior: StartupBehavior;
@@ -72,8 +75,6 @@ export interface PrismDesktopApi {
     onDaemonStatusChanged(
       callback: (status: GpuDaemonStatus) => void,
     ): () => void;
-    applyConfig(request: ApplyGpuConfigRequest): Promise<GpuMutationResponse>;
-    resetConfig(request: ResetGpuConfigRequest): Promise<GpuMutationResponse>;
     setPowerLimit(
       gpuId: string,
       limitWatts: number,

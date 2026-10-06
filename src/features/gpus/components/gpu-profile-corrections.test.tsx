@@ -17,7 +17,6 @@ import {
 import { renderWithQueryClient } from "@/test/query-client";
 import { MemoryRouter } from "react-router-dom";
 import { GpuPerformancePage } from "./gpu-performance-page";
-import { GpuTuningPage } from "./gpu-tuning-page";
 
 // The daemon-backed desktop API: fresh validation, profile storage, and GPU controls.
 function createFakeDesktop() {
@@ -119,10 +118,7 @@ it("collects every out-of-range setting into one review, and Cancel changes neit
   expect(fake.liveWrites()).toBe(0);
 });
 
-it.each([
-  ["Performance", renderPerformancePage],
-  ["Tuning", () => renderWithQueryClient(<GpuTuningPage />)],
-])(
+it.each([["Performance", renderPerformancePage]])(
   "Adjust profile and apply on the %s page saves exactly the approved values before applying them",
   async (_page, render) => {
     const user = userEvent.setup();

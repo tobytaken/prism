@@ -1,8 +1,5 @@
 mod nvidia;
 
-use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::{Deserialize, Serialize};
 
 use nvidia::{
@@ -88,6 +85,10 @@ pub struct GpuPerformanceResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuPerformanceDevice {
+    /// Original NVML slot, used only to resolve legacy index keys during migration.
+    /// A skipped device must not shift the identity of later devices.
+    #[serde(skip)]
+    pub(crate) nvidia_index: Option<u32>,
     pub id: String,
     #[serde(default)]
     pub stable_id: Option<String>,
@@ -257,7 +258,6 @@ pub struct PowerLimitControl {
     pub default_watts: Option<u32>,
     pub min_watts: Option<u32>,
     pub max_watts: Option<u32>,
-    pub desired_watts: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -285,238 +285,6 @@ pub struct OffsetControl {
     pub min_memory_mhz: Option<i32>,
     #[serde(rename = "maxMemoryMHz")]
     pub max_memory_mhz: Option<i32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct DesiredGpuConfig {
-    pub power_limit_watts: Option<u32>,
-    pub gpu_clock_lock: Option<ClockRangeInput>,
-    pub memory_clock_lock: Option<ClockRangeInput>,
-    #[serde(rename = "graphicsOffsetMHz")]
-    pub graphics_offset_mhz: Option<i32>,
-    #[serde(rename = "memoryOffsetMHz")]
-    pub memory_offset_mhz: Option<i32>,
-}
-
-impl DesiredGpuConfig {
-    pub fn is_empty(&self) -> bool {
-        self.power_limit_watts.is_none()
-            && self.gpu_clock_lock.is_none()
-            && self.memory_clock_lock.is_none()
-            && self.graphics_offset_mhz.is_none()
-            && self.memory_offset_mhz.is_none()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct GpuApplyRecord {
-    pub applied_at_unix_ms: u64,
-    pub success: bool,
-    pub message: Option<String>,
-}
-
-impl GpuApplyRecord {
-    pub fn success() -> Self {
-        Self::success_at(unix_timestamp_ms())
-    }
-
-    pub fn success_at(applied_at_unix_ms: u64) -> Self {
-        Self {
-            applied_at_unix_ms,
-            success: true,
-            message: None,
-        }
-    }
-
-    pub fn failure(message: impl Into<String>) -> Self {
-        Self::failure_at(unix_timestamp_ms(), message)
-    }
-
-    pub fn failure_at(applied_at_unix_ms: u64, message: impl Into<String>) -> Self {
-        Self {
-            applied_at_unix_ms,
-            success: false,
-            message: Some(message.into()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct PersistedGpuConfig {
-    #[serde(default)]
-    pub desired: DesiredGpuConfig,
-    pub last_apply: Option<GpuApplyRecord>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct PersistedGpuState {
-    #[serde(default)]
-    pub gpus: BTreeMap<String, PersistedGpuConfig>,
-}
-
-impl PersistedGpuState {
-    pub fn upsert_desired(&mut self, gpu_id: impl Into<String>, desired: DesiredGpuConfig) {
-        let gpu_id = gpu_id.into();
-        let record = self.gpus.entry(gpu_id.clone()).or_default();
-        record.desired = desired;
-
-        if record.desired.is_empty() {
-            self.gpus.remove(&gpu_id);
-        }
-    }
-
-    pub fn set_last_apply(&mut self, gpu_id: impl Into<String>, last_apply: GpuApplyRecord) {
-        let gpu_id = gpu_id.into();
-        let record = self.gpus.entry(gpu_id.clone()).or_default();
-        record.last_apply = Some(last_apply);
-
-        if record.desired.is_empty() && record.last_apply.is_none() {
-            self.gpus.remove(&gpu_id);
-        }
-    }
-
-    pub fn clear(&mut self, gpu_id: &str) {
-        self.gpus.remove(gpu_id);
-    }
-
-    pub fn desired_for(&self, gpu_id: &str) -> Option<&DesiredGpuConfig> {
-        self.gpus.get(gpu_id).map(|record| &record.desired)
-    }
-
-    pub fn record_for(&self, gpu_id: &str) -> Option<&PersistedGpuConfig> {
-        self.gpus.get(gpu_id)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplyGpuConfigRequest {
-    pub gpu_id: Option<String>,
-    pub power_limit_watts: Option<u32>,
-    pub gpu_clock_lock: Option<ClockRangeInput>,
-    pub memory_clock_lock: Option<ClockRangeInput>,
-    #[serde(rename = "graphicsOffsetMHz")]
-    pub graphics_offset_mhz: Option<i32>,
-    #[serde(rename = "memoryOffsetMHz")]
-    pub memory_offset_mhz: Option<i32>,
-    #[serde(default)]
-    pub reapply_saved: bool,
-}
-
-impl ApplyGpuConfigRequest {
-    pub fn validate(&self) -> Result<(), GpuCommandError> {
-        if self.reapply_saved {
-            if self.gpu_id.is_some()
-                || self.power_limit_watts.is_some()
-                || self.gpu_clock_lock.is_some()
-                || self.memory_clock_lock.is_some()
-                || self.graphics_offset_mhz.is_some()
-                || self.memory_offset_mhz.is_some()
-            {
-                return Err(GpuCommandError::new(
-                    GpuCommandErrorCode::InvalidArgument,
-                    "reapplySaved cannot be combined with per-GPU settings",
-                ));
-            }
-
-            return Ok(());
-        }
-
-        if self.gpu_id.as_deref().is_none() {
-            return Err(GpuCommandError::new(
-                GpuCommandErrorCode::InvalidArgument,
-                "gpuId is required when applying a GPU configuration",
-            ));
-        }
-
-        if self.power_limit_watts.is_none()
-            && self.gpu_clock_lock.is_none()
-            && self.memory_clock_lock.is_none()
-            && self.graphics_offset_mhz.is_none()
-            && self.memory_offset_mhz.is_none()
-        {
-            return Err(GpuCommandError::new(
-                GpuCommandErrorCode::InvalidArgument,
-                "at least one GPU setting must be provided",
-            ));
-        }
-
-        if let Some(clock_range) = self.gpu_clock_lock.as_ref() {
-            clock_range.validate("gpuClockLock")?;
-        }
-
-        if let Some(clock_range) = self.memory_clock_lock.as_ref() {
-            clock_range.validate("memoryClockLock")?;
-        }
-
-        Ok(())
-    }
-
-    pub fn desired_config(&self) -> DesiredGpuConfig {
-        DesiredGpuConfig {
-            power_limit_watts: self.power_limit_watts,
-            gpu_clock_lock: self.gpu_clock_lock,
-            memory_clock_lock: self.memory_clock_lock,
-            graphics_offset_mhz: self.graphics_offset_mhz,
-            memory_offset_mhz: self.memory_offset_mhz,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ResetGpuConfigRequest {
-    pub gpu_id: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ClockRangeInput {
-    pub min_mhz: u32,
-    pub max_mhz: u32,
-}
-
-impl ClockRangeInput {
-    pub fn validate(&self, field: &str) -> Result<(), GpuCommandError> {
-        if self.min_mhz > self.max_mhz {
-            return Err(GpuCommandError::new(
-                GpuCommandErrorCode::InvalidArgument,
-                format!("{field} minMHz cannot be greater than maxMHz"),
-            ));
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct GpuMutationResponse {
-    pub success: bool,
-    pub inventory: Option<GpuInventoryResponse>,
-    pub error: Option<GpuCommandError>,
-}
-
-impl GpuMutationResponse {
-    pub fn success(inventory: GpuInventoryResponse) -> Self {
-        Self {
-            success: true,
-            inventory: Some(inventory),
-            error: None,
-        }
-    }
-
-    pub fn failure(error: GpuCommandError) -> Self {
-        Self {
-            success: false,
-            inventory: None,
-            error: Some(error),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -625,7 +393,6 @@ pub enum ComputeApi {
 pub struct InventoryContext<'a> {
     pub managed_by_daemon: bool,
     pub daemon_reachable: bool,
-    pub persisted_state: Option<&'a PersistedGpuState>,
     pub daemon_warning: Option<&'a str>,
 }
 
@@ -653,11 +420,6 @@ pub(crate) trait GpuInventoryProvider {
     fn collect(&self, context: InventoryContext<'_>) -> ProviderOutput;
 }
 
-pub(crate) trait GpuControlProvider {
-    fn apply_config(&self, request: &ApplyGpuConfigRequest) -> Result<(), GpuCommandError>;
-    fn reset_config(&self, gpu_id: &str) -> Result<(), GpuCommandError>;
-}
-
 #[derive(Debug, Default)]
 pub(crate) struct PerformanceProviderOutput {
     gpus: Vec<GpuPerformanceDevice>,
@@ -677,7 +439,6 @@ pub fn collect_inventory() -> GpuInventoryResponse {
     collect_inventory_with_context(InventoryContext {
         managed_by_daemon: false,
         daemon_reachable: false,
-        persisted_state: None,
         daemon_warning: None,
     })
 }
@@ -729,193 +490,17 @@ pub fn reset_gpu_clock_offsets(request: GpuTargetRequest) -> Result<(), String> 
     reset_nvidia_clock_offsets(request)
 }
 
-pub fn apply_gpu_config(request: &ApplyGpuConfigRequest) -> Result<(), GpuCommandError> {
-    request.validate()?;
-
-    let providers: [Box<dyn GpuControlProvider>; 1] = [Box::new(NvmlNvidiaProvider)];
-    let mut last_error = None;
-
-    for provider in providers {
-        match provider.apply_config(request) {
-            Ok(()) => return Ok(()),
-            Err(error) => last_error = Some(error),
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| {
-        GpuCommandError::new(
-            GpuCommandErrorCode::NotFound,
-            "the selected GPU could not be found",
-        )
-    }))
-}
-
-pub fn reset_gpu_config(gpu_id: &str) -> Result<(), GpuCommandError> {
-    let providers: [Box<dyn GpuControlProvider>; 1] = [Box::new(NvmlNvidiaProvider)];
-    let mut last_error = None;
-
-    for provider in providers {
-        match provider.reset_config(gpu_id) {
-            Ok(()) => return Ok(()),
-            Err(error) => last_error = Some(error),
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| {
-        GpuCommandError::new(
-            GpuCommandErrorCode::NotFound,
-            "the selected GPU could not be found",
-        )
-    }))
-}
-
-fn unix_timestamp_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplyGpuConfigRequest, ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo,
-        ClockRangeInput, ComputeApi, ComputeInfo, ControlSupport, CoolingInfo, DesiredGpuConfig,
-        FanControlInfo, FanControlMode, GpuApplyRecord, GpuCommandErrorCode, GpuControlInfo,
+        ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo, ComputeApi, ComputeInfo,
+        ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuControlInfo,
         GpuDaemonStatus, GpuDevice, GpuInventoryResponse, GpuPerformanceDevice,
         GpuPerformanceResponse, GpuSupportedFeatures, GpuTelemetryInfo, GpuVendor, MemoryInfo,
-        OffsetControl, PcieInfo, PersistedGpuState, PowerControlInfo, PowerInfo, PowerLimitControl,
-        TuningStoreHealth, TuningStoreProblem,
+        OffsetControl, PcieInfo, PowerControlInfo, PowerInfo, PowerLimitControl, TuningStoreHealth,
+        TuningStoreProblem,
     };
     use serde_json::json;
-
-    #[test]
-    fn apply_request_requires_gpu_id_for_non_reapply_calls() {
-        let error = ApplyGpuConfigRequest {
-            power_limit_watts: Some(250),
-            ..Default::default()
-        }
-        .validate()
-        .expect_err("validation should fail");
-
-        assert_eq!(error.code, GpuCommandErrorCode::InvalidArgument);
-    }
-
-    #[test]
-    fn apply_request_rejects_inverted_clock_ranges() {
-        let error = ApplyGpuConfigRequest {
-            gpu_id: Some("GPU-123".into()),
-            gpu_clock_lock: Some(ClockRangeInput {
-                min_mhz: 2200,
-                max_mhz: 1800,
-            }),
-            ..Default::default()
-        }
-        .validate()
-        .expect_err("validation should fail");
-
-        assert_eq!(error.code, GpuCommandErrorCode::InvalidArgument);
-    }
-
-    #[test]
-    fn apply_request_rejects_reapply_with_per_gpu_settings() {
-        let error = ApplyGpuConfigRequest {
-            reapply_saved: true,
-            gpu_id: Some("GPU-123".into()),
-            power_limit_watts: Some(250),
-            ..Default::default()
-        }
-        .validate()
-        .expect_err("validation should fail");
-
-        assert_eq!(error.code, GpuCommandErrorCode::InvalidArgument);
-    }
-
-    #[test]
-    fn apply_request_requires_at_least_one_setting() {
-        let error = ApplyGpuConfigRequest {
-            gpu_id: Some("GPU-123".into()),
-            ..Default::default()
-        }
-        .validate()
-        .expect_err("validation should fail");
-
-        assert_eq!(error.code, GpuCommandErrorCode::InvalidArgument);
-    }
-
-    #[test]
-    fn desired_config_reports_non_empty_for_each_setting() {
-        assert!(!DesiredGpuConfig {
-            power_limit_watts: Some(250),
-            ..Default::default()
-        }
-        .is_empty());
-        assert!(!DesiredGpuConfig {
-            gpu_clock_lock: Some(ClockRangeInput {
-                min_mhz: 1800,
-                max_mhz: 2200,
-            }),
-            ..Default::default()
-        }
-        .is_empty());
-        assert!(!DesiredGpuConfig {
-            memory_clock_lock: Some(ClockRangeInput {
-                min_mhz: 1000,
-                max_mhz: 1200,
-            }),
-            ..Default::default()
-        }
-        .is_empty());
-        assert!(!DesiredGpuConfig {
-            graphics_offset_mhz: Some(100),
-            ..Default::default()
-        }
-        .is_empty());
-        assert!(!DesiredGpuConfig {
-            memory_offset_mhz: Some(500),
-            ..Default::default()
-        }
-        .is_empty());
-    }
-
-    #[test]
-    fn persisted_state_removes_empty_desired_config() {
-        let mut state = PersistedGpuState::default();
-        state.upsert_desired("GPU-123", Default::default());
-
-        assert!(state.gpus.is_empty());
-    }
-
-    #[test]
-    fn persisted_state_clear_removes_existing_record() {
-        let mut state = PersistedGpuState::default();
-        state.upsert_desired(
-            "GPU-123",
-            DesiredGpuConfig {
-                power_limit_watts: Some(250),
-                ..Default::default()
-            },
-        );
-
-        state.clear("GPU-123");
-
-        assert!(state.gpus.is_empty());
-    }
-
-    #[test]
-    fn mutation_failure_serializes_error_without_inventory() {
-        let response = super::GpuMutationResponse::failure(super::GpuCommandError::new(
-            GpuCommandErrorCode::Internal,
-            "boom",
-        ));
-
-        let value = serde_json::to_value(response).expect("serialize response");
-
-        assert_eq!(value["success"], false);
-        assert_eq!(value["inventory"], serde_json::Value::Null);
-        assert_eq!(value["error"]["code"], "internal");
-        assert_eq!(value["error"]["message"], "boom");
-    }
 
     #[test]
     fn inventory_response_serializes_camel_case() {
@@ -967,7 +552,6 @@ mod tests {
                         default_watts: Some(575),
                         min_watts: Some(300),
                         max_watts: Some(575),
-                        desired_watts: Some(450),
                     },
                     gpu_clock_lock: ClockLockControl {
                         current_min_mhz: Some(1800),
@@ -1005,8 +589,8 @@ mod tests {
         assert_eq!(value["gpus"][0]["clocks"]["graphicsCurrentMHz"], 1_365);
         assert_eq!(value["gpus"][0]["control"]["managedByDaemon"], true);
         assert_eq!(
-            value["gpus"][0]["control"]["powerLimit"]["desiredWatts"],
-            450
+            value["gpus"][0]["control"]["powerLimit"].get("desiredWatts"),
+            None
         );
     }
 
@@ -1014,6 +598,7 @@ mod tests {
     fn performance_response_serializes_camel_case() {
         let response = GpuPerformanceResponse {
             gpus: vec![GpuPerformanceDevice {
+                nvidia_index: None,
                 id: "GPU-123".into(),
                 stable_id: Some("GPU-123".into()),
                 vendor: GpuVendor::Nvidia,
@@ -1091,14 +676,6 @@ mod tests {
         assert_eq!(value["gpus"][0]["clocks"]["graphics"]["maxOffsetMHz"], 200);
         assert_eq!(value["gpus"][0]["telemetry"]["coreClockMHz"], 2_550);
         assert_eq!(value["gpus"][0]["telemetry"]["performanceState"], "P0");
-    }
-
-    #[test]
-    fn apply_record_failure_sets_message() {
-        let record = GpuApplyRecord::failure("boom");
-
-        assert!(!record.success);
-        assert_eq!(record.message.as_deref(), Some("boom"));
     }
 
     #[test]
