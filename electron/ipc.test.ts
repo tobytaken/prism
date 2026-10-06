@@ -15,6 +15,7 @@ import unhealthyStoreStatus from "@/test/contracts/daemon-status-unhealthy-store
 import correctedProfileApplication from "@/test/contracts/corrected-profile-application.json";
 import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
 import gpuTuningStates from "@/test/contracts/gpu-tuning-states.json";
+import gamesState from "@/test/contracts/games-state.json";
 import { connectedDaemonStatus } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
 
@@ -529,6 +530,109 @@ describe("registerIpc", () => {
           gpuId: "GPU-123",
         }),
       ).rejects.toThrow("Invalid setStartupProfile payload");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("forwards game requests to the daemon and preserves its games and Steam apps", async () => {
+    const apps = [{ appId: 570, name: "Dota 2" }];
+    const child = createBackendChild((method: string) =>
+      method === "games.listSteamApps" ? apps : gamesState,
+    );
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    const dota = { kind: "steam", appId: 570 };
+    try {
+      expect(
+        await callHandler("prism:games:listSteamApps", trustedEvent()),
+      ).toEqual(apps);
+      for (const [method, payload] of [
+        ["get", undefined],
+        ["addSteamGame", { appId: 570 }],
+        ["setProfile", { game: dota, gpuId: "GPU-123", profileId: "quiet" }],
+        ["setProfile", { game: dota, gpuId: "GPU-123", profileId: null }],
+        ["remove", { game: dota }],
+        ["setAutomaticSwitching", { enabled: true }],
+      ] as const) {
+        const args = payload === undefined ? [] : [payload];
+        expect(
+          await callHandler(`prism:games:${method}`, trustedEvent(), ...args),
+        ).toEqual(gamesState);
+      }
+      expect(sentRequests(child)).toEqual([
+        { method: "games.listSteamApps" },
+        { method: "games.get" },
+        { method: "games.addSteamGame", params: { appId: 570 } },
+        {
+          method: "games.setProfile",
+          params: { game: dota, gpuId: "GPU-123", profileId: "quiet" },
+        },
+        {
+          method: "games.setProfile",
+          params: { game: dota, gpuId: "GPU-123", profileId: null },
+        },
+        { method: "games.remove", params: { game: dota } },
+        { method: "games.setAutomaticSwitching", params: { enabled: true } },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("rejects untrusted or malformed game requests before reaching the daemon", async () => {
+    const dispose = registerIpc(getMainWindow);
+    const dota = { kind: "steam", appId: 570 };
+    try {
+      for (const [method, payload] of [
+        ["listSteamApps", undefined],
+        ["get", undefined],
+        ["addSteamGame", { appId: 570 }],
+        ["setProfile", { game: dota, gpuId: "GPU-123", profileId: null }],
+        ["remove", { game: dota }],
+        ["setAutomaticSwitching", { enabled: false }],
+      ] as const) {
+        await expect(
+          callHandler(`prism:games:${method}`, untrustedEvent(), payload),
+        ).rejects.toThrow("Untrusted IPC sender");
+      }
+      const invalid: [string, unknown[]][] = [
+        ["listSteamApps", [{}]],
+        ["get", [{ uid: 0 }]],
+        ["addSteamGame", [undefined]],
+        ["addSteamGame", [{ appId: "570" }]],
+        ["addSteamGame", [{ appId: 5.5 }]],
+        ["addSteamGame", [{ appId: -1 }]],
+        ["addSteamGame", [{ appId: 570, name: "Dota 2" }]],
+        ["setProfile", [{ game: dota, gpuId: "GPU-123" }]],
+        ["setProfile", [{ game: dota, gpuId: " ", profileId: null }]],
+        ["setProfile", [{ game: dota, gpuId: "GPU-123", profileId: " " }]],
+        [
+          "setProfile",
+          [{ game: dota, gpuId: "GPU-123", profileId: null, uid: 0 }],
+        ],
+        [
+          "setProfile",
+          [
+            {
+              game: { kind: "program", appId: 570 },
+              gpuId: "GPU-123",
+              profileId: null,
+            },
+          ],
+        ],
+        ["remove", [{ game: { ...dota, uid: 0 } }]],
+        ["remove", [{ game: { kind: "steam" } }]],
+        ["remove", [{}]],
+        ["setAutomaticSwitching", [{ enabled: "yes" }]],
+        ["setAutomaticSwitching", [{ enabled: true, uid: 0 }]],
+      ];
+      for (const [method, args] of invalid) {
+        await expect(
+          callHandler(`prism:games:${method}`, trustedEvent(), ...args),
+        ).rejects.toThrow(`Invalid ${method} payload`);
+      }
+      expect(mocks.spawn).not.toHaveBeenCalled();
     } finally {
       dispose();
     }

@@ -22,6 +22,14 @@ import type {
   SetStartupProfileRequest,
 } from "@/features/gpus/types";
 import type {
+  AddSteamGameRequest,
+  GameRequest,
+  GamesState,
+  SetAutomaticSwitchingRequest,
+  SetGameProfileRequest,
+  SteamApp,
+} from "@/features/games/types";
+import type {
   DriverAction,
   DriverJob,
   DriverStatusResponse,
@@ -95,6 +103,18 @@ export interface PrismDesktopApi {
       memoryOffsetMHz: OffsetInstruction,
     ): Promise<ClockOffsetResponse>;
     resetClockOffsets(gpuId: string): Promise<ClockOffsetResponse>;
+  };
+  /** The caller's own game associations, and Steam apps from their own home. */
+  games: {
+    /** Fully installed Steam apps, without compatibility tools or known non-game apps. */
+    listSteamApps(): Promise<SteamApp[]>;
+    get(): Promise<GamesState>;
+    addSteamGame(request: AddSteamGameRequest): Promise<GamesState>;
+    setProfile(request: SetGameProfileRequest): Promise<GamesState>;
+    remove(request: GameRequest): Promise<GamesState>;
+    setAutomaticSwitching(
+      request: SetAutomaticSwitchingRequest,
+    ): Promise<GamesState>;
   };
   drivers: {
     getStatus(): Promise<DriverStatusResponse>;

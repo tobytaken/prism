@@ -107,7 +107,10 @@ class RustBackendClient {
           !method.startsWith("gpu.get") &&
           !method.startsWith("gpu.list")
           ? 40_000
-          : 5_000,
+          : // Game requests read the caller's Steam libraries.
+            method.startsWith("games.")
+            ? 15_000
+            : 5_000,
       );
 
       this.pending.set(id, {
@@ -292,6 +295,23 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
+}
+
+function isAppId(value: unknown): value is number {
+  return (
+    Number.isInteger(value) &&
+    (value as number) >= 0 &&
+    (value as number) <= 0xffff_ffff
+  );
+}
+
+function isGameId(value: unknown) {
+  return (
+    isObject(value) &&
+    hasOnlyKeys(value, ["kind", "appId"]) &&
+    value.kind === "steam" &&
+    isAppId(value.appId)
+  );
 }
 
 function isNumber(value: unknown): value is number {
@@ -561,6 +581,72 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       )
         throw new Error("Invalid dismissStartupOutcome payload");
       return backend.invoke("gpu.dismissStartupOutcome", payload);
+    },
+  );
+
+  ipcMain.handle(
+    "prism:games:listSteamApps",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid listSteamApps payload");
+      return backend.invoke("games.listSteamApps");
+    },
+  );
+  ipcMain.handle("prism:games:get", async (event, ...args: unknown[]) => {
+    assertTrustedSender(event, getMainWindow);
+    if (args.length) throw new Error("Invalid get payload");
+    return backend.invoke("games.get");
+  });
+  ipcMain.handle(
+    "prism:games:addSteamGame",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["appId"]) ||
+        !isAppId(payload.appId)
+      )
+        throw new Error("Invalid addSteamGame payload");
+      return backend.invoke("games.addSteamGame", payload);
+    },
+  );
+  ipcMain.handle("prism:games:setProfile", async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow);
+    if (
+      !isObject(payload) ||
+      !hasOnlyKeys(payload, ["game", "gpuId", "profileId"]) ||
+      !isGameId(payload.game) ||
+      !isString(payload.gpuId) ||
+      !payload.gpuId.trim() ||
+      !(
+        payload.profileId === null ||
+        (isString(payload.profileId) && payload.profileId.trim())
+      )
+    )
+      throw new Error("Invalid setProfile payload");
+    return backend.invoke("games.setProfile", payload);
+  });
+  ipcMain.handle("prism:games:remove", async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow);
+    if (
+      !isObject(payload) ||
+      !hasOnlyKeys(payload, ["game"]) ||
+      !isGameId(payload.game)
+    )
+      throw new Error("Invalid remove payload");
+    return backend.invoke("games.remove", payload);
+  });
+  ipcMain.handle(
+    "prism:games:setAutomaticSwitching",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["enabled"]) ||
+        typeof payload.enabled !== "boolean"
+      )
+        throw new Error("Invalid setAutomaticSwitching payload");
+      return backend.invoke("games.setAutomaticSwitching", payload);
     },
   );
 

@@ -1,6 +1,7 @@
 mod backend;
 mod boot_state;
 mod daemon_core;
+mod games;
 mod host;
 mod migration;
 mod possibly_stale;
@@ -8,11 +9,14 @@ mod profiles;
 mod queue;
 mod session;
 mod startup;
+mod steam_library;
 mod tuning;
 mod tuning_store;
 
 #[cfg(test)]
 mod current_profile_tests;
+#[cfg(test)]
+mod games_tests;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]
@@ -41,6 +45,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
+use users::os::unix::UserExt;
 use users::{get_group_by_gid, get_group_by_name, get_user_by_uid, get_user_groups};
 
 use crate::drivers::DriverService;
@@ -109,6 +114,7 @@ pub fn run() -> Result<(), String> {
         clock: Arc::new(SystemClock),
         host_shutting_down: Arc::new(SystemdShutdownSignal),
         socket_path: paths.socket_path.clone(),
+        host_root: PathBuf::from("/"),
     });
 
     let core = Arc::new(core);
@@ -372,6 +378,7 @@ fn resolve_peer(
         username,
         groups,
         primary_group,
+        home: user.home_dir().to_path_buf(),
     })
 }
 

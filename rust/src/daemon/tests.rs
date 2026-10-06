@@ -27,12 +27,14 @@ fn fake_sessions_keep_their_callers_and_receive_store_health_alongside_one_shot_
         username: "alice".into(),
         groups: vec![],
         primary_group: "users".into(),
+        home: "/home/alice".into(),
     };
     let bob = SessionPeer {
         uid: 1001,
         username: "bob".into(),
         groups: vec!["admins".into()],
         primary_group: "users".into(),
+        home: "/home/bob".into(),
     };
     let core = daemon.core();
     let first = core.open_session(alice, &policy).unwrap();
@@ -70,6 +72,7 @@ fn unauthorized_sessions_are_rejected_by_the_same_admin_policy() {
         username: "mallory".into(),
         groups: vec!["users".into()],
         primary_group: "users".into(),
+        home: "/home/mallory".into(),
     };
     let expected = policy.authorize(&peer).unwrap_err();
     let Err(actual) = daemon.core().open_session(peer, &policy) else {
@@ -93,6 +96,7 @@ fn restarting_the_core_closes_old_fake_sessions_and_pushes_the_reopened_stores_h
         username: "alice".into(),
         groups: vec!["admins".into()],
         primary_group: "users".into(),
+        home: "/home/alice".into(),
     };
     let old = daemon.core().open_session(peer.clone(), &policy).unwrap();
     old.recv_timeout(std::time::Duration::from_secs(1)).unwrap();

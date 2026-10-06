@@ -1,0 +1,17 @@
+{
+  "automaticSwitching": true,
+  "games": [
+    {
+      "game": { "kind": "steam", "appId": 570 },
+      "name": "Dota 2",
+      "installed": true,
+      "profiles": { "GPU-123": "quiet", "GPU-456": "loud" }
+    },
+    {
+      "game": { "kind": "steam", "appId": 620 },
+      "name": "Portal 2",
+      "installed": false,
+      "profiles": {}
+    }
+  ]
+}

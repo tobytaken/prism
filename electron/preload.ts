@@ -29,6 +29,14 @@ import type {
   MigrationState,
   SetStartupProfileRequest,
 } from "@/features/gpus/types";
+import type {
+  AddSteamGameRequest,
+  GameRequest,
+  GamesState,
+  SetAutomaticSwitchingRequest,
+  SetGameProfileRequest,
+  SteamApp,
+} from "@/features/games/types";
 
 let daemonSubscribers = 0;
 
@@ -191,6 +199,28 @@ const prismApi = {
       ipcRenderer.invoke("prism:gpu:resetClockOffsets", {
         gpuId,
       }) as Promise<ClockOffsetResponse>,
+  },
+  games: {
+    listSteamApps: () =>
+      ipcRenderer.invoke("prism:games:listSteamApps") as Promise<SteamApp[]>,
+    get: () => ipcRenderer.invoke("prism:games:get") as Promise<GamesState>,
+    addSteamGame: (request: AddSteamGameRequest) =>
+      ipcRenderer.invoke(
+        "prism:games:addSteamGame",
+        request,
+      ) as Promise<GamesState>,
+    setProfile: (request: SetGameProfileRequest) =>
+      ipcRenderer.invoke(
+        "prism:games:setProfile",
+        request,
+      ) as Promise<GamesState>,
+    remove: (request: GameRequest) =>
+      ipcRenderer.invoke("prism:games:remove", request) as Promise<GamesState>,
+    setAutomaticSwitching: (request: SetAutomaticSwitchingRequest) =>
+      ipcRenderer.invoke(
+        "prism:games:setAutomaticSwitching",
+        request,
+      ) as Promise<GamesState>,
   },
   drivers: {
     getStatus: () =>

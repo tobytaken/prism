@@ -11,6 +11,10 @@ use crate::gpu::{
     SetGpuPowerLimitRequest,
 };
 use crate::protocol::{
+    AddSteamGameRequest, GameRequest, GamesState, SetAutomaticSwitchingRequest,
+    SetGameProfileRequest, SteamApp,
+};
+use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
     CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
     GpuTuningProfile, GpuTuningState, ImportProfilesRequest, LiveClockOffsetsRequest,
@@ -57,6 +61,44 @@ pub fn delete_gpu_profile(
         DaemonResponse::Command(response) => Ok(response),
         DaemonResponse::Error(error) => Err(error),
         _ => Err(unexpected_response_error("profile deletion")),
+    }
+}
+
+pub fn list_steam_apps() -> Result<Vec<SteamApp>, GpuCommandError> {
+    match send_request(DaemonRequest::ListSteamApps)? {
+        DaemonResponse::SteamApps(apps) => Ok(apps),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("Steam apps")),
+    }
+}
+
+pub fn get_games() -> Result<GamesState, GpuCommandError> {
+    send_games_request(DaemonRequest::GetGames)
+}
+
+pub fn add_steam_game(request: AddSteamGameRequest) -> Result<GamesState, GpuCommandError> {
+    send_games_request(DaemonRequest::AddSteamGame(request))
+}
+
+pub fn set_game_profile(request: SetGameProfileRequest) -> Result<GamesState, GpuCommandError> {
+    send_games_request(DaemonRequest::SetGameProfile(request))
+}
+
+pub fn remove_game(request: GameRequest) -> Result<GamesState, GpuCommandError> {
+    send_games_request(DaemonRequest::RemoveGame(request))
+}
+
+pub fn set_automatic_switching(
+    request: SetAutomaticSwitchingRequest,
+) -> Result<GamesState, GpuCommandError> {
+    send_games_request(DaemonRequest::SetAutomaticSwitching(request))
+}
+
+fn send_games_request(request: DaemonRequest) -> Result<GamesState, GpuCommandError> {
+    match send_request(request)? {
+        DaemonResponse::Games(state) => Ok(state),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("games")),
     }
 }
 
@@ -223,6 +265,7 @@ pub fn request_host_reboot() -> Result<(), String> {
 }
 
 /// GPU operations can be queued behind startup's roughly 30-second arrival wait.
+/// Game requests read the caller's Steam libraries.
 fn request_timeout(request: &DaemonRequest) -> Duration {
     if matches!(
         request,
@@ -242,6 +285,9 @@ fn request_timeout(request: &DaemonRequest) -> Duration {
             | DaemonRequest::SetStartupProfile(_)
     ) {
         Duration::from_secs(35)
+    } else if request.is_game_request() {
+        // Reading Steam libraries can wait on slow or removable disks.
+        Duration::from_secs(10)
     } else {
         Duration::from_secs(2)
     }

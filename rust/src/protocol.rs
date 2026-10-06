@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
@@ -314,12 +316,12 @@ pub struct SetStartupBehaviorRequest {
 pub struct SetStartupProfileRequest {
     pub gpu_id: String,
     /// None clears the designation, including one belonging to another user.
-    #[serde(deserialize_with = "startup_profile_id")]
+    #[serde(deserialize_with = "explicit_option")]
     pub profile_id: Option<String>,
 }
 
-// Require an explicit null to clear a designation; a missing field is a malformed request.
-fn startup_profile_id<'de, D: serde::Deserializer<'de>>(
+// Require an explicit null to clear a choice; a missing field is a malformed request.
+fn explicit_option<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
     Option::<String>::deserialize(deserializer)
@@ -372,6 +374,73 @@ pub struct StartupState {
     pub possibly_stale: Vec<String>,
 }
 
+/// A fully installed Steam app from the caller's Steam libraries.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SteamApp {
+    pub app_id: u32,
+    /// From the app's manifest.
+    pub name: String,
+}
+
+/// What identifies a game: a Steam app by its app ID, whether it runs natively or through
+/// Proton.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum GameId {
+    #[serde(rename_all = "camelCase")]
+    Steam { app_id: u32 },
+}
+
+/// One of the caller's game associations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GameEntry {
+    pub game: GameId,
+    pub name: String,
+    /// Whether the game is installed now; an association is kept while it isn't.
+    pub installed: bool,
+    /// The linked profile id per GPU UUID. GPUs without one are left unchanged.
+    pub profiles: BTreeMap<String, String>,
+}
+
+/// The caller's game associations and automatic switching opt-in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GamesState {
+    pub automatic_switching: bool,
+    pub games: Vec<GameEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AddSteamGameRequest {
+    pub app_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetGameProfileRequest {
+    pub game: GameId,
+    /// The GPU's UUID.
+    pub gpu_id: String,
+    /// None leaves the GPU unchanged while the game runs.
+    #[serde(deserialize_with = "explicit_option")]
+    pub profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GameRequest {
+    pub game: GameId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetAutomaticSwitchingRequest {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
@@ -402,11 +471,32 @@ pub enum DaemonRequest {
     ApplyProfileById(ProfileIdRequest),
     CorrectAndApplyProfile(CorrectAndApplyProfileRequest),
     ImportProfiles(ImportProfilesRequest),
+    ListSteamApps,
+    GetGames,
+    AddSteamGame(AddSteamGameRequest),
+    SetGameProfile(SetGameProfileRequest),
+    RemoveGame(GameRequest),
+    SetAutomaticSwitching(SetAutomaticSwitchingRequest),
     GetDriverStatus,
     StartDriverAction(StartDriverActionRequest),
     GetDriverJob(DriverJobRequest),
     CancelDriverJob(DriverJobRequest),
     RequestHostReboot,
+}
+
+impl DaemonRequest {
+    /// Game requests, which read the caller's Steam libraries.
+    pub fn is_game_request(&self) -> bool {
+        matches!(
+            self,
+            Self::ListSteamApps
+                | Self::GetGames
+                | Self::AddSteamGame(_)
+                | Self::SetGameProfile(_)
+                | Self::RemoveGame(_)
+                | Self::SetAutomaticSwitching(_)
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -425,6 +515,8 @@ pub enum DaemonResponse {
     TuningStates(Vec<GpuTuningState>),
     CorrectedProfileApplication(CorrectedProfileApplication),
     ProfileImport(ProfileImportResponse),
+    SteamApps(Vec<SteamApp>),
+    Games(GamesState),
     DriverStatus(DriverStatusResponse),
     DriverJob(DriverJob),
     Error(GpuCommandError),
@@ -629,6 +721,55 @@ mod session_tests {
             serde_json::json!({"type": "correct_and_apply_profile", "payload": {"profileId": "quiet", "corrections": [{"setting": "fanSpeed", "savedValue": 1, "proposedValue": 0, "bound": "maximum"}]}}),
             serde_json::json!({"type": "import_profiles", "payload": {"profiles": [{"id": "a", "name": "A", "gpuId": "GPU-123", "settings": {"powerLimitWatts": 300}}]}}),
             serde_json::json!({"type": "import_profiles", "payload": {"profiles": [{"id": "a", "name": "A", "gpuId": "GPU-123", "settings": {}, "uid": 0}]}}),
+        ] {
+            assert!(
+                serde_json::from_value::<DaemonRequest>(malformed.clone()).is_err(),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn game_payloads_round_trip_the_shared_contract_and_reject_client_ownership() {
+        let state: serde_json::Value =
+            serde_json::from_str(include_str!("../../src/test/contracts/games-state.json"))
+                .unwrap();
+        let typed: GamesState = serde_json::from_value(state.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(DaemonResponse::Games(typed)).unwrap(),
+            serde_json::json!({ "type": "games", "payload": state })
+        );
+        assert_eq!(
+            serde_json::to_value(DaemonResponse::SteamApps(vec![SteamApp {
+                app_id: 570,
+                name: "Dota 2".into()
+            }]))
+            .unwrap(),
+            serde_json::json!({ "type": "steam_apps", "payload": [{ "appId": 570, "name": "Dota 2" }] })
+        );
+        for request in [
+            serde_json::json!({ "type": "list_steam_apps" }),
+            serde_json::json!({ "type": "get_games" }),
+            serde_json::json!({ "type": "add_steam_game", "payload": { "appId": 570 } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123", "profileId": "quiet" } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123", "profileId": null } }),
+            serde_json::json!({ "type": "remove_game", "payload": { "game": { "kind": "steam", "appId": 570 } } }),
+            serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": true } }),
+        ] {
+            let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), request);
+        }
+        for malformed in [
+            serde_json::json!({ "type": "add_steam_game", "payload": { "appId": "570" } }),
+            serde_json::json!({ "type": "add_steam_game", "payload": { "appId": -1 } }),
+            serde_json::json!({ "type": "add_steam_game", "payload": { "appId": 570, "name": "Dota 2" } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123" } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "program", "appId": 570 }, "gpuId": "GPU-123", "profileId": null } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570, "uid": 0 }, "gpuId": "GPU-123", "profileId": null } }),
+            serde_json::json!({ "type": "remove_game", "payload": { "game": { "kind": "steam" } } }),
+            serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": "yes" } }),
+            serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": true, "uid": 0 } }),
+            serde_json::json!({ "type": "get_games", "payload": { "uid": 0 } }),
         ] {
             assert!(
                 serde_json::from_value::<DaemonRequest>(malformed.clone()).is_err(),

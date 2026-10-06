@@ -15,6 +15,9 @@ use crate::gpu::{
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 use crate::protocol::{
+    AddSteamGameRequest, GameRequest, SetAutomaticSwitchingRequest, SetGameProfileRequest,
+};
+use crate::protocol::{
     CorrectAndApplyProfileRequest, ImportProfilesRequest, LiveClockOffsetsRequest,
     ProfileIdRequest, RenameProfileRequest, SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
     SetStartupBehaviorRequest, SetStartupProfileRequest, StartupGpuRequest,
@@ -133,6 +136,36 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
             "gpu.importProfiles",
             |request| daemon_client::import_gpu_profiles(request).map_err(BridgeError::from),
         ),
+        "games.listSteamApps" => daemon_client::list_steam_apps()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
+        "games.get" => daemon_client::get_games()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
+        "games.addSteamGame" => parse_and_serialize_result::<AddSteamGameRequest, _, _>(
+            request.params,
+            "games.addSteamGame",
+            |request| daemon_client::add_steam_game(request).map_err(BridgeError::from),
+        ),
+        "games.setProfile" => parse_and_serialize_result::<SetGameProfileRequest, _, _>(
+            request.params,
+            "games.setProfile",
+            |request| daemon_client::set_game_profile(request).map_err(BridgeError::from),
+        ),
+        "games.remove" => parse_and_serialize_result::<GameRequest, _, _>(
+            request.params,
+            "games.remove",
+            |request| daemon_client::remove_game(request).map_err(BridgeError::from),
+        ),
+        "games.setAutomaticSwitching" => {
+            parse_and_serialize_result::<SetAutomaticSwitchingRequest, _, _>(
+                request.params,
+                "games.setAutomaticSwitching",
+                |request| {
+                    daemon_client::set_automatic_switching(request).map_err(BridgeError::from)
+                },
+            )
+        }
         "gpu.getInventory" => serialize_result(get_gpu_inventory()),
         "gpu.getPerformance" => serialize_result(get_gpu_performance()),
         "gpu.getDaemonStatus" => serialize_result(get_gpu_daemon_status()),

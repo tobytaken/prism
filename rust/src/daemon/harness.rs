@@ -322,6 +322,7 @@ pub struct Harness {
     host_shutting_down: Arc<FakeHostShutdown>,
     persistent_dir: TempDir,
     boot_dir: TempDir,
+    host_root: TempDir,
     boot_id: String,
     boots: u32,
     core: Option<Arc<DaemonCore>>,
@@ -354,6 +355,7 @@ impl Harness {
             host_shutting_down: Arc::default(),
             persistent_dir,
             boot_dir: tempfile::tempdir().unwrap(),
+            host_root: tempfile::tempdir().unwrap(),
             boot_id: "boot-1".into(),
             boots: 1,
             core: None,
@@ -408,6 +410,7 @@ impl Harness {
             clock: Arc::clone(&self.clock) as Arc<dyn Clock>,
             host_shutting_down: Arc::clone(&self.host_shutting_down) as Arc<dyn HostShutdownSignal>,
             socket_path: PathBuf::from("/tmp/prismd-test.sock"),
+            host_root: self.host_root.path().to_path_buf(),
         })));
     }
 
@@ -422,6 +425,7 @@ impl Harness {
             username: username.into(),
             groups: vec!["admins".into()],
             primary_group: "users".into(),
+            home: format!("/home/{username}").into(),
         };
         let core = self.core();
         let session = core.open_session(peer, &policy).unwrap();
@@ -486,6 +490,20 @@ impl Harness {
 
     pub fn persistent_path(&self, name: &str) -> PathBuf {
         self.persistent_dir.path().join(name)
+    }
+
+    /// Where the absolute host path lies in the fake host root.
+    pub fn host_path(&self, path: &str) -> PathBuf {
+        self.host_root
+            .path()
+            .join(path.strip_prefix('/').expect("an absolute host path"))
+    }
+
+    /// Writes a file at the absolute host path, creating its directories.
+    pub fn write_host_file(&self, path: &str, contents: &str) {
+        let path = self.host_path(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
     }
 }
 
