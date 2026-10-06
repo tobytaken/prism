@@ -27,6 +27,9 @@ import type {
   SaveToCurrentProfileRequest,
   RenameGpuProfileRequest,
   GpuProfileIdRequest,
+  StartupBehavior,
+  StartupState,
+  SetStartupProfileRequest,
 } from "@/features/gpus/types";
 
 let daemonSubscribers = 0;
@@ -69,6 +72,23 @@ function onTuningStateChanged(callback: (state: GpuTuningState) => void) {
 
 const prismApi = {
   gpu: {
+    getStartupState: () =>
+      ipcRenderer.invoke("prism:gpu:getStartupState") as Promise<StartupState>,
+    setStartupBehavior: (request: { behavior: StartupBehavior }) =>
+      ipcRenderer.invoke(
+        "prism:gpu:setStartupBehavior",
+        request,
+      ) as Promise<GpuCommandResponse>,
+    setStartupProfile: (request: SetStartupProfileRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:setStartupProfile",
+        request,
+      ) as Promise<GpuCommandResponse>,
+    dismissStartupOutcome: (request: { gpuId: string }) =>
+      ipcRenderer.invoke(
+        "prism:gpu:dismissStartupOutcome",
+        request,
+      ) as Promise<GpuCommandResponse>,
     onDaemonStatusChanged,
     onTuningStateChanged,
     getTuningStates: () =>

@@ -35,7 +35,7 @@ pub(super) struct SessionTransport {
 
 impl SessionTransport {
     pub fn request(&self, request: DaemonRequest) -> Reply {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + super::request_timeout(&request);
         let (sender, receiver) = mpsc::channel();
         let id = {
             let (mut connection, _) = self

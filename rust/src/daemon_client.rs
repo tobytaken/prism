@@ -16,7 +16,8 @@ use crate::protocol::{
     CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
     GpuTuningProfile, GpuTuningState, ImportProfilesRequest, LiveClockOffsetsRequest,
     ProfileApplicationResponse, ProfileIdRequest, ProfileImportResponse, RenameProfileRequest,
-    SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
+    SaveProfileAsNewRequest, SaveToCurrentProfileRequest, SetStartupBehaviorRequest,
+    SetStartupProfileRequest, StartupGpuRequest, StartupState,
 };
 
 mod session;
@@ -249,6 +250,34 @@ pub fn request_host_reboot() -> Result<(), String> {
     send_command_request(DaemonRequest::RequestHostReboot).map_err(|error| error.message)
 }
 
+/// GPU operations can be queued behind startup's roughly 30-second arrival wait.
+fn request_timeout(request: &DaemonRequest) -> Duration {
+    if matches!(
+        request,
+        DaemonRequest::ApplyConfig(_)
+            | DaemonRequest::ApplyProfile(_)
+            | DaemonRequest::ResetConfig(_)
+            | DaemonRequest::ReapplySavedConfig
+            | DaemonRequest::SetPowerLimit(_)
+            | DaemonRequest::ResetPowerLimit(_)
+            | DaemonRequest::SetFanSpeed(_)
+            | DaemonRequest::SetFanModeAuto(_)
+            | DaemonRequest::SetClockOffsets(_)
+            | DaemonRequest::ResetClockOffsets(_)
+            | DaemonRequest::SaveProfileAsNew(_)
+            | DaemonRequest::SaveToCurrentProfile(_)
+            | DaemonRequest::RenameProfile(_)
+            | DaemonRequest::DeleteProfile(_)
+            | DaemonRequest::ApplyProfileById(_)
+            | DaemonRequest::CorrectAndApplyProfile(_)
+            | DaemonRequest::SetStartupProfile(_)
+    ) {
+        Duration::from_secs(35)
+    } else {
+        Duration::from_secs(2)
+    }
+}
+
 fn send_request(request: DaemonRequest) -> Result<DaemonResponse, GpuCommandError> {
     if !matches!(
         request,
@@ -265,7 +294,7 @@ fn send_request(request: DaemonRequest) -> Result<DaemonResponse, GpuCommandErro
     }
     let mut stream = UnixStream::connect(socket_path()).map_err(map_io_error)?;
     stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
+        .set_read_timeout(Some(request_timeout(&request)))
         .map_err(map_io_error)?;
     stream
         .set_write_timeout(Some(Duration::from_secs(2)))
@@ -344,4 +373,30 @@ fn send_gpu_command(request: DaemonRequest) -> Result<DaemonCommandResponse, Gpu
         DaemonResponse::Error(error) => Err(error),
         _ => Err(unexpected_response_error("GPU command")),
     }
+}
+
+pub fn get_startup_state() -> Result<StartupState, GpuCommandError> {
+    match send_request(DaemonRequest::GetStartupState)? {
+        DaemonResponse::StartupState(state) => Ok(state),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("startup state")),
+    }
+}
+
+pub fn set_startup_behavior(
+    request: SetStartupBehaviorRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::SetStartupBehavior(request))
+}
+
+pub fn set_startup_profile(
+    request: SetStartupProfileRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::SetStartupProfile(request))
+}
+
+pub fn dismiss_startup_outcome(
+    request: StartupGpuRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::DismissStartupOutcome(request))
 }

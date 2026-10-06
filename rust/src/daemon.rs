@@ -1,9 +1,11 @@
 mod backend;
+mod boot_state;
 mod daemon_core;
 mod host;
 mod profiles;
 mod queue;
 mod session;
+mod startup;
 mod tuning;
 mod tuning_store;
 
@@ -15,6 +17,8 @@ mod harness;
 mod manage_profile_tests;
 #[cfg(test)]
 mod profile_tests;
+#[cfg(test)]
+mod startup_tests;
 #[cfg(test)]
 mod tests;
 
@@ -100,7 +104,18 @@ pub fn run() -> Result<(), String> {
         socket_path: paths.socket_path.clone(),
     });
 
-    serve(listener, Arc::new(core), Arc::new(config));
+    let core = Arc::new(core);
+    let starting = Arc::clone(&core);
+    thread::Builder::new()
+        .name("prismd-readiness".into())
+        .spawn(move || {
+            starting.wait_for_startup();
+            if let Err(error) = host::notify_ready() {
+                eprintln!("failed to notify systemd that startup finished: {error}");
+            }
+        })
+        .map_err(|error| error.to_string())?;
+    serve(listener, core, Arc::new(config));
     Ok(())
 }
 

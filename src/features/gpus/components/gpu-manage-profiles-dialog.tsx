@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from "react";
 import { LoaderCircle } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,17 +14,26 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
-import type { CurrentProfile, GpuTuningProfile } from "@/features/gpus/types";
+import { startupProfileWarning } from "@/features/gpus/lib/startup-profiles";
+import type {
+  GpuPerformanceDevice,
+  CurrentProfile,
+  GpuTuningProfile,
+} from "@/features/gpus/types";
 
 /** Manages only the caller's profiles for the GPU whose selector opened it. */
 export function GpuManageProfilesDialog({
   profiles,
+  gpuId,
+  gpu,
   current,
   currentProfileKnown,
   workflow,
   onOpenChange,
 }: {
   profiles: GpuTuningProfile[];
+  gpuId: string;
+  gpu?: GpuPerformanceDevice;
   current: CurrentProfile | null;
   currentProfileKnown: boolean;
   workflow: GpuProfileWorkflow;
@@ -34,7 +44,22 @@ export function GpuManageProfilesDialog({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<GpuTuningProfile | null>(null);
-  const pending = workflow.rename.isPending || workflow.remove.isPending;
+  const startup = workflow.startup;
+  const startupProfile = startup.profileOf(gpuId);
+  const designated = profiles.find(
+    (profile) => profile.id === startupProfile?.id,
+  );
+  const startupWarning = designated
+    ? startupProfileWarning(designated, gpu)
+    : null;
+  const startupKnown = startup.query.isSuccess;
+  const canDelete =
+    startupKnown &&
+    (currentProfileKnown || (!gpu && workflow.states.isSuccess));
+  const pending =
+    workflow.rename.isPending ||
+    workflow.remove.isPending ||
+    startup.setProfile.isPending;
   async function rename(event: FormEvent) {
     event.preventDefault();
     if (!renaming || !name.trim() || pending) return;
@@ -50,7 +75,7 @@ export function GpuManageProfilesDialog({
     }
   }
   async function remove() {
-    if (!deleting || pending || !currentProfileKnown) return;
+    if (!deleting || pending || !canDelete) return;
     setError(null);
     try {
       await workflow.remove.mutateAsync({ profileId: deleting.id });
@@ -73,15 +98,75 @@ export function GpuManageProfilesDialog({
             Manage your profiles for this GPU.
           </DialogDescription>
         </DialogHeader>
+        <div className="grid gap-2 rounded-lg border p-3">
+          <p className="text-sm">
+            Startup behavior:{" "}
+            {startup.query.data
+              ? startup.query.data.behavior === "off"
+                ? "Off"
+                : "Startup profiles"
+              : "Unavailable"}
+            .{" "}
+            <Link className="underline" to="/settings">
+              Settings
+            </Link>
+          </p>
+          <label htmlFor={`${id}-startup`} className="text-sm font-medium">
+            Startup profile
+          </label>
+          <select
+            id={`${id}-startup`}
+            className="rounded-md border bg-background p-2 text-sm"
+            value={startupProfile?.id ?? ""}
+            disabled={!startupKnown || pending}
+            onChange={(event) =>
+              startup.setProfile.mutate({
+                gpuId,
+                profileId: event.target.value || null,
+              })
+            }
+          >
+            <option value="">No startup profile</option>
+            {startupProfile &&
+              !profiles.some((profile) => profile.id === startupProfile.id) && (
+                <option value={startupProfile.id} disabled>
+                  {startupProfile.name} (another user's profile)
+                </option>
+              )}
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">
+            This choice is host-wide; the latest change wins. Changes take
+            effect at the next host boot.
+          </p>
+          {startupWarning && (
+            <p className="text-sm text-amber-600">{startupWarning}</p>
+          )}
+          {startup.query.error && (
+            <p role="alert" className="text-sm text-destructive">
+              {startup.query.error.message}
+            </p>
+          )}
+          {startup.setProfile.error && (
+            <p role="alert" className="text-sm text-destructive">
+              {startup.setProfile.error.message}
+            </p>
+          )}
+        </div>
         {profiles.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No saved profiles for this GPU yet.
           </p>
         )}
-        {!currentProfileKnown && (
+        {!canDelete && (
           <p role="status" className="text-sm text-muted-foreground">
-            Deletion is unavailable until this GPU's current profile can be
-            read. Try again once the Prism daemon is available.
+            {startupKnown
+              ? "Deletion is unavailable until this GPU's current profile can be read. Try again once the Prism daemon is available."
+              : "Deletion is unavailable until startup choices can be read. Try again once the Prism daemon is available."}
           </p>
         )}
         <ul className="max-h-80 space-y-3 overflow-y-auto">
@@ -117,7 +202,7 @@ export function GpuManageProfilesDialog({
                     type="button"
                     variant="destructive"
                     size="sm"
-                    disabled={pending || !currentProfileKnown}
+                    disabled={pending || !canDelete}
                     aria-label={`Delete ${profile.name}`}
                     onClick={() => {
                       setDeleting(profile);
@@ -198,6 +283,10 @@ export function GpuManageProfilesDialog({
               <DialogDescription>
                 {deleting?.id === current?.id &&
                   "This is the current profile. After deletion, this GPU will have no current profile. "}
+                {deleting?.id === startupProfile?.id &&
+                  "This is the startup profile. After deletion, this GPU will have no startup profile. "}
+                {!gpu &&
+                  "The GPU is absent. Any current-profile designation for this profile will be cleared. "}
                 Current tuning values will stay unchanged.
               </DialogDescription>
             </DialogHeader>
@@ -206,10 +295,10 @@ export function GpuManageProfilesDialog({
                 {error}
               </p>
             )}
-            {!currentProfileKnown && (
+            {!canDelete && (
               <p role="status" className="text-sm text-muted-foreground">
-                The GPU's current profile could not be read. Try deleting again
-                once the Prism daemon is available.
+                Profile roles could not be read. Try deleting again once the
+                Prism daemon is available.
               </p>
             )}
             <DialogFooter>
@@ -221,7 +310,7 @@ export function GpuManageProfilesDialog({
               <Button
                 type="button"
                 variant="destructive"
-                disabled={pending || !currentProfileKnown}
+                disabled={pending || !canDelete}
                 onClick={() => void remove()}
               >
                 {pending && <LoaderCircle className="animate-spin" />}Delete

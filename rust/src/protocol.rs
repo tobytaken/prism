@@ -288,6 +288,83 @@ pub struct ProfileImportResponse {
     pub skipped: Vec<String>,
 }
 
+/// The host-wide choice for this stage of startup support.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupBehavior {
+    #[default]
+    Off,
+    StartupProfiles,
+}
+
+impl StartupBehavior {
+    pub fn is_off(&self) -> bool {
+        *self == Self::Off
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetStartupBehaviorRequest {
+    pub behavior: StartupBehavior,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetStartupProfileRequest {
+    pub gpu_id: String,
+    /// None clears the designation, including one belonging to another user.
+    #[serde(deserialize_with = "startup_profile_id")]
+    pub profile_id: Option<String>,
+}
+
+// Require an explicit null to clear a designation; a missing field is a malformed request.
+fn startup_profile_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StartupGpuRequest {
+    pub gpu_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StartupProfile {
+    pub gpu_id: String,
+    /// Visible by name to all users; another user's values stay private.
+    pub profile: CurrentProfile,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupOutcomeStatus {
+    Applied,
+    Failed,
+    NotAttempted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StartupOutcome {
+    pub gpu_id: String,
+    pub profile: Option<CurrentProfile>,
+    pub status: StartupOutcomeStatus,
+    pub reason: Option<String>,
+    pub application: Option<ProfileApplicationResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StartupState {
+    pub behavior: StartupBehavior,
+    pub profiles: Vec<StartupProfile>,
+    pub outcomes: Vec<StartupOutcome>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
@@ -305,6 +382,10 @@ pub enum DaemonRequest {
     SetFanModeAuto(SetGpuFanModeAutoRequest),
     SetClockOffsets(LiveClockOffsetsRequest),
     ResetClockOffsets(GpuTargetRequest),
+    GetStartupState,
+    SetStartupBehavior(SetStartupBehaviorRequest),
+    SetStartupProfile(SetStartupProfileRequest),
+    DismissStartupOutcome(StartupGpuRequest),
     ListProfiles,
     GetTuningStates,
     SaveProfileAsNew(SaveProfileAsNewRequest),
@@ -331,6 +412,7 @@ pub enum DaemonResponse {
     Command(DaemonCommandResponse),
     ClockOffsets(ClockOffsetResponse),
     ProfileApplication(ProfileApplicationResponse),
+    StartupState(StartupState),
     Profiles(Vec<GpuTuningProfile>),
     Profile(GpuTuningProfile),
     TuningStates(Vec<GpuTuningState>),
@@ -401,6 +483,43 @@ mod session_tests {
             })
         );
         assert!(read_frame::<SessionMessage>(&mut reader).unwrap().is_none());
+    }
+
+    #[test]
+    fn startup_state_round_trips_the_shared_contract_and_explicit_clearing() {
+        let state: serde_json::Value =
+            serde_json::from_str(include_str!("../../src/test/contracts/startup-state.json"))
+                .unwrap();
+        let typed: StartupState = serde_json::from_value(state.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(DaemonResponse::StartupState(typed)).unwrap(),
+            serde_json::json!({ "type": "startup_state", "payload": state })
+        );
+        for request in [
+            serde_json::json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": null } }),
+            serde_json::json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": "quiet" } }),
+            serde_json::json!({ "type": "set_startup_behavior", "payload": { "behavior": "startupProfiles" } }),
+            serde_json::json!({ "type": "dismiss_startup_outcome", "payload": { "gpuId": "GPU-123" } }),
+        ] {
+            let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), request);
+        }
+    }
+
+    #[test]
+    fn startup_requests_reject_missing_choices_and_client_ownership() {
+        for malformed in [
+            serde_json::json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123" } }),
+            serde_json::json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": 7 } }),
+            serde_json::json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": null, "uid": 0 } }),
+            serde_json::json!({ "type": "set_startup_behavior", "payload": { "behavior": "restoreLastApplied" } }),
+            serde_json::json!({ "type": "dismiss_startup_outcome", "payload": { "gpuId": "GPU-123", "username": "alice" } }),
+        ] {
+            assert!(
+                serde_json::from_value::<DaemonRequest>(malformed.clone()).is_err(),
+                "{malformed}"
+            );
+        }
     }
 
     #[test]

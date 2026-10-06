@@ -18,6 +18,8 @@ import type {
   ProfileSetting,
   ProfileSettingKey,
   TuningOutcome,
+  StartupBehavior,
+  StartupOutcome,
 } from "@/features/gpus/types";
 import { createPerformanceResponse } from "./gpu-fixtures";
 
@@ -84,6 +86,9 @@ export function createFakeDesktop({
   profiles = [],
   otherUsersProfiles = [],
   currentProfiles = {},
+  startupBehavior = "off",
+  startupProfiles = {},
+  startupOutcomes = [],
 }: {
   response?: GpuPerformanceResponse;
   profiles?: GpuTuningProfile[];
@@ -91,6 +96,9 @@ export function createFakeDesktop({
   otherUsersProfiles?: GpuTuningProfile[];
   /** Each GPU's current profile id, by GPU UUID. */
   currentProfiles?: Record<string, string>;
+  startupBehavior?: StartupBehavior;
+  startupProfiles?: Record<string, string>;
+  startupOutcomes?: StartupOutcome[];
 } = {}) {
   /** Setters that fail with this message on every GPU until removed. */
   const failures: Partial<Record<Setting, string>> = {};
@@ -345,6 +353,44 @@ export function createFakeDesktop({
 
   const api = window.prism.gpu;
   const spies = {
+    getStartupState: vi
+      .spyOn(api, "getStartupState")
+      .mockImplementation(async () => ({
+        behavior: startupBehavior,
+        profiles: Object.entries(startupProfiles).flatMap(([gpuId, id]) => {
+          const saved = [...profiles, ...otherUsersProfiles].find(
+            (profile) => profile.id === id,
+          );
+          return saved ? [{ gpuId, profile: { id, name: saved.name } }] : [];
+        }),
+        outcomes: structuredClone(startupOutcomes),
+      })),
+    setStartupBehavior: vi
+      .spyOn(api, "setStartupBehavior")
+      .mockImplementation(async ({ behavior }) => {
+        startupBehavior = behavior;
+        return { success: true, error: null };
+      }),
+    setStartupProfile: vi
+      .spyOn(api, "setStartupProfile")
+      .mockImplementation(async ({ gpuId, profileId }) => {
+        if (profileId === null) delete startupProfiles[gpuId];
+        else {
+          if (profile(profileId).gpuId !== gpuId)
+            throw new Error("The startup profile belongs to another GPU.");
+          startupProfiles[gpuId] = profileId;
+        }
+        return { success: true, error: null };
+      }),
+    dismissStartupOutcome: vi
+      .spyOn(api, "dismissStartupOutcome")
+      .mockImplementation(async ({ gpuId }) => {
+        const index = startupOutcomes.findIndex(
+          (outcome) => outcome.gpuId === gpuId,
+        );
+        if (index >= 0) startupOutcomes.splice(index, 1);
+        return { success: true, error: null };
+      }),
     getPerformance: vi
       .spyOn(api, "getPerformance")
       .mockImplementation(async () => structuredClone(response)),
@@ -379,6 +425,8 @@ export function createFakeDesktop({
         profiles.splice(index, 1);
         for (const [gpuId, currentId] of Object.entries(currentProfiles))
           if (currentId === profileId) delete currentProfiles[gpuId];
+        for (const [gpuId, startupId] of Object.entries(startupProfiles))
+          if (startupId === profileId) delete startupProfiles[gpuId];
         return { success: true, error: null };
       }),
     getTuningStates: vi
@@ -577,6 +625,11 @@ export function createFakeDesktop({
     },
     profiles,
     currentProfiles,
+    startupProfiles,
+    startupOutcomes,
+    get startupBehavior() {
+      return startupBehavior;
+    },
     failures,
     lastApplied,
     ...spies,

@@ -1,3 +1,4 @@
+import { StartupOutcomes } from "./startup-outcomes";
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
 import { TuningStoreProblemAlert } from "./tuning-store-problem-alert";
 import {
@@ -104,6 +105,8 @@ export function GpuPerformanceScreen({
           <h1 className="text-3xl font-semibold tracking-tight">Performance</h1>
         </div>
       </div>
+
+      {profiles && <StartupOutcomes workflow={profiles} gpus={gpus} />}
 
       {daemonDisconnected && daemonStatus && (
         <Alert

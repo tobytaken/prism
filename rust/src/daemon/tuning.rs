@@ -11,6 +11,23 @@ pub(super) fn apply_profile(
     backend: &dyn DaemonBackend,
     request: ApplyGpuProfileRequest,
 ) -> ProfileApplicationResponse {
+    apply(backend, request, true)
+}
+
+/// Boot results are shared across users. Only manual loads may disclose saved values
+/// and offer the profile owner's range-correction review.
+pub(super) fn apply_startup_profile(
+    backend: &dyn DaemonBackend,
+    request: ApplyGpuProfileRequest,
+) -> ProfileApplicationResponse {
+    apply(backend, request, false)
+}
+
+fn apply(
+    backend: &dyn DaemonBackend,
+    request: ApplyGpuProfileRequest,
+    review_ranges: bool,
+) -> ProfileApplicationResponse {
     use crate::gpu::ControlSupport;
     let settings = &request.settings;
     let blocked = |message: String, corrections: Vec<ProfileRangeCorrection>| {
@@ -85,7 +102,11 @@ pub(super) fn apply_profile(
                             (max, RangeBound::Maximum)
                         };
                         range_errors.push((
-                            format!("{label}: requested {value} is outside the current allowed range {min} to {max}. Discard this change and load the profile again to review a correction."),
+                            if review_ranges {
+                                format!("{label}: requested {value} is outside the current allowed range {min} to {max}. Discard this change and load the profile again to review a correction.")
+                            } else {
+                                format!("{label} is outside the current allowed range. Load the profile manually to review a correction.")
+                            },
                             ProfileRangeCorrection { setting: setting_key, saved_value: value, proposed_value, bound },
                         ));
                     },
@@ -129,7 +150,7 @@ pub(super) fn apply_profile(
     let (range_messages, corrections): (Vec<_>, Vec<_>) = range_errors.into_iter().unzip();
     errors.extend(range_messages);
     if !errors.is_empty() {
-        let corrections = if errors.len() == corrections.len() {
+        let corrections = if review_ranges && errors.len() == corrections.len() {
             corrections
         } else {
             vec![]

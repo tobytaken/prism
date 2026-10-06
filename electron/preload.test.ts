@@ -1,3 +1,4 @@
+import startupState from "@/test/contracts/startup-state.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import tuningOutcomes from "@/test/contracts/tuning-outcomes.json";
@@ -239,6 +240,29 @@ describe("preload bridge", () => {
     mocks.invoke.mockResolvedValue(gpuTuningStates);
     expect(await prism.gpu.getTuningStates()).toEqual(gpuTuningStates);
     expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:getTuningStates");
+  });
+
+  it("forwards host-wide startup choices, explicit clearing, and outcome dismissals", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValueOnce(startupState);
+    expect(await prism.gpu.getStartupState()).toEqual(startupState);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:getStartupState");
+    mocks.invoke.mockResolvedValue({ success: true, error: null });
+    await prism.gpu.setStartupBehavior({ behavior: "startupProfiles" });
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:setStartupBehavior",
+      { behavior: "startupProfiles" },
+    );
+    await prism.gpu.setStartupProfile({ gpuId: "GPU-123", profileId: null });
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:setStartupProfile",
+      { gpuId: "GPU-123", profileId: null },
+    );
+    await prism.gpu.dismissStartupOutcome({ gpuId: "GPU-123" });
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:gpu:dismissStartupOutcome",
+      { gpuId: "GPU-123" },
+    );
   });
 
   it("subscribes to tuning state changes alongside daemon status, keeping the daemon subscription until both leave", async () => {

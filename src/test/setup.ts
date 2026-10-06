@@ -4,6 +4,14 @@ import type { PrismDesktopApi } from "@/types/global";
 
 const prismStub: PrismDesktopApi = {
   gpu: {
+    getStartupState: async () => ({
+      behavior: "off",
+      profiles: [],
+      outcomes: [],
+    }),
+    setStartupBehavior: async () => ({ success: true, error: null }),
+    setStartupProfile: async () => ({ success: true, error: null }),
+    dismissStartupOutcome: async () => ({ success: true, error: null }),
     listProfiles: async () => [],
     renameProfile: async () => {
       throw new Error("Profile renaming is not configured in this test");

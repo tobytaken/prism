@@ -252,3 +252,113 @@ it("keeps a non-current deletion separate from another user's current profile an
   expect(profileSelector()).toHaveTextContent("Another user's");
   expect(fake.currentProfiles).toEqual({ "GPU-123": "theirs" });
 });
+
+it("designates a startup profile, stars it, warns on save and confirms its startup role on delete", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    profiles: [structuredClone(quiet)],
+    currentProfiles: { "GPU-123": "quiet" },
+    startupBehavior: "startupProfiles",
+  });
+  renderPerformancePage();
+  const dialog = await manageProfiles(user);
+  const picker = await within(dialog).findByRole("combobox", {
+    name: "Startup profile",
+  });
+  expect(picker).toHaveValue("");
+  expect(dialog).toHaveTextContent("Startup behavior: Startup profiles");
+  expect(
+    within(dialog).getByRole("link", { name: "Settings" }),
+  ).toHaveAttribute("href", "/settings");
+  await user.selectOptions(picker, "quiet");
+  await waitFor(() =>
+    expect(fake.startupProfiles).toEqual({ "GPU-123": "quiet" }),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  const menu = await openProfileMenu(user);
+  await waitFor(() =>
+    expect(profileEntry("Quiet")).toHaveTextContent("Startup profile"),
+  );
+  expect(menu).toHaveTextContent("Also changes the values applied at startup.");
+  await user.keyboard("{Escape}");
+  const again = await manageProfiles(user);
+  await user.click(within(again).getByRole("button", { name: "Delete Quiet" }));
+  const confirmation = await screen.findByRole("alertdialog");
+  expect(confirmation).toHaveTextContent(
+    "This is the startup profile. After deletion, this GPU will have no startup profile.",
+  );
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Delete profile" }),
+  );
+  await waitFor(() => expect(fake.startupProfiles).toEqual({}));
+});
+
+it("allows an out-of-range startup designation with a warning, and shows another user's designation by name", async () => {
+  const user = userEvent.setup();
+  const outside = {
+    ...quiet,
+    id: "outside",
+    name: "Too high",
+    settings: { powerLimitWatts: { kind: "value" as const, value: 700 } },
+  };
+  const theirs = { ...quiet, id: "theirs", name: "Silent" };
+  const fake = createFakeDesktop({
+    profiles: [outside],
+    otherUsersProfiles: [theirs],
+    startupProfiles: { "GPU-123": "theirs" },
+  });
+  renderPerformancePage();
+  const dialog = await manageProfiles(user);
+  const picker = await within(dialog).findByRole("combobox", {
+    name: "Startup profile",
+  });
+  expect(picker).toHaveValue("theirs");
+  expect(dialog).toHaveTextContent("Silent (another user's profile)");
+  await user.selectOptions(picker, "outside");
+  await waitFor(() => expect(picker).toHaveValue("outside"));
+  expect(
+    await within(dialog).findByText(/Boot will skip this profile/),
+  ).toHaveTextContent("out of range");
+  expect(fake.startupProfiles).toEqual({ "GPU-123": "outside" });
+  expect(fake.applyProfileById).not.toHaveBeenCalled();
+});
+
+it("can designate and delete an absent GPU's startup profile with a startup-role confirmation", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    response: createPerformanceResponse({ gpus: [] }),
+    profiles: [structuredClone(quiet)],
+  });
+  renderPerformancePage();
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Manage profiles for Quiet (GPU-123)",
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Manage profiles" });
+  await user.selectOptions(
+    within(dialog).getByRole("combobox", { name: "Startup profile" }),
+    "quiet",
+  );
+  expect(
+    await within(dialog).findByText(
+      /Boot will skip this profile while its GPU is absent/,
+    ),
+  ).toBeInTheDocument();
+  expect(fake.startupProfiles).toEqual({ "GPU-123": "quiet" });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Delete Quiet" }),
+  );
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: 'Delete "Quiet"?',
+  });
+  expect(confirmation).toHaveTextContent("This is the startup profile.");
+  expect(confirmation).toHaveTextContent(
+    "Any current-profile designation for this profile will be cleared.",
+  );
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Delete profile" }),
+  );
+  await waitFor(() => expect(fake.profiles).toEqual([]));
+  expect(fake.startupProfiles).toEqual({});
+});

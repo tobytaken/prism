@@ -19,6 +19,9 @@ import type {
   SaveToCurrentProfileRequest,
   RenameGpuProfileRequest,
   GpuProfileIdRequest,
+  StartupBehavior,
+  StartupState,
+  SetStartupProfileRequest,
 } from "@/features/gpus/types";
 import type {
   DriverAction,
@@ -28,6 +31,16 @@ import type {
 
 export interface PrismDesktopApi {
   gpu: {
+    getStartupState(): Promise<StartupState>;
+    setStartupBehavior(request: {
+      behavior: StartupBehavior;
+    }): Promise<GpuCommandResponse>;
+    setStartupProfile(
+      request: SetStartupProfileRequest,
+    ): Promise<GpuCommandResponse>;
+    dismissStartupOutcome(request: {
+      gpuId: string;
+    }): Promise<GpuCommandResponse>;
     /** The caller's own profiles. */
     listProfiles(): Promise<GpuTuningProfile[]>;
     renameProfile(request: RenameGpuProfileRequest): Promise<GpuTuningProfile>;

@@ -1,0 +1,25 @@
+{
+  "behavior": "startupProfiles",
+  "profiles": [
+    { "gpuId": "GPU-123", "profile": { "id": "quiet", "name": "Quiet" } }
+  ],
+  "outcomes": [
+    {
+      "gpuId": "GPU-123",
+      "profile": { "id": "quiet", "name": "Quiet" },
+      "status": "failed",
+      "reason": "Driver rejected the offset.",
+      "application": {
+        "power": { "status": "succeeded", "error": null },
+        "graphics": {
+          "status": "failed",
+          "error": "Driver rejected the offset."
+        },
+        "memory": {
+          "status": "unattempted",
+          "error": "An earlier profile setting failed."
+        }
+      }
+    }
+  ]
+}

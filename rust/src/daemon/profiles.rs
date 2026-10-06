@@ -279,7 +279,7 @@ impl TuningDocument {
     }
 
     /// Any user's profile with this id; ids are unique across users.
-    fn any_profile(&self, id: &str) -> Option<&GpuTuningProfile> {
+    pub(super) fn any_profile(&self, id: &str) -> Option<&GpuTuningProfile> {
         self.users
             .iter()
             .flat_map(|user| &user.profiles)
@@ -364,6 +364,7 @@ impl TuningDocument {
             .profiles
             .retain(|profile| profile.id != profile_id);
         self.current_profiles.retain(|_, id| id != profile_id);
+        self.startup_profiles.retain(|_, id| id != profile_id);
         Ok(())
     }
 

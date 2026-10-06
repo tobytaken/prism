@@ -441,6 +441,94 @@ describe("registerIpc", () => {
     }
   });
 
+  it("keeps a queued GPU mutation pending through the startup wait", async () => {
+    vi.useFakeTimers();
+    const child = createBackendChild({ success: true, error: null });
+    child.stdin.write.mockImplementation(() => true);
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      const pending = callHandler("prism:gpu:setPowerLimit", trustedEvent(), {
+        gpuId: "GPU-123",
+        limitWatts: 350,
+      });
+      const observed = pending.then(
+        (value) => ({ value }),
+        (error: Error) => ({ error: error.message }),
+      );
+      await vi.advanceTimersByTimeAsync(31_000);
+      const request = JSON.parse(child.stdin.write.mock.calls[0][0]) as {
+        id: number;
+      };
+      child.stdout.write(
+        `${JSON.stringify({ id: request.id, result: { success: true, error: null } })}\n`,
+      );
+      expect(await observed).toEqual({ value: { success: true, error: null } });
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("forwards startup requests and rejects client ownership and invalid modes", async () => {
+    const child = createBackendChild({ success: true, error: null });
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      for (const [method, payload] of [
+        ["setStartupBehavior", { behavior: "startupProfiles" }],
+        ["setStartupProfile", { gpuId: "GPU-123", profileId: "quiet" }],
+        ["setStartupProfile", { gpuId: "GPU-123", profileId: null }],
+        ["dismissStartupOutcome", { gpuId: "GPU-123" }],
+      ] as const) {
+        expect(
+          await callHandler(`prism:gpu:${method}`, trustedEvent(), payload),
+        ).toEqual({ success: true, error: null });
+        await expect(
+          callHandler(`prism:gpu:${method}`, untrustedEvent(), payload),
+        ).rejects.toThrow("Untrusted IPC sender");
+        await expect(
+          callHandler(`prism:gpu:${method}`, trustedEvent(), {
+            ...payload,
+            uid: 0,
+          }),
+        ).rejects.toThrow(`Invalid ${method} payload`);
+      }
+      await callHandler("prism:gpu:getStartupState", trustedEvent());
+      expect(sentRequests(child)).toEqual([
+        {
+          method: "gpu.setStartupBehavior",
+          params: { behavior: "startupProfiles" },
+        },
+        {
+          method: "gpu.setStartupProfile",
+          params: { gpuId: "GPU-123", profileId: "quiet" },
+        },
+        {
+          method: "gpu.setStartupProfile",
+          params: { gpuId: "GPU-123", profileId: null },
+        },
+        { method: "gpu.dismissStartupOutcome", params: { gpuId: "GPU-123" } },
+        { method: "gpu.getStartupState" },
+      ]);
+      await expect(
+        callHandler("prism:gpu:getStartupState", trustedEvent(), {}),
+      ).rejects.toThrow("Invalid getStartupState payload");
+      await expect(
+        callHandler("prism:gpu:setStartupBehavior", trustedEvent(), {
+          behavior: "restoreLastApplied",
+        }),
+      ).rejects.toThrow("Invalid setStartupBehavior payload");
+      await expect(
+        callHandler("prism:gpu:setStartupProfile", trustedEvent(), {
+          gpuId: "GPU-123",
+        }),
+      ).rejects.toThrow("Invalid setStartupProfile payload");
+    } finally {
+      dispose();
+    }
+  });
+
   it("forwards profile rename and delete to the daemon, preserving profile identity", async () => {
     const renamed = { ...gpuTuningProfiles[0], name: "Silent" };
     const deleted = { success: true, error: null };

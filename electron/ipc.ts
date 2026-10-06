@@ -95,12 +95,20 @@ class RustBackendClient {
     const payload: SidecarRequest = { id, method, params };
 
     return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(
-          new Error(`Timed out waiting for Prism backend method ${method}`),
-        );
-      }, 5_000);
+      const timeout = setTimeout(
+        () => {
+          this.pending.delete(id);
+          reject(
+            new Error(`Timed out waiting for Prism backend method ${method}`),
+          );
+          // Startup can hold a GPU's operation queue for about 30 seconds.
+        },
+        method.startsWith("gpu.") &&
+          !method.startsWith("gpu.get") &&
+          !method.startsWith("gpu.list")
+          ? 40_000
+          : 5_000,
+      );
 
       this.pending.set(id, {
         resolve: resolve as (value: unknown) => void,
@@ -494,6 +502,60 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       // The app's own profile file joins the daemon's list before the first one is shown.
       await importProfileFile();
       return backend.invoke("gpu.listProfiles");
+    },
+  );
+
+  ipcMain.handle(
+    "prism:gpu:getStartupState",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid getStartupState payload");
+      return backend.invoke("gpu.getStartupState");
+    },
+  );
+  ipcMain.handle(
+    "prism:gpu:setStartupBehavior",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["behavior"]) ||
+        (payload.behavior !== "off" && payload.behavior !== "startupProfiles")
+      )
+        throw new Error("Invalid setStartupBehavior payload");
+      return backend.invoke("gpu.setStartupBehavior", payload);
+    },
+  );
+  ipcMain.handle(
+    "prism:gpu:setStartupProfile",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["gpuId", "profileId"]) ||
+        !isString(payload.gpuId) ||
+        !payload.gpuId.trim() ||
+        !(
+          payload.profileId === null ||
+          (isString(payload.profileId) && payload.profileId.trim())
+        )
+      )
+        throw new Error("Invalid setStartupProfile payload");
+      return backend.invoke("gpu.setStartupProfile", payload);
+    },
+  );
+  ipcMain.handle(
+    "prism:gpu:dismissStartupOutcome",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["gpuId"]) ||
+        !isString(payload.gpuId) ||
+        !payload.gpuId.trim()
+      )
+        throw new Error("Invalid dismissStartupOutcome payload");
+      return backend.invoke("gpu.dismissStartupOutcome", payload);
     },
   );
 
