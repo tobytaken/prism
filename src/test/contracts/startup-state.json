@@ -6,6 +6,7 @@
   "outcomes": [
     {
       "gpuId": "GPU-123",
+      "behavior": "startupProfiles",
       "profile": { "id": "quiet", "name": "Quiet" },
       "status": "failed",
       "reason": "Driver rejected the offset.",
@@ -21,5 +22,6 @@
         }
       }
     }
-  ]
+  ],
+  "possiblyStale": ["GPU-123"]
 }

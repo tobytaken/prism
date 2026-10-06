@@ -477,6 +477,7 @@ describe("registerIpc", () => {
     try {
       for (const [method, payload] of [
         ["setStartupBehavior", { behavior: "startupProfiles" }],
+        ["setStartupBehavior", { behavior: "restoreLastApplied" }],
         ["setStartupProfile", { gpuId: "GPU-123", profileId: "quiet" }],
         ["setStartupProfile", { gpuId: "GPU-123", profileId: null }],
         ["dismissStartupOutcome", { gpuId: "GPU-123" }],
@@ -501,6 +502,10 @@ describe("registerIpc", () => {
           params: { behavior: "startupProfiles" },
         },
         {
+          method: "gpu.setStartupBehavior",
+          params: { behavior: "restoreLastApplied" },
+        },
+        {
           method: "gpu.setStartupProfile",
           params: { gpuId: "GPU-123", profileId: "quiet" },
         },
@@ -516,7 +521,7 @@ describe("registerIpc", () => {
       ).rejects.toThrow("Invalid getStartupState payload");
       await expect(
         callHandler("prism:gpu:setStartupBehavior", trustedEvent(), {
-          behavior: "restoreLastApplied",
+          behavior: "always",
         }),
       ).rejects.toThrow("Invalid setStartupBehavior payload");
       await expect(

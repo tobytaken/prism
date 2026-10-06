@@ -24,6 +24,7 @@ impl TuningDocument {
                 })
                 .collect(),
             outcomes: vec![],
+            possibly_stale: vec![],
         }
     }
 
@@ -57,24 +58,89 @@ impl TuningDocument {
     }
 }
 
-use std::collections::BTreeSet;
-use std::sync::atomic::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::backend::DaemonBackend;
 use super::boot_state::STARTUP_IN_PROGRESS;
 use super::daemon_core::DaemonCore;
+use super::host::Clock;
 use super::profiles::verified_gpu;
 use super::tuning::apply_startup_profile;
+use super::tuning_store::{RestoreAttempt, TuningStore};
 use crate::protocol::{
-    ApplyGpuProfileRequest, StartupBehavior, StartupOutcome, StartupOutcomeStatus,
-    TuningOutcomeStatus,
+    ApplyGpuProfileRequest, DaemonEvent, ProfileSettings, StartupBehavior, StartupOutcome,
+    StartupOutcomeStatus, TuningOutcomeStatus,
 };
+
+const RESTORE_SKIPPED: &str = "Restoring last applied tuning values was skipped once because the \
+    host didn't shut down cleanly after the previous boot restored them. They will be restored \
+    again at the next boot.";
+
+/// What startup puts into effect on one GPU.
+struct StartupTarget {
+    settings: ProfileSettings,
+    /// The startup profile, or none when restoring last applied tuning values.
+    profile: Option<CurrentProfile>,
+}
 
 impl DaemonCore {
     pub(super) fn start_startup(&self) -> Result<(), GpuCommandError> {
         // Reading an unhealthy store fails before the marker or any hardware can be changed.
         let document = self.tuning_store.read(Clone::clone)?;
+        let behavior = document.startup_behavior;
+        let boot_id = self.dependencies.boot_id.clone();
+        // Startup profiles were chosen deliberately for boot, so only a restore is guarded.
+        let restore_skipped = behavior == StartupBehavior::RestoreLastApplied
+            && document.restore_attempt.is_some()
+            && !document.restored_in(&boot_id);
+        let restorable = || {
+            document
+                .last_applied
+                .iter()
+                .filter(|(_, settings)| !settings.is_empty())
+        };
+        let designated = |gpu_id: &str| {
+            let profile = document.any_profile(document.startup_profiles.get(gpu_id)?)?;
+            Some((
+                profile.settings.clone(),
+                CurrentProfile {
+                    id: profile.id.clone(),
+                    name: profile.name.clone(),
+                },
+            ))
+        };
+        let mut targets: BTreeMap<String, StartupTarget> = match behavior {
+            StartupBehavior::Off => BTreeMap::new(),
+            StartupBehavior::StartupProfiles => document
+                .startup_profiles
+                .keys()
+                .filter_map(|gpu_id| {
+                    let (settings, profile) = designated(gpu_id)?;
+                    Some((
+                        gpu_id.clone(),
+                        StartupTarget {
+                            settings,
+                            profile: Some(profile),
+                        },
+                    ))
+                })
+                .collect(),
+            StartupBehavior::RestoreLastApplied if restore_skipped => BTreeMap::new(),
+            StartupBehavior::RestoreLastApplied => restorable()
+                .map(|(gpu_id, settings)| {
+                    (
+                        gpu_id.clone(),
+                        StartupTarget {
+                            settings: settings.clone(),
+                            profile: None,
+                        },
+                    )
+                })
+                .collect(),
+        };
         let performance = self.dependencies.backend.performance();
         let gpu_ids: BTreeSet<_> = performance
             .gpus
@@ -82,55 +148,71 @@ impl DaemonCore {
             .filter_map(|gpu| gpu.stable_id.clone())
             .filter(|uuid| !uuid.is_empty())
             .chain(document.startup_profiles.keys().cloned())
+            .chain(targets.keys().cloned())
+            .chain(
+                (behavior == StartupBehavior::RestoreLastApplied)
+                    .then(|| restorable().map(|(gpu_id, _)| gpu_id.clone()))
+                    .into_iter()
+                    .flatten(),
+            )
             .collect();
         let outcomes: Vec<_> = gpu_ids
             .into_iter()
             .map(|gpu_id| {
-                let profile = document
-                    .startup_profiles
-                    .get(&gpu_id)
-                    .and_then(|id| document.any_profile(id));
+                let reason = match behavior {
+                    StartupBehavior::Off => "Startup behavior is Off.",
+                    _ if targets.contains_key(&gpu_id) => STARTUP_IN_PROGRESS,
+                    StartupBehavior::StartupProfiles => "No startup profile.",
+                    StartupBehavior::RestoreLastApplied
+                        if restore_skipped && restorable().any(|(id, _)| *id == gpu_id) =>
+                    {
+                        RESTORE_SKIPPED
+                    }
+                    StartupBehavior::RestoreLastApplied => "No last applied tuning values.",
+                };
                 StartupOutcome {
+                    behavior,
+                    profile: (behavior != StartupBehavior::RestoreLastApplied)
+                        .then(|| designated(&gpu_id).map(|(_, profile)| profile))
+                        .flatten(),
                     gpu_id,
-                    profile: profile.map(|profile| CurrentProfile {
-                        id: profile.id.clone(),
-                        name: profile.name.clone(),
-                    }),
                     status: StartupOutcomeStatus::NotAttempted,
-                    reason: Some(
-                        if document.startup_behavior == StartupBehavior::Off {
-                            "Startup behavior is Off."
-                        } else if profile.is_none() {
-                            "No startup profile."
-                        } else {
-                            STARTUP_IN_PROGRESS
-                        }
-                        .into(),
-                    ),
+                    reason: Some(reason.into()),
                     application: None,
                 }
             })
             .collect();
-        let in_progress = if document.startup_behavior == StartupBehavior::StartupProfiles {
+        if !self
+            .boot_state
+            .begin(outcomes.clone(), targets.keys().cloned().collect())?
+        {
+            return Ok(());
+        }
+        let restoring = behavior == StartupBehavior::RestoreLastApplied && !targets.is_empty();
+        let prepare = |document: &mut TuningDocument| {
+            // A previous boot's current profile describes this boot only where its last applied
+            // values are restored.
             document
-                .startup_profiles
-                .iter()
-                .filter(|(_, id)| document.any_profile(id).is_some())
-                .map(|(gpu_id, _)| gpu_id.clone())
-                .collect()
-        } else {
-            BTreeSet::new()
+                .current_profiles
+                .retain(|gpu_id, _| restoring && targets.contains_key(gpu_id));
+            // The guard's record is on disk before any restored value is written, and every
+            // other boot consumes it.
+            document.restore_attempt = restoring.then(|| RestoreAttempt {
+                boot_id: boot_id.clone(),
+            });
         };
-        if !self.boot_state.begin(outcomes.clone(), in_progress)? {
-            return Ok(());
-        }
-        // A previous boot's current profile never describes what this boot actually applied.
-        if !document.current_profiles.is_empty() {
-            self.tuning_store
-                .update(|document| document.current_profiles.clear())?;
-        }
-        if document.startup_behavior == StartupBehavior::Off {
-            return Ok(());
+        let mut prepared = document.clone();
+        prepare(&mut prepared);
+        if prepared != document {
+            if let Err(error) = self.tuning_store.update(prepare) {
+                for mut outcome in outcomes {
+                    if targets.contains_key(&outcome.gpu_id) {
+                        outcome.reason = Some(format!("Startup was skipped because Prism's tuning store couldn't be written: {error}"));
+                        self.boot_state.record(outcome)?;
+                    }
+                }
+                return Err(error.into());
+            }
         }
         let deadline = self
             .dependencies
@@ -138,62 +220,137 @@ impl DaemonCore {
             .now_monotonic_ms()
             .saturating_add(30_000);
         for mut outcome in outcomes {
-            let Some(profile) = document
-                .startup_profiles
-                .get(&outcome.gpu_id)
-                .and_then(|id| document.any_profile(id))
-                .cloned()
-            else {
+            let Some(target) = targets.remove(&outcome.gpu_id) else {
                 continue;
             };
+            let gpu_id = outcome.gpu_id.clone();
             let backend = Arc::clone(&self.dependencies.backend);
             let store = Arc::clone(&self.tuning_store);
             let boot = Arc::clone(&self.boot_state);
             let clock = Arc::clone(&self.dependencies.clock);
             let stopping = Arc::clone(&self.stopping);
-            // Reserve every designated GPU's queue now. Manual writes wait behind startup;
-            // reads and unrelated GPUs remain available while a designated GPU is absent.
-            let pending = self.queues.submit(&profile.gpu_id.clone(), move || {
-                loop {
-                    if stopping.load(Ordering::SeqCst) { return; }
-                    let readings = backend.performance();
-                    if clock.now_monotonic_ms() >= deadline {
-                        outcome.reason = Some("The GPU was absent at startup after waiting about 30 seconds. Nothing will be applied to it later this boot.".into());
-                        if let Err(error) = boot.record(outcome) { eprintln!("{}", error.message); }
-                        return;
-                    }
-                    if verified_gpu(&readings, &profile.gpu_id).is_ok() { break; }
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-                if store.read(|_| ()).is_err() {
-                    outcome.reason = Some("Startup was skipped because the tuning store is unhealthy.".into());
-                } else {
-                    let application = apply_startup_profile(backend.as_ref(), ApplyGpuProfileRequest {
-                        gpu_id: profile.gpu_id.clone(), settings: profile.settings.clone(),
-                    });
-                    let settings: Vec<_> = [&application.power, &application.graphics, &application.memory].into_iter().flatten().collect();
-                    let full = !settings.is_empty() && settings.iter().all(|setting| setting.status == TuningOutcomeStatus::Succeeded);
-                    let attempted = settings.iter().any(|setting| setting.status != TuningOutcomeStatus::Unattempted);
-                    outcome.status = if full { StartupOutcomeStatus::Applied } else if attempted { StartupOutcomeStatus::Failed } else { StartupOutcomeStatus::NotAttempted };
-                    outcome.reason = (!full).then(|| settings.iter().filter_map(|setting| setting.error.clone()).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>().join("\n"));
-                    outcome.application = Some(application);
-                    if full {
-                        if let Err(error) = store.update(|document| { document.current_profiles.insert(profile.gpu_id.clone(), profile.id.clone()); }) {
+            // Reserve every target GPU's queue now. Manual writes wait behind startup; reads and
+            // unrelated GPUs remain available while a target GPU is absent.
+            let pending = self.queues.submit(&gpu_id.clone(), move || {
+                let Some(full) = apply_target(
+                    backend.as_ref(),
+                    &store,
+                    clock.as_ref(),
+                    &stopping,
+                    deadline,
+                    &gpu_id,
+                    target.settings,
+                    &mut outcome,
+                ) else {
+                    return;
+                };
+                match (target.profile, full) {
+                    (Some(profile), true) => {
+                        if let Err(error) = store.update(|document| {
+                            document.current_profiles.insert(gpu_id.clone(), profile.id);
+                        }) {
                             outcome.status = StartupOutcomeStatus::Failed;
                             outcome.reason = Some(format!("The GPU accepted the settings, but its current profile could not be recorded: {error}"));
                         }
                     }
-                    if let Ok(state) = store.read(|document| {
-                        let readings = backend.performance();
-                        verified_gpu(&readings, &profile.gpu_id).ok().map(|gpu| document.tuning_state(gpu))
-                    }) {
-                        if let Some(state) = state { store.publish(crate::protocol::DaemonEvent::TuningStateChanged(state)); }
+                    // The previous current profile no longer describes a GPU whose last applied
+                    // values weren't restored in full.
+                    (None, false) => {
+                        if let Err(error) = store.update(|document| {
+                            document.current_profiles.remove(&gpu_id);
+                        }) {
+                            eprintln!("failed to clear the current profile of {gpu_id}: {error}");
+                        }
                     }
+                    _ => {}
                 }
-                if let Err(error) = boot.record(outcome) { eprintln!("{}", error.message); }
+                if let Ok(Some(state)) = store.read(|document| {
+                    let readings = backend.performance();
+                    verified_gpu(&readings, &gpu_id)
+                        .ok()
+                        .map(|gpu| document.tuning_state(gpu))
+                }) {
+                    store.publish(DaemonEvent::TuningStateChanged(state));
+                }
+                if let Err(error) = boot.record(outcome) {
+                    eprintln!("{}", error.message);
+                }
             });
             self.startup_operations.lock().unwrap().push(pending);
         }
         Ok(())
     }
+}
+
+/// Waits about 30 seconds for the GPU, then validates every setting and applies them all or
+/// none, never clamping. Returns whether every setting applied, or none when the daemon stopped.
+#[allow(clippy::too_many_arguments)]
+fn apply_target(
+    backend: &dyn DaemonBackend,
+    store: &TuningStore,
+    clock: &dyn Clock,
+    stopping: &AtomicBool,
+    deadline: u64,
+    gpu_id: &str,
+    settings: ProfileSettings,
+    outcome: &mut StartupOutcome,
+) -> Option<bool> {
+    loop {
+        if stopping.load(Ordering::SeqCst) {
+            return None;
+        }
+        let readings = backend.performance();
+        if clock.now_monotonic_ms() >= deadline {
+            outcome.reason = Some("The GPU was absent at startup after waiting about 30 seconds. Nothing will be applied to it later this boot.".into());
+            return Some(false);
+        }
+        if verified_gpu(&readings, gpu_id).is_ok() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if store.read(|_| ()).is_err() {
+        outcome.reason = Some("Startup was skipped because the tuning store is unhealthy.".into());
+        return Some(false);
+    }
+    let application = apply_startup_profile(
+        backend,
+        ApplyGpuProfileRequest {
+            gpu_id: gpu_id.into(),
+            settings,
+        },
+    );
+    let results: Vec<_> = [
+        &application.power,
+        &application.graphics,
+        &application.memory,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let full = !results.is_empty()
+        && results
+            .iter()
+            .all(|result| result.status == TuningOutcomeStatus::Succeeded);
+    let attempted = results
+        .iter()
+        .any(|result| result.status != TuningOutcomeStatus::Unattempted);
+    outcome.status = if full {
+        StartupOutcomeStatus::Applied
+    } else if attempted {
+        StartupOutcomeStatus::Failed
+    } else {
+        StartupOutcomeStatus::NotAttempted
+    };
+    outcome.reason = (!full).then(|| {
+        results
+            .iter()
+            .filter_map(|result| result.error.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
+    outcome.application = Some(application);
+    Some(full)
 }

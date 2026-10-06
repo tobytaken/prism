@@ -2,6 +2,7 @@ mod backend;
 mod boot_state;
 mod daemon_core;
 mod host;
+mod possibly_stale;
 mod profiles;
 mod queue;
 mod session;
@@ -17,6 +18,8 @@ mod harness;
 mod manage_profile_tests;
 #[cfg(test)]
 mod profile_tests;
+#[cfg(test)]
+mod restore_tests;
 #[cfg(test)]
 mod startup_tests;
 #[cfg(test)]
@@ -90,6 +93,7 @@ struct PeerCredentials {
 }
 
 pub fn run() -> Result<(), String> {
+    let stop_signals = block_stop_signals().map_err(|error| error.to_string())?;
     let paths = DaemonPaths::from_environment();
     let config = load_config(&paths).map_err(|error| error.to_string())?;
     let listener = bind_listener(&paths, &config).map_err(|error| error.to_string())?;
@@ -105,6 +109,17 @@ pub fn run() -> Result<(), String> {
     });
 
     let core = Arc::new(core);
+    let stopping = Arc::clone(&core);
+    thread::Builder::new()
+        .name("prismd-stop".into())
+        .spawn(move || {
+            let mut signal = 0;
+            // SAFETY: the set holds the blocked stop signals and outlives the call.
+            unsafe { libc::sigwait(&stop_signals, &mut signal) };
+            stopping.stop();
+            std::process::exit(0);
+        })
+        .map_err(|error| error.to_string())?;
     let starting = Arc::clone(&core);
     thread::Builder::new()
         .name("prismd-readiness".into())
@@ -117,6 +132,23 @@ pub fn run() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     serve(listener, core, Arc::new(config));
     Ok(())
+}
+
+/// systemd stops the daemon with SIGTERM, including while the host shuts down. Blocking the stop
+/// signals before any thread starts leaves them for one thread to receive, so the daemon can
+/// record a clean shutdown before it exits.
+fn block_stop_signals() -> std::io::Result<libc::sigset_t> {
+    // SAFETY: the set is initialized by sigemptyset before use.
+    unsafe {
+        let mut signals: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut signals);
+        libc::sigaddset(&mut signals, libc::SIGTERM);
+        libc::sigaddset(&mut signals, libc::SIGINT);
+        match libc::pthread_sigmask(libc::SIG_BLOCK, &signals, std::ptr::null_mut()) {
+            0 => Ok(signals),
+            error => Err(std::io::Error::from_raw_os_error(error)),
+        }
+    }
 }
 
 /// Serves each connection on its own thread, so a slow client never holds up another.
