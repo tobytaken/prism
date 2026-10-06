@@ -4,6 +4,7 @@
 use serde_json::{json, Value};
 
 use super::harness::{tunable_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
+use super::possibly_stale::POSSIBLY_STALE_FILE_NAME;
 use super::tuning_store::TUNING_STORE_FILE_NAME;
 
 const NOT_RECORDED: &str = "This change was not recorded for startup.";
@@ -339,4 +340,67 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
     daemon.reboot();
     let alice = daemon.user(1000, "alice");
     assert_eq!(startup(&alice)["possiblyStale"], json!(["GPU-123"]));
+}
+
+#[test]
+fn a_skipped_restore_is_reported_for_each_gpu_with_last_applied_values_even_when_absent() {
+    let mut second = restore_gpu();
+    second.id = "GPU-456".into();
+    second.stable_id = Some("GPU-456".into());
+    let mut third = second.clone();
+    third.id = "GPU-789".into();
+    third.stable_id = Some("GPU-789".into());
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![
+        restore_gpu(),
+        second,
+        third,
+    ]));
+    let alice = daemon.user(1000, "alice");
+    set_power(&alice, 300);
+    send(
+        &alice,
+        json!({ "type": "set_power_limit", "payload": { "gpuId": "GPU-456", "limitWatts": 300 } }),
+    );
+    restore_on_boot(&alice);
+    drop(alice);
+    daemon.reboot();
+    assert_eq!(completed_outcome(&daemon)["status"], "applied");
+
+    daemon.gpus.depart("GPU-456");
+    daemon.crash_and_reboot();
+    let alice = daemon.user(1000, "alice");
+    let outcomes = startup(&alice)["outcomes"].clone();
+    let reason = |gpu_id: &str| {
+        outcomes
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|outcome| outcome["gpuId"] == gpu_id)
+            .unwrap_or_else(|| panic!("no outcome for {gpu_id}: {outcomes}"))["reason"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert!(reason("GPU-123").contains("didn't shut down cleanly"));
+    assert!(reason("GPU-456").contains("didn't shut down cleanly"));
+    assert_eq!(reason("GPU-789"), "No last applied tuning values.");
+}
+
+#[test]
+fn an_unreadable_possibly_stale_marker_is_preserved_and_marks_every_recorded_gpu() {
+    let daemon = Harness::start_with_persistent_files(
+        FakeGpuBackend::with_gpus(vec![restore_gpu()]),
+        &[(POSSIBLY_STALE_FILE_NAME, b"{\"GPU-123\": [")],
+    );
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(startup(&alice)["possiblyStale"], json!([]));
+    assert_eq!(
+        set_power(&alice, 300),
+        json!({ "success": true, "error": null })
+    );
+    assert_eq!(startup(&alice)["possiblyStale"], json!(["GPU-123"]));
+    assert_eq!(
+        daemon.persistent_file(POSSIBLY_STALE_FILE_NAME).unwrap(),
+        b"{\"GPU-123\": ["
+    );
 }

@@ -17,7 +17,9 @@ type StaleSettings = BTreeMap<String, BTreeSet<ProfileSettingKey>>;
 
 pub(super) struct PossiblyStale {
     path: PathBuf,
-    settings: Mutex<StaleSettings>,
+    /// None when the marker can't be read. It is then preserved untouched, and every GPU's last
+    /// applied tuning values count as possibly stale.
+    settings: Mutex<Option<StaleSettings>>,
 }
 
 impl PossiblyStale {
@@ -27,22 +29,25 @@ impl PossiblyStale {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(StaleSettings::new()),
             Err(error) => Err(error.to_string()),
         }
-        .unwrap_or_else(|error| {
+        .map_err(|error| {
             eprintln!(
-                "failed to read which last applied tuning values are possibly stale from {}: {error}",
+                "failed to read which last applied tuning values are possibly stale from {}; it is preserved untouched: {error}",
                 path.display()
             );
-            StaleSettings::new()
-        });
+        })
+        .ok();
         Self {
             path,
             settings: Mutex::new(settings),
         }
     }
 
-    /// GPU UUIDs with any possibly stale setting.
-    pub fn gpus(&self) -> Vec<String> {
-        self.settings.lock().unwrap().keys().cloned().collect()
+    /// GPU UUIDs with any possibly stale setting, out of those with last applied tuning values.
+    pub fn gpus<'a>(&self, recorded: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+        match &*self.settings.lock().unwrap() {
+            Some(settings) => settings.keys().cloned().collect(),
+            None => recorded.into_iter().cloned().collect(),
+        }
     }
 
     /// The settings' latest manual writes reached the GPU without being recorded.
@@ -67,10 +72,14 @@ impl PossiblyStale {
     }
 
     /// Keeps the change in memory even when it can't be written, so this daemon still reports it.
+    /// An unreadable marker is never overwritten.
     fn change(&self, change: impl FnOnce(&mut StaleSettings)) {
         let mut settings = self.settings.lock().unwrap();
+        let Some(settings) = settings.as_mut() else {
+            return;
+        };
         let before = settings.clone();
-        change(&mut settings);
+        change(settings);
         if *settings == before {
             return;
         }

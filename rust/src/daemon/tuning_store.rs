@@ -81,6 +81,13 @@ pub struct UserState {
 }
 
 impl TuningDocument {
+    /// Whether this boot restored last applied tuning values and hasn't yet shut down cleanly.
+    pub fn restored_in(&self, boot_id: &str) -> bool {
+        self.restore_attempt
+            .as_ref()
+            .is_some_and(|attempt| attempt.boot_id == boot_id)
+    }
+
     pub fn user(&self, uid: u32, username: &str) -> Option<&UserState> {
         self.users
             .iter()

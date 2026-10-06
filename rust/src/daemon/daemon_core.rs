@@ -82,11 +82,14 @@ impl DaemonCore {
         let response = match request {
             DaemonRequest::GetStartupState => self
                 .tuning_store
-                .read(|document| document.startup_state())
+                .read(|document| {
+                    let mut state = document.startup_state();
+                    state.possibly_stale = self.possibly_stale.gpus(document.last_applied.keys());
+                    state
+                })
                 .map_err(GpuCommandError::from)
                 .and_then(|mut state| {
                     state.outcomes = self.boot_state.outcomes(peer)?;
-                    state.possibly_stale = self.possibly_stale.gpus();
                     Ok(DaemonResponse::StartupState(state))
                 }),
             DaemonRequest::SetStartupBehavior(request) => self
@@ -416,13 +419,10 @@ impl DaemonCore {
             return;
         }
         let boot_id = &self.dependencies.boot_id;
-        let restored_this_boot = self.tuning_store.read(|document| {
-            document
-                .restore_attempt
-                .as_ref()
-                .is_some_and(|attempt| attempt.boot_id == *boot_id)
-        });
-        if let Ok(true) = restored_this_boot {
+        if let Ok(true) = self
+            .tuning_store
+            .read(|document| document.restored_in(boot_id))
+        {
             if let Err(error) = self
                 .tuning_store
                 .update(|document| document.restore_attempt = None)
@@ -891,17 +891,17 @@ impl ManualWriteResponse for DaemonCommandResponse {
 
 impl ManualWriteResponse for ClockOffsetResponse {
     fn not_recorded(&mut self) {
-        not_recorded([&mut self.graphics, &mut self.memory]);
+        mark_not_recorded([&mut self.graphics, &mut self.memory]);
     }
 }
 
 impl ManualWriteResponse for ProfileApplicationResponse {
     fn not_recorded(&mut self) {
-        not_recorded([&mut self.power, &mut self.graphics, &mut self.memory]);
+        mark_not_recorded([&mut self.power, &mut self.graphics, &mut self.memory]);
     }
 }
 
-fn not_recorded<const N: usize>(outcomes: [&mut Option<TuningOutcome>; N]) {
+fn mark_not_recorded<const N: usize>(outcomes: [&mut Option<TuningOutcome>; N]) {
     for outcome in outcomes.into_iter().flatten() {
         if outcome.status == TuningOutcomeStatus::Succeeded {
             outcome.error = Some(NOT_RECORDED.into());

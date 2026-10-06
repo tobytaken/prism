@@ -94,10 +94,14 @@ impl DaemonCore {
         let boot_id = self.dependencies.boot_id.clone();
         // Startup profiles were chosen deliberately for boot, so only a restore is guarded.
         let restore_skipped = behavior == StartupBehavior::RestoreLastApplied
-            && document
-                .restore_attempt
-                .as_ref()
-                .is_some_and(|attempt| attempt.boot_id != boot_id);
+            && document.restore_attempt.is_some()
+            && !document.restored_in(&boot_id);
+        let restorable = || {
+            document
+                .last_applied
+                .iter()
+                .filter(|(_, settings)| !settings.is_empty())
+        };
         let designated = |gpu_id: &str| {
             let profile = document.any_profile(document.startup_profiles.get(gpu_id)?)?;
             Some((
@@ -125,10 +129,7 @@ impl DaemonCore {
                 })
                 .collect(),
             StartupBehavior::RestoreLastApplied if restore_skipped => BTreeMap::new(),
-            StartupBehavior::RestoreLastApplied => document
-                .last_applied
-                .iter()
-                .filter(|(_, settings)| !settings.is_empty())
+            StartupBehavior::RestoreLastApplied => restorable()
                 .map(|(gpu_id, settings)| {
                     (
                         gpu_id.clone(),
@@ -148,6 +149,12 @@ impl DaemonCore {
             .filter(|uuid| !uuid.is_empty())
             .chain(document.startup_profiles.keys().cloned())
             .chain(targets.keys().cloned())
+            .chain(
+                (behavior == StartupBehavior::RestoreLastApplied)
+                    .then(|| restorable().map(|(gpu_id, _)| gpu_id.clone()))
+                    .into_iter()
+                    .flatten(),
+            )
             .collect();
         let outcomes: Vec<_> = gpu_ids
             .into_iter()
@@ -156,7 +163,11 @@ impl DaemonCore {
                     StartupBehavior::Off => "Startup behavior is Off.",
                     _ if targets.contains_key(&gpu_id) => STARTUP_IN_PROGRESS,
                     StartupBehavior::StartupProfiles => "No startup profile.",
-                    StartupBehavior::RestoreLastApplied if restore_skipped => RESTORE_SKIPPED,
+                    StartupBehavior::RestoreLastApplied
+                        if restore_skipped && restorable().any(|(id, _)| *id == gpu_id) =>
+                    {
+                        RESTORE_SKIPPED
+                    }
                     StartupBehavior::RestoreLastApplied => "No last applied tuning values.",
                 };
                 StartupOutcome {
