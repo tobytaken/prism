@@ -36,6 +36,8 @@ pub struct CoreDependencies {
     pub host_shutting_down: Arc<dyn HostShutdownSignal>,
     /// Reported by daemon status requests.
     pub socket_path: PathBuf,
+    /// Where the host's file system is read from, such as callers' Steam libraries.
+    pub host_root: PathBuf,
 }
 
 /// The daemon below the socket. Requests may arrive from several connections at once: reads
@@ -193,6 +195,14 @@ impl DaemonCore {
                 .tuning_store
                 .try_update(|document| document.import_profiles(peer, request.profiles))
                 .map(DaemonResponse::ProfileImport),
+            DaemonRequest::ListSteamApps => Ok(DaemonResponse::SteamApps(self.steam_apps(peer))),
+            DaemonRequest::GetGames => self.games(peer),
+            DaemonRequest::AddSteamGame(request) => self.add_steam_game(peer, request.app_id),
+            DaemonRequest::SetGameProfile(request) => self.set_game_profile(peer, request),
+            DaemonRequest::RemoveGame(request) => self.remove_game(peer, request.game),
+            DaemonRequest::SetAutomaticSwitching(request) => {
+                self.set_automatic_switching(peer, request.enabled)
+            }
             request => Ok(self.handle(request)),
         };
         response.unwrap_or_else(DaemonResponse::Error)
@@ -521,6 +531,17 @@ impl DaemonCore {
                 GpuCommandErrorCode::NoPermission,
                 "GPU tuning profiles need a connection that identifies the caller.",
             )),
+            DaemonRequest::ListSteamApps
+            | DaemonRequest::GetGames
+            | DaemonRequest::AddSteamGame(_)
+            | DaemonRequest::SetGameProfile(_)
+            | DaemonRequest::RemoveGame(_)
+            | DaemonRequest::SetAutomaticSwitching(_) => {
+                DaemonResponse::Error(GpuCommandError::new(
+                    GpuCommandErrorCode::NoPermission,
+                    "Games need a connection that identifies the caller.",
+                ))
+            }
             DaemonRequest::GetDriverStatus => DaemonResponse::DriverStatus(drivers.status()),
             DaemonRequest::StartDriverAction(request) => match drivers.start_action(request) {
                 Ok(job) => DaemonResponse::DriverJob(job),

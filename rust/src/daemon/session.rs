@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -13,6 +14,8 @@ pub struct SessionPeer {
     pub username: String,
     pub groups: Vec<String>,
     pub primary_group: String,
+    /// The caller's home directory on the host, from the user database.
+    pub home: PathBuf,
 }
 
 #[derive(Debug, Clone)]

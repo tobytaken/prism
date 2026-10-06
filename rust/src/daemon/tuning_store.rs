@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 6;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 7;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -38,6 +38,8 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // a boot restores last applied tuning values.
     Ok,
     // Version 6 imports legacy configurations with the current inventory during opening.
+    Ok,
+    // Version 7 adds users' game associations and automatic switching opt-ins, none until set.
     Ok,
 ];
 
@@ -86,6 +88,11 @@ pub struct UserState {
     pub profiles: Vec<GpuTuningProfile>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub migration_notice_dismissed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub games: Vec<super::games::GameAssociation>,
+    /// Whether the user opted in to automatic switching; off by default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub automatic_switching: bool,
 }
 
 impl TuningDocument {
@@ -116,6 +123,8 @@ impl TuningDocument {
                     username: username.into(),
                     profiles: vec![],
                     migration_notice_dismissed: false,
+                    games: vec![],
+                    automatic_switching: false,
                 });
                 self.users.len() - 1
             }
@@ -393,6 +402,7 @@ mod tests {
                     username: username.into(),
                     groups: vec![],
                     primary_group: "users".into(),
+                    home: format!("/home/{username}").into(),
                 })
             })
             .collect();
@@ -445,7 +455,7 @@ mod tests {
     fn an_unhealthy_store_refuses_every_write_and_keeps_its_bytes() {
         for preserved in [
             &b"{\"schemaVersion\": 1, \"profi"[..],
-            b"{\"schemaVersion\": 7}",
+            b"{\"schemaVersion\": 8}",
         ] {
             let dir = tempfile::tempdir().unwrap();
             fs::create_dir_all(store_path(&dir).parent().unwrap()).unwrap();

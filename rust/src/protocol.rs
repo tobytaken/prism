@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
@@ -314,12 +316,12 @@ pub struct SetStartupBehaviorRequest {
 pub struct SetStartupProfileRequest {
     pub gpu_id: String,
     /// None clears the designation, including one belonging to another user.
-    #[serde(deserialize_with = "startup_profile_id")]
+    #[serde(deserialize_with = "explicit_option")]
     pub profile_id: Option<String>,
 }
 
-// Require an explicit null to clear a designation; a missing field is a malformed request.
-fn startup_profile_id<'de, D: serde::Deserializer<'de>>(
+// Require an explicit null to clear a choice; a missing field is a malformed request.
+fn explicit_option<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
     Option::<String>::deserialize(deserializer)
@@ -372,6 +374,73 @@ pub struct StartupState {
     pub possibly_stale: Vec<String>,
 }
 
+/// A fully installed Steam app from the caller's Steam libraries.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SteamApp {
+    pub app_id: u32,
+    /// From the app's manifest.
+    pub name: String,
+}
+
+/// What identifies a game: a Steam app by its app ID, whether it runs natively or through
+/// Proton.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum GameId {
+    #[serde(rename_all = "camelCase")]
+    Steam { app_id: u32 },
+}
+
+/// One of the caller's game associations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GameEntry {
+    pub game: GameId,
+    pub name: String,
+    /// Whether the game is installed now; an association is kept while it isn't.
+    pub installed: bool,
+    /// The linked profile id per GPU UUID. GPUs without one are left unchanged.
+    pub profiles: BTreeMap<String, String>,
+}
+
+/// The caller's game associations and automatic switching opt-in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GamesState {
+    pub automatic_switching: bool,
+    pub games: Vec<GameEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AddSteamGameRequest {
+    pub app_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetGameProfileRequest {
+    pub game: GameId,
+    /// The GPU's UUID.
+    pub gpu_id: String,
+    /// None leaves the GPU unchanged while the game runs.
+    #[serde(deserialize_with = "explicit_option")]
+    pub profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GameRequest {
+    pub game: GameId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetAutomaticSwitchingRequest {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
@@ -402,6 +471,12 @@ pub enum DaemonRequest {
     ApplyProfileById(ProfileIdRequest),
     CorrectAndApplyProfile(CorrectAndApplyProfileRequest),
     ImportProfiles(ImportProfilesRequest),
+    ListSteamApps,
+    GetGames,
+    AddSteamGame(AddSteamGameRequest),
+    SetGameProfile(SetGameProfileRequest),
+    RemoveGame(GameRequest),
+    SetAutomaticSwitching(SetAutomaticSwitchingRequest),
     GetDriverStatus,
     StartDriverAction(StartDriverActionRequest),
     GetDriverJob(DriverJobRequest),
@@ -425,6 +500,8 @@ pub enum DaemonResponse {
     TuningStates(Vec<GpuTuningState>),
     CorrectedProfileApplication(CorrectedProfileApplication),
     ProfileImport(ProfileImportResponse),
+    SteamApps(Vec<SteamApp>),
+    Games(GamesState),
     DriverStatus(DriverStatusResponse),
     DriverJob(DriverJob),
     Error(GpuCommandError),

@@ -353,8 +353,8 @@ impl TuningDocument {
         Ok(profile.clone())
     }
 
-    /// Removes only the caller's profile and its current-profile references, leaving all
-    /// current and last applied tuning values unchanged.
+    /// Removes only the caller's profile, its current-profile and startup references and its
+    /// game associations, leaving all current and last applied tuning values unchanged.
     pub fn delete_profile(
         &mut self,
         peer: &SessionPeer,
@@ -366,6 +366,7 @@ impl TuningDocument {
             .retain(|profile| profile.id != profile_id);
         self.current_profiles.retain(|_, id| id != profile_id);
         self.startup_profiles.retain(|_, id| id != profile_id);
+        self.unlink_profile(profile_id);
         Ok(())
     }
 
