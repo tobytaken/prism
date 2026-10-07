@@ -7,7 +7,7 @@ use std::path::Path;
 use super::DaemonCore;
 use crate::protocol::{DaemonEvent, GameId, RunningGame, RunningGamesState};
 
-type GamesByUser = BTreeMap<u32, Vec<RunningGame>>;
+pub(super) type GamesByUser = BTreeMap<u32, Vec<RunningGame>>;
 
 pub(super) struct Recognition(Result<GamesByUser, String>);
 
@@ -18,6 +18,11 @@ impl Default for Recognition {
 }
 
 impl Recognition {
+    /// Each user's running games, or why the latest scan was incomplete.
+    pub fn running(&self) -> &Result<GamesByUser, String> {
+        &self.0
+    }
+
     pub fn for_uid(&self, uid: u32) -> RunningGamesState {
         match &self.0 {
             Ok(users) => RunningGamesState::Available {
@@ -48,18 +53,23 @@ impl DaemonCore {
         Ok(())
     }
 
-    /// Runs one complete scan. The host adapter schedules this every 1–2 seconds; fixture
-    /// hosts drive the same operation explicitly, without reading the real /proc.
+    /// Runs one complete scan, then lets automatic switching react to it. The host adapter
+    /// schedules this every 1–2 seconds; fixture hosts drive the same operation explicitly,
+    /// without reading the real /proc.
     pub fn scan_running_games(&self) {
-        let mut current = self.recognition.lock().unwrap();
-        let next = Recognition(scan(&self.dependencies.host_root).map_err(|_| {
-            "A complete host process scan could not be read. Recognition will retry automatically.".into()
-        }));
-        self.tuning_store.publish_for_users(|uid| {
-            let state = next.for_uid(uid);
-            (state != current.for_uid(uid)).then_some(DaemonEvent::RunningGamesChanged(state))
-        });
-        *current = next;
+        {
+            let mut current = self.recognition.lock().unwrap();
+            let next = Recognition(scan(&self.dependencies.host_root).map_err(|_| {
+                "A complete host process scan could not be read. Recognition will retry automatically.".into()
+            }));
+            self.tuning_store.publish_for_users(|peer| {
+                let state = next.for_uid(peer.uid);
+                (state != current.for_uid(peer.uid))
+                    .then_some(DaemonEvent::RunningGamesChanged(state))
+            });
+            *current = next;
+        }
+        self.evaluate_switching();
     }
 }
 

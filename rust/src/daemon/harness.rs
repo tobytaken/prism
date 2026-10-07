@@ -505,6 +505,65 @@ impl Harness {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, contents).unwrap();
     }
+
+    /// Installs a Steam app in the user's own Steam library.
+    pub fn install_steam_app(&self, username: &str, app_id: u32, name: &str) {
+        let root = format!("/home/{username}/.local/share/Steam");
+        self.write_host_file(
+            &format!("{root}/steamapps/libraryfolders.vdf"),
+            &format!(
+                "\"libraryfolders\"\n{{\n\t\"0\"\n\t{{\n\t\t\"path\"\t\t\"{root}\"\n\t}}\n}}\n"
+            ),
+        );
+        self.write_host_file(
+            &format!("{root}/steamapps/appmanifest_{app_id}.acf"),
+            &format!(
+                "\"AppState\"\n{{\n\t\"appid\"\t\t\"{app_id}\"\n\t\"name\"\t\t\"{name}\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"{name}\"\n}}\n"
+            ),
+        );
+        self.write_host_file(&format!("{root}/steamapps/common/{name}/game"), "");
+    }
+
+    /// Starts a fixture host process owned by the uid, with its start time in clock ticks.
+    pub fn run_process(&self, pid: u32, uid: u32, start: u64, env: &str, cmd: &str) {
+        self.write_host_file(&format!("/proc/{pid}/environ"), env);
+        self.write_host_file(&format!("/proc/{pid}/cmdline"), cmd);
+        self.write_host_file(
+            &format!("/proc/{pid}/status"),
+            &format!("Name:\tgame\nUid:\t{uid}\t0\t0\t0\n"),
+        );
+        // Field 22 is starttime, in clock ticks since boot. comm can contain spaces and ')'.
+        self.write_host_file(
+            &format!("/proc/{pid}/stat"),
+            &format!("{pid} (game ) name) S 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 {start} 0\n"),
+        );
+    }
+
+    /// Starts a native Steam game's process.
+    pub fn run_steam_game(&self, pid: u32, uid: u32, start: u64, app_id: u32) {
+        self.run_process(pid, uid, start, &format!("SteamAppId={app_id}\0"), "game\0");
+    }
+
+    /// Ends the fixture process, as an exit or a crash would.
+    pub fn end_process(&self, pid: u32) {
+        std::fs::remove_dir_all(self.host_path(&format!("/proc/{pid}"))).unwrap();
+    }
+
+    /// Runs one complete process scan and waits for the automatic operations it queued.
+    pub fn scan(&self) {
+        self.core().scan_running_games();
+        self.settle();
+    }
+
+    /// Waits until every GPU's operation queue has run what was queued so far.
+    pub fn settle(&self) {
+        let core = self.core();
+        for gpu in self.gpus.gpus() {
+            for id in std::iter::once(gpu.id).chain(gpu.stable_id) {
+                core.queues.submit(&id, || ()).wait();
+            }
+        }
+    }
 }
 
 /// A user's session connection to the daemon.

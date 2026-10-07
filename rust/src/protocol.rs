@@ -459,6 +459,54 @@ pub struct SetAutomaticSwitchingRequest {
     pub enabled: bool,
 }
 
+/// The caller's view of automatic switching: what holds it back overall, and each GPU that
+/// automation drives or failed to drive. Other GPUs are left unchanged. It doesn't establish
+/// which tuning values are in effect.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AutomaticSwitchingStatus {
+    pub condition: SwitchingCondition,
+    pub gpus: Vec<GpuSwitchingStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
+pub enum SwitchingCondition {
+    // Struct variants, so deny_unknown_fields also rejects extra fields.
+    /// The caller's games switch profiles as they run.
+    Ready {},
+    /// The caller hasn't opted in.
+    Off {},
+    /// No automatic writes or restorations happen, such as while the tuning store is unhealthy.
+    Blocked { reason: String },
+    /// Current values are held, and nothing is restored, until a complete scan succeeds.
+    RecognitionUnavailable { reason: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GpuSwitchingStatus {
+    /// The GPU's UUID.
+    pub gpu_id: String,
+    pub state: GpuSwitchingState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
+pub enum GpuSwitchingState {
+    /// The caller's running game drives the GPU with its linked profile.
+    #[serde(rename_all = "camelCase")]
+    Active {
+        game: GameId,
+        game_name: String,
+        profile: CurrentProfile,
+    },
+    /// Another user's running game drives the GPU; its details stay private.
+    AnotherUser {},
+    /// The latest automatic application or restoration didn't complete.
+    Failed { message: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
@@ -496,6 +544,7 @@ pub enum DaemonRequest {
     SetGameProfile(SetGameProfileRequest),
     RemoveGame(GameRequest),
     SetAutomaticSwitching(SetAutomaticSwitchingRequest),
+    GetAutomaticSwitchingStatus,
     GetDriverStatus,
     StartDriverAction(StartDriverActionRequest),
     GetDriverJob(DriverJobRequest),
@@ -537,6 +586,7 @@ pub enum DaemonResponse {
     SteamApps(Vec<SteamApp>),
     Games(GamesState),
     RunningGames(RunningGamesState),
+    AutomaticSwitchingStatus(AutomaticSwitchingStatus),
     DriverStatus(DriverStatusResponse),
     DriverJob(DriverJob),
     Error(GpuCommandError),
@@ -567,6 +617,7 @@ pub enum DaemonEvent {
     StoreHealthChanged(crate::gpu::TuningStoreHealth),
     TuningStateChanged(GpuTuningState),
     RunningGamesChanged(RunningGamesState),
+    AutomaticSwitchingChanged(AutomaticSwitchingStatus),
 }
 
 #[cfg(test)]
@@ -794,6 +845,35 @@ mod session_tests {
         ] {
             assert!(
                 serde_json::from_value::<DaemonRequest>(malformed.clone()).is_err(),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_switching_status_round_trips_the_shared_contract_and_rejects_extras() {
+        let statuses: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../src/test/contracts/automatic-switching-status.json"
+        ))
+        .unwrap();
+        for status in statuses {
+            let typed: AutomaticSwitchingStatus = serde_json::from_value(status.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(DaemonResponse::AutomaticSwitchingStatus(typed)).unwrap(),
+                serde_json::json!({ "type": "automatic_switching_status", "payload": status })
+            );
+        }
+        let request = serde_json::json!({ "type": "get_automatic_switching_status" });
+        let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(serde_json::to_value(typed).unwrap(), request);
+        for malformed in [
+            serde_json::json!({ "condition": { "status": "ready", "reason": "x" }, "gpus": [] }),
+            serde_json::json!({ "condition": { "status": "paused" }, "gpus": [] }),
+            serde_json::json!({ "condition": { "status": "off" }, "gpus": [{ "gpuId": "GPU-123", "state": { "status": "anotherUser", "uid": 1000 } }] }),
+            serde_json::json!({ "condition": { "status": "off" }, "gpus": [{ "gpuId": "GPU-123", "state": { "status": "active", "gameName": "Dota 2" } }] }),
+        ] {
+            assert!(
+                serde_json::from_value::<AutomaticSwitchingStatus>(malformed.clone()).is_err(),
                 "{malformed}"
             );
         }

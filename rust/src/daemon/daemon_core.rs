@@ -48,7 +48,8 @@ pub struct DaemonCore {
     pub(super) tuning_store: Arc<TuningStore>,
     pub(super) boot_state: Arc<super::boot_state::BootState>,
     possibly_stale: Arc<PossiblyStale>,
-    pub(super) recognition: Mutex<super::recognition::Recognition>,
+    pub(super) recognition: Arc<Mutex<super::recognition::Recognition>>,
+    pub(super) switching: super::switching::Switching,
     pub(super) stopping: Arc<AtomicBool>,
     pub(super) startup_operations: Mutex<Vec<PendingOperation<()>>>,
 }
@@ -63,6 +64,7 @@ impl DaemonCore {
         if let Err(error) = self.tuning_store.reserve_migration_adoption(&peer) {
             eprintln!("Could not reserve migrated profiles: {error}");
         }
+        self.switching.opened(&peer);
         Ok(self.tuning_store.subscribe(peer))
     }
 
@@ -80,6 +82,15 @@ impl DaemonCore {
         peer: &SessionPeer,
         request: DaemonRequest,
     ) -> DaemonResponse {
+        // These change which game, if any, should drive a GPU, or how its status reads.
+        let reevaluate = matches!(
+            request,
+            DaemonRequest::SetGameProfile(_)
+                | DaemonRequest::RemoveGame(_)
+                | DaemonRequest::SetAutomaticSwitching(_)
+                | DaemonRequest::DeleteProfile(_)
+                | DaemonRequest::RenameProfile(_)
+        );
         let response = match request {
             DaemonRequest::AdoptMigratedProfile(request) => self
                 .tuning_store
@@ -207,9 +218,29 @@ impl DaemonCore {
             DaemonRequest::SetAutomaticSwitching(request) => {
                 self.set_automatic_switching(peer, request.enabled)
             }
+            DaemonRequest::GetAutomaticSwitchingStatus => Ok(
+                DaemonResponse::AutomaticSwitchingStatus(self.switching.status_for(peer)),
+            ),
             request => Ok(self.handle(request)),
         };
+        if reevaluate {
+            self.evaluate_switching();
+        }
         response.unwrap_or_else(DaemonResponse::Error)
+    }
+
+    /// Queues a reconciliation on each GPU whose automatic switching should change, then pushes
+    /// every changed status. Saving a linked profile changes nothing until its next application.
+    pub(super) fn evaluate_switching(&self) {
+        for gpu_id in self.switching.claim_unsettled() {
+            let switching = self.switching.clone();
+            let id = gpu_id.clone();
+            drop(self.submit_tracked(&gpu_id, move |backend| {
+                switching.reconcile(backend, &id);
+                switching.publish();
+            }));
+        }
+        self.switching.publish();
     }
 
     /// Edits a saved profile on its GPU's queue, without changing any GPU controls.
@@ -380,9 +411,18 @@ impl DaemonCore {
         gpu_id: &str,
         operation: impl FnOnce(&dyn DaemonBackend) -> T + Send + 'static,
     ) -> T {
+        self.submit_tracked(gpu_id, operation).wait()
+    }
+
+    /// Queues a tuning write like `tracked_write`, without waiting for it.
+    fn submit_tracked<T: Send + 'static>(
+        &self,
+        gpu_id: &str,
+        operation: impl FnOnce(&dyn DaemonBackend) -> T + Send + 'static,
+    ) -> PendingOperation<T> {
         let store = Arc::clone(&self.tuning_store);
         let uuid = gpu_id.to_string();
-        self.write(gpu_id, move |backend| {
+        self.submit_write(gpu_id, move |backend| {
             let before = tuning_state(backend, &store, &uuid);
             let result = operation(backend);
             match tuning_state(backend, &store, &uuid) {
@@ -408,13 +448,21 @@ impl DaemonCore {
         let possibly_stale = Arc::new(PossiblyStale::open(
             dependencies.persistent_dir.join(POSSIBLY_STALE_FILE_NAME),
         ));
+        let recognition = Arc::default();
+        let switching = super::switching::Switching::open(
+            &dependencies.boot_dir,
+            &dependencies.boot_id,
+            Arc::clone(&tuning_store),
+            Arc::clone(&recognition),
+        );
         let core = Self {
             dependencies,
             boot_state,
             possibly_stale,
             stopping: Arc::default(),
             startup_operations: Mutex::default(),
-            recognition: Mutex::default(),
+            recognition,
+            switching,
             queues: GpuOperationQueues::default(),
             tuning_store,
         };
@@ -543,7 +591,8 @@ impl DaemonCore {
             | DaemonRequest::AddSteamGame(_)
             | DaemonRequest::SetGameProfile(_)
             | DaemonRequest::RemoveGame(_)
-            | DaemonRequest::SetAutomaticSwitching(_) => {
+            | DaemonRequest::SetAutomaticSwitching(_)
+            | DaemonRequest::GetAutomaticSwitchingStatus => {
                 DaemonResponse::Error(GpuCommandError::new(
                     GpuCommandErrorCode::NoPermission,
                     "Games need a connection that identifies the caller.",

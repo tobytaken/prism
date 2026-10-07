@@ -80,6 +80,15 @@ pub fn get_running_games() -> Result<crate::protocol::RunningGamesState, GpuComm
     }
 }
 
+pub fn get_automatic_switching_status(
+) -> Result<crate::protocol::AutomaticSwitchingStatus, GpuCommandError> {
+    match send_request(DaemonRequest::GetAutomaticSwitchingStatus)? {
+        DaemonResponse::AutomaticSwitchingStatus(status) => Ok(status),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("automatic switching status")),
+    }
+}
+
 pub fn get_games() -> Result<GamesState, GpuCommandError> {
     send_games_request(DaemonRequest::GetGames)
 }
