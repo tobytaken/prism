@@ -55,3 +55,30 @@ export interface RunningGame {
 export type RunningGamesState =
   | { status: "available"; games: RunningGame[] }
   | { status: "unavailable"; reason: string };
+
+/** What holds automatic switching back for the caller overall. */
+export type SwitchingCondition =
+  | { status: "ready" }
+  | { status: "off" }
+  | { status: "blocked"; reason: string }
+  | { status: "recognitionUnavailable"; reason: string };
+
+/** Why automation drives a GPU, or why its latest automatic operation didn't complete. */
+export type GpuSwitchingState =
+  | {
+      status: "active";
+      game: GameId;
+      gameName: string;
+      profile: { id: string; name: string };
+    }
+  | { status: "anotherUser" }
+  | { status: "failed"; message: string };
+
+/**
+ * The caller's automatic switching status. GPUs without an entry are left unchanged; it doesn't
+ * establish which tuning values are in effect.
+ */
+export interface AutomaticSwitchingStatus {
+  condition: SwitchingCondition;
+  gpus: { gpuId: string; state: GpuSwitchingState }[];
+}

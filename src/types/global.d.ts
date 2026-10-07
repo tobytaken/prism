@@ -23,6 +23,7 @@ import type {
 } from "@/features/gpus/types";
 import type {
   AddSteamGameRequest,
+  AutomaticSwitchingStatus,
   GameRequest,
   GamesState,
   RunningGamesState,
@@ -112,6 +113,11 @@ export interface PrismDesktopApi {
     get(): Promise<GamesState>;
     getRunning(): Promise<RunningGamesState>;
     onRunningChanged(callback: (state: RunningGamesState) => void): () => void;
+    /** The caller's automatic switching status, then pushed changes. */
+    getSwitchingStatus(): Promise<AutomaticSwitchingStatus>;
+    onSwitchingStatusChanged(
+      callback: (status: AutomaticSwitchingStatus) => void,
+    ): () => void;
     addSteamGame(request: AddSteamGameRequest): Promise<GamesState>;
     setProfile(request: SetGameProfileRequest): Promise<GamesState>;
     remove(request: GameRequest): Promise<GamesState>;

@@ -1,4 +1,5 @@
 import { GameTuningPanel } from "@/features/games/components/game-tuning-panel";
+import { describeGpuSwitching } from "@/features/games/lib/switching-status";
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
 import { TuningStoreProblemAlert } from "./tuning-store-problem-alert";
 import {
@@ -260,6 +261,10 @@ function GpuTelemetrySurface({
           )
       : undefined,
   });
+  const switching =
+    profiles && gpu.stableId
+      ? describeGpuSwitching(profiles.switching, gpu.stableId)
+      : null;
   const headlineMetrics = [
     {
       label: "Power",
@@ -287,6 +292,16 @@ function GpuTelemetrySurface({
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <VendorBadge vendor={gpu.vendor} />
+            {switching?.chip && (
+              <Badge
+                data-testid="switching-chip"
+                title={switching.summary}
+                className="rounded-md border-amber-500/50 bg-transparent text-amber-600 dark:text-amber-400"
+                variant="outline"
+              >
+                {switching.chip}
+              </Badge>
+            )}
             {gpu.architecture && (
               <Badge
                 className="rounded-md border-border/70 bg-transparent"

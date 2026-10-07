@@ -1,4 +1,7 @@
-import type { RunningGamesState } from "@/features/games/types";
+import type {
+  AutomaticSwitchingStatus,
+  RunningGamesState,
+} from "@/features/games/types";
 import type {
   GpuDaemonStatus,
   GpuTuningState,
@@ -115,10 +118,7 @@ export function isRunningGamesState(
       (entry: unknown) =>
         isRecord(entry) &&
         hasKeys(entry, ["game", "pid", "startTimeTicks"]) &&
-        isRecord(entry.game) &&
-        hasKeys(entry.game, ["kind", "appId"]) &&
-        entry.game.kind === "steam" &&
-        positiveU32(entry.game.appId) &&
+        isSteamGame(entry.game) &&
         positiveU32(entry.pid) &&
         Number.isSafeInteger(entry.startTimeTicks) &&
         typeof entry.startTimeTicks === "number" &&
@@ -144,6 +144,81 @@ export function runningGamesNotification(
     hasKeys(value, ["method", "params"]) &&
     value.method === "games.runningChanged" &&
     isRunningGamesState(value.params)
+  )
+    return value.params;
+}
+
+function isSteamGame(value: unknown) {
+  return (
+    isRecord(value) &&
+    hasKeys(value, ["kind", "appId"]) &&
+    value.kind === "steam" &&
+    positiveU32(value.appId)
+  );
+}
+
+function isSwitchingCondition(value: unknown) {
+  if (!isRecord(value)) return false;
+  if (value.status === "ready" || value.status === "off")
+    return hasKeys(value, ["status"]);
+  return (
+    (value.status === "blocked" || value.status === "recognitionUnavailable") &&
+    hasKeys(value, ["status", "reason"]) &&
+    typeof value.reason === "string"
+  );
+}
+
+function isGpuSwitchingState(value: unknown) {
+  if (!isRecord(value)) return false;
+  switch (value.status) {
+    case "active":
+      return (
+        hasKeys(value, ["status", "game", "gameName", "profile"]) &&
+        isSteamGame(value.game) &&
+        typeof value.gameName === "string" &&
+        isRecord(value.profile) &&
+        hasKeys(value.profile, ["id", "name"]) &&
+        typeof value.profile.id === "string" &&
+        typeof value.profile.name === "string"
+      );
+    case "anotherUser":
+      return hasKeys(value, ["status"]);
+    case "failed":
+      return (
+        hasKeys(value, ["status", "message"]) &&
+        typeof value.message === "string"
+      );
+    default:
+      return false;
+  }
+}
+
+export function isAutomaticSwitchingStatus(
+  value: unknown,
+): value is AutomaticSwitchingStatus {
+  return (
+    isRecord(value) &&
+    hasKeys(value, ["condition", "gpus"]) &&
+    isSwitchingCondition(value.condition) &&
+    Array.isArray(value.gpus) &&
+    value.gpus.every(
+      (entry: unknown) =>
+        isRecord(entry) &&
+        hasKeys(entry, ["gpuId", "state"]) &&
+        typeof entry.gpuId === "string" &&
+        isGpuSwitchingState(entry.state),
+    )
+  );
+}
+
+export function switchingStatusNotification(
+  value: unknown,
+): AutomaticSwitchingStatus | undefined {
+  if (
+    isRecord(value) &&
+    hasKeys(value, ["method", "params"]) &&
+    value.method === "games.switchingStatusChanged" &&
+    isAutomaticSwitchingStatus(value.params)
   )
     return value.params;
 }

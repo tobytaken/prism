@@ -3,6 +3,7 @@ import {
   isDaemonStatus,
   isTuningState,
   isRunningGamesState,
+  isAutomaticSwitchingStatus,
 } from "./daemon-events";
 
 import type {
@@ -35,6 +36,7 @@ import type {
 } from "@/features/gpus/types";
 import type {
   AddSteamGameRequest,
+  AutomaticSwitchingStatus,
   GameRequest,
   GamesState,
   RunningGamesState,
@@ -214,6 +216,18 @@ const prismApi = {
       onDaemonEvent(
         "prism:games:runningChanged",
         isRunningGamesState,
+        callback,
+      ),
+    getSwitchingStatus: () =>
+      ipcRenderer.invoke(
+        "prism:games:getSwitchingStatus",
+      ) as Promise<AutomaticSwitchingStatus>,
+    onSwitchingStatusChanged: (
+      callback: (status: AutomaticSwitchingStatus) => void,
+    ) =>
+      onDaemonEvent(
+        "prism:games:switchingStatusChanged",
+        isAutomaticSwitchingStatus,
         callback,
       ),
     listSteamApps: () =>

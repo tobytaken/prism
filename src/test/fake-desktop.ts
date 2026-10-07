@@ -23,6 +23,7 @@ import type {
   StartupOutcome,
 } from "@/features/gpus/types";
 import type {
+  AutomaticSwitchingStatus,
   GameEntry,
   GameId,
   SteamApp,
@@ -101,6 +102,7 @@ export function createFakeDesktop({
   games = [],
   automaticSwitching = false,
   runningGames = { status: "available", games: [] },
+  switchingStatus = { condition: { status: "off" }, gpus: [] },
 }: {
   response?: GpuPerformanceResponse;
   profiles?: GpuTuningProfile[];
@@ -119,6 +121,7 @@ export function createFakeDesktop({
   games?: Omit<GameEntry, "installed">[];
   automaticSwitching?: boolean;
   runningGames?: RunningGamesState;
+  switchingStatus?: AutomaticSwitchingStatus;
 } = {}) {
   /** Setters that fail with this message on every GPU until removed. */
   const failures: Partial<Record<Setting, string>> = {};
@@ -134,6 +137,9 @@ export function createFakeDesktop({
     },
   );
   const runningListeners = new Set<(state: RunningGamesState) => void>();
+  const switchingListeners = new Set<
+    (status: AutomaticSwitchingStatus) => void
+  >();
   const tuningStateListeners = new Set<(state: GpuTuningState) => void>();
   let nextId = profiles.length + 1;
 
@@ -409,6 +415,17 @@ export function createFakeDesktop({
       runningListeners.delete(listener);
     };
   });
+  vi.spyOn(gamesApi, "getSwitchingStatus").mockImplementation(async () =>
+    structuredClone(switchingStatus),
+  );
+  vi.spyOn(gamesApi, "onSwitchingStatusChanged").mockImplementation(
+    (listener) => {
+      switchingListeners.add(listener);
+      return () => {
+        switchingListeners.delete(listener);
+      };
+    },
+  );
   const gameSpies = {
     listSteamApps: vi
       .spyOn(gamesApi, "listSteamApps")
@@ -765,6 +782,10 @@ export function createFakeDesktop({
     pushRunningGames(state: RunningGamesState) {
       runningGames = state;
       for (const listener of runningListeners) listener(state);
+    },
+    pushSwitchingStatus(status: AutomaticSwitchingStatus) {
+      switchingStatus = status;
+      for (const listener of switchingListeners) listener(status);
     },
     /** Pushes the GPU's tuning state to the app, as the daemon does after another session's change. */
     pushTuningState(gpuId: string) {

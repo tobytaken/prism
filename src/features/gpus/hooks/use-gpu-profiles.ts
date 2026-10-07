@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useMigration } from "./use-migration";
 import { useStartup } from "./use-startup";
 import { useGames } from "@/features/games/hooks/use-games";
+import { useSwitchingStatus } from "@/features/games/hooks/use-switching-status";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGpuTuningStates,
@@ -26,6 +27,7 @@ export function useGpuProfiles() {
   const startup = useStartup();
   const migration = useMigration();
   const games = useGames();
+  const switching = useSwitchingStatus();
   const query = useQuery({
     queryKey: PROFILES_QUERY_KEY,
     queryFn: listGpuProfiles,
@@ -95,6 +97,8 @@ export function useGpuProfiles() {
     migration,
     startup,
     games,
+    /** The caller's automatic switching status, kept apart from current tuning values. */
+    switching,
     query,
     states,
     saveAsNew,
