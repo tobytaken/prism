@@ -1,5 +1,9 @@
 import type { ShownSwitchingStatus } from "@/features/games/hooks/use-switching-status";
 
+function gpuState(status: ShownSwitchingStatus | undefined, gpuId: string) {
+  return status?.gpus.find((entry) => entry.gpuId === gpuId)?.state;
+}
+
 /** How a GPU's automatic switching status reads, and its header chip when it isn't ready. */
 export function describeGpuSwitching(
   status: ShownSwitchingStatus | undefined,
@@ -7,7 +11,7 @@ export function describeGpuSwitching(
 ): { summary: string; chip: string | null } {
   if (!status) return { summary: "Reading status…", chip: null };
   const { condition } = status;
-  const state = status.gpus.find((entry) => entry.gpuId === gpuId)?.state;
+  const state = gpuState(status, gpuId);
   if (condition.status === "unknown")
     return {
       summary: `Status unknown: ${condition.reason}`,
@@ -43,10 +47,10 @@ export function describeGpuSwitching(
 /** The tag for a current profile that a running game applied automatically. */
 export function automaticTag(
   status: ShownSwitchingStatus | undefined,
-  gpuId: string,
+  gpuId: string | null,
   currentProfileId: string | undefined,
 ): string | null {
-  const state = status?.gpus.find((entry) => entry.gpuId === gpuId)?.state;
+  const state = gpuId ? gpuState(status, gpuId) : undefined;
   return state?.status === "active" && state.profile.id === currentProfileId
     ? `auto · ${state.gameName}`
     : null;

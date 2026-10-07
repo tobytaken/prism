@@ -16,21 +16,22 @@ use super::backend::DaemonBackend;
 use super::profiles::{reading, verified_gpu};
 use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
-use super::tuning::apply_startup_profile;
+use super::tuning::apply_unreviewed_profile;
 use super::tuning_store::{write_atomically, TuningDocument, TuningStore};
 use crate::protocol::{
     ApplyGpuProfileRequest, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
-    GpuSwitchingState, GpuSwitchingStatus, ProfileApplicationResponse, ProfileSetting,
-    ProfileSettingKey, ProfileSettings, SwitchingCondition, TuningOutcome, TuningOutcomeStatus,
+    GpuSwitchingState, GpuSwitchingStatus, ProfileSetting, ProfileSettingKey, ProfileSettings,
+    SwitchingCondition, TuningOutcome, TuningOutcomeStatus,
 };
 
 pub(super) const SWITCHING_STATE_FILE_NAME: &str = "switching-state.json";
 const SCHEMA_VERSION: u64 = 1;
 
-/// The user's running game, and its linked profile, that drive a GPU.
+/// The user's running game, with its linked profile, that automatic switching puts into effect
+/// on a GPU.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Driver {
+struct DrivingGame {
     uid: u32,
     username: String,
     game: GameId,
@@ -41,8 +42,8 @@ struct Driver {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Activation {
-    /// What automation last put, or tried to put, into effect; none once it restores.
-    driver: Option<Driver>,
+    /// The game automation last put, or tried to put, into effect; none once it restores.
+    driving: Option<DrivingGame>,
     /// The pre-game tuning values: the actual value of each setting automation wrote, captured
     /// when it first wrote that setting.
     baseline: BTreeMap<ProfileSettingKey, i64>,
@@ -159,7 +160,7 @@ impl Switching {
         }
     }
 
-    /// GPUs whose wanted driver differs from what automation last put into effect, each claimed
+    /// GPUs whose winning game differs from the one automation last put into effect, each claimed
     /// for one queued reconciliation. Nothing changes while recognition is unavailable or the
     /// tuning store is unhealthy.
     pub fn claim_unsettled(&self) -> Vec<String> {
@@ -171,7 +172,7 @@ impl Switching {
         };
         let Ok(wanted) = self
             .store
-            .read(|document| wanted_drivers(document, &running))
+            .read(|document| winning_games(document, &running))
         else {
             return vec![];
         };
@@ -183,7 +184,7 @@ impl Switching {
                 wanted.get(*gpu_id)
                     != activations
                         .get(*gpu_id)
-                        .and_then(|activation| activation.driver.as_ref())
+                        .and_then(|activation| activation.driving.as_ref())
             })
             .filter(|gpu_id| queued.insert((*gpu_id).clone()))
             .cloned()
@@ -196,7 +197,7 @@ impl Switching {
         self.recognition.lock().unwrap().running().clone()
     }
 
-    /// Applies the GPU's wanted driver's profile, or restores the GPU when nothing drives it,
+    /// Applies the GPU's winning game's profile, or restores the GPU when no game wins,
     /// from the latest scan and saved state. Runs on the GPU's queue.
     pub fn reconcile(&self, backend: &dyn DaemonBackend, gpu_id: &str) {
         self.state.queued.lock().unwrap().remove(gpu_id);
@@ -210,17 +211,17 @@ impl Switching {
             return;
         };
         let activation = activations.remove(gpu_id);
-        let wanted = wanted_drivers(&document, &running).remove(gpu_id);
-        if wanted.as_ref() == activation.as_ref().and_then(|a| a.driver.as_ref()) {
+        let wanted = winning_games(&document, &running).remove(gpu_id);
+        if wanted.as_ref() == activation.as_ref().and_then(|a| a.driving.as_ref()) {
             return;
         }
         match (wanted, activation) {
-            (Some(driver), activation) => {
+            (Some(game), activation) => {
                 let activation = activation.unwrap_or_else(|| Activation {
                     previous_profile: document.current_profiles.get(gpu_id).cloned(),
                     ..Activation::default()
                 });
-                self.apply(backend, &document, gpu_id, driver, activation)
+                self.apply(backend, &document, gpu_id, game, activation)
             }
             (None, Some(activation)) => self.restore(backend, gpu_id, activation),
             (None, None) => {}
@@ -232,150 +233,143 @@ impl Switching {
         backend: &dyn DaemonBackend,
         document: &TuningDocument,
         gpu_id: &str,
-        driver: Driver,
+        game: DrivingGame,
         mut activation: Activation,
     ) {
-        let settings = document
-            .any_profile(&driver.profile_id)
-            .expect("only an existing profile is wanted")
-            .settings
-            .clone();
-        activation.driver = Some(driver.clone());
+        let profile = &document
+            .any_profile(&game.profile_id)
+            .expect("only an existing profile wins")
+            .settings;
+        activation.driving = Some(game.clone());
         activation.failure = None;
         let readings = backend.performance();
         let Ok(gpu) = verified_gpu(&readings, gpu_id) else {
-            activation.failure = Some(
-                "The GPU is unavailable or its identity can't be verified, so nothing was applied."
-                    .into(),
-            );
-            self.keep(gpu_id, Some(activation));
-            return;
+            return self.abandon(gpu_id, activation, &[], UNAVAILABLE_APPLY.into());
         };
         // Each setting's pre-game value is captured before automation first writes it, and
         // recorded before any write.
         let mut captured = vec![];
         for key in ProfileSettingKey::ALL {
-            if settings.get(key).is_none() || activation.baseline.contains_key(&key) {
+            if profile.get(key).is_none() || activation.baseline.contains_key(&key) {
                 continue;
             }
             let reading = reading(gpu, key);
             let Some(current) = reading.current else {
-                for key in &captured {
-                    activation.baseline.remove(key);
-                }
-                activation.failure = Some(format!(
+                let failure = format!(
                     "{}: the pre-game value can't be read, so nothing was applied.",
                     reading.label
-                ));
-                self.keep(gpu_id, Some(activation));
-                return;
+                );
+                return self.abandon(gpu_id, activation, &captured, failure);
             };
             activation.baseline.insert(key, current);
             captured.push(key);
         }
         if let Err(error) = self.state.set(gpu_id, Some(activation.clone())) {
-            for key in &captured {
-                activation.baseline.remove(key);
-            }
-            activation.failure = Some(format!(
+            let failure = format!(
                 "The pre-game values couldn't be recorded, so nothing was applied: {error}"
-            ));
-            self.keep(gpu_id, Some(activation));
-            return;
+            );
+            return self.abandon(gpu_id, activation, &captured, failure);
         }
-        let application = apply_startup_profile(
-            backend,
-            ApplyGpuProfileRequest {
-                gpu_id: gpu_id.into(),
-                settings,
-            },
-        );
-        let outcomes = outcomes(&application);
-        // A setting that was never attempted keeps no pre-game value, so it isn't restored.
-        for key in captured {
-            if outcomes
-                .iter()
-                .any(|(attempted, outcome)| *attempted == key && unattempted(outcome))
-            {
-                activation.baseline.remove(&key);
+        // Settings an earlier game profile wrote that this one omits return to their pre-game
+        // values.
+        let mut settings = profile.clone();
+        let returning: Vec<_> = activation
+            .baseline
+            .iter()
+            .filter(|(key, _)| profile.get(**key).is_none())
+            .map(|(key, value)| (*key, *value))
+            .collect();
+        for (key, value) in &returning {
+            settings.set(*key, ProfileSetting::Value { value: *value });
+        }
+        let outcomes = write_settings(backend, gpu_id, settings);
+        for (key, outcome) in &outcomes {
+            // A setting that was never attempted keeps no pre-game value, so it isn't restored.
+            let unwritten =
+                captured.contains(key) && outcome.status == TuningOutcomeStatus::Unattempted;
+            let returned =
+                returning.iter().any(|(returned, _)| returned == key) && succeeded(outcome);
+            if unwritten || returned {
+                activation.baseline.remove(key);
             }
         }
         let full = outcomes.iter().all(|(_, outcome)| succeeded(outcome));
-        let any = outcomes.iter().any(|(_, outcome)| succeeded(outcome));
         if !full {
             activation.failure = Some(failure_message(&outcomes));
         }
         // A fully applied game profile becomes current; a partly applied one leaves no
         // current profile. Neither is recorded as last applied tuning values.
-        if any {
-            if let Err(error) = self.store.update(|document| {
-                if full {
-                    document
-                        .current_profiles
-                        .insert(gpu_id.into(), driver.profile_id.clone());
-                } else {
-                    document.current_profiles.remove(gpu_id);
-                }
-            }) {
-                eprintln!("failed to record the current profile of {gpu_id}: {error}");
-            }
+        if outcomes.iter().any(|(_, outcome)| succeeded(outcome)) {
+            self.set_current_profile(gpu_id, full.then_some(game.profile_id));
         }
-        self.keep(gpu_id, Some(activation));
+        self.record(gpu_id, Some(activation));
     }
 
     fn restore(&self, backend: &dyn DaemonBackend, gpu_id: &str, mut activation: Activation) {
-        activation.driver = None;
+        activation.driving = None;
         activation.failure = None;
         if !activation.baseline.is_empty() {
             let readings = backend.performance();
             if verified_gpu(&readings, gpu_id).is_err() {
-                activation.failure = Some(
-                    "The GPU is unavailable or its identity can't be verified, so its pre-game \
-                     values weren't restored."
-                        .into(),
-                );
-                self.keep(gpu_id, Some(activation));
-                return;
+                return self.abandon(gpu_id, activation, &[], UNAVAILABLE_RESTORE.into());
             }
             let mut settings = ProfileSettings::default();
             for (key, value) in &activation.baseline {
                 settings.set(*key, ProfileSetting::Value { value: *value });
             }
-            let application = apply_startup_profile(
-                backend,
-                ApplyGpuProfileRequest {
-                    gpu_id: gpu_id.into(),
-                    settings,
-                },
-            );
-            let outcomes = outcomes(&application);
+            let outcomes = write_settings(backend, gpu_id, settings);
             for (key, outcome) in &outcomes {
                 if succeeded(outcome) {
                     activation.baseline.remove(key);
                 }
             }
             if !activation.baseline.is_empty() {
-                activation.failure = Some(failure_message(&outcomes));
-                self.keep(gpu_id, Some(activation));
-                return;
+                // Partly restored, no profile describes the GPU.
+                if outcomes.iter().any(|(_, outcome)| succeeded(outcome)) {
+                    self.set_current_profile(gpu_id, None);
+                }
+                return self.abandon(gpu_id, activation, &[], failure_message(&outcomes));
             }
         }
         // Fully restored, the previous current profile returns, if it still exists.
+        let previous = activation.previous_profile.filter(|id| {
+            self.store
+                .read(|document| document.any_profile(id).is_some())
+                .unwrap_or(false)
+        });
+        self.set_current_profile(gpu_id, previous);
+        self.record(gpu_id, None);
+    }
+
+    /// Records why the operation stopped, without the pre-game values it captured but never
+    /// wrote.
+    fn abandon(
+        &self,
+        gpu_id: &str,
+        mut activation: Activation,
+        captured: &[ProfileSettingKey],
+        failure: String,
+    ) {
+        for key in captured {
+            activation.baseline.remove(key);
+        }
+        activation.failure = Some(failure);
+        self.record(gpu_id, Some(activation));
+    }
+
+    fn set_current_profile(&self, gpu_id: &str, profile_id: Option<String>) {
         if let Err(error) = self.store.update(|document| {
-            match activation
-                .previous_profile
-                .filter(|id| document.any_profile(id).is_some())
-            {
+            match profile_id {
                 Some(id) => document.current_profiles.insert(gpu_id.into(), id),
                 None => document.current_profiles.remove(gpu_id),
             };
         }) {
-            eprintln!("failed to restore the current profile of {gpu_id}: {error}");
+            eprintln!("failed to record the current profile of {gpu_id}: {error}");
         }
-        self.keep(gpu_id, None);
     }
 
-    fn keep(&self, gpu_id: &str, activation: Option<Activation>) {
+    /// Writes the GPU's activation to boot-scoped state.
+    fn record(&self, gpu_id: &str, activation: Option<Activation>) {
         if let Err(error) = self.state.set(gpu_id, activation) {
             eprintln!("failed to record automatic switching state for {gpu_id}: {error}");
         }
@@ -390,11 +384,14 @@ impl Switching {
     pub fn opened(&self, peer: &SessionPeer) {
         let _publishing = self.state.publishing.lock().unwrap();
         let status = self.status_for(peer);
+        // Another of the user's sessions may not have been pushed a newer status yet; the next
+        // push then reaches every session.
         self.state
             .published
             .lock()
             .unwrap()
-            .insert((peer.uid, peer.username.clone()), status);
+            .entry((peer.uid, peer.username.clone()))
+            .or_insert(status);
     }
 
     /// Pushes each user's status to their sessions when it changed.
@@ -422,10 +419,13 @@ impl Switching {
     }
 }
 
-/// Each GPU's driver: of the running games linked to it by users who opted in, the most
+/// Each GPU's winning game: of the running games linked to it by users who opted in, the most
 /// recently started, by its earliest process's start time, with ties to the lower pid.
-fn wanted_drivers(document: &TuningDocument, running: &GamesByUser) -> BTreeMap<String, Driver> {
-    let mut wanted: BTreeMap<String, ((u64, Reverse<u32>), Driver)> = BTreeMap::new();
+fn winning_games(
+    document: &TuningDocument,
+    running: &GamesByUser,
+) -> BTreeMap<String, DrivingGame> {
+    let mut wanted: BTreeMap<String, ((u64, Reverse<u32>), DrivingGame)> = BTreeMap::new();
     let users = document
         .users
         .iter()
@@ -448,30 +448,48 @@ fn wanted_drivers(document: &TuningDocument, running: &GamesByUser) -> BTreeMap<
                 if wanted.get(gpu_id).is_some_and(|(best, _)| *best >= rank) {
                     continue;
                 }
-                let driver = Driver {
+                let winner = DrivingGame {
                     uid: user.uid,
                     username: user.username.clone(),
                     game: game.game.clone(),
                     profile_id: profile_id.clone(),
                 };
-                wanted.insert(gpu_id.clone(), (rank, driver));
+                wanted.insert(gpu_id.clone(), (rank, winner));
             }
         }
     }
     wanted
         .into_iter()
-        .map(|(gpu_id, (_, driver))| (gpu_id, driver))
+        .map(|(gpu_id, (_, winner))| (gpu_id, winner))
         .collect()
 }
 
-fn outcomes(application: &ProfileApplicationResponse) -> Vec<(ProfileSettingKey, &TuningOutcome)> {
+const UNAVAILABLE_APPLY: &str =
+    "The GPU is unavailable or its identity can't be verified, so nothing was applied.";
+const UNAVAILABLE_RESTORE: &str = "The GPU is unavailable or its identity can't be verified, so \
+    its pre-game values weren't restored.";
+
+/// Validates every setting and writes them all or none, never clamping, as startup does. Returns
+/// each included setting's outcome.
+fn write_settings(
+    backend: &dyn DaemonBackend,
+    gpu_id: &str,
+    settings: ProfileSettings,
+) -> Vec<(ProfileSettingKey, TuningOutcome)> {
+    let application = apply_unreviewed_profile(
+        backend,
+        ApplyGpuProfileRequest {
+            gpu_id: gpu_id.into(),
+            settings,
+        },
+    );
     [
-        (ProfileSettingKey::PowerLimitWatts, &application.power),
-        (ProfileSettingKey::GraphicsOffsetMhz, &application.graphics),
-        (ProfileSettingKey::MemoryOffsetMhz, &application.memory),
+        (ProfileSettingKey::PowerLimitWatts, application.power),
+        (ProfileSettingKey::GraphicsOffsetMhz, application.graphics),
+        (ProfileSettingKey::MemoryOffsetMhz, application.memory),
     ]
     .into_iter()
-    .filter_map(|(key, outcome)| Some((key, outcome.as_ref()?)))
+    .filter_map(|(key, outcome)| Some((key, outcome?)))
     .collect()
 }
 
@@ -479,11 +497,7 @@ fn succeeded(outcome: &TuningOutcome) -> bool {
     outcome.status == TuningOutcomeStatus::Succeeded
 }
 
-fn unattempted(outcome: &TuningOutcome) -> bool {
-    outcome.status == TuningOutcomeStatus::Unattempted
-}
-
-fn failure_message(outcomes: &[(ProfileSettingKey, &TuningOutcome)]) -> String {
+fn failure_message(outcomes: &[(ProfileSettingKey, TuningOutcome)]) -> String {
     outcomes
         .iter()
         .filter_map(|(_, outcome)| outcome.error.clone())
@@ -524,25 +538,25 @@ impl Snapshot {
             );
         };
         let user = document.user(peer.uid, &peer.username);
-        let own = |driver: &Driver| driver.uid == peer.uid && driver.username == peer.username;
+        let own = |game: &DrivingGame| game.uid == peer.uid && game.username == peer.username;
         let gpus: Vec<_> = activations
             .iter()
             .filter_map(|(gpu_id, activation)| {
-                let state = match (&activation.failure, &activation.driver) {
+                let state = match (&activation.failure, &activation.driving) {
                     (Some(message), _) => GpuSwitchingState::Failed {
                         message: message.clone(),
                     },
-                    (None, Some(driver)) if own(driver) => {
-                        let profile = document.any_profile(&driver.profile_id)?;
+                    (None, Some(driving)) if own(driving) => {
+                        let profile = document.any_profile(&driving.profile_id)?;
                         GpuSwitchingState::Active {
-                            game: driver.game.clone(),
+                            game: driving.game.clone(),
                             game_name: user
                                 .and_then(|user| {
-                                    user.games.iter().find(|linked| linked.game == driver.game)
+                                    user.games.iter().find(|linked| linked.game == driving.game)
                                 })
                                 .map(|linked| linked.name.clone())
                                 .unwrap_or_else(|| {
-                                    let GameId::Steam { app_id } = driver.game;
+                                    let GameId::Steam { app_id } = driving.game;
                                     format!("Steam app {app_id}")
                                 }),
                             profile: CurrentProfile {
@@ -563,7 +577,7 @@ impl Snapshot {
         let opted_in = user.is_some_and(|user| user.automatic_switching);
         let holding = activations
             .values()
-            .any(|activation| activation.driver.as_ref().is_some_and(own));
+            .any(|activation| activation.driving.as_ref().is_some_and(own));
         let condition = match &self.recognition {
             Some(reason) if opted_in || holding => SwitchingCondition::RecognitionUnavailable {
                 reason: reason.clone(),

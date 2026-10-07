@@ -206,10 +206,10 @@ fn association_changes_and_profile_deletes_re_evaluate_a_running_game() {
     daemon.scan();
     assert_eq!(values(&daemon), GAMING);
 
-    // Cool omits the graphics offset, so Gaming's stays until the game ends.
+    // Cool omits the graphics offset, so it returns to its pre-game value.
     link(&alice, LINKED, Some("cool"));
     daemon.settle();
-    assert_eq!(values(&daemon), (Some(320), Some(150), Some(0)));
+    assert_eq!(values(&daemon), (Some(320), Some(60), Some(0)));
     assert_eq!(
         current_profile(&alice, LINKED),
         json!({ "id": "cool", "name": "Cool" })
@@ -387,6 +387,34 @@ fn a_previous_boots_pre_game_values_are_never_restored() {
 
     daemon.reboot_with_retained_boot_state();
     daemon.end_process(123);
+    let before = writes_to(&daemon, LINKED);
+    daemon.scan();
+    assert_eq!(writes_to(&daemon, LINKED), before);
+}
+
+#[test]
+fn a_partial_restoration_leaves_no_current_profile_and_reports_the_failure() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    daemon.gpus.fail(
+        LINKED,
+        Setter::GraphicsOffset,
+        "Graphics offset write failed.",
+    );
+
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), (Some(450), Some(150), Some(0)));
+    assert_eq!(current_profile(&alice, LINKED), Value::Null);
+    assert_eq!(
+        status(&alice)["gpus"],
+        json!([{ "gpuId": LINKED, "state": {
+            "status": "failed", "message": "Graphics offset write failed."
+        } }])
+    );
+    // A failed restoration isn't retried by later scans.
     let before = writes_to(&daemon, LINKED);
     daemon.scan();
     assert_eq!(writes_to(&daemon, LINKED), before);

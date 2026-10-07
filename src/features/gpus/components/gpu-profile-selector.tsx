@@ -297,11 +297,7 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
     canApply,
     canSave,
   } = selector;
-  const autoTag = automaticTag(
-    workflow.switching,
-    selector.uuid ?? "",
-    current?.id,
-  );
+  const autoTag = automaticTag(workflow.switching, selector.uuid, current?.id);
   return (
     <>
       <DropdownMenu modal={false}>
