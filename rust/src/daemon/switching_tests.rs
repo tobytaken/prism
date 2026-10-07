@@ -364,8 +364,9 @@ fn a_daemon_restart_mid_game_keeps_the_pre_game_values_for_restoration() {
     daemon.scan();
     drop(alice);
 
-    daemon.restart();
     let before = writes_to(&daemon, LINKED);
+    daemon.restart();
+    daemon.settle();
     daemon.scan();
     assert_eq!(writes_to(&daemon, LINKED), before);
     let alice = daemon.user(1000, "alice");
@@ -385,11 +386,15 @@ fn a_previous_boots_pre_game_values_are_never_restored() {
     daemon.scan();
     drop(alice);
 
-    daemon.reboot_with_retained_boot_state();
-    daemon.end_process(123);
     let before = writes_to(&daemon, LINKED);
+
+    // The game ended with the host, so the new boot's first scan finds nothing running.
+    daemon.end_process(123);
+    daemon.reboot_with_retained_boot_state();
+    daemon.settle();
     daemon.scan();
     assert_eq!(writes_to(&daemon, LINKED), before);
+    assert_eq!(values(&daemon), GAMING);
 }
 
 #[test]
