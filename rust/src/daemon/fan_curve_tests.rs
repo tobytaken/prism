@@ -104,31 +104,6 @@ fn curves_are_unavailable_with_a_reason_rather_than_guessing_limits() {
 }
 
 #[test]
-fn a_shared_curve_starts_at_zero_only_when_every_fan_supports_it() {
-    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
-    daemon.gpus.update("GPU-123", |gpu| {
-        gpu.cooling.fans[0].min_speed_percent = Some(0);
-        gpu.cooling.fans[1].min_speed_percent = Some(30);
-    });
-    let support = curve_support(&daemon, "GPU-123");
-    assert_eq!(support["minSpeedPercent"], 30);
-    assert_eq!(
-        support["starter"],
-        points(&[(45, 30), (65, 65), (75, 83), (85, 100)])
-    );
-
-    daemon.gpus.update("GPU-123", |gpu| {
-        gpu.cooling.fans[1].min_speed_percent = Some(0);
-    });
-    let support = curve_support(&daemon, "GPU-123");
-    assert_eq!(support["minSpeedPercent"], 0);
-    assert_eq!(
-        support["starter"],
-        points(&[(45, 0), (65, 50), (75, 75), (85, 100)])
-    );
-}
-
-#[test]
 fn the_starter_curve_tracks_the_reported_thermal_boundary() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     daemon.gpus.update("GPU-123", |gpu| {
@@ -185,105 +160,6 @@ fn previewing_the_starter_curve_finds_no_problems_and_writes_nothing() {
 }
 
 #[test]
-fn preview_explains_each_invalid_point() {
-    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
-
-    assert_eq!(
-        problems(preview(
-            &daemon,
-            "GPU-123",
-            &[(-1, 20), (65, 10), (65, 101), (95, 100)]
-        )),
-        vec![
-            (Some(0), "Point 1: temperature must be between 0 and 90°C.".into()),
-            (Some(1), "Point 2: speed must be between 20% and 100%.".into()),
-            (Some(1), "Point 2: speed can't be lower than point 1's 20%.".into()),
-            (Some(2), "Point 3: speed must be between 20% and 100%.".into()),
-            (
-                Some(2),
-                "Point 3: temperature must be higher than point 2's 65°C.".into()
-            ),
-            (Some(3), "Point 4: temperature must be between 0 and 90°C.".into()),
-            (Some(3), "Point 4: speed can't be lower than point 3's 101%.".into()),
-            (
-                None,
-                "The curve must reach 100% by 85°C, 5°C below the GPU's 90°C maximum operating temperature."
-                    .into()
-            ),
-        ]
-    );
-}
-
-#[test]
-fn preview_requires_maximum_speed_by_five_degrees_below_the_boundary() {
-    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
-
-    assert_eq!(
-        problems(preview(&daemon, "GPU-123", &[(45, 20), (86, 100)])),
-        vec![(
-            None,
-            "The curve must reach 100% by 85°C, 5°C below the GPU's 90°C maximum operating temperature."
-                .into()
-        )]
-    );
-    assert_eq!(
-        problems(preview(&daemon, "GPU-123", &[(45, 20), (85, 99)])).len(),
-        1
-    );
-    assert_eq!(
-        problems(preview(&daemon, "GPU-123", &[(45, 20), (85, 100)])),
-        vec![]
-    );
-}
-
-#[test]
-fn preview_accepts_two_to_sixteen_points() {
-    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
-    let curve = |count: i64| -> Vec<(i64, i64)> {
-        (0..count)
-            .map(|index| {
-                (
-                    85 - (count - 1 - index) * 5,
-                    if index == count - 1 { 100 } else { 20 },
-                )
-            })
-            .collect()
-    };
-    let too_few = "A curve needs 2 to 16 points.".to_string();
-
-    assert_eq!(
-        problems(preview(&daemon, "GPU-123", &curve(1))),
-        vec![(None, too_few.clone())]
-    );
-    assert_eq!(problems(preview(&daemon, "GPU-123", &curve(2))), vec![]);
-    assert_eq!(problems(preview(&daemon, "GPU-123", &curve(16))), vec![]);
-    assert_eq!(
-        problems(preview(&daemon, "GPU-123", &curve(17))),
-        vec![(None, too_few)]
-    );
-}
-
-#[test]
-fn preview_validates_a_shared_curve_against_every_fan() {
-    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
-    daemon.gpus.update("GPU-123", |gpu| {
-        gpu.cooling.fans[1].min_speed_percent = Some(35);
-    });
-
-    assert_eq!(
-        problems(preview(&daemon, "GPU-123", &[(45, 30), (85, 100)])),
-        vec![(
-            Some(0),
-            "Point 1: speed must be between 35% and 100%.".into()
-        )]
-    );
-    assert_eq!(
-        problems(preview(&daemon, "GPU-123", &[(0, 0), (85, 100)]))[0].1,
-        "Point 1: speed must be between 35% and 100%."
-    );
-}
-
-#[test]
 fn preview_reports_why_curves_are_unavailable() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     daemon.gpus.update("GPU-123", |gpu| {
@@ -318,8 +194,9 @@ fn preview_rejects_fractional_and_unknown_point_fields() {
     assert!(request(json!({ "temperatureC": 45, "speedPercent": 20, "rpm": 900 })).is_err());
 }
 
+/// The same contract holds the fake desktop to the daemon's judgement.
 #[test]
-fn preview_matches_the_shared_contract() {
+fn support_and_previews_follow_the_shared_contract() {
     let contract: Value = serde_json::from_str(include_str!(
         "../../../src/test/contracts/fan-curve-preview.json"
     ))
@@ -330,7 +207,45 @@ fn preview_matches_the_shared_contract() {
         "type": "preview_fan_curve",
         "payload": contract["request"],
     }));
-
-    assert_eq!(response["type"], "fan_curve_preview");
     assert_eq!(response["payload"], contract["preview"]);
+
+    for limits in contract["limits"].as_array().unwrap() {
+        let name = limits["name"].as_str().unwrap();
+        daemon.gpus.update("GPU-123", |gpu| {
+            gpu.cooling.max_operating_temperature_c = limits["maxOperatingTemperatureC"]
+                .as_u64()
+                .map(|c| c as u32);
+            for (fan, range) in gpu
+                .cooling
+                .fans
+                .iter_mut()
+                .zip(limits["fanSpeedRanges"].as_array().unwrap())
+            {
+                fan.min_speed_percent = range[0].as_u64().map(|speed| speed as u32);
+                fan.max_speed_percent = range[1].as_u64().map(|speed| speed as u32);
+            }
+        });
+        assert_eq!(
+            curve_support(&daemon, "GPU-123"),
+            limits["curveSupport"],
+            "{name}"
+        );
+
+        for case in limits["cases"].as_array().unwrap() {
+            let curve: Vec<(i64, i64)> = case["points"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|point| (point[0].as_i64().unwrap(), point[1].as_i64().unwrap()))
+                .collect();
+            let response = preview(&daemon, "GPU-123", &curve);
+            assert_eq!(response["type"], "fan_curve_preview", "{response}");
+            assert_eq!(
+                response["payload"]["problems"], case["problems"],
+                "{name}: {}",
+                case["name"]
+            );
+        }
+    }
+    assert!(daemon.gpus.writes().is_empty());
 }

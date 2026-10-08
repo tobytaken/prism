@@ -10,9 +10,16 @@ import {
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
 import { renderWithQueryClient } from "@/test/query-client";
-import type { CoolingInfo } from "@/features/gpus/types";
+import fanCurvePreview from "@/test/contracts/fan-curve-preview.json";
+import type { CoolingInfo, FanCurveSupport } from "@/features/gpus/types";
 import { GpuPerformancePage } from "./gpu-performance-page";
 
+/** The curve support the daemon reports for each set of limits in the shared contract. */
+const [twentyToHundred, zeroToHundred] = fanCurvePreview.limits.map(
+  ({ curveSupport }) => curveSupport as FanCurveSupport,
+);
+
+/** The issue's worked example: T=85°C with a 20-100% range. */
 const starter = [
   { temperatureC: 45, speedPercent: 20 },
   { temperatureC: 65, speedPercent: 60 },
@@ -34,14 +41,7 @@ const sharedCooling: CoolingInfo = {
   })),
   maxOperatingTemperatureC: 90,
   maxOperatingTemperatureReason: null,
-  curveSupport: {
-    status: "available",
-    maxOperatingTemperatureC: 90,
-    fullSpeedTemperatureC: 85,
-    minSpeedPercent: 20,
-    maxSpeedPercent: 100,
-    starter,
-  },
+  curveSupport: twentyToHundred,
 };
 
 function renderPerformance(cooling: CoolingInfo = sharedCooling) {
@@ -193,19 +193,7 @@ describe("Fan curve preview", () => {
     const fake = renderPerformance({
       ...sharedCooling,
       fans: sharedCooling.fans.map((fan) => ({ ...fan, minSpeedPercent: 0 })),
-      curveSupport: {
-        status: "available",
-        maxOperatingTemperatureC: 90,
-        fullSpeedTemperatureC: 85,
-        minSpeedPercent: 0,
-        maxSpeedPercent: 100,
-        starter: [
-          { temperatureC: 45, speedPercent: 0 },
-          { temperatureC: 65, speedPercent: 50 },
-          { temperatureC: 75, speedPercent: 75 },
-          { temperatureC: 85, speedPercent: 100 },
-        ],
-      },
+      curveSupport: zeroToHundred,
     });
     const editor = await curveEditor();
     expect(

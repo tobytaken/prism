@@ -43,7 +43,7 @@ pub enum FanCurveSupport {
         /// The lowest speed every fan supports; zero only when every fan supports it.
         min_speed_percent: i64,
         max_speed_percent: i64,
-        /// An editable starting curve, not the GPU's own firmware curve.
+        /// The starter fan curve: editable, and not the GPU's own firmware curve.
         starter: Vec<FanCurvePoint>,
     },
     Unavailable {
@@ -105,7 +105,7 @@ pub fn curve_support(cooling: &CoolingInfo) -> FanCurveSupport {
             let starter = starter_curve(limits);
             if !validate_points(limits, &starter).is_empty() {
                 return FanCurveSupport::Unavailable {
-                    reason: "Prism can't build a valid starting curve within this GPU's limits."
+                    reason: "Prism can't build a valid starter fan curve within this GPU's limits."
                         .into(),
                 };
             }

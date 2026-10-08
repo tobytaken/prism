@@ -172,6 +172,10 @@ _Avoid_: Current fan speed, saved fan curve when referring to the applied curve
 A user's last manually applied custom curve and fan arrangement for a GPU, retained for reuse even when another cooling mode is applied. Recalling it creates unapplied tuning changes; temporary game curves do not replace it.
 _Avoid_: Applied fan curve, GPU tuning profile
 
+**Starter fan curve**:
+An editable fan curve Prism proposes for a GPU from its supported fan speeds and maximum operating temperature, as a starting point for tuning; it is neither the GPU's own firmware curve nor a safety guarantee.
+_Avoid_: Default curve, preset, firmware curve
+
 ### Driver management
 
 **NVIDIA driver**:

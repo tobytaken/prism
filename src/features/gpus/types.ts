@@ -195,7 +195,7 @@ export type FanCurveSupport =
       /** Zero only when every fan supports it. */
       minSpeedPercent: number;
       maxSpeedPercent: number;
-      /** An editable starting curve, not the GPU's own firmware curve. */
+      /** The starter fan curve: editable, and not the GPU's own firmware curve. */
       starter: FanCurvePoint[];
     }
   | { status: "unavailable"; reason: string };

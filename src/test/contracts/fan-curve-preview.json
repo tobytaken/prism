@@ -18,5 +18,275 @@
         "message": "The curve must reach 100% by 85°C, 5°C below the GPU's 90°C maximum operating temperature."
       }
     ]
-  }
+  },
+  "limits": [
+    {
+      "name": "two fans at 20-100% under a 90°C maximum operating temperature",
+      "maxOperatingTemperatureC": 90,
+      "fanSpeedRanges": [
+        [20, 100],
+        [20, 100]
+      ],
+      "curveSupport": {
+        "status": "available",
+        "maxOperatingTemperatureC": 90,
+        "fullSpeedTemperatureC": 85,
+        "minSpeedPercent": 20,
+        "maxSpeedPercent": 100,
+        "starter": [
+          { "temperatureC": 45, "speedPercent": 20 },
+          { "temperatureC": 65, "speedPercent": 60 },
+          { "temperatureC": 75, "speedPercent": 80 },
+          { "temperatureC": 85, "speedPercent": 100 }
+        ]
+      },
+      "cases": [
+        {
+          "name": "the starter fan curve",
+          "points": [
+            [45, 20],
+            [65, 60],
+            [75, 80],
+            [85, 100]
+          ],
+          "problems": []
+        },
+        {
+          "name": "full speed early, held past the boundary",
+          "points": [
+            [30, 20],
+            [70, 100],
+            [90, 100]
+          ],
+          "problems": []
+        },
+        {
+          "name": "every point rule broken",
+          "points": [
+            [-1, 20],
+            [65, 10],
+            [65, 101],
+            [95, 100]
+          ],
+          "problems": [
+            {
+              "point": 0,
+              "message": "Point 1: temperature must be between 0 and 90°C."
+            },
+            {
+              "point": 1,
+              "message": "Point 2: speed must be between 20% and 100%."
+            },
+            {
+              "point": 1,
+              "message": "Point 2: speed can't be lower than point 1's 20%."
+            },
+            {
+              "point": 2,
+              "message": "Point 3: speed must be between 20% and 100%."
+            },
+            {
+              "point": 2,
+              "message": "Point 3: temperature must be higher than point 2's 65°C."
+            },
+            {
+              "point": 3,
+              "message": "Point 4: temperature must be between 0 and 90°C."
+            },
+            {
+              "point": 3,
+              "message": "Point 4: speed can't be lower than point 3's 101%."
+            },
+            {
+              "point": null,
+              "message": "The curve must reach 100% by 85°C, 5°C below the GPU's 90°C maximum operating temperature."
+            }
+          ]
+        },
+        {
+          "name": "full speed only after the boundary",
+          "points": [
+            [45, 20],
+            [86, 100]
+          ],
+          "problems": [
+            {
+              "point": null,
+              "message": "The curve must reach 100% by 85°C, 5°C below the GPU's 90°C maximum operating temperature."
+            }
+          ]
+        },
+        {
+          "name": "short of full speed at the boundary",
+          "points": [
+            [45, 20],
+            [85, 99]
+          ],
+          "problems": [
+            {
+              "point": null,
+              "message": "The curve must reach 100% by 85°C, 5°C below the GPU's 90°C maximum operating temperature."
+            }
+          ]
+        },
+        {
+          "name": "one point",
+          "points": [[85, 100]],
+          "problems": [
+            { "point": null, "message": "A curve needs 2 to 16 points." }
+          ]
+        },
+        {
+          "name": "two points",
+          "points": [
+            [45, 20],
+            [85, 100]
+          ],
+          "problems": []
+        },
+        {
+          "name": "sixteen points",
+          "points": [
+            [10, 20],
+            [15, 20],
+            [20, 20],
+            [25, 20],
+            [30, 20],
+            [35, 20],
+            [40, 20],
+            [45, 20],
+            [50, 20],
+            [55, 20],
+            [60, 20],
+            [65, 20],
+            [70, 20],
+            [75, 20],
+            [80, 20],
+            [85, 100]
+          ],
+          "problems": []
+        },
+        {
+          "name": "seventeen points",
+          "points": [
+            [5, 20],
+            [10, 20],
+            [15, 20],
+            [20, 20],
+            [25, 20],
+            [30, 20],
+            [35, 20],
+            [40, 20],
+            [45, 20],
+            [50, 20],
+            [55, 20],
+            [60, 20],
+            [65, 20],
+            [70, 20],
+            [75, 20],
+            [80, 20],
+            [85, 100]
+          ],
+          "problems": [
+            { "point": null, "message": "A curve needs 2 to 16 points." }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two fans that both allow 0%",
+      "maxOperatingTemperatureC": 90,
+      "fanSpeedRanges": [
+        [0, 100],
+        [0, 100]
+      ],
+      "curveSupport": {
+        "status": "available",
+        "maxOperatingTemperatureC": 90,
+        "fullSpeedTemperatureC": 85,
+        "minSpeedPercent": 0,
+        "maxSpeedPercent": 100,
+        "starter": [
+          { "temperatureC": 45, "speedPercent": 0 },
+          { "temperatureC": 65, "speedPercent": 50 },
+          { "temperatureC": 75, "speedPercent": 75 },
+          { "temperatureC": 85, "speedPercent": 100 }
+        ]
+      },
+      "cases": [
+        {
+          "name": "0% below the starting temperature",
+          "points": [
+            [45, 0],
+            [65, 0],
+            [85, 100]
+          ],
+          "problems": []
+        }
+      ]
+    },
+    {
+      "name": "one fan allowing 0% and one starting at 35%",
+      "maxOperatingTemperatureC": 90,
+      "fanSpeedRanges": [
+        [0, 100],
+        [35, 100]
+      ],
+      "curveSupport": {
+        "status": "available",
+        "maxOperatingTemperatureC": 90,
+        "fullSpeedTemperatureC": 85,
+        "minSpeedPercent": 35,
+        "maxSpeedPercent": 100,
+        "starter": [
+          { "temperatureC": 45, "speedPercent": 35 },
+          { "temperatureC": 65, "speedPercent": 68 },
+          { "temperatureC": 75, "speedPercent": 84 },
+          { "temperatureC": 85, "speedPercent": 100 }
+        ]
+      },
+      "cases": [
+        {
+          "name": "0% that only one fan allows",
+          "points": [
+            [0, 0],
+            [85, 100]
+          ],
+          "problems": [
+            {
+              "point": 0,
+              "message": "Point 1: speed must be between 35% and 100%."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "fans with different maximum speeds",
+      "maxOperatingTemperatureC": 90,
+      "fanSpeedRanges": [
+        [20, 100],
+        [20, 90]
+      ],
+      "curveSupport": {
+        "status": "unavailable",
+        "reason": "This GPU's fans report different maximum speeds, so one shared curve can't reach each fan's maximum."
+      },
+      "cases": [
+        {
+          "name": "any curve",
+          "points": [
+            [45, 20],
+            [85, 100]
+          ],
+          "problems": [
+            {
+              "point": null,
+              "message": "This GPU's fans report different maximum speeds, so one shared curve can't reach each fan's maximum."
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }
