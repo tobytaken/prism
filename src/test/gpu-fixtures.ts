@@ -173,6 +173,12 @@ export function createPerformanceGpu(
             { temperatureC: 85, speedPercent: 100 },
           ],
         },
+        control: {
+          applied: null,
+          requested: [],
+          curveTemperatureC: null,
+          suspension: null,
+        },
       },
       clocks: {
         graphics: {

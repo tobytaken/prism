@@ -101,6 +101,11 @@ impl<T> PendingOperation<T> {
     pub fn wait(self) -> T {
         self.0.recv().expect("GPU operation panicked")
     }
+
+    /// The result, unless the operation is still queued or running when the timeout ends.
+    pub fn wait_timeout(self, timeout: Duration) -> Option<T> {
+        self.0.recv_timeout(timeout).ok()
+    }
 }
 
 #[cfg(test)]

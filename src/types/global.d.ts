@@ -22,6 +22,8 @@ import type {
   SetStartupProfileRequest,
   FanCurvePreview,
   PreviewFanCurveRequest,
+  ApplyCoolingRequest,
+  CoolingApplication,
 } from "@/features/gpus/types";
 import type {
   AddSteamGameRequest,
@@ -103,6 +105,8 @@ export interface PrismDesktopApi {
     ): Promise<GpuCommandResponse>;
     /** Checks a draft shared fan curve against the GPU's current limits; nothing is applied. */
     previewFanCurve(request: PreviewFanCurveRequest): Promise<FanCurvePreview>;
+    /** Validates the configuration against fresh readings, then makes it the GPU's applied cooling. */
+    applyCooling(request: ApplyCoolingRequest): Promise<CoolingApplication>;
     setClockOffsets(
       gpuId: string,
       graphicsOffsetMHz: OffsetInstruction,

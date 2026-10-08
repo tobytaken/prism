@@ -111,7 +111,8 @@ export function useGpuProfileSelector({
     profileWritePending ||
     (pendingAction?.gpuId === gpu.id &&
       pendingAction.kind !== "setFanSpeed" &&
-      pendingAction.kind !== "setFanModeAuto");
+      pendingAction.kind !== "setFanModeAuto" &&
+      pendingAction.kind !== "applyCooling");
   const saving =
     workflow.saveAsNew.isPending || workflow.saveToCurrent.isPending;
   const profilesReady = !workflow.query.isPending && !workflow.query.error;

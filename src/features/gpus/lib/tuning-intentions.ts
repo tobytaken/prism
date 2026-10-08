@@ -1,7 +1,8 @@
 import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-controls";
-import type {
-  TuningEdits,
-  TuningSetting,
+import {
+  coolingConfiguration,
+  type TuningEdits,
+  type TuningSetting,
 } from "@/features/gpus/hooks/use-tuning-edits";
 import type { GpuPerformanceDevice } from "@/features/gpus/types";
 
@@ -59,6 +60,13 @@ export function retryTuningAction(
           memoryOffsetMHz:
             setting !== "memory" ? null : value === "default" ? value : offset,
         }
+      : null;
+  }
+  if (setting === "cooling") {
+    const draft = value as TuningEdits["cooling"];
+    const configuration = draft && coolingConfiguration(draft);
+    return configuration && gpu.stableId
+      ? { kind: "applyCooling", gpuId, stableId: gpu.stableId, configuration }
       : null;
   }
   const fanIndex = Number(setting.slice(4));

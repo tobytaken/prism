@@ -35,6 +35,8 @@ import type {
   SetStartupProfileRequest,
   FanCurvePreview,
   PreviewFanCurveRequest,
+  ApplyCoolingRequest,
+  CoolingApplication,
 } from "@/features/gpus/types";
 import type {
   AddSteamGameRequest,
@@ -199,6 +201,11 @@ const prismApi = {
         "prism:gpu:previewFanCurve",
         request,
       ) as Promise<FanCurvePreview>,
+    applyCooling: (request: ApplyCoolingRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:applyCooling",
+        request,
+      ) as Promise<CoolingApplication>,
     setClockOffsets: (
       gpuId: string,
       graphicsOffsetMHz: OffsetInstruction,

@@ -76,6 +76,23 @@ export async function runTuningMutation(
           await api.setGpuFanModeAuto(action.gpuId, action.fanIndex),
         ),
       };
+    case "applyCooling": {
+      const application = await api.applyGpuCooling({
+        gpuId: action.stableId,
+        configuration: action.configuration,
+      });
+      const unsuccessful = application.fans
+        .filter((fan) => fan.outcome.status === "failed")
+        .map((fan) => `Fan ${fan.fanIndex + 1}: ${fan.outcome.error}`);
+      return {
+        cooling: {
+          status: application.outcome.status,
+          error:
+            application.outcome.error ??
+            (unsuccessful.length ? unsuccessful.join("; ") : null),
+        },
+      };
+    }
     case "setClockOffsets":
     case "resetClockOffsets": {
       const result =

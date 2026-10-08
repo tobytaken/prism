@@ -46,6 +46,12 @@
         "curveSupport": {
           "status": "unavailable",
           "reason": "Fan curves need controllable fans. No fans"
+        },
+        "control": {
+          "applied": null,
+          "requested": [],
+          "curveTemperatureC": null,
+          "suspension": null
         }
       },
       "telemetry": {

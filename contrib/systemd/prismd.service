@@ -9,6 +9,10 @@ NotifyAccess=main
 User=root
 Group=root
 ExecStart=/usr/bin/prismd
+# Fan curves need the daemon running. However it stops, return fans it left following a curve to
+# the GPU's default automatic cooling; a stalled curve loop stops the watchdog pings.
+ExecStopPost=/usr/bin/prismd --restore-cooling
+WatchdogSec=20
 Restart=on-failure
 RuntimeDirectory=prism
 RuntimeDirectoryPreserve=yes

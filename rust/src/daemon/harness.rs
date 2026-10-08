@@ -102,6 +102,9 @@ pub struct FakeGpuBackend {
 struct FakeGpus {
     gpus: Vec<GpuPerformanceDevice>,
     failures: HashMap<(String, Setter), String>,
+    fan_failures: HashMap<(String, Setter, u32), String>,
+    /// Fans whose control mode the driver doesn't report.
+    unreported_modes: Vec<(String, u32)>,
     gates: HashMap<(String, Setter), Gate>,
     writes: Vec<(String, Setter)>,
 }
@@ -125,7 +128,21 @@ impl FakeGpuBackend {
     }
 
     pub fn gpus(&self) -> Vec<GpuPerformanceDevice> {
-        self.state.lock().unwrap().gpus.clone()
+        let state = self.state.lock().unwrap();
+        let mut gpus = state.gpus.clone();
+        for (id, fan_index) in &state.unreported_modes {
+            for gpu in gpus.iter_mut().filter(|gpu| &gpu.id == id) {
+                for fan in gpu
+                    .cooling
+                    .fans
+                    .iter_mut()
+                    .filter(|fan| fan.index == *fan_index)
+                {
+                    fan.mode = None;
+                }
+            }
+        }
+        gpus
     }
 
     /// Changes what the GPU reports, such as its capabilities, ranges or current values.
@@ -154,6 +171,24 @@ impl FakeGpuBackend {
             .unwrap()
             .failures
             .insert((id.into(), setter), message.into());
+    }
+
+    /// Makes every later call of the fan setter on this one fan fail with the message.
+    pub fn fail_fan(&self, id: &str, setter: Setter, fan_index: u32, message: &str) {
+        self.state
+            .lock()
+            .unwrap()
+            .fan_failures
+            .insert((id.into(), setter, fan_index), message.into());
+    }
+
+    /// Makes the driver stop reporting the fan's control mode.
+    pub fn hide_fan_mode(&self, id: &str, fan_index: u32) {
+        self.state
+            .lock()
+            .unwrap()
+            .unreported_modes
+            .push((id.into(), fan_index));
     }
 
     pub fn stop_failing(&self, id: &str, setter: Setter) {
@@ -185,6 +220,29 @@ impl FakeGpuBackend {
     /// Every setter call so far, in the order the calls started.
     pub fn writes(&self) -> Vec<(String, Setter)> {
         self.state.lock().unwrap().writes.clone()
+    }
+
+    fn write_fan(
+        &self,
+        id: &str,
+        setter: Setter,
+        fan_index: u32,
+        change: impl FnOnce(&mut GpuPerformanceDevice),
+    ) -> Result<(), String> {
+        let failure = self
+            .state
+            .lock()
+            .unwrap()
+            .fan_failures
+            .get(&(id.into(), setter, fan_index))
+            .cloned();
+        match failure {
+            Some(message) => {
+                self.state.lock().unwrap().writes.push((id.into(), setter));
+                Err(message)
+            }
+            None => self.write(id, setter, change),
+        }
     }
 
     fn write(
@@ -247,20 +305,30 @@ impl DaemonBackend for FakeGpuBackend {
     }
 
     fn set_fan_speed(&self, request: SetGpuFanSpeedRequest) -> Result<(), String> {
-        self.write(&request.gpu_id, Setter::FanSpeed, |gpu| {
-            if let Some(fan) = gpu.cooling.fans.get_mut(request.fan_index as usize) {
-                fan.current_speed_percent = Some(request.speed_percent);
-                fan.mode = Some(FanControlMode::Manual);
-            }
-        })
+        self.write_fan(
+            &request.gpu_id,
+            Setter::FanSpeed,
+            request.fan_index,
+            |gpu| {
+                if let Some(fan) = gpu.cooling.fans.get_mut(request.fan_index as usize) {
+                    fan.current_speed_percent = Some(request.speed_percent);
+                    fan.mode = Some(FanControlMode::Manual);
+                }
+            },
+        )
     }
 
     fn set_fan_mode_auto(&self, request: SetGpuFanModeAutoRequest) -> Result<(), String> {
-        self.write(&request.gpu_id, Setter::FanModeAuto, |gpu| {
-            if let Some(fan) = gpu.cooling.fans.get_mut(request.fan_index as usize) {
-                fan.mode = Some(FanControlMode::Auto);
-            }
-        })
+        self.write_fan(
+            &request.gpu_id,
+            Setter::FanModeAuto,
+            request.fan_index,
+            |gpu| {
+                if let Some(fan) = gpu.cooling.fans.get_mut(request.fan_index as usize) {
+                    fan.mode = Some(FanControlMode::Auto);
+                }
+            },
+        )
     }
 
     fn set_clock_offsets(&self, request: SetGpuClockOffsetsRequest) -> Result<(), String> {
@@ -320,6 +388,10 @@ pub struct FakeClock(AtomicU64);
 impl FakeClock {
     pub fn set(&self, unix_ms: u64) {
         self.0.store(unix_ms, Ordering::SeqCst);
+    }
+
+    pub fn advance(&self, ms: u64) {
+        self.0.fetch_add(ms, Ordering::SeqCst);
     }
 }
 
@@ -403,6 +475,13 @@ impl Harness {
     /// starts a new one on the same directories.
     pub fn restart(&mut self) {
         self.core().stop();
+        self.core = None;
+        self.start_core();
+    }
+
+    /// Simulates the daemon dying mid-boot without stopping, as a crash or kill would, and the
+    /// service manager starting it again on the same directories.
+    pub fn crash_daemon(&mut self) {
         self.core = None;
         self.start_core();
     }
@@ -591,6 +670,22 @@ impl Harness {
     pub fn scan(&self) {
         self.core().scan_running_games();
         self.settle();
+    }
+
+    /// Lets the controllable clock run for this long, following applied curves every 500 ms as the
+    /// daemon's curve loop does.
+    pub fn run_curves_for(&self, ms: u64) {
+        for _ in 0..ms / super::cooling::EVALUATION_INTERVAL_MS {
+            self.clock.advance(super::cooling::EVALUATION_INTERVAL_MS);
+            self.core().follow_curves();
+            self.settle();
+        }
+    }
+
+    /// Changes the temperature the GPU reports.
+    pub fn set_temperature(&self, id: &str, temperature_c: Option<u32>) {
+        self.gpus
+            .update(id, |gpu| gpu.telemetry.temperature_c = temperature_c);
     }
 
     /// Waits until every GPU's operation queue has run what was queued so far.

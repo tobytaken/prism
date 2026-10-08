@@ -2,6 +2,7 @@ mod nvidia;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cooling::CoolingControl;
 use crate::fan_curve::FanCurveSupport;
 
 use nvidia::{
@@ -163,6 +164,10 @@ pub struct CoolingInfo {
     /// when the readings didn't come from the daemon.
     #[serde(default)]
     pub curve_support: Option<FanCurveSupport>,
+    /// Prism's control of the fans, as reported by the daemon; unknown when the readings didn't
+    /// come from the daemon.
+    #[serde(default)]
+    pub control: Option<CoolingControl>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -643,6 +648,7 @@ mod tests {
                     max_operating_temperature_c: Some(90),
                     max_operating_temperature_reason: None,
                     curve_support: None,
+                    control: None,
                 },
                 clocks: ClockOffsetsInfo {
                     graphics: ClockOffsetInfo {

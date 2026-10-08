@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cooling::{ApplyCoolingRequest, CoolingApplication};
 use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
 use crate::fan_curve::{FanCurvePreview, PreviewFanCurveRequest};
 use crate::gpu::{
@@ -522,6 +523,9 @@ pub enum DaemonRequest {
     SetFanModeAuto(SetGpuFanModeAutoRequest),
     /// Checks a draft shared fan curve without changing any GPU setting.
     PreviewFanCurve(PreviewFanCurveRequest),
+    /// Validates a cooling configuration against fresh readings, then makes it the GPU's applied
+    /// cooling, replacing any curve its fans followed.
+    ApplyCooling(ApplyCoolingRequest),
     SetClockOffsets(LiveClockOffsetsRequest),
     ResetClockOffsets(GpuTargetRequest),
     GetMigrationState,
@@ -579,6 +583,7 @@ pub enum DaemonResponse {
     Command(DaemonCommandResponse),
     ClockOffsets(ClockOffsetResponse),
     FanCurvePreview(FanCurvePreview),
+    CoolingApplication(CoolingApplication),
     ProfileApplication(ProfileApplicationResponse),
     MigrationState(MigrationState),
     StartupState(StartupState),

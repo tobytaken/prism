@@ -61,6 +61,10 @@ const prismStub: PrismDesktopApi = {
     setFanSpeed: async () => ({ success: true, error: null }),
     setFanModeAuto: async () => ({ success: true, error: null }),
     previewFanCurve: async () => ({ problems: [] }),
+    applyCooling: async () => ({
+      outcome: { status: "succeeded", error: null },
+      fans: [],
+    }),
     setClockOffsets: async () => ({
       graphics: { status: "succeeded", error: null },
       memory: null,

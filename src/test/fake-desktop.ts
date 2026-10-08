@@ -6,6 +6,11 @@ import {
 } from "@/features/gpus/lib/tuning-profiles";
 import type {
   ClockOffsetResponse,
+  CoolingApplication,
+  CoolingConfiguration,
+  CoolingControl,
+  FanRestoration,
+  FanSetting,
   ControlSupport,
   FanCurvePoint,
   FanCurveProblem,
@@ -133,6 +138,34 @@ function fanCurveProblems(
   return problems;
 }
 
+/** The daemon's curve output: a straight line between points, rounded up, ends held. */
+function requestedSpeed(points: FanCurvePoint[], temperatureC: number) {
+  if (temperatureC <= points[0].temperatureC) return points[0].speedPercent;
+  const last = points[points.length - 1];
+  if (temperatureC >= last.temperatureC) return last.speedPercent;
+  const high = points.findIndex((point) => point.temperatureC >= temperatureC);
+  const [from, to] = [points[high - 1], points[high]];
+  return (
+    from.speedPercent +
+    Math.ceil(
+      ((to.speedPercent - from.speedPercent) *
+        (temperatureC - from.temperatureC)) /
+        (to.temperatureC - from.temperatureC),
+    )
+  );
+}
+
+/** Each fan's applied setting, by fan index. */
+function fanSettings(
+  applied: CoolingConfiguration | null,
+  gpu: GpuPerformanceDevice,
+): Map<number, FanSetting> {
+  if (!applied) return new Map();
+  if (applied.arrangement === "shared")
+    return new Map(gpu.cooling.fans.map((fan) => [fan.index, applied.setting]));
+  return new Map(applied.fans.map((fan) => [fan.fanIndex, fan.setting]));
+}
+
 /**
  * A stateful stand-in for the desktop API backed by the daemon: GPU readings that writes change,
  * the caller's profiles, other users' profiles, each GPU's current profile and last applied
@@ -176,6 +209,8 @@ export function createFakeDesktop({
 } = {}) {
   /** Setters that fail with this message on every GPU until removed. */
   const failures: Partial<Record<Setting, string>> = {};
+  /** Fans whose speed writes fail with this message until removed. */
+  const fanFailures: Record<number, string> = {};
   /** Last applied tuning values per GPU UUID, as the daemon records them. */
   const lastApplied: Record<string, GpuProfileSettings> = {};
   const daemonListeners = new Set<(status: GpuDaemonStatus) => void>();
@@ -239,6 +274,118 @@ export function createFakeDesktop({
   }
 
   const byId = (gpuId: string) => response.gpus.find((gpu) => gpu.id === gpuId);
+  const coolingControl = (gpu: GpuPerformanceDevice): CoolingControl =>
+    (gpu.cooling.control ??= {
+      applied: null,
+      requested: [],
+      curveTemperatureC: null,
+      suspension: null,
+    });
+  /** Like the daemon, stops the GPU's curve and returns its fans to automatic cooling. */
+  const suspendCurve = (
+    gpu: GpuPerformanceDevice,
+    reason: string,
+    restoration?: FanRestoration[],
+  ) => {
+    const control = coolingControl(gpu);
+    if (!control.requested.length) return;
+    control.suspension = {
+      reason,
+      restoration:
+        restoration ??
+        control.requested.map(({ fanIndex }) => ({
+          fanIndex,
+          status: "restored" as const,
+          detail: null,
+        })),
+    };
+    // Only a confirmed restoration means the driver reports automatic control.
+    for (const { fanIndex, status } of control.suspension.restoration)
+      if (status === "restored") gpu.cooling.fans[fanIndex].mode = "auto";
+    control.requested = [];
+    control.curveTemperatureC = null;
+  };
+  /** Replaces the fans' applied settings, keeping the arrangement only when every fan took it. */
+  const applyFans = (
+    gpu: GpuPerformanceDevice,
+    configuration: CoolingConfiguration,
+    targets: [number, FanSetting][],
+  ): CoolingApplication => {
+    const control = coolingControl(gpu);
+    const outcomes: CoolingApplication["fans"] = [];
+    const settings = fanSettings(control.applied, gpu);
+    let failure: string | null = null;
+    for (const [fanIndex, setting] of targets) {
+      if (failure) {
+        outcomes.push({
+          fanIndex,
+          outcome: {
+            status: "unattempted",
+            error: "An earlier fan failed. Retry or discard this change.",
+          },
+        });
+        continue;
+      }
+      const fan = gpu.cooling.fans[fanIndex];
+      const speed =
+        setting.mode === "fixed"
+          ? setting.speedPercent
+          : setting.mode === "curve"
+            ? requestedSpeed(setting.points, gpu.telemetry.temperatureC!)
+            : null;
+      control.requested = control.requested.filter(
+        (request) => request.fanIndex !== fanIndex,
+      );
+      settings.set(fanIndex, setting);
+      if (setting.mode === "curve")
+        control.requested.push({ fanIndex, speedPercent: speed! });
+      if (fanFailures[fanIndex] && speed != null) {
+        failure = `Fan ${fanIndex + 1}: ${fanFailures[fanIndex]}`;
+        outcomes.push({
+          fanIndex,
+          outcome: { status: "failed", error: fanFailures[fanIndex] },
+        });
+        continue;
+      }
+      Object.assign(
+        fan,
+        speed == null
+          ? { mode: "auto" }
+          : { mode: "manual", currentSpeedPercent: speed },
+      );
+      outcomes.push({ fanIndex, outcome: succeeded });
+    }
+    control.requested.sort((a, b) => a.fanIndex - b.fanIndex);
+    control.applied =
+      configuration.arrangement === "shared" &&
+      outcomes.every((fan) => fan.outcome.status !== "unattempted")
+        ? configuration
+        : {
+            arrangement: "perFan",
+            fans: [...settings].map(([fanIndex, setting]) => ({
+              fanIndex,
+              setting,
+            })),
+          };
+    control.curveTemperatureC = control.requested.length
+      ? gpu.telemetry.temperatureC
+      : null;
+    if (failure) suspendCurve(gpu, failure);
+    else if (
+      !control.requested.length ||
+      targets.some(([, s]) => s.mode === "curve")
+    )
+      control.suspension = null;
+    return {
+      outcome: {
+        status: outcomes.every((fan) => fan.outcome.status === "succeeded")
+          ? "succeeded"
+          : "failed",
+        error: null,
+      },
+      fans: outcomes,
+    };
+  };
   const record = (
     gpu: GpuPerformanceDevice | undefined,
     key: ProfileSettingKey,
@@ -752,13 +899,56 @@ export function createFakeDesktop({
     setFanSpeed: vi
       .spyOn(api, "setFanSpeed")
       .mockImplementation(async (gpuId, fanIndex, speedPercent) => {
-        const fan = byId(gpuId)?.cooling.fans[fanIndex];
-        if (fan)
-          Object.assign(fan, {
-            currentSpeedPercent: speedPercent,
-            mode: "manual",
-          });
+        const gpu = byId(gpuId);
+        const setting = { mode: "fixed" as const, speedPercent };
+        if (gpu)
+          applyFans(gpu, { arrangement: "perFan", fans: [] }, [
+            [fanIndex, setting],
+          ]);
         return { success: true, error: null };
+      }),
+    applyCooling: vi
+      .spyOn(api, "applyCooling")
+      .mockImplementation(async ({ gpuId, configuration }) => {
+        const gpu = response.gpus.find((gpu) => gpu.stableId === gpuId);
+        const targets: [number, FanSetting][] =
+          configuration.arrangement === "shared"
+            ? (gpu?.cooling.fans ?? []).map((fan) => [
+                fan.index,
+                configuration.setting,
+              ])
+            : configuration.fans.map((fan) => [fan.fanIndex, fan.setting]);
+        const problems: string[] = [];
+        if (!gpu)
+          problems.push(
+            "The GPU is absent or its stable identity could not be verified. Refresh the GPU readings and try again.",
+          );
+        for (const [, setting] of gpu ? targets : [])
+          if (setting.mode === "curve")
+            problems.push(
+              ...fanCurveProblems(
+                gpu!.cooling.curveSupport!,
+                setting.points,
+              ).map((problem) => problem.message),
+            );
+        if (
+          gpu?.telemetry.temperatureC == null &&
+          targets.some(([, setting]) => setting.mode === "curve")
+        )
+          problems.push(
+            "The GPU's temperature is unavailable, so a curve can't be followed. Refresh the GPU readings and try again.",
+          );
+        if (problems.length) {
+          const error = [...new Set(problems)].join("\n");
+          return {
+            outcome: { status: "unattempted", error },
+            fans: targets.map(([fanIndex]) => ({
+              fanIndex,
+              outcome: { status: "unattempted", error },
+            })),
+          };
+        }
+        return applyFans(gpu!, configuration, targets);
       }),
     previewFanCurve: vi
       .spyOn(api, "previewFanCurve")
@@ -773,8 +963,11 @@ export function createFakeDesktop({
     setFanModeAuto: vi
       .spyOn(api, "setFanModeAuto")
       .mockImplementation(async (gpuId, fanIndex) => {
-        const fan = byId(gpuId)?.cooling.fans[fanIndex];
-        if (fan) fan.mode = "auto";
+        const gpu = byId(gpuId);
+        if (gpu)
+          applyFans(gpu, { arrangement: "perFan", fans: [] }, [
+            [fanIndex, { mode: "automatic" }],
+          ]);
         return { success: true, error: null };
       }),
   };
@@ -829,6 +1022,7 @@ export function createFakeDesktop({
       return startupBehavior;
     },
     failures,
+    fanFailures,
     lastApplied,
     steamApps,
     games,
@@ -852,6 +1046,42 @@ export function createFakeDesktop({
     pushTuningState(gpuId: string) {
       const state = tuningState(owner(gpuId));
       for (const listener of tuningStateListeners) listener(state);
+    },
+    /**
+     * Follows each running curve at the GPU's current temperature, as the daemon's loop does.
+     * Rises apply at once; a drop applies only once the caller says demand has stayed lower for
+     * the daemon's five-second delay. A missing temperature suspends the curve.
+     */
+    followCurves({ decreaseDelayElapsed = false } = {}) {
+      for (const gpu of response.gpus) {
+        const control = gpu.cooling.control;
+        const settings = fanSettings(control?.applied ?? null, gpu);
+        if (!control?.requested.length) continue;
+        if (gpu.telemetry.temperatureC == null) {
+          suspendCurve(
+            gpu,
+            "The GPU's temperature is unavailable, so Prism stopped following its curve.",
+          );
+          continue;
+        }
+        for (const request of control.requested) {
+          const setting = settings.get(request.fanIndex);
+          if (setting?.mode !== "curve") continue;
+          const demand = requestedSpeed(
+            setting.points,
+            gpu.telemetry.temperatureC,
+          );
+          if (demand < request.speedPercent && !decreaseDelayElapsed) continue;
+          request.speedPercent = demand;
+          gpu.cooling.fans[request.fanIndex].currentSpeedPercent =
+            request.speedPercent;
+        }
+        control.curveTemperatureC = gpu.telemetry.temperatureC;
+      }
+    },
+    /** Suspends the first GPU's curve after a fault, as the daemon reports it. */
+    suspendCurve(reason: string, restoration?: FanRestoration[]) {
+      suspendCurve(response.gpus[0], reason, restoration);
     },
     /** How many live tuning writes the app requested. */
     liveWrites: () =>

@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod cooling;
 pub mod daemon;
 pub mod daemon_client;
 pub mod drivers;

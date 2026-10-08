@@ -4,6 +4,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::cooling::ApplyCoolingRequest;
 use crate::daemon_client;
 use crate::drivers::{
     collect_driver_status, DriverJob, DriverJobRequest, DriverStatusResponse,
@@ -200,6 +201,11 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
             request.params,
             "gpu.previewFanCurve",
             |request| daemon_client::preview_fan_curve(request).map_err(BridgeError::from),
+        ),
+        "gpu.applyCooling" => parse_and_serialize_result::<ApplyCoolingRequest, _, _>(
+            request.params,
+            "gpu.applyCooling",
+            |request| daemon_client::apply_cooling(request).map_err(BridgeError::from),
         ),
         "gpu.setClockOffsets" => parse_and_serialize_result::<LiveClockOffsetsRequest, _, _>(
             request.params,
@@ -545,6 +551,29 @@ mod tests {
                 response.error.expect("error").code,
                 "invalid_request",
                 "{points}"
+            );
+        }
+    }
+
+    #[test]
+    fn cooling_applications_reject_malformed_configurations_before_transport() {
+        for configuration in [
+            json!(null),
+            json!({ "arrangement": "shared" }),
+            json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 50.5 } }),
+            json!({ "arrangement": "shared", "setting": { "mode": "curve", "points": [{ "temperatureC": 45 }] } }),
+            json!({ "arrangement": "perFan", "fans": [{ "fanIndex": 0, "setting": { "mode": "auto" } }] }),
+        ] {
+            let response = handle_request(BridgeRequest {
+                id: 16,
+                method: "gpu.applyCooling".into(),
+                params: Some(json!({ "gpuId": "GPU-123", "configuration": configuration })),
+            });
+            assert!(response.result.is_none());
+            assert_eq!(
+                response.error.expect("error").code,
+                "invalid_request",
+                "{configuration}"
             );
         }
     }

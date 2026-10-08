@@ -176,6 +176,62 @@ export interface CoolingInfo {
   maxOperatingTemperatureReason: string | null;
   /** The daemon's judgement of shared fan curves; null when the readings bypassed the daemon. */
   curveSupport: FanCurveSupport | null;
+  /** Prism's control of the fans; null when the readings bypassed the daemon. */
+  control: CoolingControl | null;
+}
+
+/** One fan's control mode. A curve is followed by the daemon as the temperature changes. */
+export type FanSetting =
+  | { mode: "automatic" }
+  | { mode: "fixed"; speedPercent: number }
+  | { mode: "curve"; points: FanCurvePoint[] };
+
+/** One setting shared by every fan, or a setting per fan; omitted fans are left as they are. */
+export type CoolingConfiguration =
+  | { arrangement: "shared"; setting: FanSetting }
+  | {
+      arrangement: "perFan";
+      fans: { fanIndex: number; setting: FanSetting }[];
+    };
+
+export interface ApplyCoolingRequest {
+  /** The GPU's UUID. */
+  gpuId: string;
+  configuration: CoolingConfiguration;
+}
+
+/** Succeeded only when every targeted fan took its setting. */
+export interface CoolingApplication {
+  outcome: TuningOutcome;
+  fans: { fanIndex: number; outcome: TuningOutcome }[];
+}
+
+/**
+ * Prism's control of a GPU's fans: the applied configuration, the speeds a curve requests now,
+ * and any curve suspension, all distinct from the modes and speeds the driver reports.
+ */
+export interface CoolingControl {
+  /** Null when Prism hasn't applied cooling to this GPU. A suspended curve stays applied. */
+  applied: CoolingConfiguration | null;
+  /** Each fan following a curve, with the speed the curve requests now. */
+  requested: { fanIndex: number; speedPercent: number }[];
+  /** The GPU temperature the curve last followed. */
+  curveTemperatureC: number | null;
+  /** Why curve control stopped; only a new application resumes the kept curve. */
+  suspension: CurveSuspension | null;
+}
+
+export interface CurveSuspension {
+  reason: string;
+  /** Each curve fan's attempt to return to the GPU's default automatic cooling. */
+  restoration: FanRestoration[];
+}
+
+export interface FanRestoration {
+  fanIndex: number;
+  /** Restored: the driver reports automatic control. Unverified: accepted, but not reported. */
+  status: "restored" | "unverified" | "failed";
+  detail: string | null;
 }
 
 /** A requested fan speed at a GPU temperature, in whole °C and whole percent. */

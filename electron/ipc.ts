@@ -21,6 +21,7 @@ import type {
   GpuDaemonStatus,
   GpuTuningState,
   PreviewFanCurveRequest,
+  ApplyCoolingRequest,
 } from "@/features/gpus/types";
 
 import {
@@ -400,6 +401,67 @@ function validateFanCurvePreviewPayload(
         hasOnlyKeys(point, ["temperatureC", "speedPercent"]) &&
         Number.isSafeInteger(point.temperatureC) &&
         Number.isSafeInteger(point.speedPercent),
+    )
+  );
+}
+
+function isFanCurvePoint(point: unknown) {
+  return (
+    isObject(point) &&
+    hasOnlyKeys(point, ["temperatureC", "speedPercent"]) &&
+    Number.isSafeInteger(point.temperatureC) &&
+    Number.isSafeInteger(point.speedPercent)
+  );
+}
+
+function isFanSetting(setting: unknown) {
+  if (!isObject(setting)) return false;
+  switch (setting.mode) {
+    case "automatic":
+      return hasOnlyKeys(setting, ["mode"]);
+    case "fixed":
+      return (
+        hasOnlyKeys(setting, ["mode", "speedPercent"]) &&
+        Number.isSafeInteger(setting.speedPercent)
+      );
+    case "curve":
+      return (
+        hasOnlyKeys(setting, ["mode", "points"]) &&
+        Array.isArray(setting.points) &&
+        setting.points.every(isFanCurvePoint)
+      );
+    default:
+      return false;
+  }
+}
+
+function validateApplyCoolingPayload(
+  payload: unknown,
+): payload is ApplyCoolingRequest {
+  if (
+    !isObject(payload) ||
+    !hasOnlyKeys(payload, ["gpuId", "configuration"]) ||
+    !isString(payload.gpuId) ||
+    !isObject(payload.configuration)
+  )
+    return false;
+  const configuration = payload.configuration;
+  if (configuration.arrangement === "shared")
+    return (
+      hasOnlyKeys(configuration, ["arrangement", "setting"]) &&
+      isFanSetting(configuration.setting)
+    );
+  return (
+    configuration.arrangement === "perFan" &&
+    hasOnlyKeys(configuration, ["arrangement", "fans"]) &&
+    Array.isArray(configuration.fans) &&
+    configuration.fans.every(
+      (fan) =>
+        isObject(fan) &&
+        hasOnlyKeys(fan, ["fanIndex", "setting"]) &&
+        Number.isSafeInteger(fan.fanIndex) &&
+        (fan.fanIndex as number) >= 0 &&
+        isFanSetting(fan.setting),
     )
   );
 }
@@ -887,6 +949,14 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       throw new Error("Invalid previewFanCurve payload");
     }
     return backend.invoke("gpu.previewFanCurve", payload);
+  });
+
+  ipcMain.handle("prism:gpu:applyCooling", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateApplyCoolingPayload(payload)) {
+      throw new Error("Invalid applyCooling payload");
+    }
+    return backend.invoke("gpu.applyCooling", payload);
   });
 
   ipcMain.handle("prism:gpu:setClockOffsets", async (event, payload) => {

@@ -19,6 +19,7 @@ import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
 import gpuTuningStates from "@/test/contracts/gpu-tuning-states.json";
 import gamesState from "@/test/contracts/games-state.json";
 import fanCurvePreview from "@/test/contracts/fan-curve-preview.json";
+import coolingApplication from "@/test/contracts/cooling-application.json";
 import { connectedDaemonStatus } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
 
@@ -1248,6 +1249,93 @@ describe("registerIpc", () => {
           gpuId: "GPU-123",
           points: [point],
         }),
+      ).rejects.toThrow("Untrusted IPC sender");
+      expect(child.stdin.write).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("forwards a cooling application to the backend and returns its per-fan outcomes", async () => {
+    const child = createBackendChild((method: string, params: unknown) =>
+      method === "gpu.applyCooling" ? coolingApplication.application : params,
+    );
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      expect(
+        await callHandler(
+          "prism:gpu:applyCooling",
+          trustedEvent(),
+          coolingApplication.request,
+        ),
+      ).toEqual(coolingApplication.application);
+      const sent = JSON.parse(child.stdin.write.mock.lastCall![0] as string);
+      expect(sent).toMatchObject({
+        method: "gpu.applyCooling",
+        params: coolingApplication.request,
+      });
+      const perFan = {
+        gpuId: "GPU-123",
+        configuration: coolingApplication.controls[1].applied,
+      };
+      await callHandler("prism:gpu:applyCooling", trustedEvent(), perFan);
+      expect(
+        JSON.parse(child.stdin.write.mock.lastCall![0] as string).params,
+      ).toEqual(perFan);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("rejects malformed or untrusted cooling applications before the backend", async () => {
+    const child = createBackendChild();
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    const point = { temperatureC: 45, speedPercent: 20 };
+    const shared = (setting: unknown) => ({
+      gpuId: "GPU-123",
+      configuration: { arrangement: "shared", setting },
+    });
+    try {
+      for (const payload of [
+        null,
+        { gpuId: "GPU-123" },
+        {
+          gpuId: 123,
+          configuration: {
+            arrangement: "shared",
+            setting: { mode: "automatic" },
+          },
+        },
+        shared({ mode: "auto" }),
+        shared({ mode: "automatic", speedPercent: 50 }),
+        shared({ mode: "fixed", speedPercent: 50.5 }),
+        shared({ mode: "curve", points: point }),
+        shared({ mode: "curve", points: [{ ...point, temperatureC: "45" }] }),
+        shared({ mode: "curve", points: [{ ...point, rpm: 900 }] }),
+        { ...shared({ mode: "automatic" }), apply: true },
+        {
+          gpuId: "GPU-123",
+          configuration: { arrangement: "shared", fans: [] },
+        },
+        {
+          gpuId: "GPU-123",
+          configuration: {
+            arrangement: "perFan",
+            fans: [{ fanIndex: -1, setting: { mode: "automatic" } }],
+          },
+        },
+      ])
+        await expect(
+          callHandler("prism:gpu:applyCooling", trustedEvent(), payload),
+        ).rejects.toThrow("Invalid applyCooling payload");
+      await expect(
+        callHandler(
+          "prism:gpu:applyCooling",
+          untrustedEvent(),
+          coolingApplication.request,
+        ),
       ).rejects.toThrow("Untrusted IPC sender");
       expect(child.stdin.write).not.toHaveBeenCalled();
     } finally {

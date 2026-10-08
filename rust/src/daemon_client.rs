@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
+use crate::cooling::{ApplyCoolingRequest, CoolingApplication};
 use crate::daemon::DEFAULT_SOCKET_PATH;
 use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
 use crate::fan_curve::{FanCurvePreview, PreviewFanCurveRequest};
@@ -239,6 +240,14 @@ pub fn preview_fan_curve(
         DaemonResponse::FanCurvePreview(preview) => Ok(preview),
         DaemonResponse::Error(error) => Err(error),
         _ => Err(unexpected_response_error("fan curve preview")),
+    }
+}
+
+pub fn apply_cooling(request: ApplyCoolingRequest) -> Result<CoolingApplication, GpuCommandError> {
+    match send_request(DaemonRequest::ApplyCooling(request))? {
+        DaemonResponse::CoolingApplication(application) => Ok(application),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("cooling application")),
     }
 }
 

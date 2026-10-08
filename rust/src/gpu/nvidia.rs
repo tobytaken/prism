@@ -430,6 +430,7 @@ fn query_cooling_controls(
             max_operating_temperature_c,
             max_operating_temperature_reason: max_operating_temperature_reason.clone(),
             curve_support: None,
+            control: None,
         };
     match device.num_fans() {
         Ok(fan_count) if fan_count > 0 => {
@@ -1124,6 +1125,7 @@ mod tests {
             max_operating_temperature_c: Some(90),
             max_operating_temperature_reason: None,
             curve_support: None,
+            control: None,
         };
         let mut warnings = Vec::new();
 
