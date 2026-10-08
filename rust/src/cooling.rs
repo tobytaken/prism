@@ -39,6 +39,17 @@ pub enum CoolingConfiguration {
     PerFan { fans: Vec<FanConfiguration> },
 }
 
+impl CoolingConfiguration {
+    pub fn contains_curve(&self) -> bool {
+        match self {
+            Self::Shared { setting } => matches!(setting, FanSetting::Curve { .. }),
+            Self::PerFan { fans } => fans
+                .iter()
+                .any(|fan| matches!(fan.setting, FanSetting::Curve { .. })),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ApplyCoolingRequest {
@@ -76,6 +87,9 @@ pub struct FanOutcome {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CoolingControl {
+    /// The caller's last successful manual curve configuration, independent of applied mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remembered_curve: Option<CoolingConfiguration>,
     /// Changes only when configuration or control ownership changes, never on curve ticks.
     #[serde(default)]
     pub revision: u64,

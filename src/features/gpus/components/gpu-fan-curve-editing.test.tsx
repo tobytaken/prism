@@ -1,5 +1,5 @@
 import { MemoryRouter } from "react-router-dom";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -66,6 +66,290 @@ function renderPerformance(cooling: CoolingInfo = sharedCooling) {
 }
 
 const curveEditor = () => screen.findByRole("group", { name: "Fan curve" });
+
+describe("Remembered fan curves", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(window.prism.gpu, "getDaemonStatus").mockResolvedValue(
+      connectedDaemonStatus,
+    );
+  });
+
+  it("recalls the remembered curve from Automatic as an unapplied editable draft", async () => {
+    const cooling = structuredClone(sharedCooling);
+    cooling.control!.rememberedCurve = {
+      arrangement: "shared",
+      setting: {
+        mode: "curve",
+        points: [
+          { temperatureC: 40, speedPercent: 30 },
+          { temperatureC: 80, speedPercent: 100 },
+        ],
+      },
+    };
+    const fake = renderPerformance(cooling);
+    const user = userEvent.setup();
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Control mode" }),
+      "curve",
+    );
+    const editor = await curveEditor();
+    expect(pointValues(editor)).toEqual([
+      [40, 30],
+      [80, 100],
+    ]);
+    expect(within(editor).getByText("Unapplied")).toBeInTheDocument();
+    expectNoFanWrites(fake);
+    const apply = within(editor).getByRole("button", { name: "Apply curve" });
+    await waitFor(() => expect(apply).toBeEnabled());
+    await user.click(apply);
+    await waitFor(() =>
+      expect(fake.gpu.cooling.control?.applied).toEqual(
+        cooling.control!.rememberedCurve,
+      ),
+    );
+  });
+
+  it("keeps the last applied curve after Fixed, reopening, and discarding later edits", async () => {
+    const fake = renderPerformance();
+    const user = userEvent.setup();
+    let editor = await curveEditor();
+    const input = within(editor).getByRole("spinbutton", {
+      name: "Point 1 speed (%)",
+    });
+    await user.clear(input);
+    await user.type(input, "35");
+    let apply = within(editor).getByRole("button", { name: "Apply curve" });
+    await waitFor(() => expect(apply).toBeEnabled());
+    await user.click(apply);
+    await waitFor(() =>
+      expect(fake.gpu.cooling.control?.rememberedCurve).toBeDefined(),
+    );
+    const remembered = structuredClone(
+      fake.gpu.cooling.control!.rememberedCurve,
+    );
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Control mode" }),
+      "fixed",
+    );
+    await user.type(
+      screen.getByRole("spinbutton", { name: "Fixed target (%)" }),
+      "55",
+    );
+    await user.click(screen.getByRole("button", { name: "Apply cooling" }));
+    await waitFor(() =>
+      expect(fake.gpu.cooling.control?.applied).toEqual({
+        arrangement: "shared",
+        setting: { mode: "fixed", speedPercent: 55 },
+      }),
+    );
+    const reopen = () => {
+      cleanup();
+      renderWithQueryClient(
+        <MemoryRouter>
+          <GpuPerformancePage />
+        </MemoryRouter>,
+      );
+    };
+    reopen();
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Control mode" }),
+      "curve",
+    );
+    editor = await curveEditor();
+    expect(pointValues(editor)).toEqual([
+      [45, 35],
+      [65, 60],
+      [75, 80],
+      [85, 100],
+    ]);
+    expect(fake.applyCooling).toHaveBeenCalledTimes(2);
+    const edit = within(editor).getByRole("spinbutton", {
+      name: "Point 1 speed (%)",
+    });
+    await user.clear(edit);
+    await user.type(edit, "45");
+    // Closing discards the draft, keeping the last successfully applied curve.
+    reopen();
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Control mode" }),
+      "curve",
+    );
+    editor = await curveEditor();
+    expect(pointValues(editor)[0]).toEqual([45, 35]);
+    expect(fake.gpu.cooling.control?.rememberedCurve).toEqual(remembered);
+    expect(fake.applyCooling).toHaveBeenCalledTimes(2);
+    apply = within(editor).getByRole("button", { name: "Apply curve" });
+    await waitFor(() => expect(apply).toBeEnabled());
+    await user.click(apply);
+    await waitFor(() =>
+      expect(fake.gpu.cooling.control?.applied).toEqual(remembered),
+    );
+  });
+
+  it("recalls the complete separate arrangement and mixed modes before Apply", async () => {
+    const cooling = structuredClone(sharedCooling);
+    cooling.control!.rememberedCurve = {
+      arrangement: "perFan",
+      fans: [
+        { fanIndex: 0, setting: { mode: "curve", points: starter } },
+        { fanIndex: 1, setting: { mode: "fixed", speedPercent: 57 } },
+      ],
+    };
+    const fake = renderPerformance(cooling);
+    const user = userEvent.setup();
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Control mode" }),
+      "curve",
+    );
+    const first = await screen.findByRole("group", {
+      name: "Fan 1 configuration",
+    });
+    const second = screen.getByRole("group", { name: "Fan 2 configuration" });
+    expect(
+      within(first).getByRole("combobox", { name: "Control mode" }),
+    ).toHaveValue("curve");
+    expect(
+      within(second).getByRole("combobox", { name: "Control mode" }),
+    ).toHaveValue("fixed");
+    expect(
+      within(second).getByRole("spinbutton", { name: "Fixed target (%)" }),
+    ).toHaveValue(57);
+    expectNoFanWrites(fake);
+    const apply = screen.getByRole("button", { name: "Apply cooling" });
+    await waitFor(() => expect(apply).toBeEnabled());
+    await user.click(apply);
+    await waitFor(() =>
+      expect(fake.gpu.cooling.control?.applied).toEqual(
+        cooling.control!.rememberedCurve,
+      ),
+    );
+  });
+
+  it("validates a recalled curve against current limits and preserves it after a failed apply", async () => {
+    const cooling = structuredClone(sharedCooling);
+    cooling.control!.rememberedCurve = {
+      arrangement: "shared",
+      setting: {
+        mode: "curve",
+        points: [
+          { temperatureC: 40, speedPercent: 0 },
+          { temperatureC: 80, speedPercent: 100 },
+        ],
+      },
+    };
+    const fake = renderPerformance(cooling);
+    const user = userEvent.setup();
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Control mode" }),
+      "curve",
+    );
+    const editor = await curveEditor();
+    expect(pointValues(editor)).toEqual([
+      [40, 0],
+      [80, 100],
+    ]);
+    const apply = within(editor).getByRole("button", { name: "Apply curve" });
+    await within(editor).findByText(/speed must be between 20% and 100%/);
+    expect(apply).toBeDisabled();
+    expectNoFanWrites(fake);
+    await user.type(
+      within(editor).getByRole("spinbutton", { name: "Point 1 speed (%)" }),
+      "30",
+    );
+    await waitFor(() => expect(apply).toBeEnabled());
+    fake.fanFailures[1] = "fan unavailable";
+    await user.click(apply);
+    await waitFor(() => expect(fake.applyCooling).toHaveBeenCalledOnce());
+    expect(fake.gpu.cooling.control?.rememberedCurve).toEqual(
+      cooling.control!.rememberedCurve,
+    );
+  });
+
+  it("requires review when the remembered arrangement targets fans that are no longer present", async () => {
+    const cooling = structuredClone(sharedCooling);
+    cooling.control!.rememberedCurve = {
+      arrangement: "perFan",
+      fans: [
+        { fanIndex: 0, setting: { mode: "curve", points: starter } },
+        { fanIndex: 7, setting: { mode: "automatic" } },
+      ],
+    };
+    const fake = renderPerformance(cooling);
+    const user = userEvent.setup();
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Control mode" }),
+      "curve",
+    );
+    expect(
+      await screen.findByText(/The GPU or targeted fans changed/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Apply cooling" }),
+    ).toBeDisabled();
+    expectNoFanWrites(fake);
+  });
+
+  it("lets a previously fixed fan choose Curve while preserving the other fan's draft", async () => {
+    const cooling = structuredClone(sharedCooling);
+    cooling.control!.rememberedCurve = {
+      arrangement: "perFan",
+      fans: [
+        { fanIndex: 0, setting: { mode: "curve", points: starter } },
+        { fanIndex: 1, setting: { mode: "fixed", speedPercent: 57 } },
+      ],
+    };
+    cooling.control!.applied = structuredClone(
+      cooling.control!.rememberedCurve,
+    );
+    const fake = renderPerformance(cooling);
+    const user = userEvent.setup();
+    const first = await screen.findByRole("group", {
+      name: "Fan 1 configuration",
+    });
+    const second = screen.getByRole("group", { name: "Fan 2 configuration" });
+    await user.selectOptions(
+      within(first).getByRole("combobox", { name: "Control mode" }),
+      "fixed",
+    );
+    await user.type(
+      within(first).getByRole("spinbutton", { name: "Fixed target (%)" }),
+      "66",
+    );
+    await waitFor(() =>
+      expect(
+        within(second).getByRole("option", { name: "Curve" }),
+      ).toBeEnabled(),
+    );
+    await user.selectOptions(
+      within(second).getByRole("combobox", { name: "Control mode" }),
+      "curve",
+    );
+    expect(
+      within(first).getByRole("combobox", { name: "Control mode" }),
+    ).toHaveValue("fixed");
+    expect(
+      within(first).getByRole("spinbutton", { name: "Fixed target (%)" }),
+    ).toHaveValue(66);
+    expect(
+      within(second).getByRole("combobox", { name: "Control mode" }),
+    ).toHaveValue("curve");
+    expectNoFanWrites(fake);
+    const apply = screen.getByRole("button", { name: "Apply cooling" });
+    await waitFor(() => expect(apply).toBeEnabled());
+    await user.click(apply);
+    await waitFor(() =>
+      expect(fake.gpu.cooling.control?.applied).toEqual({
+        arrangement: "perFan",
+        fans: [
+          { fanIndex: 0, setting: { mode: "fixed", speedPercent: 66 } },
+          { fanIndex: 1, setting: { mode: "curve", points: starter } },
+        ],
+      }),
+    );
+  });
+});
 
 /** Each point's temperature and speed inputs, in order. */
 function pointValues(editor: HTMLElement) {
