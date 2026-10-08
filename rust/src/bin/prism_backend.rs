@@ -8,7 +8,10 @@ fn main() {
     let stdin = io::stdin();
     let stdout = Arc::new(Mutex::new(io::stdout()));
     let notification_output = Arc::clone(&stdout);
-    let _session = prism_rust::daemon_client::start_session(move |notification| {
+    let initial_holds = std::env::var("PRISM_INITIAL_EDIT_HOLDS").ok().map(|value| {
+        serde_json::from_str(&value).expect("invalid initial edit holds from Electron")
+    });
+    let _session = prism_rust::daemon_client::start_session(initial_holds, move |notification| {
         let notification = match notification {
             SessionNotification::DaemonStatus(status) => {
                 serde_json::json!({ "method": "daemon.statusChanged", "params": status })

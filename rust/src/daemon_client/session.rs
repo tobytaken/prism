@@ -132,8 +132,17 @@ pub enum SessionNotification {
 }
 
 /// One session for the sidecar's lifetime. Probes and driver requests remain one-shot.
-pub fn start_session(notify: impl Fn(SessionNotification) + Send + 'static) -> SessionClient {
-    let transport = Arc::new(SessionTransport::default());
+pub fn start_session(
+    initial_holds: Option<crate::protocol::SetEditHoldsRequest>,
+    notify: impl Fn(SessionNotification) + Send + 'static,
+) -> SessionClient {
+    let transport = Arc::new(SessionTransport {
+        connection: Mutex::new(Connection {
+            edit_holds: initial_holds,
+            ..Connection::default()
+        }),
+        ..SessionTransport::default()
+    });
     assert!(
         SESSION.set(Arc::clone(&transport)).is_ok(),
         "a sidecar has only one daemon session"

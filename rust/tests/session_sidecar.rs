@@ -779,3 +779,38 @@ fn edit_holds_are_resent_before_a_reconnected_session_reports_ready() {
         true
     );
 }
+
+#[test]
+fn a_replacement_sidecar_sends_the_renderers_existing_holds_on_its_first_connection() {
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = Sidecar(
+        Command::new(env!("CARGO_BIN_EXE_prism_backend"))
+            .env("PRISM_SOCKET_PATH", &socket)
+            .env(
+                "PRISM_INITIAL_EDIT_HOLDS",
+                json!({ "gpuIds": ["GPU-A"] }).to_string(),
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let lines = output_lines(&mut sidecar);
+    let mut session = accept_session(&listener);
+    let request = read_frame::<SessionRequest>(&mut session).unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(request.request).unwrap(),
+        json!({
+            "type": "set_edit_holds", "payload": { "gpuIds": ["GPU-A"] }
+        })
+    );
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["params"]["reachable"],
+        true
+    );
+}

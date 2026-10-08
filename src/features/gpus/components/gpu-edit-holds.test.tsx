@@ -173,3 +173,35 @@ it("includes fan-only edits in navigation confirmation and releases holds when t
   view.unmount();
   await waitFor(() => expect(holds).toHaveBeenLastCalledWith([]));
 });
+
+it("keeps one set of waiting actions when reading game associations fails", async () => {
+  createFakeDesktop({
+    switchingStatus: {
+      condition: { status: "ready" },
+      gpus: [
+        {
+          gpuId: "GPU-123",
+          state: {
+            status: "waitingForEdits",
+            profile: { id: "gaming", name: "Gaming" },
+          },
+        },
+      ],
+    },
+  });
+  vi.spyOn(window.prism.games, "get").mockRejectedValue(
+    new Error("Cannot read game associations"),
+  );
+  const router = createMemoryRouter(appRoutes, {
+    initialEntries: ["/performance"],
+  });
+  renderWithQueryClient(<RouterProvider router={router} />);
+  const panel = await screen.findByRole("region", { name: "Game tuning" });
+  await within(panel).findByText("Cannot read game associations");
+  expect(
+    within(panel).getAllByRole("button", { name: "Apply my changes" }),
+  ).toHaveLength(1);
+  expect(
+    within(panel).getAllByRole("button", { name: "Discard my changes" }),
+  ).toHaveLength(1);
+});

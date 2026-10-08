@@ -79,6 +79,7 @@ class RustBackendClient {
   private pending = new Map<number, PendingRequest>();
   private restartTimer: NodeJS.Timeout | undefined;
   private disposed = false;
+  private editHolds: string[] = [];
   private socketPath =
     process.env.PRISM_SOCKET_PATH ?? "/run/prism/prismd.sock";
 
@@ -93,6 +94,12 @@ class RustBackendClient {
 
   start() {
     this.ensureStarted();
+  }
+
+  setEditHolds(gpuIds: string[]) {
+    // Renderer drafts outlive a restarted sidecar. Seed its first connection with this set.
+    this.editHolds = gpuIds;
+    return this.invoke("games.setEditHolds", { gpuIds });
   }
 
   async invoke<T>(method: string, params?: unknown): Promise<T> {
@@ -207,6 +214,7 @@ class RustBackendClient {
         stdio: ["pipe", "pipe", "pipe"],
         env: {
           ...process.env,
+          PRISM_INITIAL_EDIT_HOLDS: JSON.stringify({ gpuIds: this.editHolds }),
           ...(isFlatpak ? { PRISM_BACKEND_REQUIRE_DAEMON: "1" } : {}),
         },
       });
@@ -227,6 +235,7 @@ class RustBackendClient {
         stdio: ["pipe", "pipe", "pipe"],
         env: {
           ...process.env,
+          PRISM_INITIAL_EDIT_HOLDS: JSON.stringify({ gpuIds: this.editHolds }),
           ...(isFlatpak ? { PRISM_BACKEND_REQUIRE_DAEMON: "1" } : {}),
         },
       },
@@ -758,7 +767,7 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       ) {
         throw new Error("Invalid edit holds payload");
       }
-      return backend.invoke("games.setEditHolds", payload);
+      return backend.setEditHolds(payload.gpuIds);
     },
   );
   ipcMain.handle(

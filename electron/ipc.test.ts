@@ -384,6 +384,9 @@ describe("registerIpc", () => {
       first.stdout.write(
         `${JSON.stringify({ method: "daemon.statusChanged", params: connectedDaemonStatus })}\n`,
       );
+      await callHandler("prism:games:setEditHolds", trustedEvent(), {
+        gpuIds: ["GPU-A"],
+      });
       first.emit("exit", 1, null);
       expect(send).toHaveBeenLastCalledWith(
         "prism:daemon:statusChanged",
@@ -391,6 +394,9 @@ describe("registerIpc", () => {
       );
       await vi.advanceTimersByTimeAsync(250);
       expect(mocks.spawn).toHaveBeenCalledTimes(2);
+      expect(mocks.spawn.mock.calls[1][2].env.PRISM_INITIAL_EDIT_HOLDS).toBe(
+        JSON.stringify({ gpuIds: ["GPU-A"] }),
+      );
       second.stdout.write(
         `${JSON.stringify({ method: "daemon.statusChanged", params: connectedDaemonStatus })}\n`,
       );
