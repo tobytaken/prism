@@ -724,7 +724,7 @@ fn has_suspended_curve(cooling: &GpuCooling) -> bool {
 }
 
 /// Why the configuration can't be applied to the GPU now; none means it can.
-fn application_problems(
+pub(super) fn application_problems(
     gpu: &GpuPerformanceDevice,
     shared: bool,
     targets: &[(u32, FanSetting)],

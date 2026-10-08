@@ -30,6 +30,7 @@ import {
   compareProfile,
   correctedSettings,
   PROFILE_SETTING_KEYS,
+  describeCooling,
   profileSaveBlocker,
 } from "@/features/gpus/lib/tuning-profiles";
 import type {
@@ -108,18 +109,14 @@ export function useGpuProfileSelector({
       ? compareProfile(gpu, ownCurrent, appliedDefaults)
       : null;
   const profileMutationPending =
-    profileWritePending ||
-    (pendingAction?.gpuId === gpu.id &&
-      pendingAction.kind !== "setFanSpeed" &&
-      pendingAction.kind !== "setFanModeAuto" &&
-      pendingAction.kind !== "applyCooling");
+    profileWritePending || pendingAction?.gpuId === gpu.id;
   const saving =
     workflow.saveAsNew.isPending || workflow.saveToCurrent.isPending;
   const profilesReady = !workflow.query.isPending && !workflow.query.error;
   const saveBlocker =
     readError ??
-    (["power", "graphics", "memory"].some((key) => key in edits)
-      ? "Apply or discard unapplied power-limit or clock-offset changes before saving a profile."
+    (Object.keys(edits).length > 0
+      ? "Apply or discard unapplied tuning changes before saving a profile."
       : profileSaveBlocker(gpu)) ??
     (uuid && !workflow.stateOf(uuid)
       ? "Saving is unavailable until the GPU's profile state is read from the Prism daemon."
@@ -724,6 +721,13 @@ export function GpuProfileFeedback({
           )}
           <ul className="list-disc space-y-1 pl-5 text-sm">
             {review.corrections.map((correction) => {
+              if (correction.setting === "cooling")
+                return (
+                  <li key="cooling">
+                    Cooling: {describeCooling(correction.savedValue)} →{" "}
+                    {describeCooling(correction.proposedValue)}
+                  </li>
+                );
               const { label, unit } = SETTING_DISPLAY[correction.setting];
               return (
                 <li key={correction.setting}>
@@ -794,7 +798,11 @@ function describeSettings(settings: GpuProfileSettings) {
         ? "Use default"
         : `${setting.value} ${SETTING_DISPLAY[key].unit}`;
     return [`${SHORT_LABEL[key]} ${value}`];
-  }).join(" · ");
+  })
+    .concat(
+      settings.cooling ? [`Cooling ${describeCooling(settings.cooling)}`] : [],
+    )
+    .join(" · ");
 }
 
 /** Profile loading problems, and profiles whose owning GPU is absent. */

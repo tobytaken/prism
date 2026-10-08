@@ -53,6 +53,12 @@ pub enum ProfileSetting {
 pub struct ProfileSettings {
     #[serde(
         default,
+        deserialize_with = "included_cooling",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cooling: Option<crate::cooling::CoolingConfiguration>,
+    #[serde(
+        default,
         deserialize_with = "included_setting",
         skip_serializing_if = "Option::is_none"
     )]
@@ -91,10 +97,17 @@ impl ProfileSettings {
     }
 
     pub fn is_empty(&self) -> bool {
-        ProfileSettingKey::ALL
-            .iter()
-            .all(|key| self.get(*key).is_none())
+        self.cooling.is_none()
+            && ProfileSettingKey::ALL
+                .iter()
+                .all(|key| self.get(*key).is_none())
     }
+}
+
+fn included_cooling<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::cooling::CoolingConfiguration>, D::Error> {
+    crate::cooling::CoolingConfiguration::deserialize(deserializer).map(Some)
 }
 
 // An included null is invalid; only an omitted instruction leaves a control alone.
@@ -114,6 +127,8 @@ pub struct ApplyGpuProfileRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileApplicationResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooling: Option<crate::cooling::CoolingApplication>,
     pub power: Option<TuningOutcome>,
     pub graphics: Option<TuningOutcome>,
     pub memory: Option<TuningOutcome>,
@@ -149,7 +164,27 @@ pub enum RangeBound {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ProfileRangeCorrection {
+#[serde(untagged)]
+pub enum ProfileRangeCorrection {
+    Numeric(NumericRangeCorrection),
+    Cooling {
+        setting: CoolingSettingKey,
+        #[serde(rename = "savedValue")]
+        saved_value: crate::cooling::CoolingConfiguration,
+        #[serde(rename = "proposedValue")]
+        proposed_value: crate::cooling::CoolingConfiguration,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CoolingSettingKey {
+    #[serde(rename = "cooling")]
+    Cooling,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NumericRangeCorrection {
     pub setting: ProfileSettingKey,
     pub saved_value: i64,
     pub proposed_value: i64,
@@ -240,6 +275,8 @@ pub struct GpuTuningState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReportedTuningValues {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooling: Option<crate::cooling::CoolingConfiguration>,
     pub power_limit_watts: Option<i64>,
     #[serde(rename = "graphicsOffsetMHz")]
     pub graphics_offset_mhz: Option<i64>,

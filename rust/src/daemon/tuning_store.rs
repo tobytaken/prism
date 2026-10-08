@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 7;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 8;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -40,6 +40,8 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // Version 6 imports legacy configurations with the current inventory during opening.
     Ok,
     // Version 7 adds users' game associations and automatic switching opt-ins, none until set.
+    Ok,
+    // Version 8 adds optional complete cooling configurations; old profiles omit cooling.
     Ok,
 ];
 
@@ -460,7 +462,7 @@ mod tests {
     fn an_unhealthy_store_refuses_every_write_and_keeps_its_bytes() {
         for preserved in [
             &b"{\"schemaVersion\": 1, \"profi"[..],
-            b"{\"schemaVersion\": 8}",
+            b"{\"schemaVersion\": 9}",
         ] {
             let dir = tempfile::tempdir().unwrap();
             fs::create_dir_all(store_path(&dir).parent().unwrap()).unwrap();

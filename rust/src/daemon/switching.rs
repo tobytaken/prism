@@ -246,6 +246,10 @@ impl Switching {
             .settings;
         activation.driving = Some(game.clone());
         activation.failure = None;
+        // Cooling lifecycle wiring belongs to #41–48. Do not silently apply only a subset.
+        if profile.cooling.is_some() {
+            return self.abandon(gpu_id, activation, &[], "Automatic switching of cooling profiles is not available yet.".into());
+        }
         let readings = backend.performance();
         let Ok(gpu) = verified_gpu(&readings, gpu_id) else {
             return self.abandon(gpu_id, activation, &[], UNAVAILABLE_APPLY.into());

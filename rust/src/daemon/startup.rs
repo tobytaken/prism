@@ -327,6 +327,7 @@ fn apply_target(
     ]
     .into_iter()
     .flatten()
+    .chain(application.cooling.as_ref().map(|c| &c.outcome))
     .collect();
     let full = !results.is_empty()
         && results

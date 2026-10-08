@@ -12,7 +12,11 @@ import {
   renameGpuProfile,
   deleteGpuProfile,
 } from "@/features/gpus/api";
-import { PROFILE_SETTING_KEYS } from "@/features/gpus/lib/tuning-profiles";
+import {
+  PROFILE_SETTING_KEYS,
+  captureCooling,
+  sameCooling,
+} from "@/features/gpus/lib/tuning-profiles";
 import type {
   GpuPerformanceDevice,
   GpuTuningState,
@@ -70,6 +74,8 @@ export function useGpuProfiles() {
       memoryOffsetMHz: gpu.clocks.memory.currentOffsetMHz,
     };
     if (PROFILE_SETTING_KEYS.some((key) => state.reported[key] !== shown[key]))
+      throw new Error(STALE_SAVE);
+    if (!sameCooling(state.reported.cooling, captureCooling(gpu)))
       throw new Error(STALE_SAVE);
     return { gpuId: state.gpuId, revision: state.revision };
   };

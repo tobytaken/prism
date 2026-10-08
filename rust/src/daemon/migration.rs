@@ -101,6 +101,7 @@ pub(super) fn upgrade(
                 name: "Previous startup settings".into(),
                 gpu_id: uuid.unwrap(),
                 settings: ProfileSettings {
+                    cooling: None,
                     power_limit_watts: desired.power_limit_watts.map(|v| value(i64::from(v))),
                     graphics_offset_mhz: desired.graphics_offset_mhz.map(|v| value(i64::from(v))),
                     memory_offset_mhz: desired.memory_offset_mhz.map(|v| value(i64::from(v))),

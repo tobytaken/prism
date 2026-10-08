@@ -74,6 +74,7 @@ describe("GPU tuning profiles", () => {
     expect(fake.profiles[0].settings).toEqual({
       powerLimitWatts: { kind: "value", value: 475 },
       graphicsOffsetMHz: { kind: "value", value: 120 },
+      cooling: { arrangement: "shared", setting: { mode: "automatic" } },
     });
   });
 
@@ -93,7 +94,7 @@ describe("GPU tuning profiles", () => {
     const blocked = await saveAsNewAvailability(user);
     expect(blocked.enabled).toBe(false);
     expect(blocked.text).toContain(
-      "Apply or discard unapplied power-limit or clock-offset changes before saving a profile.",
+      "Apply or discard unapplied tuning changes before saving a profile.",
     );
     const section = power.closest("section")!;
     await user.click(within(section).getByRole("button", { name: "Apply" }));
@@ -113,7 +114,7 @@ describe("GPU tuning profiles", () => {
     });
   });
 
-  it("compares applied values with the current profile separately from drafts and lets failed fan edits coexist with saving", async () => {
+  it("compares applied values with the current profile separately from drafts and blocks saving failed fan edits", async () => {
     const user = userEvent.setup();
     const fake = createFakeDesktop({
       profiles: [quiet],
@@ -129,23 +130,14 @@ describe("GPU tuning profiles", () => {
     const fan = screen.getByRole("spinbutton", { name: "Fan 1 manual target" });
     await user.clear(fan);
     await user.type(fan, "65");
-    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
+    expect((await saveAsNewAvailability(user)).enabled).toBe(false);
     await user.click(screen.getByRole("button", { name: "Set Manual" }));
     await screen.findByText("Fan 1: Failed — Fan denied");
     expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
     expect(
       screen.queryByText("Changes not saved to profile"),
     ).not.toBeInTheDocument();
-    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
-    await saveAsNew(user, "New");
-    await waitFor(() =>
-      expect(fake.saveProfile).toHaveBeenCalledWith({
-        gpuId: "GPU-123",
-        name: "New",
-        revision: expect.any(String),
-      }),
-    );
-    await waitFor(() => expect(profileSelector()).toHaveTextContent("New"));
+    expect((await saveAsNewAvailability(user)).enabled).toBe(false);
     const power = screen.getByRole("spinbutton", { name: "Power limit" });
     await user.clear(power);
     await user.type(power, "500");
@@ -158,11 +150,11 @@ describe("GPU tuning profiles", () => {
     await screen.findByText("Changes not saved to profile");
     expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
     expect(fan).toHaveValue(65);
-    expect((await saveAsNewAvailability(user)).enabled).toBe(true);
+    expect((await saveAsNewAvailability(user)).enabled).toBe(false);
   });
 
   it.each(["Performance", "Apply all"])(
-    "allows saving known profile settings while %s awaits a fan outcome",
+    "blocks saving while %s awaits a fan outcome",
     async (surface) => {
       const user = userEvent.setup();
       const fake = createFakeDesktop();
@@ -215,14 +207,8 @@ describe("GPU tuning profiles", () => {
           ).toBeDisabled();
         }
         expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
-        await saveAsNew(user, "Quiet");
-        await waitFor(() =>
-          expect(save).toHaveBeenCalledWith({
-            gpuId: "GPU-123",
-            name: "Quiet",
-            revision: expect.any(String),
-          }),
-        );
+        expect((await saveAsNewAvailability(user)).enabled).toBe(false);
+        expect(save).not.toHaveBeenCalled();
         expect(fan).toHaveValue(65);
       } finally {
         finishFan({ success: false, error: "Fan denied" });
@@ -334,6 +320,7 @@ describe("GPU tuning profiles", () => {
     {
       label: "no supported profile settings",
       gpu: createPerformanceGpu({
+        cooling: { isSupported: false },
         power: { support: "unsupported" },
         clocks: { graphics: { support: "unsupported" } },
       }),

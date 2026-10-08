@@ -168,7 +168,7 @@ fn save_as_new_blocks_on_unknown_support_or_unavailable_values_and_saves_nothing
         ),
         (
             nothing,
-            "This GPU has no supported profile settings (power limit or clock offsets).",
+            "This GPU has no supported profile settings (power limit, clock offsets or cooling).",
         ),
     ] {
         let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
@@ -535,4 +535,193 @@ fn live_clock_offsets_accept_the_app_field_names_and_default_requests() {
     let gpu = daemon.gpus.gpu("GPU-123");
     assert_eq!(gpu.clocks.graphics.current_offset_mhz, Some(0));
     assert_eq!(gpu.clocks.memory.current_offset_mhz, Some(80));
+}
+
+#[test]
+fn cooling_profiles_capture_complete_curves_and_ticks_do_not_invalidate_saving() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(
+        vec![super::harness::cooled_gpu()],
+    ));
+    let alice = daemon.user(1000, "alice");
+    let cooling = json!({"arrangement":"shared","setting":{"mode":"curve","points":[
+        {"temperatureC":45,"speedPercent":20}, {"temperatureC":85,"speedPercent":100}
+    ]}});
+    alice.send_json(
+        json!({"type":"apply_cooling","payload":{"gpuId":"GPU-123","configuration":cooling}}),
+    );
+    let request = save_as_new(&alice, "GPU-123", "Curve");
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.run_curves_for(500);
+    let profile = saved(alice.send_json(request));
+    assert_eq!(profile["settings"]["cooling"], cooling);
+}
+
+#[test]
+fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omission_leaves_it_alone(
+) {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(
+        vec![super::harness::cooled_gpu()],
+    ));
+    let alice = daemon.user(1000, "alice");
+    let cooling = json!({"arrangement":"perFan","fans":[
+        {"fanIndex":0,"setting":{"mode":"curve","points":[{"temperatureC":45,"speedPercent":20},{"temperatureC":85,"speedPercent":100}]}},
+        {"fanIndex":1,"setting":{"mode":"fixed","speedPercent":50}}
+    ]});
+    alice.send_json(import(
+        json!([{"id":"curve","name":"Curve","gpuId":"GPU-123","settings":{"cooling":cooling}}]),
+    ));
+    daemon.set_temperature("GPU-123", Some(80));
+    let result = alice.send_json(apply_by_id("curve"));
+    assert_eq!(
+        result["payload"]["cooling"]["outcome"]["status"], "succeeded",
+        "{result}"
+    );
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").cooling.fans[0].current_speed_percent,
+        Some(90)
+    );
+    assert_eq!(
+        daemon.gpus.gpu("GPU-123").cooling.fans[1].current_speed_percent,
+        Some(50)
+    );
+    alice.send_json(json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{"powerLimitWatts":{"kind":"default"}}}}));
+    let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Still curve")));
+    assert_eq!(profile["settings"]["cooling"], cooling);
+}
+
+#[test]
+fn cooling_range_corrections_require_review_and_keep_the_corrected_profile_after_failure() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(
+        vec![super::harness::cooled_gpu()],
+    ));
+    let alice = daemon.user(1000, "alice");
+    let cooling = json!({"arrangement":"shared","setting":{"mode":"fixed","speedPercent":10}});
+    alice.send_json(import(
+        json!([{"id":"fixed","name":"Fixed","gpuId":"GPU-123","settings":{"cooling":cooling}}]),
+    ));
+    let result = alice.send_json(apply_by_id("fixed"));
+    assert_eq!(
+        result["payload"]["cooling"]["outcome"]["status"],
+        "unattempted"
+    );
+    let corrections = result["payload"]["corrections"].clone();
+    assert_eq!(corrections[0]["setting"], "cooling", "{result}");
+    assert_eq!(
+        corrections[0]["proposedValue"]["setting"]["speedPercent"],
+        20
+    );
+    assert!(daemon.gpus.writes().is_empty());
+    daemon.gpus.fail("GPU-123", Setter::FanSpeed, "Denied");
+    let result = alice.send_json(json!({"type":"correct_and_apply_profile","payload":{"profileId":"fixed","corrections":corrections}}));
+    assert_eq!(
+        result["payload"]["profile"]["settings"]["cooling"]["setting"]["speedPercent"], 20,
+        "{result}"
+    );
+    assert_eq!(
+        result["payload"]["application"]["cooling"]["outcome"]["status"],
+        "failed"
+    );
+}
+
+#[test]
+fn cooling_profile_validation_blocks_all_writes_when_fixed_bounds_are_unknown() {
+    let mut gpu = super::harness::cooled_gpu();
+    gpu.cooling.fans[0].min_speed_percent = None;
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    let result = daemon.send_json(
+        json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
+            "powerLimitWatts":{"kind":"value","value":500},
+            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speedPercent":60}}
+        }}}),
+    );
+    assert_eq!(
+        result["payload"]["power"]["status"], "unattempted",
+        "{result}"
+    );
+    assert!(daemon.gpus.writes().is_empty());
+}
+
+#[test]
+fn automatic_cooling_is_saved_as_default_intent_and_survives_restart() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(
+        vec![super::harness::cooled_gpu()],
+    ));
+    let alice = daemon.user(1000, "alice");
+    let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Automatic")));
+    assert_eq!(
+        profile["settings"]["cooling"],
+        json!({"arrangement":"shared","setting":{"mode":"automatic"}})
+    );
+    drop(alice);
+    daemon.restart();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(list(alice.send_json(LIST())), vec![profile.clone()]);
+    let result = alice.send_json(apply_by_id(profile["id"].as_str().unwrap()));
+    assert_eq!(
+        result["payload"]["cooling"]["outcome"]["status"],
+        "succeeded"
+    );
+}
+
+#[test]
+fn a_partial_cooling_profile_reports_each_fan_and_does_not_become_current() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(
+        vec![super::harness::cooled_gpu()],
+    ));
+    let alice = daemon.user(1000, "alice");
+    saved(alice.send_json(save_as_new(&alice, "GPU-123", "Before")));
+    alice.send_json(import(
+        json!([{"id":"fixed","name":"Fixed","gpuId":"GPU-123","settings":{
+            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speedPercent":70}}
+        }}]),
+    ));
+    daemon
+        .gpus
+        .fail_fan("GPU-123", Setter::FanSpeed, 1, "Denied");
+    let result = alice.send_json(apply_by_id("fixed"));
+    let cooling = &result["payload"]["cooling"];
+    assert_eq!(cooling["outcome"]["status"], "failed");
+    assert_eq!(cooling["fans"][0]["outcome"]["status"], "succeeded");
+    assert_eq!(cooling["fans"][1]["outcome"]["status"], "failed");
+    let states = alice.send_json(json!({"type":"get_tuning_states"}));
+    assert!(states["payload"][0]["currentProfile"].is_null());
+}
+
+#[test]
+fn unknown_cooling_policy_blocks_capture_instead_of_saving_a_sampled_speed() {
+    let mut gpu = super::harness::cooled_gpu();
+    gpu.cooling.fans[0].mode = Some(crate::gpu::FanControlMode::Manual);
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    let alice = daemon.user(1000, "alice");
+    let response = alice.send_json(save_as_new(&alice, "GPU-123", "Unknown"));
+    assert!(
+        error_message(&response).contains("Cooling: the current configured policy is unavailable")
+    );
+    assert!(list(alice.send_json(LIST())).is_empty());
+}
+
+#[test]
+fn cooling_application_keeps_working_with_an_unhealthy_store_and_reports_unrecorded_manual_state() {
+    let preserved = b"{\"schemaVersion\":999}";
+    let daemon = Harness::start_with_persistent_files(
+        FakeGpuBackend::with_gpus(vec![super::harness::cooled_gpu()]),
+        &[(TUNING_STORE_FILE_NAME, preserved)],
+    );
+    let result = daemon.send_json(
+        json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
+            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speedPercent":70}}
+        }}}),
+    );
+    assert_eq!(
+        result["payload"]["cooling"]["outcome"]["status"],
+        "succeeded"
+    );
+    assert!(result["payload"]["cooling"]["outcome"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("not recorded"));
+    assert_eq!(
+        daemon.persistent_file(TUNING_STORE_FILE_NAME).as_deref(),
+        Some(&preserved[..])
+    );
 }

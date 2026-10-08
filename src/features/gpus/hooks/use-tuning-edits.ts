@@ -82,7 +82,7 @@ export function useTuningEdits() {
     const device = devices[gpu.id];
     const owner = device?.profileOwners?.[setting];
     const value = device?.edits[setting];
-    if (owner) {
+    if (owner && setting !== "cooling") {
       const key = profileSettingKey(setting);
       const instruction = profileInstruction(value);
       if (gpu.stableId !== owner || !key || !instruction) return null;
@@ -529,9 +529,16 @@ function actionIntentions(
     case "applyProfile": {
       const intention = (setting: ProfileSetting) =>
         setting.kind === "default" ? ("default" as const) : setting.value;
-      const { powerLimitWatts, graphicsOffsetMHz, memoryOffsetMHz } =
+      const { powerLimitWatts, graphicsOffsetMHz, memoryOffsetMHz, cooling } =
         action.settings;
       return {
+        ...(cooling && {
+          cooling: {
+            ...coolingDraft(cooling),
+            stableId: action.stableId,
+            fanIndexes: gpu.cooling.fans.map((fan) => fan.index),
+          },
+        }),
         ...(powerLimitWatts && { power: intention(powerLimitWatts) }),
         ...(graphicsOffsetMHz && { graphics: intention(graphicsOffsetMHz) }),
         ...(memoryOffsetMHz && { memory: intention(memoryOffsetMHz) }),

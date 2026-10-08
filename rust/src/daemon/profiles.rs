@@ -108,6 +108,7 @@ pub(super) fn reading(gpu: &GpuPerformanceDevice, key: ProfileSettingKey) -> Rea
 pub(super) fn capture_settings(
     gpu: &GpuPerformanceDevice,
     last_applied: Option<&ProfileSettings>,
+    origin: super::tuning::TuningOrigin,
 ) -> Result<ProfileSettings, GpuCommandError> {
     let blocked =
         |message: String| GpuCommandError::new(GpuCommandErrorCode::InvalidArgument, message);
@@ -133,8 +134,9 @@ pub(super) fn capture_settings(
                 reading.error.unwrap_or(refresh)
             )));
         };
-        let follows_default =
-            last_applied.and_then(|applied| applied.get(key)) == Some(ProfileSetting::Default {});
+        let follows_default = origin == super::tuning::TuningOrigin::Manual
+            && last_applied.and_then(|applied| applied.get(key))
+                == Some(ProfileSetting::Default {});
         settings.set(
             key,
             if follows_default && reading.default == Some(current) {
@@ -144,9 +146,11 @@ pub(super) fn capture_settings(
             },
         );
     }
+    settings.cooling = capture_cooling(gpu)?;
     if settings.is_empty() {
         return Err(blocked(
-            "This GPU has no supported profile settings (power limit or clock offsets).".into(),
+            "This GPU has no supported profile settings (power limit, clock offsets or cooling)."
+                .into(),
         ));
     }
     Ok(settings)
@@ -207,12 +211,14 @@ impl TuningDocument {
             });
         let state = serde_json::json!({
             "reported": reported,
+            "cooling": capture_cooling(gpu).ok(),
             "lastApplied": self.last_applied.get(&uuid),
             "currentProfile": current_profile,
         });
         GpuTuningState {
             revision: format!("{:016x}", digest(state.to_string().as_bytes())),
             reported: ReportedTuningValues {
+                cooling: capture_cooling(gpu).ok().flatten(),
                 power_limit_watts: reading(gpu, ProfileSettingKey::PowerLimitWatts).current,
                 graphics_offset_mhz: reading(gpu, ProfileSettingKey::GraphicsOffsetMhz).current,
                 memory_offset_mhz: reading(gpu, ProfileSettingKey::MemoryOffsetMhz).current,
@@ -428,19 +434,10 @@ impl TuningDocument {
         profile_id: &str,
         corrections: &[ProfileRangeCorrection],
     ) -> Result<GpuTuningProfile, GpuCommandError> {
-        let reviewed = |correction: &&ProfileRangeCorrection| match correction.bound {
-            RangeBound::Maximum => correction.proposed_value < correction.saved_value,
-            RangeBound::Minimum => correction.proposed_value > correction.saved_value,
-        };
-        let distinct = corrections.iter().enumerate().all(|(index, correction)| {
-            corrections[..index]
-                .iter()
-                .all(|earlier| earlier.setting != correction.setting)
-        });
-        if corrections.is_empty() || !distinct || !corrections.iter().all(|c| reviewed(&c)) {
+        if corrections.is_empty() {
             return Err(GpuCommandError::new(
                 GpuCommandErrorCode::InvalidArgument,
-                "The profile corrections are invalid. No GPU settings were changed.",
+                "No profile corrections were supplied.",
             ));
         }
         let profile = self
@@ -449,25 +446,46 @@ impl TuningDocument {
             .iter_mut()
             .find(|profile| profile.id == profile_id)
             .ok_or_else(profile_missing)?;
+        let mut corrected = profile.settings.clone();
+        let mut seen = std::collections::BTreeSet::new();
         for correction in corrections {
-            if profile.settings.get(correction.setting)
-                != Some(ProfileSetting::Value {
-                    value: correction.saved_value,
-                })
-            {
-                return Err(GpuCommandError::new(
-                    GpuCommandErrorCode::InvalidArgument,
-                    "The saved profile changed while its corrections were being reviewed. Load it \
-                     again to review current corrections. No GPU settings were changed.",
-                ));
+            let valid = match correction {
+                ProfileRangeCorrection::Numeric(c) => {
+                    let distinct = seen.insert(format!("{:?}", c.setting));
+                    let reviewed = match c.bound {
+                        RangeBound::Maximum => c.proposed_value < c.saved_value,
+                        RangeBound::Minimum => c.proposed_value > c.saved_value,
+                    };
+                    let matches = corrected.get(c.setting)
+                        == Some(ProfileSetting::Value {
+                            value: c.saved_value,
+                        });
+                    corrected.set(
+                        c.setting,
+                        ProfileSetting::Value {
+                            value: c.proposed_value,
+                        },
+                    );
+                    distinct && reviewed && matches
+                }
+                ProfileRangeCorrection::Cooling {
+                    saved_value,
+                    proposed_value,
+                    ..
+                } => {
+                    let valid = seen.insert("cooling".into())
+                        && corrected.cooling.as_ref() == Some(saved_value)
+                        && saved_value != proposed_value;
+                    corrected.cooling = Some(proposed_value.clone());
+                    valid
+                }
+            };
+            if !valid {
+                return Err(GpuCommandError::new(GpuCommandErrorCode::InvalidArgument,
+                    "The saved profile changed while its corrections were being reviewed. Load it again to review current corrections. No GPU settings were changed."));
             }
-            profile.settings.set(
-                correction.setting,
-                ProfileSetting::Value {
-                    value: correction.proposed_value,
-                },
-            );
         }
+        profile.settings = corrected;
         Ok(profile.clone())
     }
 
@@ -509,4 +527,65 @@ pub(super) fn new_profile_id() -> Result<String, GpuCommandError> {
         &hex[16..20],
         &hex[20..32]
     ))
+}
+
+/// Captures policy, never a sampled fan speed. Shared/per-fan arrangement is part of the policy.
+pub(super) fn capture_cooling(
+    gpu: &GpuPerformanceDevice,
+) -> Result<Option<crate::cooling::CoolingConfiguration>, GpuCommandError> {
+    use crate::cooling::{CoolingConfiguration, FanConfiguration, FanSetting};
+    use crate::gpu::FanControlMode;
+    if !gpu.cooling.is_supported {
+        return Ok(None);
+    }
+    let unknown = || {
+        GpuCommandError::new(GpuCommandErrorCode::InvalidArgument,
+        "Cooling: the current configured policy is unavailable. Apply cooling successfully before saving.")
+    };
+    if gpu.cooling.fans.is_empty() {
+        return Err(unknown());
+    }
+    let control = gpu.cooling.control.as_ref();
+    if control.is_some_and(|control| control.suspension.is_some()) {
+        return Err(unknown());
+    }
+    let applied = control.and_then(|control| control.applied.as_ref());
+    let mut fans = Vec::new();
+    for fan in &gpu.cooling.fans {
+        let setting = match applied {
+            Some(CoolingConfiguration::Shared { setting }) => Some(setting.clone()),
+            Some(CoolingConfiguration::PerFan { fans }) => fans
+                .iter()
+                .find(|f| f.fan_index == fan.index)
+                .map(|f| f.setting.clone()),
+            None => None,
+        };
+        let setting = match (setting, fan.mode) {
+            (Some(FanSetting::Automatic {}), Some(FanControlMode::Auto))
+            | (None, Some(FanControlMode::Auto)) => FanSetting::Automatic {},
+            (
+                Some(setting @ (FanSetting::Fixed { .. } | FanSetting::Curve { .. })),
+                Some(FanControlMode::Manual),
+            ) => setting,
+            _ => return Err(unknown()),
+        };
+        fans.push(FanConfiguration {
+            fan_index: fan.index,
+            setting,
+        });
+    }
+    Ok(Some(match applied {
+        Some(CoolingConfiguration::Shared { setting }) => CoolingConfiguration::Shared {
+            setting: setting.clone(),
+        },
+        None if fans
+            .iter()
+            .all(|f| matches!(f.setting, FanSetting::Automatic {})) =>
+        {
+            CoolingConfiguration::Shared {
+                setting: FanSetting::Automatic {},
+            }
+        }
+        _ => CoolingConfiguration::PerFan { fans },
+    }))
 }

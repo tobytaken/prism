@@ -23,6 +23,7 @@ use super::host::{Clock, HostShutdownSignal, UserDirectory};
 use super::possibly_stale::{PossiblyStale, POSSIBLY_STALE_FILE_NAME};
 use super::profiles::{capture_settings, new_profile_id, profile_name, uuid_of, verified_gpu};
 use super::queue::{GpuOperationQueues, PendingOperation};
+use super::tuning::TuningOrigin;
 use super::tuning::{apply_live_offsets, apply_profile, reset_live_offsets};
 use super::tuning_store::{TuningDocument, TuningStore, TUNING_STORE_FILE_NAME};
 use super::{DaemonSession, SessionPeer, SessionPolicy};
@@ -154,7 +155,7 @@ impl DaemonCore {
                 .map_err(GpuCommandError::from)
                 .map(DaemonResponse::Profiles),
             DaemonRequest::GetTuningStates => {
-                let performance = self.dependencies.backend.performance();
+                let performance = self.performance();
                 self.tuning_store
                     .read(|document| {
                         performance
@@ -322,12 +323,15 @@ impl DaemonCore {
     ) -> Result<GpuTuningProfile, GpuCommandError> {
         let store = Arc::clone(&self.tuning_store);
         let uuid = uuid.to_string();
+        let cooling = Arc::clone(&self.cooling);
         self.tracked_write(&uuid.clone(), move |backend| {
             let performance = backend.performance();
-            let gpu = verified_gpu(&performance, &uuid)?;
+            let mut gpu = verified_gpu(&performance, &uuid)?.clone();
+            gpu.cooling.control = Some(cooling.control(&uuid));
             store.try_update(|document| {
-                document.check_revision(gpu, &revision)?;
-                let settings = capture_settings(gpu, document.last_applied.get(&uuid))?;
+                document.check_revision(&gpu, &revision)?;
+                let settings =
+                    capture_settings(&gpu, document.last_applied.get(&uuid), TuningOrigin::Manual)?;
                 keep(document, settings)
             })
         })
@@ -339,8 +343,23 @@ impl DaemonCore {
         peer: &SessionPeer,
         request: CorrectAndApplyProfileRequest,
     ) -> Result<CorrectedProfileApplication, GpuCommandError> {
-        let profile = self.tuning_store.try_update(|document| {
-            document.correct_profile(peer, &request.profile_id, &request.corrections)
+        let peer_owned = peer.clone();
+        let corrections = request.corrections;
+        let backend = Arc::clone(&self.dependencies.backend);
+        let profile_id = request.profile_id.clone();
+        let profile = self.update_profile(peer, &request.profile_id, move |document| {
+            let profile = document.profile_of(&peer_owned, &profile_id)?;
+            for correction in &corrections {
+                if let crate::protocol::ProfileRangeCorrection::Cooling { saved_value, .. } = correction {
+                    let performance = backend.performance();
+                    let gpu = verified_gpu(&performance, &profile.gpu_id)?;
+                    if super::cooling_profiles::correction(gpu, saved_value).as_ref() != Some(correction) {
+                        return Err(GpuCommandError::new(crate::gpu::GpuCommandErrorCode::InvalidArgument,
+                            "Cooling limits changed or the correction is invalid. Review the profile again. No GPU settings were changed."));
+                    }
+                }
+            }
+            document.correct_profile(&peer_owned, &profile_id, &corrections)
         })?;
         let application = self.apply_saved_profile(peer, profile.clone())?;
         Ok(CorrectedProfileApplication {
@@ -359,12 +378,14 @@ impl DaemonCore {
     ) -> Result<ProfileApplicationResponse, GpuCommandError> {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
+        let cooling = Arc::clone(&self.cooling);
         let peer = peer.clone();
         self.tracked_write(&profile.gpu_id, move |backend| {
             // A profile can be deleted or edited while this application waits on the GPU's queue.
             let profile = store.read(|document| document.profile_of(&peer, &profile.id))??;
             Ok(apply_recorded_profile(
                 backend,
+                &cooling,
                 &store,
                 &stale,
                 ApplyGpuProfileRequest {
@@ -372,6 +393,7 @@ impl DaemonCore {
                     settings: profile.settings,
                 },
                 Some(profile.id),
+                TuningOrigin::Manual,
             ))
         })
     }
@@ -382,8 +404,17 @@ impl DaemonCore {
     ) -> ProfileApplicationResponse {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
+        let cooling = Arc::clone(&self.cooling);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
-            apply_recorded_profile(backend, &store, &stale, request, None)
+            apply_recorded_profile(
+                backend,
+                &cooling,
+                &store,
+                &stale,
+                request,
+                None,
+                TuningOrigin::Manual,
+            )
         })
     }
 
@@ -429,10 +460,11 @@ impl DaemonCore {
     ) -> PendingOperation<T> {
         let store = Arc::clone(&self.tuning_store);
         let uuid = gpu_id.to_string();
+        let cooling = Arc::clone(&self.cooling);
         self.submit_write(gpu_id, move |backend| {
-            let before = tuning_state(backend, &store, &uuid);
+            let before = tuning_state(backend, &store, &cooling, &uuid);
             let result = operation(backend);
-            match tuning_state(backend, &store, &uuid) {
+            match tuning_state(backend, &store, &cooling, &uuid) {
                 Some(after) if Some(&after) != before.as_ref() => {
                     store.publish(DaemonEvent::TuningStateChanged(after))
                 }
@@ -666,8 +698,28 @@ impl DaemonCore {
     /// Applies cooling on the GPU's queue, so it never races a curve being followed.
     fn apply_cooling(&self, request: ApplyCoolingRequest) -> crate::cooling::CoolingApplication {
         let cooling = Arc::clone(&self.cooling);
-        self.write(&request.gpu_id.clone(), move |backend| {
-            cooling.apply(backend, request)
+        let store = Arc::clone(&self.tuning_store);
+        self.tracked_write(&request.gpu_id.clone(), move |backend| {
+            let uuid = request.gpu_id.clone();
+            let mut response = cooling.apply(backend, request);
+            if response.outcome.status == TuningOutcomeStatus::Succeeded {
+                let mut gpu = verified_gpu(&backend.performance(), &uuid).ok().cloned();
+                if let Some(gpu) = &mut gpu {
+                    gpu.cooling.control = Some(cooling.control(&uuid));
+                    if let Ok(Some(configuration)) = super::profiles::capture_cooling(gpu) {
+                        if store
+                            .update(|document| {
+                                document.last_applied.entry(uuid).or_default().cooling =
+                                    Some(configuration)
+                            })
+                            .is_err()
+                        {
+                            response.outcome.error = Some(NOT_RECORDED.into());
+                        }
+                    }
+                }
+            }
+            response
         })
     }
 
@@ -817,16 +869,21 @@ impl DaemonCore {
 }
 
 /// Applies settings and records successful manual instructions and the resulting current profile.
-fn apply_recorded_profile(
+pub(super) fn apply_recorded_profile(
     backend: &dyn DaemonBackend,
+    cooling: &CoolingController,
     store: &TuningStore,
     stale: &PossiblyStale,
     request: ApplyGpuProfileRequest,
     profile_id: Option<String>,
+    origin: TuningOrigin,
 ) -> ProfileApplicationResponse {
     let uuid = request.gpu_id.clone();
     let settings = request.settings.clone();
-    let mut response = apply_profile(backend, request);
+    let mut response = apply_profile(backend, cooling, request, origin);
+    if origin == TuningOrigin::TemporaryAutomatic {
+        return response;
+    }
     let outcomes = [
         (ProfileSettingKey::PowerLimitWatts, &response.power),
         (ProfileSettingKey::GraphicsOffsetMhz, &response.graphics),
@@ -838,19 +895,39 @@ fn apply_recorded_profile(
         .filter(|(_, outcome)| succeeded(outcome))
         .filter_map(|(key, _)| settings.get(*key).map(|setting| (*key, setting)))
         .collect();
+    let cooling_succeeded = response
+        .cooling
+        .as_ref()
+        .is_some_and(|c| c.outcome.status == TuningOutcomeStatus::Succeeded);
+    let cooling_changed = response.cooling.as_ref().is_some_and(|c| {
+        c.fans
+            .iter()
+            .any(|f| f.outcome.status == TuningOutcomeStatus::Succeeded)
+    });
+    let complete =
+        applied.len() == included.count() && (settings.cooling.is_none() || cooling_succeeded);
     let current = match profile_id {
-        Some(id) if applied.len() == included.count() => CurrentProfileChange::Become(id),
-        Some(_) if !applied.is_empty() => CurrentProfileChange::Clear,
+        Some(id) if complete => CurrentProfileChange::Become(id),
+        Some(_) if !applied.is_empty() || cooling_changed => CurrentProfileChange::Clear,
         _ => CurrentProfileChange::Keep,
     };
-    let recorded = record_manual(store, stale, &uuid, &applied, |document| match current {
-        CurrentProfileChange::Become(id) => {
-            document.current_profiles.insert(uuid.clone(), id);
+    let recorded = record_manual(store, stale, &uuid, &applied, |document| {
+        if cooling_succeeded {
+            document
+                .last_applied
+                .entry(uuid.clone())
+                .or_default()
+                .cooling = settings.cooling.clone();
         }
-        CurrentProfileChange::Clear => {
-            document.current_profiles.remove(&uuid);
+        match current {
+            CurrentProfileChange::Become(id) => {
+                document.current_profiles.insert(uuid.clone(), id);
+            }
+            CurrentProfileChange::Clear => {
+                document.current_profiles.remove(&uuid);
+            }
+            CurrentProfileChange::Keep => {}
         }
-        CurrentProfileChange::Keep => {}
     });
     if !recorded {
         response.not_recorded();
@@ -1002,6 +1079,11 @@ impl ManualWriteResponse for ClockOffsetResponse {
 impl ManualWriteResponse for ProfileApplicationResponse {
     fn not_recorded(&mut self) {
         mark_not_recorded([&mut self.power, &mut self.graphics, &mut self.memory]);
+        if let Some(cooling) = &mut self.cooling {
+            if cooling.outcome.status == TuningOutcomeStatus::Succeeded {
+                cooling.outcome.error = Some(NOT_RECORDED.into());
+            }
+        }
     }
 }
 
@@ -1018,11 +1100,13 @@ fn mark_not_recorded<const N: usize>(outcomes: [&mut Option<TuningOutcome>; N]) 
 fn tuning_state(
     backend: &dyn DaemonBackend,
     store: &TuningStore,
+    cooling: &CoolingController,
     uuid: &str,
 ) -> Option<GpuTuningState> {
     let performance = backend.performance();
-    let gpu = verified_gpu(&performance, uuid).ok()?;
-    store.read(|document| document.tuning_state(gpu)).ok()
+    let mut gpu = verified_gpu(&performance, uuid).ok()?.clone();
+    gpu.cooling.control = Some(cooling.control(uuid));
+    store.read(|document| document.tuning_state(&gpu)).ok()
 }
 
 fn command_result(result: Result<(), String>) -> DaemonCommandResponse {
