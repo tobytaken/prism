@@ -226,33 +226,35 @@ impl Switching {
     }
 
     /// GPUs whose winning game differs from the one automation last put into effect, each claimed
-    /// for one queued reconciliation. Nothing changes while recognition is unavailable or the
-    /// tuning store is unhealthy.
+    /// for one queued reconciliation. Recognition uncertainty defers writes, but still lets us
+    /// remember GPU absence so its return can reconcile after a complete scan.
     pub fn claim_unsettled(&self, backend: &dyn DaemonBackend) -> Vec<String> {
-        let Ok(running) = self.running() else {
-            return vec![];
-        };
+        let running = self.running().ok();
         let Ok(activations) = self.state.activations() else {
             return vec![];
         };
-        let Ok(wanted) = self
-            .store
-            .read(|document| winning_games(document, &running, self.users.as_ref()))
-        else {
+        let Ok(wanted) = self.store.read(|document| {
+            running
+                .as_ref()
+                .map(|running| winning_games(document, running, self.users.as_ref()))
+        }) else {
             return vec![];
         };
         let mut queued = self.state.queued.lock().unwrap();
         let readings = backend.performance();
         wanted
-            .keys()
+            .iter()
+            .flat_map(|games| games.keys())
             .chain(activations.keys())
             .filter(|gpu_id| {
-                activations.get(*gpu_id).is_some_and(|activation| {
-                    activation.gpu_absent != verified_gpu(&readings, gpu_id).is_err()
-                }) || wanted.get(*gpu_id)
-                    != activations
-                        .get(*gpu_id)
-                        .and_then(|activation| activation.driving.as_ref())
+                let activation = activations.get(*gpu_id);
+                let absent = verified_gpu(&readings, gpu_id).is_err();
+                let presence_changed = activation.is_some_and(|a| a.gpu_absent != absent);
+                (presence_changed && absent)
+                    || wanted.as_ref().is_some_and(|games| {
+                        presence_changed
+                            || games.get(*gpu_id) != activation.and_then(|a| a.driving.as_ref())
+                    })
             })
             .filter(|gpu_id| queued.insert((*gpu_id).clone()))
             .cloned()
@@ -269,9 +271,6 @@ impl Switching {
     /// from the latest scan and saved state. Runs on the GPU's queue.
     pub fn reconcile(&self, backend: &dyn DaemonBackend, gpu_id: &str) {
         self.state.queued.lock().unwrap().remove(gpu_id);
-        let Ok(running) = self.running() else {
-            return;
-        };
         let Ok(document) = self.store.read(Clone::clone) else {
             return;
         };
@@ -279,7 +278,6 @@ impl Switching {
             return;
         };
         let activation = activations.remove(gpu_id);
-        let wanted = winning_games(&document, &running, self.users.as_ref()).remove(gpu_id);
         // Absence is temporary within a boot. Keep the last driving game and its baseline
         // until this UUID can be reconciled; a device in its old slot owns none of that state.
         if verified_gpu(&backend.performance(), gpu_id).is_err() {
@@ -289,6 +287,10 @@ impl Switching {
             }
             return;
         }
+        let Ok(running) = self.running() else {
+            return;
+        };
+        let wanted = winning_games(&document, &running, self.users.as_ref()).remove(gpu_id);
         let returning = activation.as_ref().is_some_and(|a| a.gpu_absent);
         let same_game = wanted.as_ref() == activation.as_ref().and_then(|a| a.driving.as_ref());
         if same_game && !returning {

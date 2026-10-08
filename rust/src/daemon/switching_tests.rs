@@ -1050,3 +1050,26 @@ fn returning_mid_game_reconciles_the_applied_settings_instead_of_later_saved_pro
     daemon.scan();
     assert_eq!(values(&daemon), PRE_GAME);
 }
+
+#[test]
+fn absence_is_remembered_while_recognition_is_unavailable_but_return_waits_for_a_complete_scan() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let mut returning = daemon.gpus.gpu(LINKED);
+    std::fs::remove_file(daemon.host_path("/proc/123/stat")).unwrap();
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    returning.power.current_limit_watts = Some(575);
+    daemon.gpus.arrive(returning);
+    let before = daemon.gpus.writes();
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), GAMING);
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+}
