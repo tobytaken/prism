@@ -765,7 +765,7 @@ impl DaemonCore {
         self.cooling.begin_stopping();
         let pending: Vec<_> = self
             .cooling
-            .running_gpus()
+            .gpus_to_stop()
             .into_iter()
             .map(|uuid| {
                 let cooling = Arc::clone(&self.cooling);

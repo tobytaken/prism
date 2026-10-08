@@ -507,6 +507,12 @@ impl Harness {
         self.start_daemon();
     }
 
+    /// Like `crash_daemon`, without waiting for the new daemon's startup to finish.
+    pub fn crash_daemon_without_waiting(&mut self) {
+        self.core = None;
+        self.start_core();
+    }
+
     /// Simulates a clean host reboot: the daemon is stopped while the host shuts down, the
     /// persistent directory survives, and the boot-scoped directory starts empty under a new
     /// boot id.
