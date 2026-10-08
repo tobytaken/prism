@@ -430,6 +430,17 @@ fn game_requests_cross_the_sidecar_session_and_preserve_daemon_errors() {
             )),
             json!({ "error": { "code": "io", "message": "Failed to write Prism's tuning store." } }),
         ),
+        (
+            26,
+            "games.setGpuSwitchingPaused",
+            Some(json!({ "gpuId": "GPU-123", "paused": true })),
+            json!({ "type": "set_gpu_switching_paused", "payload": { "gpuId": "GPU-123", "paused": true } }),
+            DaemonResponse::Command(prism_rust::protocol::DaemonCommandResponse {
+                success: true,
+                error: None,
+            }),
+            json!({ "result": { "success": true, "error": null } }),
+        ),
     ] {
         let mut request = json!({ "id": id, "method": method });
         if let Some(params) = params {

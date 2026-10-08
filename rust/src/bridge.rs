@@ -180,6 +180,15 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
         "games.getSwitchingStatus" => daemon_client::get_automatic_switching_status()
             .map_err(BridgeError::from)
             .and_then(serialize_result),
+        "games.setGpuSwitchingPaused" => {
+            parse_and_serialize_result::<crate::protocol::SetGpuSwitchingPausedRequest, _, _>(
+                request.params,
+                "games.setGpuSwitchingPaused",
+                |request| {
+                    daemon_client::set_gpu_switching_paused(request).map_err(BridgeError::from)
+                },
+            )
+        }
         "games.get" => daemon_client::get_games()
             .map_err(BridgeError::from)
             .and_then(serialize_result),

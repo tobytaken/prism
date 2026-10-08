@@ -45,6 +45,7 @@ import type {
   GamesState,
   RunningGamesState,
   SetAutomaticSwitchingRequest,
+  SetGpuSwitchingPausedRequest,
   SetGameProfileRequest,
   SteamApp,
   RunningProgram,
@@ -235,6 +236,11 @@ const prismApi = {
       ),
     setEditHolds: (gpuIds: string[]) =>
       ipcRenderer.invoke("prism:games:setEditHolds", { gpuIds }),
+    setGpuSwitchingPaused: (request: SetGpuSwitchingPausedRequest) =>
+      ipcRenderer.invoke(
+        "prism:games:setGpuSwitchingPaused",
+        request,
+      ) as Promise<GpuCommandResponse>,
     getSwitchingStatus: () =>
       ipcRenderer.invoke(
         "prism:games:getSwitchingStatus",

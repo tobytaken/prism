@@ -290,6 +290,18 @@ describe("preload bridge", () => {
 
   it("exposes game requests and preserves the daemon's games, Steam apps and errors", async () => {
     const prism = await loadPrismApi();
+    const command = { success: true, error: null };
+    mocks.invoke.mockResolvedValueOnce(command);
+    expect(
+      await prism.games.setGpuSwitchingPaused({
+        gpuId: "GPU-123",
+        paused: true,
+      }),
+    ).toEqual(command);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:games:setGpuSwitchingPaused",
+      { gpuId: "GPU-123", paused: true },
+    );
     const apps = [{ appId: 570, name: "Dota 2" }];
     const dota = { kind: "steam", appId: 570 } as const;
     mocks.invoke.mockResolvedValueOnce(apps);

@@ -834,6 +834,19 @@ export function createFakeDesktop({
     },
   );
   const gameSpies = {
+    setGpuSwitchingPaused: vi
+      .spyOn(gamesApi, "setGpuSwitchingPaused")
+      .mockImplementation(async ({ gpuId, paused }) => {
+        switchingStatus = {
+          ...switchingStatus,
+          gpus: switchingStatus.gpus.filter((gpu) => gpu.gpuId !== gpuId),
+        };
+        if (paused)
+          switchingStatus.gpus.push({ gpuId, state: { status: "paused" } });
+        for (const listener of switchingListeners)
+          listener(structuredClone(switchingStatus));
+        return { success: true, error: null };
+      }),
     browseProgram: vi
       .spyOn(gamesApi, "browseProgram")
       .mockImplementation(async () =>

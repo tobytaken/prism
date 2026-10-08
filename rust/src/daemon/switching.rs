@@ -21,6 +21,7 @@ use super::session::SessionPeer;
 use super::tuning::apply_unreviewed_profile;
 use super::tuning_store::{write_atomically, TuningDocument, TuningStore};
 use crate::cooling::{CoolingConfiguration, SuspensionKind};
+use crate::gpu::GpuPerformanceDevice;
 use crate::protocol::{
     ApplyGpuProfileRequest, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
     GpuSwitchingState, GpuSwitchingStatus, ProfileSetting, ProfileSettingKey, ProfileSettings,
@@ -74,6 +75,14 @@ struct Activation {
     failure: Option<String>,
     /// An override relinquishes the baseline. Keep an external-change notice after games end.
     manual_override: Option<ManualOverride>,
+}
+
+impl Activation {
+    fn numeric_changed(&self, gpu: &GpuPerformanceDevice) -> bool {
+        self.expected.iter().any(|(key, expected)| {
+            matches!((expected, reading(gpu, *key).current), (Some(before), Some(now)) if *before != now)
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +194,50 @@ pub(super) struct Switching {
 }
 
 impl Switching {
+    /// Runs on the GPU queue so Pause takes effect between complete tuning operations.
+    pub fn set_paused(
+        &self,
+        backend: &dyn DaemonBackend,
+        gpu_id: &str,
+        paused: bool,
+    ) -> Result<(), crate::gpu::GpuCommandError> {
+        let readings = backend.performance();
+        let gpu = verified_gpu(&readings, gpu_id)?;
+        self.store.read(|_| ())?;
+        if !paused {
+            let activations = self.state.activations().map_err(|message| {
+                crate::gpu::GpuCommandError::new(crate::gpu::GpuCommandErrorCode::Io, message)
+            })?;
+            let replaced = activations.get(gpu_id).is_some_and(|a| {
+                a.manual_override.is_some()
+                    || (!a.gpu_absent && a.numeric_changed(gpu))
+                    || (a.cooling_baseline.is_some()
+                        && if a.gpu_absent {
+                            self.cooling
+                                .control(gpu_id)
+                                .suspension
+                                .is_some_and(|s| s.kind == SuspensionKind::ExternalControl)
+                        } else {
+                            self.cooling.changed_outside_prism(gpu)
+                        })
+            });
+            if replaced {
+                // Relinquish the obsolete baseline durably before allowing automatic writes.
+                self.state.set(gpu_id, None).map_err(|message| {
+                    crate::gpu::GpuCommandError::new(crate::gpu::GpuCommandErrorCode::Io, message)
+                })?;
+            }
+        }
+        self.store.update(|document| {
+            if paused {
+                document.switching_pauses.insert(gpu_id.into());
+            } else {
+                document.switching_pauses.remove(gpu_id);
+            }
+        })?;
+        Ok(())
+    }
+
     pub fn open(
         boot_dir: &Path,
         boot_id: &str,
@@ -270,6 +323,10 @@ impl Switching {
         };
         let readings = backend.performance();
         let held = self.store.held_gpus();
+        let paused = self
+            .store
+            .read(|document| document.switching_pauses.clone())
+            .unwrap_or_default();
         let in_grace = self.clock.now_monotonic_ms() < self.grace_until_ms;
         let pending = self.state.pending_manual.lock().unwrap();
         let mut queued = self.state.queued.lock().unwrap();
@@ -293,6 +350,7 @@ impl Switching {
                 let presence_changed = activation.is_some_and(|a| a.gpu_absent != absent);
                 (presence_changed && absent)
                     || (!in_grace
+                        && !paused.contains(*gpu_id)
                         && !held.contains(*gpu_id)
                         && games.as_ref().is_some_and(|(wanted, _)| {
                             presence_changed
@@ -366,6 +424,7 @@ impl Switching {
         // Presence bookkeeping above must continue while profile replacement is deferred.
         if self.clock.now_monotonic_ms() < self.grace_until_ms
             || self.store.held_gpus().contains(gpu_id)
+            || document.switching_pauses.contains(gpu_id)
         {
             return;
         }
@@ -408,9 +467,10 @@ impl Switching {
                 } else {
                     self.cooling.changed_outside_prism(gpu)
                 };
-            let numeric_changed = !returning && activation.as_ref().is_some_and(|active| active.expected.iter().any(|(key, expected)| {
-                matches!((expected, reading(gpu, *key).current), (Some(before), Some(now)) if *before != now)
-            }));
+            let numeric_changed = !returning
+                && activation
+                    .as_ref()
+                    .is_some_and(|active| active.numeric_changed(gpu));
             if cooling_changed || numeric_changed {
                 self.record(
                     gpu_id,
@@ -1100,6 +1160,13 @@ impl Snapshot {
             gpus.push(GpuSwitchingStatus {
                 gpu_id: gpu_id.clone(),
                 state,
+            });
+        }
+        for gpu_id in &document.switching_pauses {
+            gpus.retain(|gpu| &gpu.gpu_id != gpu_id);
+            gpus.push(GpuSwitchingStatus {
+                gpu_id: gpu_id.clone(),
+                state: GpuSwitchingState::Paused {},
             });
         }
         gpus.sort_by(|a, b| a.gpu_id.cmp(&b.gpu_id));
