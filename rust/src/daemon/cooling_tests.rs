@@ -60,6 +60,7 @@ fn applying_a_shared_curve_requests_its_speed_at_the_current_temperature() {
     assert_eq!(
         application,
         json!({
+            "revision": 1,
             "outcome": succeeded,
             "fans": [
                 { "fanIndex": 0, "outcome": succeeded },
@@ -72,6 +73,7 @@ fn applying_a_shared_curve_requests_its_speed_at_the_current_temperature() {
     assert_eq!(
         control(&daemon),
         json!({
+            "revision": 1,
             "applied": shared_curve(&STARTER),
             "requested": [
                 { "fanIndex": 0, "speedPercent": 72 },
@@ -256,7 +258,7 @@ fn returning_to_automatic_cooling_stops_the_curve() {
     assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
     assert_eq!(
         control(&daemon),
-        json!({ "applied": automatic, "requested": [], "curveTemperatureC": null, "suspension": null })
+        json!({ "revision": 2, "applied": automatic, "requested": [], "curveTemperatureC": null, "suspension": null })
     );
 }
 
@@ -350,10 +352,12 @@ fn a_missing_temperature_suspends_the_curve_keeps_it_and_restores_automatic_cool
     assert_eq!(
         control(&daemon),
         json!({
+            "revision": 2,
             "applied": shared_curve(&STARTER),
             "requested": [],
             "curveTemperatureC": null,
             "suspension": {
+                "kind": "fault",
                 "reason": "The GPU's temperature is unavailable, so Prism stopped following its curve.",
                 "restoration": [restoration(0, "restored", None), restoration(1, "restored", None)],
             },
@@ -392,6 +396,7 @@ fn a_failed_fan_write_suspends_the_curve_and_reports_each_fans_restoration_hones
     assert_eq!(
         control["suspension"],
         json!({
+            "kind": "fault",
             "reason": "Fan 2 couldn't be set to 90%: Unknown error",
             "restoration": [
                 restoration(0, "unverified", Some("The driver accepted the request but doesn't report the fan's control mode.")),
@@ -504,10 +509,12 @@ fn stopping_the_daemon_returns_curve_fans_to_automatic_cooling_and_keeps_reporti
     assert_eq!(
         control(&daemon),
         json!({
+            "revision": 2,
             "applied": shared_curve(&STARTER),
             "requested": [],
             "curveTemperatureC": null,
             "suspension": {
+                "kind": "fault",
                 "reason": "The Prism daemon stopped, so it stopped following this curve.",
                 "restoration": [restoration(0, "restored", None), restoration(1, "restored", None)],
             },
@@ -535,6 +542,7 @@ fn after_an_abnormal_termination_the_next_daemon_restores_abandoned_curve_fans_f
     assert_eq!(
         control(&daemon)["suspension"],
         json!({
+            "kind": "fault",
             "reason": "The Prism daemon stopped unexpectedly while following this curve.",
             "restoration": [
                 restoration(0, "restored", None),
@@ -740,4 +748,141 @@ fn a_write_hanging_mid_application_is_a_stall_with_its_fans_already_recorded() {
     core.follow_curves();
     daemon.settle();
     assert!(core.cooling_is_live(1_000));
+}
+
+#[test]
+fn another_sessions_cooling_change_rejects_a_stale_draft_without_writing() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    let first = daemon.user(1000, "alice");
+    let second = daemon.user(1000, "alice");
+    let revision = control(&daemon)["revision"].clone();
+    let request = json!({ "type": "apply_cooling", "payload": {
+        "gpuId": "GPU-123", "configuration": shared_curve(&STARTER),
+        "expectedRevision": revision,
+    }});
+    assert_eq!(
+        first.send_json(request.clone())["payload"]["outcome"]["status"],
+        "succeeded"
+    );
+    let writes = daemon.gpus.writes();
+    let stale = second.send_json(request);
+    assert_eq!(stale["payload"]["outcome"]["status"], "unattempted");
+    assert!(stale["payload"]["outcome"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("Review"));
+    assert_eq!(daemon.gpus.writes(), writes);
+    let applied_revision = control(&daemon)["revision"].clone();
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.run_curves_for(500);
+    assert_eq!(control(&daemon)["revision"], applied_revision);
+}
+
+#[test]
+fn an_observable_external_mode_change_yields_without_restoring_or_resuming() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    let revision = control(&daemon)["revision"].as_u64().unwrap();
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.cooling.fans[0].mode = Some(FanControlMode::Auto);
+        gpu.cooling.fans[0].current_speed_percent = Some(33);
+    });
+    let writes = daemon.gpus.writes();
+    // External ownership takes priority even when the sensor is also unavailable.
+    daemon.set_temperature("GPU-123", None);
+    daemon.run_curves_for(500);
+    assert_eq!(daemon.gpus.writes(), writes);
+    assert_eq!(control(&daemon)["suspension"]["kind"], "externalControl");
+    assert_eq!(control(&daemon)["suspension"]["restoration"], json!([]));
+    assert_eq!(control(&daemon)["applied"], shared_curve(&STARTER));
+    assert_eq!(control(&daemon)["requested"], json!([]));
+    assert_eq!(control(&daemon)["revision"], revision + 1);
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.run_curves_for(10_000);
+    daemon.restart();
+    assert_eq!(daemon.gpus.writes(), writes);
+    assert_eq!(control(&daemon)["suspension"]["kind"], "externalControl");
+    assert_eq!(
+        apply(&daemon, shared_curve(&STARTER))["outcome"]["status"],
+        "succeeded"
+    );
+    assert_eq!(speeds(&daemon), vec![Some(90), Some(90)]);
+}
+
+#[test]
+fn queued_applications_check_the_revision_after_the_preceding_write_finishes() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    let first = daemon.user(1000, "alice");
+    let second = daemon.user(1001, "bob");
+    let request = json!({ "type": "apply_cooling", "payload": {
+        "gpuId": "GPU-123", "configuration": shared_curve(&STARTER), "expectedRevision": 0,
+    }});
+    let gate = daemon.gpus.block("GPU-123", Setter::FanSpeed);
+    let first_request = request.clone();
+    let first = std::thread::spawn(move || first.send_json(first_request));
+    gate.wait_until_entered();
+    assert_eq!(control(&daemon)["revision"], 0);
+    let second = std::thread::spawn(move || second.send_json(request));
+    gate.release();
+    assert_eq!(
+        first.join().unwrap()["payload"]["outcome"]["status"],
+        "succeeded"
+    );
+    assert_eq!(
+        second.join().unwrap()["payload"]["outcome"]["status"],
+        "unattempted"
+    );
+    assert_eq!(daemon.gpus.writes().len(), 2);
+    assert_eq!(control(&daemon)["revision"], 1);
+}
+
+#[test]
+fn driver_observations_do_not_claim_ownership_or_report_false_external_changes() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    let _session = daemon.user(1000, "alice");
+    daemon.set_temperature("GPU-123", Some(60));
+    daemon.run_curves_for(500);
+    assert_eq!(control(&daemon)["revision"], 0);
+    assert!(daemon.gpus.writes().is_empty());
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.cooling.fans[0].current_speed_percent = Some(25);
+        gpu.cooling.fans[1].mode = None;
+    });
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.run_curves_for(500);
+    assert_eq!(control(&daemon)["revision"], 1);
+    assert_eq!(control(&daemon)["suspension"], Value::Null);
+    assert_eq!(speeds(&daemon), vec![Some(90), Some(90)]);
+}
+
+#[test]
+fn changing_a_fixed_fans_policy_yields_only_its_gpus_curve() {
+    let mut other = cooled_gpu();
+    other.id = "GPU-456".into();
+    other.stable_id = Some("GPU-456".into());
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu(), other]));
+    apply(
+        &daemon,
+        json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 0, "setting": { "mode": "fixed", "speedPercent": 55 } },
+        { "fanIndex": 1, "setting": { "mode": "curve", "points": points(&STARTER) } },
+    ] }),
+    );
+    daemon.send_json(json!({ "type": "apply_cooling", "payload": { "gpuId": "GPU-456", "configuration": shared_curve(&STARTER) } }));
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.cooling.fans[0].mode = Some(FanControlMode::Auto)
+    });
+    let writes = daemon.gpus.writes().len();
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.set_temperature("GPU-456", Some(80));
+    daemon.run_curves_for(500);
+    assert_eq!(control(&daemon)["suspension"]["kind"], "externalControl");
+    assert!(daemon.gpus.writes()[writes..]
+        .iter()
+        .all(|(uuid, _)| uuid == "GPU-456"));
+    assert_eq!(
+        daemon.gpus.gpu("GPU-456").cooling.fans[0].current_speed_percent,
+        Some(90)
+    );
 }

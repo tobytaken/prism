@@ -43,6 +43,7 @@ const sharedCooling: CoolingInfo = {
   maxOperatingTemperatureReason: null,
   curveSupport: twentyToHundred,
   control: {
+    revision: 0,
     applied: null,
     requested: [],
     curveTemperatureC: null,
@@ -299,7 +300,14 @@ describe("Editing a fan curve", () => {
     await user.type(fixed, "65");
     await user.click(screen.getAllByRole("button", { name: "Set Manual" })[0]);
     await waitFor(() =>
-      expect(fake.setFanSpeed).toHaveBeenCalledWith("GPU-123", 0, 65),
+      expect(fake.applyCooling).toHaveBeenCalledWith({
+        gpuId: "GPU-123",
+        expectedRevision: 0,
+        configuration: {
+          arrangement: "perFan",
+          fans: [{ fanIndex: 0, setting: { mode: "fixed", speedPercent: 65 } }],
+        },
+      }),
     );
     expect(fake.previewFanCurve).not.toHaveBeenCalled();
   });

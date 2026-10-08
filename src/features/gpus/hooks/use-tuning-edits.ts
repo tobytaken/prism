@@ -39,6 +39,7 @@ export type CoolingDraft =
   | { mode: "curve"; points: FanCurveDraftPoint[] };
 type DeviceEdits = {
   edits: TuningEdits;
+  coolingRevisions?: Partial<Record<TuningSetting, number>>;
   outcomes: Partial<Record<TuningSetting, TuningOutcome>>;
   profileOwners?: Partial<Record<TuningSetting, string>>;
   // Profile settings whose last successful application was an explicit default request.
@@ -81,6 +82,33 @@ export function useTuningEdits() {
     { reviewCorrections = false } = {},
   ): Promise<ProfileRangeCorrection[] | undefined> {
     const intentions = actionIntentions(action, gpu);
+    const coolingAction =
+      action.kind === "applyCooling" ||
+      action.kind === "setFanSpeed" ||
+      action.kind === "setFanModeAuto";
+    if (coolingAction && gpu.cooling.control) {
+      const revision = gpu.cooling.control.revision;
+      const device = devices[gpu.id];
+      if (
+        Object.entries(device?.coolingRevisions ?? {}).some(
+          ([setting, expected]) =>
+            setting in (device?.edits ?? {}) && expected !== revision,
+        )
+      ) {
+        return;
+      }
+      if (action.kind === "applyCooling")
+        action = { ...action, expectedRevision: revision };
+      else if (
+        action.kind === "setFanSpeed" ||
+        action.kind === "setFanModeAuto"
+      )
+        action = {
+          ...action,
+          expectedRevision: revision,
+          stableId: gpu.stableId ?? undefined,
+        };
+    }
     // Existing Apply buttons also retry retained profile instructions through validation.
     if (action.kind !== "applyProfile") {
       const owner = (Object.keys(intentions) as TuningSetting[])
@@ -115,6 +143,21 @@ export function useTuningEdits() {
       return {
         ...device,
         profileOwners,
+        coolingRevisions:
+          coolingAction && gpu.cooling.control
+            ? {
+                ...device.coolingRevisions,
+                ...Object.fromEntries(
+                  Object.keys(intentions).map((setting) => [
+                    setting,
+                    setting in device.edits
+                      ? (device.coolingRevisions?.[setting as TuningSetting] ??
+                        gpu.cooling.control!.revision)
+                      : gpu.cooling.control!.revision,
+                  ]),
+                ),
+              }
+            : device.coolingRevisions,
         edits: { ...device.edits, ...intentions },
       };
     });
@@ -176,12 +219,55 @@ export function useTuningEdits() {
           delete profileOwners[setting];
         }
       }
-      return { edits, outcomes, profileOwners, appliedDefaults };
+      const coolingRevisions = { ...device.coolingRevisions };
+      // A completed own write acknowledges only drafts based on the revision it replaced.
+      // A stale rejection or transport error never acknowledges competing changes.
+      if (
+        result?.coolingRevision != null &&
+        coolingAction &&
+        "expectedRevision" in action
+      ) {
+        for (const key of Object.keys(coolingRevisions) as TuningSetting[]) {
+          if (coolingRevisions[key] === action.expectedRevision)
+            coolingRevisions[key] = result.coolingRevision;
+        }
+      }
+      return {
+        ...device,
+        edits,
+        outcomes,
+        profileOwners,
+        appliedDefaults,
+        coolingRevisions,
+      };
     });
   }
 
   return {
     devices,
+    coolingNeedsReview(gpu: GpuPerformanceDevice) {
+      const device = devices[gpu.id];
+      return (
+        gpu.cooling.control != null &&
+        Object.entries(device?.coolingRevisions ?? {}).some(
+          ([setting, revision]) =>
+            setting in (device?.edits ?? {}) &&
+            revision !== gpu.cooling.control!.revision,
+        )
+      );
+    },
+    reviewCooling(gpuId: string, revision: number) {
+      update(gpuId, (device) => ({
+        ...device,
+        coolingRevisions: Object.fromEntries(
+          Object.keys(device.edits)
+            .filter(
+              (setting) => setting === "cooling" || setting.startsWith("fan:"),
+            )
+            .map((setting) => [setting, revision]),
+        ),
+      }));
+    },
     retryAction,
     appliedDefaults(gpuId: string): ProfileSettingKey[] {
       return Object.keys(
@@ -200,6 +286,10 @@ export function useTuningEdits() {
         for (const [gpuId, device] of Object.entries(devices)) {
           const gpu = gpus.find((gpu) => gpu.id === gpuId);
           const actions: PerformanceMutationAction[] = [];
+          const fans: Extract<
+            CoolingConfiguration,
+            { arrangement: "perFan" }
+          >["fans"] = [];
           for (const setting of Object.keys(device.edits) as TuningSetting[]) {
             const action = gpu && retryAction(gpu, setting);
             if (!action) {
@@ -217,6 +307,21 @@ export function useTuningEdits() {
                   },
                 },
               }));
+              continue;
+            }
+            if (
+              gpu?.stableId &&
+              gpu.cooling.control &&
+              (action.kind === "setFanSpeed" ||
+                action.kind === "setFanModeAuto")
+            ) {
+              fans.push({
+                fanIndex: action.fanIndex,
+                setting:
+                  action.kind === "setFanSpeed"
+                    ? { mode: "fixed", speedPercent: action.speedPercent }
+                    : { mode: "automatic" },
+              });
               continue;
             }
             const clocks = actions.find(
@@ -237,6 +342,13 @@ export function useTuningEdits() {
               actions.push(action);
             }
           }
+          if (fans.length && gpu?.stableId)
+            actions.push({
+              kind: "applyCooling",
+              gpuId,
+              stableId: gpu.stableId,
+              configuration: { arrangement: "perFan", fans },
+            });
           if (gpu)
             for (const action of actions) await apply(action, gpu, handler);
         }
@@ -249,35 +361,65 @@ export function useTuningEdits() {
       gpuId: string,
       setting: K,
       value: TuningEdits[K],
+      coolingRevision?: number,
     ) {
-      update(gpuId, ({ edits, outcomes, profileOwners, appliedDefaults }) => {
-        const nextOutcomes = { ...outcomes };
-        const nextOwners = { ...profileOwners };
-        delete nextOwners[setting];
-        delete nextOutcomes[setting];
-        return {
-          edits: { ...edits, [setting]: value },
-          outcomes: nextOutcomes,
-          profileOwners: nextOwners,
+      update(
+        gpuId,
+        ({
+          edits,
+          outcomes,
+          profileOwners,
           appliedDefaults,
-        };
-      });
+          coolingRevisions,
+        }) => {
+          const nextOutcomes = { ...outcomes };
+          const nextOwners = { ...profileOwners };
+          delete nextOwners[setting];
+          delete nextOutcomes[setting];
+          return {
+            coolingRevisions:
+              coolingRevision == null
+                ? coolingRevisions
+                : {
+                    ...coolingRevisions,
+                    [setting]:
+                      setting in edits
+                        ? (coolingRevisions?.[setting] ?? coolingRevision)
+                        : coolingRevision,
+                  },
+            edits: { ...edits, [setting]: value },
+            outcomes: nextOutcomes,
+            profileOwners: nextOwners,
+            appliedDefaults,
+          };
+        },
+      );
     },
     discard(gpuId: string, setting: TuningSetting) {
-      update(gpuId, ({ edits, outcomes, profileOwners, appliedDefaults }) => {
-        const nextEdits = { ...edits };
-        const nextOutcomes = { ...outcomes };
-        const nextOwners = { ...profileOwners };
-        delete nextEdits[setting];
-        delete nextOutcomes[setting];
-        delete nextOwners[setting];
-        return {
-          edits: nextEdits,
-          outcomes: nextOutcomes,
-          profileOwners: nextOwners,
+      update(
+        gpuId,
+        ({
+          edits,
+          outcomes,
+          profileOwners,
           appliedDefaults,
-        };
-      });
+          coolingRevisions,
+        }) => {
+          const nextEdits = { ...edits };
+          const nextOutcomes = { ...outcomes };
+          const nextOwners = { ...profileOwners };
+          delete nextEdits[setting];
+          delete nextOutcomes[setting];
+          delete nextOwners[setting];
+          return {
+            coolingRevisions,
+            edits: nextEdits,
+            outcomes: nextOutcomes,
+            profileOwners: nextOwners,
+            appliedDefaults,
+          };
+        },
+      );
     },
     apply,
   };
@@ -370,7 +512,20 @@ function actionIntentions(
     case "applyCooling":
       return action.configuration.arrangement === "shared"
         ? { cooling: coolingDraft(action.configuration) }
-        : {};
+        : Object.fromEntries(
+            action.configuration.fans.flatMap(({ fanIndex, setting }) =>
+              setting.mode === "curve"
+                ? []
+                : [
+                    [
+                      `fan:${fanIndex}`,
+                      setting.mode === "automatic"
+                        ? "auto"
+                        : setting.speedPercent,
+                    ],
+                  ],
+            ),
+          );
     case "resetClockOffsets":
       return {
         ...(gpu.clocks.graphics.support !== "unsupported" && {

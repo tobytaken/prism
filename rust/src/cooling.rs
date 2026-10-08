@@ -45,12 +45,17 @@ pub struct ApplyCoolingRequest {
     /// The GPU's UUID.
     pub gpu_id: String,
     pub configuration: CoolingConfiguration,
+    /// Draft revision, checked on the GPU queue before any write. Omitted by legacy callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
 }
 
 /// What an application did: succeeded only when every targeted fan took its setting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CoolingApplication {
+    /// Revision after this attempt, captured before releasing the GPU queue.
+    pub revision: u64,
     pub outcome: TuningOutcome,
     pub fans: Vec<FanOutcome>,
 }
@@ -68,6 +73,9 @@ pub struct FanOutcome {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CoolingControl {
+    /// Changes only when configuration or control ownership changes, never on curve ticks.
+    #[serde(default)]
+    pub revision: u64,
     /// The configuration Prism last applied, or none when it hasn't applied cooling to this GPU.
     /// A suspended curve stays applied until another configuration replaces it.
     pub applied: Option<CoolingConfiguration>,
@@ -86,11 +94,13 @@ pub struct FanRequest {
     pub speed_percent: i64,
 }
 
-/// Curve control stopped after a fault. The curve is kept, and only an explicit application
+/// Curve control stopped after a fault or an observable competing control change. The curve is kept, and only an explicit application
 /// resumes it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CurveSuspension {
+    #[serde(default)]
+    pub kind: SuspensionKind,
     pub reason: String,
     /// Each curve fan's attempt to return to the GPU's default automatic cooling.
     pub restoration: Vec<FanRestoration>,
@@ -113,4 +123,13 @@ pub enum RestorationStatus {
     Unverified,
     /// The driver rejected the request, or it never ran.
     Failed,
+}
+
+/// Provenance for consumers such as automatic switching: yielding is not fault recovery.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SuspensionKind {
+    #[default]
+    Fault,
+    ExternalControl,
 }

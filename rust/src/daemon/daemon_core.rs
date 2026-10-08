@@ -688,6 +688,7 @@ impl DaemonCore {
             });
         };
         let application = self.apply_cooling(ApplyCoolingRequest {
+            expected_revision: None,
             gpu_id: uuid,
             configuration: CoolingConfiguration::PerFan {
                 fans: vec![FanConfiguration { fan_index, setting }],

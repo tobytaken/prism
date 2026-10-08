@@ -7,6 +7,7 @@ import { Clock3, Gauge, RotateCcw, Wind, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CoolingConflictReview } from "./cooling-conflict-review";
 import { CoolingControlStatus } from "@/features/gpus/components/cooling-control-status";
 import { FanCurveSection } from "@/features/gpus/components/fan-curve-section";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
@@ -52,12 +53,16 @@ export type PerformanceMutationAction =
     }
   | {
       kind: "setFanSpeed";
+      expectedRevision?: number;
+      stableId?: string;
       gpuId: string;
       fanIndex: number;
       speedPercent: number;
     }
   | {
       kind: "setFanModeAuto";
+      expectedRevision?: number;
+      stableId?: string;
       gpuId: string;
       fanIndex: number;
     }
@@ -74,6 +79,7 @@ export type PerformanceMutationAction =
     }
   | {
       kind: "applyCooling";
+      expectedRevision?: number;
       gpuId: string;
       /** The GPU's UUID, which the daemon's cooling control is keyed by. */
       stableId: string;
@@ -278,7 +284,12 @@ export function GpuTuningControls({
         layout={layout}
         pendingAction={pendingAction}
         onDraftChange={(fanIndex, value) =>
-          editStore.change(gpu.id, `fan:${fanIndex}`, value)
+          editStore.change(
+            gpu.id,
+            `fan:${fanIndex}`,
+            value,
+            gpu.cooling.control?.revision,
+          )
         }
         onSetManual={(fanIndex, speedPercent) =>
           onMutationAction({
@@ -296,6 +307,15 @@ export function GpuTuningControls({
           })
         }
       />
+      {editStore.coolingNeedsReview(gpu) && gpu.cooling.control && (
+        <CoolingConflictReview
+          control={gpu.cooling.control}
+          fans={gpu.cooling.fans}
+          edits={edits}
+          busy={pendingAction != null}
+          onReview={(revision) => editStore.reviewCooling(gpu.id, revision)}
+        />
+      )}
       <CoolingControlStatus
         gpu={gpu}
         busy={pendingAction != null}
@@ -307,7 +327,12 @@ export function GpuTuningControls({
         busy={pendingAction != null}
         onDraftChange={(points) =>
           points
-            ? editStore.change(gpu.id, "cooling", { mode: "curve", points })
+            ? editStore.change(
+                gpu.id,
+                "cooling",
+                { mode: "curve", points },
+                gpu.cooling.control?.revision,
+              )
             : editStore.discard(gpu.id, "cooling")
         }
         onApply={(points) =>
