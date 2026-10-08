@@ -345,11 +345,26 @@ fn enabling_switching_while_an_older_game_runs_keeps_the_newer_games_precedence(
 #[test]
 fn equal_start_times_are_broken_by_the_lower_pid() {
     for (alice_pid, bob_pid, alice_wins) in [(600, 700, true), (700, 600, false)] {
-        let (daemon, alice, bob) = shared_gpu();
+        let (mut daemon, alice, bob) = shared_gpu();
         // Both games start between scans, at the same clock tick.
         daemon.run_steam_game(alice_pid, 1000, 5_000, DOTA);
         daemon.run_steam_game(bob_pid, 1001, 5_000, CS);
         daemon.scan();
+        if alice_wins {
+            assert_alice_wins(&daemon, &alice, &bob);
+        } else {
+            assert_bob_wins(&daemon, &alice, &bob);
+        }
+
+        // A later helper with a lower pid does not replace the game's earliest process.
+        daemon.run_steam_game(100, 1000, 6_000, DOTA);
+        daemon.run_steam_game(200, 1001, 6_000, CS);
+        let before = writes(&daemon);
+        daemon.scan();
+        assert_eq!(writes(&daemon), before);
+        drop((alice, bob));
+        let (alice, bob) = restart(&mut daemon);
+        assert_eq!(writes(&daemon), before);
         if alice_wins {
             assert_alice_wins(&daemon, &alice, &bob);
         } else {
@@ -383,4 +398,201 @@ fn a_renamed_accounts_orphaned_links_never_drive_its_games() {
     daemon.settle();
     assert_eq!(values(&daemon), (Some(300), Some(120), Some(0)));
     assert_eq!(current_profile(&alicia), "Tuned");
+}
+
+fn shared_curve() -> Value {
+    json!({ "arrangement": "shared", "setting": { "mode": "curve", "points": [
+        { "temperatureC": 40, "speedPercent": 30 },
+        { "temperatureC": 80, "speedPercent": 100 }
+    ] } })
+}
+
+fn separate_cooling(second_fan: Value) -> Value {
+    json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 0, "setting": shared_curve()["setting"] },
+        { "fanIndex": 1, "setting": second_fan }
+    ] })
+}
+
+fn apply_cooling(session: &FakeSession, configuration: &Value) {
+    let result = ok(
+        session.send_json(json!({ "type": "apply_cooling", "payload": {
+        "gpuId": GPU, "configuration": configuration
+    } })),
+    );
+    assert_eq!(result["outcome"]["status"], "succeeded", "{result}");
+}
+
+fn cooling(session: &FakeSession) -> Value {
+    ok(session.send_json(json!({ "type": "get_performance" })))["gpus"][0]["cooling"]["control"]
+        .clone()
+}
+
+fn link_cooling(session: &FakeSession, app_id: u32, id: &str, configuration: Value) {
+    ok(session.send_json(
+        json!({ "type": "import_profiles", "payload": { "profiles": [
+        profile(id, id, json!({ "cooling": configuration }))
+    ] } }),
+    ));
+    link(session, app_id, id);
+}
+
+fn shared_cooled_gpu() -> (Harness, FakeSession, FakeSession) {
+    let (daemon, alice, bob) = shared_gpu();
+    daemon.gpus.update(GPU, |gpu| {
+        gpu.cooling = super::harness::cooled_gpu().cooling;
+        gpu.telemetry.temperature_c = Some(40);
+    });
+    (daemon, alice, bob)
+}
+
+#[test]
+fn overlapping_users_restore_the_original_unsaved_cooling_configuration() {
+    use crate::gpu::FanControlMode;
+
+    for baseline in [
+        shared_curve(),
+        separate_cooling(json!({ "mode": "automatic" })),
+        separate_cooling(json!({ "mode": "fixed", "speedPercent": 55 })),
+    ] {
+        for restart_between_games in [false, true] {
+            let (mut daemon, alice, bob) = shared_cooled_gpu();
+            apply_cooling(&alice, &baseline);
+            let manual = last_applied(&daemon);
+            let remembered = cooling(&alice)["rememberedCurve"].clone();
+            let alice_cooling = json!({ "arrangement": "shared", "setting": {
+                "mode": "fixed", "speedPercent": 75
+            } });
+            let bob_cooling = separate_cooling(json!({ "mode": "automatic" }));
+            link_cooling(&alice, DOTA, "alice-fans", alice_cooling.clone());
+            link_cooling(&bob, CS, "bob-fans", bob_cooling.clone());
+
+            daemon.run_steam_game(100, 1000, 1_000, DOTA);
+            daemon.scan();
+            assert_eq!(cooling(&alice)["applied"], alice_cooling);
+            assert_eq!(current_profile(&alice), "alice-fans");
+
+            drop((alice, bob));
+            if restart_between_games {
+                daemon.stop_daemon();
+            }
+            daemon.run_steam_game(200, 1001, 2_000, CS);
+            if restart_between_games {
+                daemon.start_daemon();
+            }
+            daemon.scan();
+            let alice = daemon.user(1000, "alice");
+            let bob = daemon.user(1001, "bob");
+            assert_eq!(cooling(&bob)["applied"], bob_cooling);
+            assert_eq!(current_profile(&bob), "bob-fans");
+            assert_eq!(gpu_status(&alice), another_user());
+
+            daemon.set_temperature(GPU, Some(80));
+            daemon.run_curves_for(500);
+            assert_eq!(
+                daemon.gpus.gpu(GPU).cooling.fans[0].current_speed_percent,
+                Some(100)
+            );
+            assert_eq!(last_applied(&daemon), manual);
+            assert_eq!(cooling(&alice)["rememberedCurve"], remembered);
+
+            daemon.end_process(200);
+            daemon.scan();
+            assert_eq!(cooling(&alice)["applied"], alice_cooling);
+            assert_eq!(current_profile(&alice), "alice-fans");
+            assert_eq!(gpu_status(&bob), another_user());
+
+            daemon.set_temperature(GPU, Some(60));
+            daemon.end_process(100);
+            daemon.scan();
+            assert_eq!(cooling(&alice)["applied"], baseline);
+            let fans = daemon.gpus.gpu(GPU).cooling.fans;
+            assert_eq!(fans[0].mode, Some(FanControlMode::Manual));
+            assert_eq!(fans[0].current_speed_percent, Some(65));
+            if baseline["arrangement"] == "shared" {
+                assert_eq!(fans[1].mode, Some(FanControlMode::Manual));
+                assert_eq!(fans[1].current_speed_percent, Some(65));
+            } else if baseline["fans"][1]["setting"]["mode"] == "automatic" {
+                assert_eq!(fans[1].mode, Some(FanControlMode::Auto));
+            } else {
+                assert_eq!(fans[1].mode, Some(FanControlMode::Manual));
+                assert_eq!(fans[1].current_speed_percent, Some(55));
+            }
+            assert_eq!(current_profile(&alice), "Daily");
+            assert_eq!(gpu_status(&alice), json!([]));
+            assert_eq!(last_applied(&daemon), manual);
+            assert_eq!(cooling(&alice)["rememberedCurve"], remembered);
+            assert!(!writes(&daemon).contains(&Setter::GraphicsOffset));
+            assert!(!writes(&daemon).contains(&Setter::MemoryOffset));
+        }
+    }
+}
+
+#[test]
+fn overlapping_games_capture_cooling_only_when_first_written_and_restore_it_when_omitted() {
+    let (daemon, alice, bob) = shared_cooled_gpu();
+    let baseline = separate_cooling(json!({ "mode": "fixed", "speedPercent": 55 }));
+    apply_cooling(&alice, &baseline);
+    let manual = last_applied(&daemon);
+    let bob_cooling = json!({ "arrangement": "shared", "setting": { "mode": "automatic" } });
+    link_cooling(&bob, CS, "bob-fans", bob_cooling.clone());
+    let before = cooling(&alice);
+
+    // Alice's numeric profile must apply even when cooling's policy can't currently be read.
+    daemon
+        .gpus
+        .update(GPU, |gpu| gpu.cooling.fans[1].mode = None);
+    daemon.run_steam_game(100, 1000, 1_000, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), GAMING);
+    assert_eq!(current_profile(&alice), "Gaming");
+    assert_eq!(cooling(&alice), before);
+    daemon.gpus.update(GPU, |gpu| {
+        gpu.cooling.fans[1].mode = Some(crate::gpu::FanControlMode::Manual);
+    });
+    daemon.set_temperature(GPU, Some(60));
+    daemon.run_curves_for(500);
+    assert_eq!(
+        daemon.gpus.gpu(GPU).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+
+    // Cooling is readable by the time Bob's profile first writes it. Capture its policy,
+    // including the curve definition, rather than the curve's current output of 65%.
+    daemon.run_steam_game(200, 1001, 2_000, CS);
+    daemon.scan();
+    assert_eq!(cooling(&bob)["applied"], bob_cooling);
+    assert_eq!(current_profile(&bob), "bob-fans");
+
+    daemon.set_temperature(GPU, Some(80));
+    daemon.end_process(200);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"], baseline);
+    assert_eq!(current_profile(&alice), "Gaming");
+    let fans = daemon.gpus.gpu(GPU).cooling.fans;
+    assert_eq!(fans[0].current_speed_percent, Some(100));
+    assert_eq!(fans[1].current_speed_percent, Some(55));
+
+    // Bob can start again during the same activation without losing the original curve.
+    daemon.run_steam_game(201, 1001, 3_000, CS);
+    daemon.scan();
+    assert_eq!(cooling(&bob)["applied"], bob_cooling);
+    daemon.set_temperature(GPU, Some(60));
+    daemon.end_process(201);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"], baseline);
+    assert_eq!(
+        daemon.gpus.gpu(GPU).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+
+    let restored = cooling(&alice);
+    let before = writes(&daemon);
+    daemon.end_process(100);
+    daemon.scan();
+    assert_eq!(cooling(&alice), restored, "cooling was already restored");
+    assert!(writes(&daemon)[before.len()..]
+        .iter()
+        .all(|setter| { !matches!(setter, Setter::FanSpeed | Setter::FanModeAuto) }));
+    assert_restored(&daemon, &alice, &manual);
 }
