@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   handle: vi.fn(),
   openExternal: vi.fn(),
+  showOpenDialog: vi.fn(),
   spawn: vi.fn(),
   getPath: vi.fn(),
 }));
@@ -37,6 +38,7 @@ vi.mock("electron", () => ({
     getPath: mocks.getPath,
   },
   BrowserWindow: vi.fn(),
+  dialog: { showOpenDialog: mocks.showOpenDialog },
   ipcMain: {
     handle: mocks.handle,
   },
@@ -709,6 +711,90 @@ describe("registerIpc", () => {
         { method: "games.remove", params: { game: dota } },
         { method: "games.setAutomaticSwitching", params: { enabled: true } },
       ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("lists and adds manual programs and browses through the app-side portal recovery", async () => {
+    const programs = [
+      {
+        pid: 123,
+        name: "game.exe",
+        path: "/games/game.exe",
+        launcher: "Lutris",
+        environment: [],
+        helper: false,
+        recognitionWarning: null,
+      },
+    ];
+    const child = createBackendChild((method: string) =>
+      method === "games.listRunningPrograms" ? programs : gamesState,
+    );
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    const game = { kind: "program", path: "/games/game.exe" };
+    try {
+      expect(
+        await callHandler("prism:games:listRunningPrograms", trustedEvent()),
+      ).toEqual(programs);
+      await callHandler("prism:games:addProgram", trustedEvent(), {
+        path: game.path,
+      });
+      await callHandler("prism:games:setProfile", trustedEvent(), {
+        game,
+        gpuId: "GPU-123",
+        profileId: "quiet",
+      });
+      await callHandler("prism:games:remove", trustedEvent(), { game });
+      mocks.showOpenDialog.mockResolvedValueOnce({
+        canceled: true,
+        filePaths: [],
+      });
+      expect(
+        await callHandler("prism:games:browseProgram", trustedEvent()),
+      ).toBeNull();
+      mocks.showOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ["/run/flatpak/doc/abc/game.exe"],
+      });
+      expect(
+        await callHandler("prism:games:browseProgram", trustedEvent()),
+      ).toEqual(gamesState);
+      expect(sentRequests(child)).toEqual([
+        { method: "games.listRunningPrograms" },
+        { method: "games.addProgram", params: { path: game.path } },
+        {
+          method: "games.setProfile",
+          params: { game, gpuId: "GPU-123", profileId: "quiet" },
+        },
+        { method: "games.remove", params: { game } },
+        {
+          method: "games.addProgramFile",
+          params: { path: "/run/flatpak/doc/abc/game.exe" },
+        },
+      ]);
+      for (const method of [
+        "listRunningPrograms",
+        "addProgram",
+        "browseProgram",
+      ]) {
+        await expect(
+          callHandler(`prism:games:${method}`, untrustedEvent()),
+        ).rejects.toThrow("Untrusted IPC sender");
+        await expect(
+          callHandler(`prism:games:${method}`, trustedEvent(), { uid: 0 }),
+        ).rejects.toThrow("Invalid");
+      }
+      for (const path of [
+        "relative",
+        "/games/../private",
+        "/games/bad\0path",
+      ]) {
+        await expect(
+          callHandler("prism:games:addProgram", trustedEvent(), { path }),
+        ).rejects.toThrow("Invalid");
+      }
     } finally {
       dispose();
     }

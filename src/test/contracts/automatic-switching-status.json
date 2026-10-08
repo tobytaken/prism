@@ -76,6 +76,28 @@
   },
   {
     "condition": {
+      "status": "ready"
+    },
+    "gpus": [
+      {
+        "gpuId": "GPU-123",
+        "state": {
+          "status": "active",
+          "game": {
+            "kind": "program",
+            "path": "/games/game.exe"
+          },
+          "gameName": "game.exe",
+          "profile": {
+            "id": "quiet",
+            "name": "Quiet"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "condition": {
       "status": "blocked",
       "reason": "Prism's boot state can't be read."
     },

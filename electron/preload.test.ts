@@ -269,6 +269,25 @@ describe("preload bridge", () => {
     expect(mocks.invoke).toHaveBeenLastCalledWith("prism:gpu:getTuningStates");
   });
 
+  it("exposes running-program listing, adding and browsing", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValueOnce([]);
+    expect(await prism.games.listRunningPrograms()).toEqual([]);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:games:listRunningPrograms",
+    );
+    mocks.invoke.mockResolvedValueOnce(gamesState);
+    expect(await prism.games.addProgram({ path: "/games/game.exe" })).toEqual(
+      gamesState,
+    );
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:games:addProgram", {
+      path: "/games/game.exe",
+    });
+    mocks.invoke.mockResolvedValueOnce(null);
+    expect(await prism.games.browseProgram()).toBeNull();
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:games:browseProgram");
+  });
+
   it("exposes game requests and preserves the daemon's games, Steam apps and errors", async () => {
     const prism = await loadPrismApi();
     const apps = [{ appId: 570, name: "Dota 2" }];

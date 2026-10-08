@@ -1,5 +1,17 @@
-/** What identifies a game: a Steam app by its app ID, natively or through Proton. */
-export type GameId = { kind: "steam"; appId: number };
+/** What identifies a game: a Steam app ID or a manually identified program location. */
+export type GameId =
+  | { kind: "steam"; appId: number }
+  | { kind: "program"; path: string };
+
+export interface RunningProgram {
+  pid: number;
+  name: string;
+  path: string | null;
+  launcher: string | null;
+  environment: string[];
+  helper: boolean;
+  recognitionWarning: string | null;
+}
 
 /** A fully installed Steam app from the caller's Steam libraries. */
 export interface SteamApp {
