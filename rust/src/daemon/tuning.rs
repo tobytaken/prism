@@ -16,7 +16,7 @@ pub(super) fn apply_profile(
 
 /// Boot results are shared across users. Only manual loads may disclose saved values
 /// and offer the profile owner's range-correction review.
-pub(super) fn apply_startup_profile(
+pub(super) fn apply_unreviewed_profile(
     backend: &dyn DaemonBackend,
     request: ApplyGpuProfileRequest,
 ) -> ProfileApplicationResponse {

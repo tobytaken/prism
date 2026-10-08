@@ -11,6 +11,7 @@ mod recognition;
 mod session;
 mod startup;
 mod steam_library;
+mod switching;
 mod tuning;
 mod tuning_store;
 
@@ -32,6 +33,8 @@ mod recognition_tests;
 mod restore_tests;
 #[cfg(test)]
 mod startup_tests;
+#[cfg(test)]
+mod switching_tests;
 #[cfg(test)]
 mod tests;
 

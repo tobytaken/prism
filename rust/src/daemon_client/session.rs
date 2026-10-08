@@ -117,6 +117,7 @@ pub enum SessionNotification {
     DaemonStatus(GpuDaemonStatus),
     TuningState(GpuTuningState),
     RunningGames(crate::protocol::RunningGamesState),
+    SwitchingStatus(crate::protocol::AutomaticSwitchingStatus),
 }
 
 /// One session for the sidecar's lifetime. Probes and driver requests remain one-shot.
@@ -233,6 +234,9 @@ fn connect_and_receive(
             SessionMessage::Event {
                 event: DaemonEvent::RunningGamesChanged(state),
             } => publish(SessionNotification::RunningGames(state)),
+            SessionMessage::Event {
+                event: DaemonEvent::AutomaticSwitchingChanged(status),
+            } => publish(SessionNotification::SwitchingStatus(status)),
         }
     }
     Ok(())

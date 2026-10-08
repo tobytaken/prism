@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
+import { automaticTag } from "@/features/games/lib/switching-status";
 import type { TuningEdits } from "@/features/gpus/hooks/use-tuning-edits";
 import {
   captureProfileSettings,
@@ -296,6 +297,7 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
     canApply,
     canSave,
   } = selector;
+  const autoTag = automaticTag(workflow.switching, selector.uuid, current?.id);
   return (
     <>
       <DropdownMenu modal={false}>
@@ -311,6 +313,11 @@ function ProfileMenu({ selector }: { selector: GpuProfileSelectorState }) {
             <span className="truncate">
               {current?.name ?? "No current profile"}
             </span>
+            {autoTag && (
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {autoTag}
+              </span>
+            )}
             {comparison?.changed && (
               <>
                 <span

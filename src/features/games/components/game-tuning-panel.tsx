@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { gameKey } from "@/features/games/hooks/use-games";
 import { useRunningGames } from "@/features/games/hooks/use-running-games";
+import { describeGpuSwitching } from "@/features/games/lib/switching-status";
 import { AutomaticSwitchingChoice } from "./automatic-switching-choice";
 import { StartupOutcomes } from "@/features/gpus/components/startup-outcomes";
 import { MigrationNotice } from "@/features/gpus/components/migration-notice";
@@ -55,6 +56,23 @@ export function GameTuningPanel({
           </ul>
         ))}
       <AutomaticSwitchingChoice workflow={games} />
+      {gpus.length > 0 && (
+        <ul
+          aria-label="Automatic switching status"
+          className="space-y-1 text-sm"
+        >
+          {gpus.map((gpu) => (
+            <li key={gpu.id} className="text-muted-foreground">
+              {`${gpu.name}: ${
+                gpu.stableId
+                  ? describeGpuSwitching(workflow.switching, gpu.stableId)
+                      .summary
+                  : "Unavailable: this GPU reports no stable identity (UUID)."
+              }`}
+            </li>
+          ))}
+        </ul>
+      )}
       {(games.query.error || games.changeError) && (
         <p role="alert" className="text-sm text-destructive">
           {(games.query.error ?? games.changeError)?.message}

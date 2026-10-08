@@ -1,4 +1,5 @@
 import runningGames from "@/test/contracts/running-games.json";
+import switchingStatuses from "@/test/contracts/automatic-switching-status.json";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
@@ -168,6 +169,74 @@ describe("registerIpc", () => {
       child.stdout.write(
         `${JSON.stringify({ method: "games.runningChanged", params: runningGames[0] })}\n`,
       );
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("reads the caller's automatic switching status and rejects extra arguments or an untrusted sender", async () => {
+    const child = createBackendChild(switchingStatuses[0]);
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      expect(
+        await callHandler("prism:games:getSwitchingStatus", trustedEvent()),
+      ).toEqual(switchingStatuses[0]);
+      expect(sentRequests(child)).toEqual([
+        { method: "games.getSwitchingStatus" },
+      ]);
+      await expect(
+        callHandler("prism:games:getSwitchingStatus", untrustedEvent()),
+      ).rejects.toThrow("Untrusted IPC sender");
+      await expect(
+        callHandler("prism:games:getSwitchingStatus", trustedEvent(), {
+          uid: 0,
+        }),
+      ).rejects.toThrow("Invalid switching status payload");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("forwards only validated automatic switching statuses to subscribed renderers", async () => {
+    const child = createBackendChild();
+    mocks.spawn.mockReturnValue(child);
+    const send = vi.fn();
+    const window = getMainWindow();
+    window.webContents.send = send;
+    const dispose = registerIpc(() => window);
+    const push = (params: unknown) =>
+      child.stdout.write(
+        `${JSON.stringify({ method: "games.switchingStatusChanged", params })}\n`,
+      );
+    try {
+      await callHandler("prism:daemon:subscribe", trustedEvent());
+      for (const params of switchingStatuses) push(params);
+      expect(send.mock.calls).toEqual(
+        switchingStatuses.map((status) => [
+          "prism:games:switchingStatusChanged",
+          status,
+        ]),
+      );
+      send.mockClear();
+      for (const params of [
+        null,
+        { condition: { status: "ready" } },
+        { condition: { status: "paused" }, gpus: [] },
+        { condition: { status: "blocked" }, gpus: [] },
+        {
+          condition: { status: "off" },
+          gpus: [
+            { gpuId: "GPU-123", state: { status: "anotherUser", uid: 0 } },
+          ],
+        },
+        { ...switchingStatuses[0], uid: 0 },
+      ])
+        push(params);
+      expect(send).not.toHaveBeenCalled();
+      await callHandler("prism:daemon:unsubscribe", trustedEvent());
+      push(switchingStatuses[0]);
       expect(send).not.toHaveBeenCalled();
     } finally {
       dispose();

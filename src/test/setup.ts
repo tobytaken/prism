@@ -72,6 +72,11 @@ const prismStub: PrismDesktopApi = {
   games: {
     getRunning: async () => ({ status: "available", games: [] }),
     onRunningChanged: () => () => undefined,
+    getSwitchingStatus: async () => ({
+      condition: { status: "off" },
+      gpus: [],
+    }),
+    onSwitchingStatusChanged: () => () => undefined,
     listSteamApps: async () => [],
     get: async () => ({ automaticSwitching: false, games: [] }),
     addSteamGame: async () => {

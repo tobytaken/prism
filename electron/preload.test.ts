@@ -1,4 +1,5 @@
 import runningGames from "@/test/contracts/running-games.json";
+import switchingStatuses from "@/test/contracts/automatic-switching-status.json";
 import startupState from "@/test/contracts/startup-state.json";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -326,6 +327,49 @@ describe("preload bridge", () => {
       },
     ])
       handler({}, state);
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
+    expect(mocks.removeListener).toHaveBeenCalledWith(channel, handler);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("prism:daemon:unsubscribe");
+  });
+
+  it("reads automatic switching status and validates pushed statuses until unsubscribed", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValueOnce(switchingStatuses[0]);
+    expect(await prism.games.getSwitchingStatus()).toEqual(
+      switchingStatuses[0],
+    );
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:games:getSwitchingStatus",
+    );
+    const changed = vi.fn();
+    const unsubscribe = prism.games.onSwitchingStatusChanged(changed);
+    const [channel, handler] = mocks.on.mock.calls[0];
+    expect(channel).toBe("prism:games:switchingStatusChanged");
+    for (const status of switchingStatuses) handler({}, status);
+    expect(changed.mock.calls).toEqual(
+      switchingStatuses.map((status) => [status]),
+    );
+    changed.mockClear();
+    for (const status of [
+      null,
+      { condition: { status: "ready" }, gpus: null },
+      { condition: { status: "recognitionUnavailable" }, gpus: [] },
+      {
+        condition: { status: "ready" },
+        gpus: [
+          {
+            gpuId: "GPU-123",
+            state: {
+              status: "active",
+              game: { kind: "steam", appId: 570 },
+              gameName: "Dota 2",
+            },
+          },
+        ],
+      },
+    ])
+      handler({}, status);
     expect(changed).not.toHaveBeenCalled();
     unsubscribe();
     expect(mocks.removeListener).toHaveBeenCalledWith(channel, handler);

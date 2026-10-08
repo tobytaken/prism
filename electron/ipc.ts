@@ -1,4 +1,7 @@
-import type { RunningGamesState } from "@/features/games/types";
+import type {
+  AutomaticSwitchingStatus,
+  RunningGamesState,
+} from "@/features/games/types";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
@@ -7,6 +10,7 @@ import {
   daemonStatusNotification,
   tuningStateNotification,
   runningGamesNotification,
+  switchingStatusNotification,
 } from "./daemon-events";
 import {
   isProfileSetting,
@@ -80,6 +84,9 @@ class RustBackendClient {
     private readonly onStatus: (status: GpuDaemonStatus) => void,
     private readonly onTuningState: (state: GpuTuningState) => void,
     private readonly onRunningGames: (state: RunningGamesState) => void,
+    private readonly onSwitchingStatus: (
+      status: AutomaticSwitchingStatus,
+    ) => void,
   ) {}
 
   start() {
@@ -248,6 +255,11 @@ class RustBackendClient {
     const runningGames = runningGamesNotification(value);
     if (runningGames) {
       this.onRunningGames(runningGames);
+      return;
+    }
+    const switchingStatus = switchingStatusNotification(value);
+    if (switchingStatus) {
+      this.onSwitchingStatus(switchingStatus);
       return;
     }
     const tuningState = tuningStateNotification(value);
@@ -484,6 +496,13 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       if (subscribed)
         getMainWindow()?.webContents.send("prism:games:runningChanged", state);
     },
+    (status) => {
+      if (subscribed)
+        getMainWindow()?.webContents.send(
+          "prism:games:switchingStatusChanged",
+          status,
+        );
+    },
   );
 
   ipcMain.handle(
@@ -610,6 +629,14 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       assertTrustedSender(event, getMainWindow);
       if (args.length) throw new Error("Invalid running games payload");
       return backend.invoke("games.getRunning");
+    },
+  );
+  ipcMain.handle(
+    "prism:games:getSwitchingStatus",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid switching status payload");
+      return backend.invoke("games.getSwitchingStatus");
     },
   );
   ipcMain.handle("prism:games:get", async (event, ...args: unknown[]) => {

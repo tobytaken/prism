@@ -16,6 +16,9 @@ fn main() {
             SessionNotification::RunningGames(state) => {
                 serde_json::json!({ "method": "games.runningChanged", "params": state })
             }
+            SessionNotification::SwitchingStatus(status) => {
+                serde_json::json!({ "method": "games.switchingStatusChanged", "params": status })
+            }
             SessionNotification::TuningState(state) => {
                 serde_json::json!({ "method": "gpu.tuningStateChanged", "params": state })
             }

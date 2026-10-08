@@ -60,15 +60,17 @@ pub(super) fn uuid_of(performance: &GpuPerformanceResponse, gpu_id: &str) -> Opt
         .filter(|uuid| !uuid.trim().is_empty())
 }
 
-struct Reading<'a> {
-    label: &'static str,
+/// A profile setting's control as the GPU reports it.
+pub(super) struct Reading<'a> {
+    pub label: &'static str,
     support: ControlSupport,
-    current: Option<i64>,
+    /// The current tuning value, unless it can't be read.
+    pub current: Option<i64>,
     default: Option<i64>,
     error: Option<&'a str>,
 }
 
-fn reading(gpu: &GpuPerformanceDevice, key: ProfileSettingKey) -> Reading<'_> {
+pub(super) fn reading(gpu: &GpuPerformanceDevice, key: ProfileSettingKey) -> Reading<'_> {
     fn offset<'a>(label: &'static str, info: &'a crate::gpu::ClockOffsetInfo) -> Reading<'a> {
         Reading {
             label,

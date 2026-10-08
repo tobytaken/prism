@@ -5,7 +5,9 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { appRoutes } from "@/app/router";
 import { createFakeDesktop } from "@/test/fake-desktop";
 import { connectedDaemonStatus } from "@/test/gpu-fixtures";
+import { findProfileControls, profileSelector } from "@/test/profile-selector";
 import { renderWithQueryClient } from "@/test/query-client";
+import type { AutomaticSwitchingStatus } from "@/features/games/types";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -35,7 +37,7 @@ it("lists running games from pushed events, keeps the opt-in, and links to Games
   );
   await waitFor(() => expect(fake.automaticSwitching).toBe(true));
   expect(panel).toHaveTextContent(
-    "Prism doesn't switch profiles for games yet",
+    "restores the values from before the game when it ends",
   );
   act(() =>
     fake.pushRunningGames({
@@ -134,4 +136,125 @@ it("keeps a newer pushed snapshot when an older snapshot request finishes later"
   expect(await within(panel).findByText("Steam app 570")).toBeVisible();
   await act(async () => resolve({ status: "available", games: [] }));
   expect(within(panel).getByText("Steam app 570")).toBeVisible();
+});
+
+const dotaOnGaming = {
+  status: "active",
+  game: { kind: "steam", appId: 570 },
+  gameName: "Dota 2",
+  profile: { id: "gaming", name: "Gaming" },
+} as const;
+
+it("shows each GPU's automatic switching status live, a header chip when it isn't ready, and tags the game profile as auto", async () => {
+  const fake = createFakeDesktop({
+    profiles: [
+      {
+        id: "gaming",
+        name: "Gaming",
+        gpuId: "GPU-123",
+        settings: { powerLimitWatts: { kind: "value", value: 350 } },
+      },
+    ],
+    currentProfiles: { "GPU-123": "gaming" },
+    switchingStatus: {
+      condition: { status: "ready" },
+      gpus: [{ gpuId: "GPU-123", state: dotaOnGaming }],
+    },
+  });
+  const router = createMemoryRouter(appRoutes, {
+    initialEntries: ["/performance"],
+  });
+  renderWithQueryClient(<RouterProvider router={router} />);
+  const panel = await screen.findByRole("region", { name: "Game tuning" });
+  const rows = await within(panel).findByRole("list", {
+    name: "Automatic switching status",
+  });
+  const row = within(rows).getByRole("listitem");
+  expect(row).toHaveTextContent("NVIDIA GeForce RTX 5090");
+  await waitFor(() =>
+    expect(row).toHaveTextContent("Gaming applied for Dota 2"),
+  );
+  await findProfileControls();
+  await waitFor(() =>
+    expect(profileSelector()).toHaveTextContent("auto · Dota 2"),
+  );
+  const header = profileSelector().closest("summary")!;
+  expect(within(header).queryByTestId("switching-chip")).toBeNull();
+
+  const push = (status: AutomaticSwitchingStatus) =>
+    act(() => fake.pushSwitchingStatus(status));
+  push({
+    condition: {
+      status: "recognitionUnavailable",
+      reason: "A complete host process scan could not be read.",
+    },
+    gpus: [{ gpuId: "GPU-123", state: dotaOnGaming }],
+  });
+  await waitFor(() =>
+    expect(row).toHaveTextContent(
+      "Holding Gaming for Dota 2: recognition unavailable.",
+    ),
+  );
+  expect(within(header).getByTestId("switching-chip")).toHaveTextContent(
+    "Recognition unavailable",
+  );
+
+  push({
+    condition: { status: "ready" },
+    gpus: [
+      {
+        gpuId: "GPU-123",
+        state: { status: "failed", message: "Power limit failed." },
+      },
+    ],
+  });
+  await waitFor(() =>
+    expect(row).toHaveTextContent("Failed: Power limit failed."),
+  );
+  expect(within(header).getByTestId("switching-chip")).toHaveTextContent(
+    "Switching failed",
+  );
+  expect(profileSelector()).not.toHaveTextContent("auto ·");
+
+  push({
+    condition: {
+      status: "blocked",
+      reason:
+        "Automatic switching is suspended because Prism's tuning store can't be used.",
+    },
+    gpus: [],
+  });
+  await waitFor(() =>
+    expect(row).toHaveTextContent("Blocked: Automatic switching is suspended"),
+  );
+  expect(within(header).getByTestId("switching-chip")).toHaveTextContent(
+    "Switching blocked",
+  );
+
+  push({ condition: { status: "ready" }, gpus: [] });
+  await waitFor(() =>
+    expect(row).toHaveTextContent("Waiting for a linked game to run."),
+  );
+  expect(within(header).queryByTestId("switching-chip")).toBeNull();
+
+  push({
+    condition: { status: "off" },
+    gpus: [{ gpuId: "GPU-123", state: { status: "anotherUser" } }],
+  });
+  await waitFor(() =>
+    expect(row).toHaveTextContent("Another user's game is running."),
+  );
+
+  act(() =>
+    fake.pushDaemonStatus({
+      ...connectedDaemonStatus,
+      reachable: false,
+      managedByDaemon: false,
+    }),
+  );
+  await waitFor(() => expect(row).toHaveTextContent("Status unknown"));
+  act(() => fake.pushDaemonStatus(connectedDaemonStatus));
+  await waitFor(() =>
+    expect(row).toHaveTextContent("Another user's game is running."),
+  );
 });

@@ -68,7 +68,7 @@ use super::boot_state::STARTUP_IN_PROGRESS;
 use super::daemon_core::DaemonCore;
 use super::host::Clock;
 use super::profiles::verified_gpu;
-use super::tuning::apply_startup_profile;
+use super::tuning::apply_unreviewed_profile;
 use super::tuning_store::{RestoreAttempt, TuningStore};
 use crate::protocol::{
     ApplyGpuProfileRequest, DaemonEvent, ProfileSettings, StartupBehavior, StartupOutcome,
@@ -313,7 +313,7 @@ fn apply_target(
         outcome.reason = Some("Startup was skipped because the tuning store is unhealthy.".into());
         return Some(false);
     }
-    let application = apply_startup_profile(
+    let application = apply_unreviewed_profile(
         backend,
         ApplyGpuProfileRequest {
             gpu_id: gpu_id.into(),
