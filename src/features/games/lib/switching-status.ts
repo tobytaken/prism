@@ -15,7 +15,11 @@ export function describeGpuSwitching(
   if (state?.status === "recoveryRequired")
     return {
       summary: `Recovery required: ${state.message}`,
-      chip: "Recovery required",
+      chip:
+        status.gpus.find((entry) => entry.gpuId === gpuId)?.application
+          ?.rollback?.status === "restoreFailed"
+          ? "Failed · retry needed"
+          : "Recovery required",
     };
   if (condition.status === "unknown")
     return {
@@ -40,7 +44,10 @@ export function describeGpuSwitching(
     return { summary: `${label}. Current values are kept.`, chip: label };
   }
   if (state?.status === "failed")
-    return { summary: `Failed: ${state.message}`, chip: "Switching failed" };
+    return {
+      summary: `Failed: ${state.message}`,
+      chip: "Failed · retry needed",
+    };
   if (condition.status === "recognitionUnavailable")
     return {
       summary:
@@ -59,6 +66,8 @@ export function describeGpuSwitching(
       summary: `${state.profile.name} applied for ${state.gameName}.`,
       chip: null,
     };
+  if (state?.status === "restored")
+    return { summary: "Pre-game tuning values restored.", chip: null };
   if (state?.status === "anotherUser")
     return { summary: "Another user's game is running.", chip: null };
   return condition.status === "ready"

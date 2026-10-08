@@ -66,7 +66,7 @@ pub(super) struct Reading<'a> {
     support: ControlSupport,
     /// The current tuning value, unless it can't be read.
     pub current: Option<i64>,
-    default: Option<i64>,
+    pub(super) default: Option<i64>,
     error: Option<&'a str>,
 }
 

@@ -33,8 +33,17 @@ it("shows honest per-setting startup results, allows manual range review, and di
         behavior: "startupProfiles",
         profile: { id: "quiet", name: "Quiet" },
         status: "failed",
+        previousFailure:
+          "Automatic switching was paused after a failure during the previous boot.",
         reason: "Driver rejected the offset.",
         application: {
+          rollback: {
+            status: "restored",
+            power: { status: "succeeded", error: null },
+            graphics: null,
+            memory: null,
+            cooling: null,
+          },
           power: { status: "succeeded", error: null },
           graphics: { status: "failed", error: "Driver rejected the offset." },
           memory: {
@@ -52,6 +61,10 @@ it("shows honest per-setting startup results, allows manual range review, and di
   );
   const rows = await screen.findByRole("region", { name: "Startup outcomes" });
   expect(rows).toHaveTextContent("Quiet — Failed");
+  expect(rows).toHaveTextContent("Rollback: Restored");
+  expect(rows).toHaveTextContent(
+    "Automatic switching was paused after a failure during the previous boot.",
+  );
   expect(rows).toHaveTextContent("Power limit: Applied");
   expect(rows).toHaveTextContent("Graphics clock offset: Failed");
   expect(rows).toHaveTextContent("Memory clock offset: Not attempted");

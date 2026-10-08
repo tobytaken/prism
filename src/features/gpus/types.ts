@@ -407,7 +407,15 @@ export interface ApplyGpuProfileRequest {
   settings: GpuProfileSettings;
 }
 
+export interface RollbackResult extends ClockOffsetResponse {
+  status: "restored" | "restoreFailed" | "notNeeded";
+  power: TuningOutcome | null;
+  cooling: CoolingApplication | null;
+  coolingRestoration?: FanRestoration[];
+}
+
 export interface ProfileApplicationResponse extends ClockOffsetResponse {
+  rollback?: RollbackResult;
   cooling?: CoolingApplication;
   power: TuningOutcome | null;
   /** Present only when out-of-range values alone blocked application; nothing was written. */
@@ -452,6 +460,7 @@ export interface SetStartupProfileRequest {
   profileId: string | null;
 }
 export interface StartupOutcome {
+  previousFailure?: string;
   gpuId: string;
   /** The startup behavior this boot ran. */
   behavior: StartupBehavior;

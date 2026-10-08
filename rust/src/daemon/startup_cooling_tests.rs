@@ -178,6 +178,12 @@ fn restoring_last_applied_values_restores_the_latest_manual_cooling_configuratio
         "succeeded"
     );
     daemon.set_temperature("GPU-123", Some(60));
+    // This host boot resets fan policy; the rollback baseline must be freshly readable.
+    daemon.gpus.update("GPU-123", |gpu| {
+        for fan in &mut gpu.cooling.fans {
+            fan.mode = Some(FanControlMode::Auto);
+        }
+    });
     daemon.reboot();
     let outcome = completed_outcome(&daemon);
     assert_eq!(outcome["status"], "applied", "{outcome}");
@@ -289,7 +295,7 @@ fn a_rejected_fan_command_at_startup_is_reported_per_fan_and_suspends_the_curve(
         .unwrap()
         .contains("Fan rejected the speed."));
     let application = &outcome["application"];
-    assert_eq!(application["power"]["status"], "succeeded");
+    assert_eq!(application["power"]["status"], "unattempted");
     assert_eq!(application["cooling"]["outcome"]["status"], "failed");
     assert_eq!(
         application["cooling"]["fans"][1]["outcome"]["status"],
@@ -307,6 +313,11 @@ fn a_crash_after_restoring_cooling_skips_the_next_restore_once() {
     apply_cooling(&alice, json!({"arrangement": "shared", "setting": curve()}));
     set_behavior(&alice, "restoreLastApplied");
     drop(alice);
+    daemon.gpus.update("GPU-123", |gpu| {
+        for fan in &mut gpu.cooling.fans {
+            fan.mode = Some(FanControlMode::Auto);
+        }
+    });
     daemon.reboot();
     assert_eq!(completed_outcome(&daemon)["status"], "applied");
     daemon.crash_and_reboot();
@@ -314,6 +325,11 @@ fn a_crash_after_restoring_cooling_skips_the_next_restore_once() {
     assert_eq!(skipped["status"], "notAttempted");
     assert!(skipped["reason"].as_str().unwrap().contains("skipped once"));
     assert!(control(&daemon)["applied"].is_null());
+    daemon.gpus.update("GPU-123", |gpu| {
+        for fan in &mut gpu.cooling.fans {
+            fan.mode = Some(FanControlMode::Auto);
+        }
+    });
     daemon.reboot();
     assert_eq!(completed_outcome(&daemon)["status"], "applied");
     assert_eq!(

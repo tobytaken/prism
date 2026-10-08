@@ -420,6 +420,17 @@ fn game_requests_cross_the_sidecar_session_and_preserve_daemon_errors() {
             json!({ "result": state }),
         ),
         (
+            26,
+            "games.retrySwitching",
+            Some(json!({ "gpuId": "GPU-123" })),
+            json!({ "type": "retry_automatic_switching", "payload": { "gpuId": "GPU-123" } }),
+            DaemonResponse::AutomaticSwitchingStatus(
+                serde_json::from_value(json!({ "condition": { "status": "ready" }, "gpus": [] }))
+                    .unwrap(),
+            ),
+            json!({ "result": { "condition": { "status": "ready" }, "gpus": [] } }),
+        ),
+        (
             25,
             "games.setAutomaticSwitching",
             Some(json!({ "enabled": true })),

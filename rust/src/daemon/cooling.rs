@@ -480,7 +480,8 @@ impl CoolingController {
         }
         drop(gpus);
         if let Some(reason) = failure {
-            self.suspend(backend, &request.gpu_id, &reason);
+            // A partly applied fixed/automatic configuration needs the same fallback as curves.
+            self.suspend_fans(backend, &request.gpu_id, &reason, &indexes);
         }
         self.save_record();
         CoolingApplication {
@@ -584,13 +585,25 @@ impl CoolingController {
         // The backend exposes policy, but no independent manual target readback. A speed
         // observation (including spin-up lag) or unknown policy cannot prove another writer.
         if cooling.fans.iter().any(|(index, state)| {
-            let expected = match state {
-                FanState::Automatic => FanControlMode::Auto,
-                FanState::Fixed(_)
-                | FanState::Curve {
-                    output: Some(_), ..
-                } => FanControlMode::Manual,
-                FanState::Curve { output: None, .. } => return false,
+            // A fault's own fallback is controller activity, not a competing external edit.
+            let restoration = cooling
+                .suspension
+                .as_ref()
+                .and_then(|s| s.restoration.iter().find(|fan| fan.fan_index == *index));
+            let expected = if let Some(restoration) = restoration {
+                if restoration.status != RestorationStatus::Restored {
+                    return false;
+                }
+                FanControlMode::Auto
+            } else {
+                match state {
+                    FanState::Automatic => FanControlMode::Auto,
+                    FanState::Fixed(_)
+                    | FanState::Curve {
+                        output: Some(_), ..
+                    } => FanControlMode::Manual,
+                    FanState::Curve { output: None, .. } => return false,
+                }
             };
             gpu.cooling
                 .fans
@@ -662,12 +675,27 @@ impl CoolingController {
     /// Stops following the GPU's running curves, keeps them, and tries to return their fans to the
     /// GPU's default automatic cooling, reporting what happened to each fan.
     fn suspend(&self, backend: &dyn DaemonBackend, uuid: &str, reason: &str) {
+        self.suspend_fans(backend, uuid, reason, &[]);
+    }
+
+    /// Application faults include every targeted fan, even when no curve was running.
+    fn suspend_fans(
+        &self,
+        backend: &dyn DaemonBackend,
+        uuid: &str,
+        reason: &str,
+        affected: &[u32],
+    ) {
         let _operation = self.operating(uuid);
-        let fans = self
+        let mut fans: BTreeSet<_> = self
             .lock()
             .get_mut(uuid)
             .map(GpuCooling::release_running)
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        fans.extend(affected);
+        let fans: Vec<_> = fans.into_iter().collect();
         if fans.is_empty() {
             return;
         }

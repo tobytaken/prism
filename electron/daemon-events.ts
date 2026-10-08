@@ -203,6 +203,7 @@ function isGpuSwitchingState(value: unknown) {
         hasKeys(value, ["status", "changedOutsidePrism"]) &&
         typeof value.changedOutsidePrism === "boolean"
       );
+    case "restored":
     case "anotherUser":
     case "paused":
       return hasKeys(value, ["status"]);
@@ -217,6 +218,78 @@ function isGpuSwitchingState(value: unknown) {
   }
 }
 
+function isTuningOutcome(value: unknown) {
+  return (
+    isRecord(value) &&
+    hasKeys(value, ["status", "error"]) &&
+    ["succeeded", "failed", "unattempted"].includes(String(value.status)) &&
+    (value.error === null || typeof value.error === "string")
+  );
+}
+
+function isCoolingApplication(value: unknown) {
+  return (
+    isRecord(value) &&
+    hasKeys(value, ["revision", "outcome", "fans"]) &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) >= 0 &&
+    isTuningOutcome(value.outcome) &&
+    Array.isArray(value.fans) &&
+    value.fans.every(
+      (fan: unknown) =>
+        isRecord(fan) &&
+        hasKeys(fan, ["fanIndex", "outcome"]) &&
+        Number.isSafeInteger(fan.fanIndex) &&
+        Number(fan.fanIndex) >= 0 &&
+        isTuningOutcome(fan.outcome),
+    )
+  );
+}
+
+function isAutomaticApplication(value: unknown) {
+  if (!isRecord(value) || !isRecord(value.rollback)) return false;
+  const rollback = value.rollback;
+  const numeric = (value: Record<string, unknown>) =>
+    ["power", "graphics", "memory"].every(
+      (key) => value[key] === null || isTuningOutcome(value[key]),
+    );
+  return (
+    hasKeys(value, [
+      "power",
+      "graphics",
+      "memory",
+      "rollback",
+      ...("cooling" in value ? ["cooling"] : []),
+    ]) &&
+    numeric(value) &&
+    (!("cooling" in value) || isCoolingApplication(value.cooling)) &&
+    hasKeys(rollback, [
+      "status",
+      "power",
+      "graphics",
+      "memory",
+      "cooling",
+      ...("coolingRestoration" in rollback ? ["coolingRestoration"] : []),
+    ]) &&
+    ["restored", "restoreFailed", "notNeeded"].includes(
+      String(rollback.status),
+    ) &&
+    numeric(rollback) &&
+    (rollback.cooling === null || isCoolingApplication(rollback.cooling)) &&
+    (!("coolingRestoration" in rollback) ||
+      (Array.isArray(rollback.coolingRestoration) &&
+        rollback.coolingRestoration.every(
+          (fan: unknown) =>
+            isRecord(fan) &&
+            hasKeys(fan, ["fanIndex", "status", "detail"]) &&
+            Number.isSafeInteger(fan.fanIndex) &&
+            Number(fan.fanIndex) >= 0 &&
+            ["restored", "failed", "unverified"].includes(String(fan.status)) &&
+            (fan.detail === null || typeof fan.detail === "string"),
+        )))
+  );
+}
+
 export function isAutomaticSwitchingStatus(
   value: unknown,
 ): value is AutomaticSwitchingStatus {
@@ -228,7 +301,13 @@ export function isAutomaticSwitchingStatus(
     value.gpus.every(
       (entry: unknown) =>
         isRecord(entry) &&
-        hasKeys(entry, ["gpuId", "state"]) &&
+        hasKeys(entry, [
+          "gpuId",
+          "state",
+          ...("application" in entry ? ["application"] : []),
+        ]) &&
+        (!("application" in entry) ||
+          isAutomaticApplication(entry.application)) &&
         typeof entry.gpuId === "string" &&
         isGpuSwitchingState(entry.state),
     )

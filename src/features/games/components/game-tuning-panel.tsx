@@ -1,3 +1,5 @@
+import { useRetrySwitching } from "@/features/games/hooks/use-switching-status";
+import { AutomaticTuningOutcomes } from "@/features/gpus/components/automatic-tuning-outcomes";
 import { Button } from "@/components/ui/button";
 import { useMutation } from "@tanstack/react-query";
 import type { SetGpuSwitchingPausedRequest } from "@/features/games/types";
@@ -29,6 +31,7 @@ export function GameTuningPanel({
   onDiscard?: () => void;
 }) {
   const running = useRunningGames();
+  const retry = useRetrySwitching();
   const games = workflow.games;
   const switchingChange = useMutation({
     mutationFn: async (request: SetGpuSwitchingPausedRequest) => {
@@ -87,9 +90,13 @@ export function GameTuningPanel({
           className="space-y-1 text-sm"
         >
           {gpus.map((gpu) => {
-            const state = workflow.switching?.gpus.find(
+            const entry = workflow.switching?.gpus.find(
               (entry) => entry.gpuId === gpu.stableId,
-            )?.state;
+            );
+            const state = entry?.state;
+            const failed =
+              state?.status === "failed" ||
+              state?.status === "recoveryRequired";
             const resume =
               state?.status === "paused" || state?.status === "manualOverride";
             const actions = [
@@ -110,22 +117,50 @@ export function GameTuningPanel({
                 key={gpu.id}
                 className="flex items-center justify-between gap-4 text-muted-foreground"
               >
-                <span>
+                <div>
                   {`${gpu.name}: ${
                     gpu.stableId
                       ? describeGpuSwitching(workflow.switching, gpu.stableId)
                           .summary
                       : "Unavailable: this GPU reports no stable identity (UUID)."
                   }`}
-                </span>
+                  {entry?.application && (
+                    <AutomaticTuningOutcomes application={entry.application} />
+                  )}
+                </div>
                 {gpu.stableId && (
                   <div className="flex gap-2">
+                    {failed && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Retry automatic switching for ${gpu.name}`}
+                        disabled={
+                          retry.isPending ||
+                          switchingChange.isPending ||
+                          busy ||
+                          hasEdits ||
+                          unavailable
+                        }
+                        onClick={() =>
+                          gpu.stableId && retry.mutate(gpu.stableId)
+                        }
+                      >
+                        {retry.isPending && retry.variables === gpu.stableId
+                          ? "Retrying…"
+                          : "Retry"}
+                      </Button>
+                    )}
                     {actions.map((action) => (
                       <Button
                         key={action.label}
                         size="sm"
                         variant="outline"
-                        disabled={unavailable || switchingChange.isPending}
+                        disabled={
+                          unavailable ||
+                          switchingChange.isPending ||
+                          retry.isPending
+                        }
                         onClick={() =>
                           switchingChange.mutate({
                             gpuId: gpu.stableId!,
@@ -173,6 +208,11 @@ export function GameTuningPanel({
       {(games.query.error || games.changeError) && (
         <p role="alert" className="text-sm text-destructive">
           {(games.query.error ?? games.changeError)?.message}
+        </p>
+      )}
+      {retry.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {retry.error.message}
         </p>
       )}
       {switchingChange.error && (

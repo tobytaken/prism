@@ -254,6 +254,16 @@ impl DaemonCore {
             DaemonRequest::SetAutomaticSwitching(request) => {
                 self.set_automatic_switching(peer, request.enabled)
             }
+            DaemonRequest::RetryAutomaticSwitching(request) => {
+                let switching = self.switching.clone();
+                let gpu_id = request.gpu_id;
+                self.tracked_write(&gpu_id.clone(), move |backend| {
+                    switching.retry(backend, &gpu_id)
+                });
+                Ok(DaemonResponse::AutomaticSwitchingStatus(
+                    self.switching.status_for(peer),
+                ))
+            }
             DaemonRequest::GetAutomaticSwitchingStatus => Ok(
                 DaemonResponse::AutomaticSwitchingStatus(self.switching.status_for(peer)),
             ),
@@ -717,6 +727,7 @@ impl DaemonCore {
             | DaemonRequest::SetGameProfile(_)
             | DaemonRequest::RemoveGame(_)
             | DaemonRequest::SetAutomaticSwitching(_)
+            | DaemonRequest::RetryAutomaticSwitching(_)
             | DaemonRequest::SetGpuSwitchingPaused(_)
             | DaemonRequest::GetAutomaticSwitchingStatus => {
                 DaemonResponse::Error(GpuCommandError::new(

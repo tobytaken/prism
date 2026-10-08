@@ -226,8 +226,18 @@ describe("registerIpc", () => {
       expect(
         await callHandler("prism:games:getSwitchingStatus", trustedEvent()),
       ).toEqual(switchingStatuses[0]);
+      expect(
+        await callHandler("prism:games:retrySwitching", trustedEvent(), {
+          gpuId: "GPU-123",
+        }),
+      ).toEqual(switchingStatuses[0]);
+      expect(sentRequests(child).at(-1)).toEqual({
+        method: "games.retrySwitching",
+        params: { gpuId: "GPU-123" },
+      });
       expect(sentRequests(child)).toEqual([
         { method: "games.getSwitchingStatus" },
+        { method: "games.retrySwitching", params: { gpuId: "GPU-123" } },
       ]);
       await expect(
         callHandler("prism:games:getSwitchingStatus", untrustedEvent()),
@@ -861,6 +871,7 @@ describe("registerIpc", () => {
         ["addSteamGame", { appId: 570 }],
         ["setProfile", { game: dota, gpuId: "GPU-123", profileId: null }],
         ["remove", { game: dota }],
+        ["retrySwitching", { gpuId: "GPU-123" }],
         ["setAutomaticSwitching", { enabled: false }],
       ] as const) {
         await expect(
@@ -900,6 +911,8 @@ describe("registerIpc", () => {
         ["remove", [{ game: { ...dota, uid: 0 } }]],
         ["remove", [{ game: { kind: "steam" } }]],
         ["remove", [{}]],
+        ["retrySwitching", [{ gpuId: "" }]],
+        ["retrySwitching", [{ gpuId: "GPU-123", uid: 0 }]],
         ["setAutomaticSwitching", [{ enabled: "yes" }]],
         ["setAutomaticSwitching", [{ enabled: true, uid: 0 }]],
       ];

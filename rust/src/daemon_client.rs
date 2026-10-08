@@ -115,6 +115,16 @@ pub fn get_automatic_switching_status(
     }
 }
 
+pub fn retry_automatic_switching(
+    request: crate::protocol::StartupGpuRequest,
+) -> Result<crate::protocol::AutomaticSwitchingStatus, GpuCommandError> {
+    match send_request(DaemonRequest::RetryAutomaticSwitching(request))? {
+        DaemonResponse::AutomaticSwitchingStatus(status) => Ok(status),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("automatic switching retry")),
+    }
+}
+
 pub fn set_gpu_switching_paused(
     request: crate::protocol::SetGpuSwitchingPausedRequest,
 ) -> Result<DaemonCommandResponse, GpuCommandError> {

@@ -301,7 +301,7 @@ it("shows each GPU's automatic switching status live, a header chip when it isn'
     expect(row).toHaveTextContent("Failed: Power limit failed."),
   );
   expect(within(header).getByTestId("switching-chip")).toHaveTextContent(
-    "Switching failed",
+    "Failed · retry needed",
   );
   expect(profileSelector()).not.toHaveTextContent("auto ·");
 
@@ -399,4 +399,121 @@ it("shows manual overrides and changes outside Prism in the GPU row and header c
     );
     expect(profileSelector()).not.toHaveTextContent("auto ·");
   }
+});
+
+it("shows automatic setting and rollback results and retries explicitly from the failure panel", async () => {
+  const user = userEvent.setup();
+  const failed: AutomaticSwitchingStatus = {
+    condition: { status: "ready" },
+    gpus: [
+      {
+        gpuId: "GPU-123",
+        state: { status: "failed", message: "Memory rejected." },
+        application: {
+          power: { status: "succeeded", error: null },
+          graphics: null,
+          memory: { status: "failed", error: "Memory rejected." },
+          rollback: {
+            status: "restored",
+            power: { status: "succeeded", error: null },
+            graphics: null,
+            memory: null,
+            cooling: null,
+          },
+        },
+      },
+    ],
+  };
+  const fake = createFakeDesktop({ switchingStatus: failed });
+  const retry = vi
+    .spyOn(window.prism.games, "retrySwitching")
+    .mockImplementation(async () => {
+      const active: AutomaticSwitchingStatus = {
+        condition: { status: "ready" },
+        gpus: [{ gpuId: "GPU-123", state: dotaOnGaming }],
+      };
+      fake.pushSwitchingStatus(active);
+      return active;
+    });
+  renderWithQueryClient(
+    <RouterProvider
+      router={createMemoryRouter(appRoutes, {
+        initialEntries: ["/performance"],
+      })}
+    />,
+  );
+  const panel = await screen.findByRole("region", { name: "Game tuning" });
+  await waitFor(() =>
+    expect(panel).toHaveTextContent("Memory clock offset: Failed"),
+  );
+  expect(panel).toHaveTextContent("Rollback: Restored");
+  await findProfileControls();
+  expect(
+    within(profileSelector().closest("summary")!).getByTestId("switching-chip"),
+  ).toHaveTextContent("Failed · retry needed");
+  act(() =>
+    fake.pushSwitchingStatus({
+      condition: { status: "ready" },
+      gpus: [
+        {
+          ...failed.gpus[0],
+          state: {
+            status: "recoveryRequired",
+            message: "Cooling recovery could not be verified.",
+          },
+          application: {
+            power: null,
+            graphics: null,
+            memory: null,
+            cooling: {
+              revision: 2,
+              outcome: { status: "failed", error: null },
+              fans: [
+                {
+                  fanIndex: 0,
+                  outcome: { status: "failed", error: "Fan rejected." },
+                },
+              ],
+            },
+            rollback: {
+              status: "restoreFailed",
+              power: null,
+              graphics: null,
+              memory: null,
+              cooling: null,
+              coolingRestoration: [
+                { fanIndex: 0, status: "failed", detail: "Auto rejected." },
+                {
+                  fanIndex: 1,
+                  status: "unverified",
+                  detail: "Fan mode is unavailable.",
+                },
+              ],
+            },
+          },
+        },
+      ],
+    }),
+  );
+  await waitFor(() =>
+    expect(panel).toHaveTextContent("Rollback: Restore failed"),
+  );
+  expect(panel).toHaveTextContent(
+    "Fan 1 automatic cooling: Failed — Auto rejected.",
+  );
+  expect(panel).toHaveTextContent(
+    "Fan 2 automatic cooling: Unverified — Fan mode is unavailable.",
+  );
+  expect(
+    within(profileSelector().closest("summary")!).getByTestId("switching-chip"),
+  ).toHaveTextContent("Failed · retry needed");
+  expect(retry).not.toHaveBeenCalled();
+  await user.click(within(panel).getByRole("button", { name: /Retry/ }));
+  expect(retry).toHaveBeenCalledWith({ gpuId: "GPU-123" });
+  await waitFor(() =>
+    expect(panel).toHaveTextContent("Gaming applied for Dota 2"),
+  );
+  expect(
+    within(panel).queryByRole("button", { name: /Retry/ }),
+  ).not.toBeInTheDocument();
 });

@@ -1,3 +1,4 @@
+import type { ProfileApplicationResponse } from "@/features/gpus/types";
 /** What identifies a game: a Steam app ID or a manually identified program location. */
 export type GameId =
   | { kind: "steam"; appId: number }
@@ -91,6 +92,7 @@ export type GpuSwitchingState =
     }
   | { status: "waitingForEdits"; profile: { id: string; name: string } }
   | { status: "anotherUser" }
+  | { status: "restored" }
   | { status: "manualOverride"; changedOutsidePrism: boolean }
   | { status: "recoveryRequired"; message: string }
   | { status: "failed"; message: string };
@@ -101,5 +103,9 @@ export type GpuSwitchingState =
  */
 export interface AutomaticSwitchingStatus {
   condition: SwitchingCondition;
-  gpus: { gpuId: string; state: GpuSwitchingState }[];
+  gpus: {
+    gpuId: string;
+    state: GpuSwitchingState;
+    application?: ProfileApplicationResponse;
+  }[];
 }

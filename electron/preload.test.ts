@@ -401,6 +401,14 @@ describe("preload bridge", () => {
     expect(mocks.invoke).toHaveBeenLastCalledWith(
       "prism:games:getSwitchingStatus",
     );
+    mocks.invoke.mockResolvedValueOnce(switchingStatuses.at(-1));
+    expect(await prism.games.retrySwitching({ gpuId: "GPU-123" })).toEqual(
+      switchingStatuses.at(-1),
+    );
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "prism:games:retrySwitching",
+      { gpuId: "GPU-123" },
+    );
     const changed = vi.fn();
     const unsubscribe = prism.games.onSwitchingStatusChanged(changed);
     const [channel, handler] = mocks.on.mock.calls[0];

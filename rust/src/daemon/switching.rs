@@ -12,20 +12,20 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use super::automatic_tuning::apply as apply_automatic_profile;
 use super::backend::DaemonBackend;
 use super::cooling::CoolingController;
 use super::host::{Clock, UserDirectory};
 use super::profiles::{capture_cooling, reading, verified_gpu};
 use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
-use super::tuning::apply_unreviewed_profile;
 use super::tuning_store::{write_atomically, TuningDocument, TuningStore};
 use crate::cooling::{CoolingConfiguration, SuspensionKind};
 use crate::gpu::GpuPerformanceDevice;
 use crate::protocol::{
     ApplyGpuProfileRequest, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
-    GpuSwitchingState, GpuSwitchingStatus, ProfileSetting, ProfileSettingKey, ProfileSettings,
-    SwitchingCondition, TuningOutcome, TuningOutcomeStatus,
+    GpuSwitchingState, GpuSwitchingStatus, ProfileApplicationResponse, ProfileSetting,
+    ProfileSettingKey, ProfileSettings, RollbackStatus, SwitchingCondition, TuningOutcomeStatus,
 };
 
 pub(super) const SWITCHING_STATE_FILE_NAME: &str = "switching-state.json";
@@ -71,8 +71,10 @@ struct Activation {
     /// The current profile before automation, which returns after full restoration.
     previous_profile: Option<String>,
     /// Why the latest automatic application or restoration didn't complete. It isn't retried
-    /// until what drives the GPU changes.
+    /// until an explicit retry.
     failure: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    application: Option<ProfileApplicationResponse>,
     /// An override relinquishes the baseline. Keep an external-change notice after games end.
     manual_override: Option<ManualOverride>,
 }
@@ -346,6 +348,9 @@ impl Switching {
                         }
                     });
                 }
+                if activation.is_some_and(|a| a.failure.is_some()) {
+                    return false;
+                }
                 let absent = verified_gpu(&readings, gpu_id).is_err();
                 let presence_changed = activation.is_some_and(|a| a.gpu_absent != absent);
                 (presence_changed && absent)
@@ -372,6 +377,15 @@ impl Switching {
     /// Applies the GPU's winning game's profile, or restores the GPU when no game wins,
     /// from the latest scan and saved state. Runs on the GPU's queue.
     pub fn reconcile(&self, backend: &dyn DaemonBackend, gpu_id: &str) {
+        self.reconcile_attempt(backend, gpu_id, false);
+    }
+
+    pub fn retry(&self, backend: &dyn DaemonBackend, gpu_id: &str) {
+        self.reconcile_attempt(backend, gpu_id, true);
+        self.publish();
+    }
+
+    fn reconcile_attempt(&self, backend: &dyn DaemonBackend, gpu_id: &str, retry: bool) {
         self.state.queued.lock().unwrap().remove(gpu_id);
         if self
             .state
@@ -389,6 +403,12 @@ impl Switching {
             return;
         };
         let mut activation = activations.remove(gpu_id);
+        if activation.as_ref().is_some_and(|a| a.failure.is_some()) && !retry {
+            return;
+        }
+        if retry && !activation.as_ref().is_some_and(|a| a.failure.is_some()) {
+            return;
+        }
         let running = self.running();
         // An override has no restoration baseline. Its lifetime follows linked games,
         // even while the GPU is absent; returning hardware cannot bypass it.
@@ -434,17 +454,11 @@ impl Switching {
         let wanted = winning_games(&document, &running, self.users.as_ref(), true).remove(gpu_id);
         let returning = activation.as_ref().is_some_and(|a| a.gpu_absent);
         let same_game = wanted.as_ref() == activation.as_ref().and_then(|a| a.driving.as_ref());
-        if same_game && !returning {
+        if same_game && !returning && !retry {
             return;
         }
         if returning {
             self.cooling.resume_interrupted(backend, gpu_id);
-            if same_game && activation.as_ref().is_some_and(|a| a.failure.is_some()) {
-                let mut activation = activation.unwrap();
-                activation.gpu_absent = false;
-                self.record(gpu_id, Some(activation));
-                return;
-            }
         }
         let controls_cooling = activation
             .as_ref()
@@ -490,7 +504,7 @@ impl Switching {
                 );
                 return;
             }
-            if let Some(active) = activation.as_ref().filter(|_| !returning) {
+            if let Some(active) = activation.as_ref().filter(|_| !retry && !returning) {
                 if active.expected.iter().any(|(key, expected)| {
                     expected.is_none() || reading(gpu, *key).current.is_none()
                 }) {
@@ -507,13 +521,20 @@ impl Switching {
         }
         match (wanted, activation) {
             (Some(game), activation) => {
-                let activation = activation.unwrap_or_else(|| Activation {
-                    previous_profile: document.current_profiles.get(gpu_id).cloned(),
-                    ..Activation::default()
-                });
-                self.apply(backend, &document, gpu_id, game, activation)
+                let activation = activation
+                    .filter(|a| {
+                        a.driving.is_some()
+                            || a.failure.is_some()
+                            || !a.baseline.is_empty()
+                            || a.cooling_baseline.is_some()
+                    })
+                    .unwrap_or_else(|| Activation {
+                        previous_profile: document.current_profiles.get(gpu_id).cloned(),
+                        ..Activation::default()
+                    });
+                self.apply(backend, &document, gpu_id, game, activation, retry)
             }
-            (None, Some(activation)) => self.restore(backend, gpu_id, activation),
+            (None, Some(activation)) => self.restore(backend, gpu_id, activation, retry),
             (None, None) => {}
         }
     }
@@ -553,9 +574,10 @@ impl Switching {
             .ok()
             .and_then(|mut all| all.remove(gpu_id))
             .is_some_and(|a| {
-                a.manual_override
-                    .as_ref()
-                    .is_none_or(|overridden| !overridden.games_ended)
+                (a.driving.is_some() || a.failure.is_some() || a.manual_override.is_some())
+                    && a.manual_override
+                        .as_ref()
+                        .is_none_or(|overridden| !overridden.games_ended)
             });
         if linked || active {
             self.record(
@@ -569,6 +591,8 @@ impl Switching {
                 }),
             );
             self.publish();
+        } else {
+            self.record(gpu_id, None);
         }
     }
 
@@ -579,8 +603,12 @@ impl Switching {
         gpu_id: &str,
         game: DrivingGame,
         mut activation: Activation,
+        retry: bool,
     ) {
-        let profile = if activation.gpu_absent && activation.driving.as_ref() == Some(&game) {
+        let profile = if !retry
+            && activation.gpu_absent
+            && activation.driving.as_ref() == Some(&game)
+        {
             let Some(settings) = activation.applied_settings.clone() else {
                 activation.gpu_absent = false;
                 return self.abandon(gpu_id, activation, &[],
@@ -600,6 +628,7 @@ impl Switching {
         };
         activation.driving = Some(game.clone());
         activation.failure = None;
+        activation.application = None;
         let returning_gpu = activation.gpu_absent;
         activation.gpu_absent = false;
         activation.applied_settings = None;
@@ -626,8 +655,13 @@ impl Switching {
         if captured_cooling {
             let mut gpu = gpu.clone();
             gpu.cooling.control = Some(self.cooling.control(gpu_id));
-            match capture_cooling(&gpu) {
-                Ok(Some(configuration)) => {
+            let baseline = if retry {
+                super::automatic_tuning::capture_cooling_baseline(&gpu, gpu.cooling.control.clone())
+            } else {
+                capture_cooling(&gpu).ok().flatten()
+            };
+            match baseline {
+                Some(configuration) => {
                     activation.cooling_baseline = Some(configuration);
                     activation.cooling_baseline_fans =
                         gpu.cooling.fans.iter().map(|fan| fan.index).collect();
@@ -671,31 +705,32 @@ impl Switching {
             &self.cooling,
             gpu_id,
             settings,
+            retry,
             (returning_cooling || (returning_gpu && profile.cooling.is_some()))
                 .then_some(&activation.cooling_baseline_fans),
         );
-        for (key, outcome) in &outcomes.numeric {
+        for (key, outcome) in outcomes.numeric() {
             // A setting that was never attempted keeps no pre-game value, so it isn't restored.
             let unwritten =
-                captured.contains(key) && outcome.status == TuningOutcomeStatus::Unattempted;
-            let returned =
-                returning.iter().any(|(returned, _)| returned == key) && succeeded(outcome);
+                captured.contains(&key) && outcome.status != TuningOutcomeStatus::Succeeded;
+            let returned = returning.iter().any(|(returned, _)| *returned == key)
+                && outcomes.all_settings_succeeded();
             if unwritten || returned {
-                activation.baseline.remove(key);
+                activation.baseline.remove(&key);
             }
         }
         if captured_cooling
             && outcomes
                 .cooling
                 .as_ref()
-                .is_some_and(|outcome| outcome.status == TuningOutcomeStatus::Unattempted)
+                .is_some_and(|cooling| cooling.outcome.status == TuningOutcomeStatus::Unattempted)
         {
             activation.cooling_baseline = None;
         }
-        if returning_cooling && outcomes.cooling.as_ref().is_some_and(succeeded) {
+        if returning_cooling && outcomes.all_settings_succeeded() {
             activation.cooling_baseline = None;
         }
-        let full = outcomes.iter().all(succeeded);
+        let full = outcomes.all_settings_succeeded();
         if full {
             let mut applied = profile.clone();
             if applied.cooling.is_some() {
@@ -708,11 +743,51 @@ impl Switching {
         }
         // A fully applied game profile becomes current; a partly applied one leaves no
         // current profile. Neither is recorded as last applied tuning values.
-        if outcomes.iter().any(succeeded) {
+        if outcomes
+            .outcomes()
+            .any(|o| o.status != TuningOutcomeStatus::Unattempted)
+        {
             self.set_current_profile(gpu_id, full.then_some(game.profile_id));
         }
+        activation.application = Some(outcomes);
         self.observe(backend, gpu_id, &mut activation);
         self.record(gpu_id, Some(activation));
+    }
+
+    /// Startup and game tuning share the same failure gate and explicit retry path.
+    pub fn startup_failed(
+        &self,
+        backend: &dyn DaemonBackend,
+        gpu_id: &str,
+        before: ProfileSettings,
+        application: ProfileApplicationResponse,
+    ) {
+        let mut activation = Activation {
+            failure: Some(failure_message(&application)),
+            ..Activation::default()
+        };
+        for (key, outcome) in application.numeric() {
+            if outcome.status == TuningOutcomeStatus::Succeeded {
+                if let Some(ProfileSetting::Value { value }) = before.get(key) {
+                    activation.baseline.insert(key, value);
+                }
+            }
+        }
+        if application
+            .cooling
+            .as_ref()
+            .is_some_and(|c| c.outcome.status != TuningOutcomeStatus::Unattempted)
+        {
+            activation.cooling_baseline = before.cooling;
+            if let Ok(gpu) = verified_gpu(&backend.performance(), gpu_id) {
+                activation.cooling_baseline_fans =
+                    gpu.cooling.fans.iter().map(|f| f.index).collect();
+            }
+        }
+        activation.application = Some(application);
+        self.observe(backend, gpu_id, &mut activation);
+        self.record(gpu_id, Some(activation));
+        self.publish();
     }
 
     fn observe(&self, backend: &dyn DaemonBackend, gpu_id: &str, activation: &mut Activation) {
@@ -725,10 +800,17 @@ impl Switching {
             .collect();
     }
 
-    fn restore(&self, backend: &dyn DaemonBackend, gpu_id: &str, mut activation: Activation) {
+    fn restore(
+        &self,
+        backend: &dyn DaemonBackend,
+        gpu_id: &str,
+        mut activation: Activation,
+        retry: bool,
+    ) {
         activation.gpu_absent = false;
         activation.driving = None;
         activation.failure = None;
+        let mut restored = None;
         if !activation.baseline.is_empty() || activation.cooling_baseline.is_some() {
             let readings = backend.performance();
             if verified_gpu(&readings, gpu_id).is_err() {
@@ -748,27 +830,25 @@ impl Switching {
                 &self.cooling,
                 gpu_id,
                 settings,
+                retry,
                 activation
                     .cooling_baseline
                     .as_ref()
                     .map(|_| &activation.cooling_baseline_fans),
             );
-            for (key, outcome) in &outcomes.numeric {
-                if succeeded(outcome) {
-                    activation.baseline.remove(key);
-                }
-            }
-            if outcomes.cooling.as_ref().is_some_and(succeeded) {
-                activation.cooling_baseline = None;
-            }
-            if !activation.baseline.is_empty() || activation.cooling_baseline.is_some() {
-                // Partly restored, no profile describes the GPU.
-                if outcomes.iter().any(succeeded) {
+            if !outcomes.all_settings_succeeded() {
+                if outcomes
+                    .outcomes()
+                    .any(|o| o.status != TuningOutcomeStatus::Unattempted)
+                {
                     self.set_current_profile(gpu_id, None);
                 }
                 self.observe(backend, gpu_id, &mut activation);
-                return self.abandon(gpu_id, activation, &[], failure_message(&outcomes));
+                let failure = failure_message(&outcomes);
+                activation.application = Some(outcomes);
+                return self.abandon(gpu_id, activation, &[], failure);
             }
+            restored = Some(outcomes);
         }
         // Fully restored, the previous current profile returns, if it still exists.
         let previous = activation.previous_profile.filter(|id| {
@@ -777,7 +857,13 @@ impl Switching {
                 .unwrap_or(false)
         });
         self.set_current_profile(gpu_id, previous);
-        self.record(gpu_id, None);
+        self.record(
+            gpu_id,
+            restored.map(|application| Activation {
+                application: Some(application),
+                ..Activation::default()
+            }),
+        );
     }
 
     /// Records why the operation stopped, without the pre-game values it captured but never
@@ -790,8 +876,20 @@ impl Switching {
         failure: String,
     ) {
         for key in captured {
-            activation.baseline.remove(key);
+            activation.baseline.remove(&key);
             activation.expected.remove(key);
+        }
+        if activation.application.is_none() {
+            let settings = activation.driving.as_ref().and_then(|game| {
+                self.store
+                    .read(|d| d.any_profile(&game.profile_id).map(|p| p.settings.clone()))
+                    .ok()
+                    .flatten()
+            });
+            if let Some(settings) = settings {
+                activation.application =
+                    Some(ProfileApplicationResponse::unattempted(&settings, &failure));
+            }
         }
         activation.failure = Some(failure);
         self.record(gpu_id, Some(activation));
@@ -810,6 +908,19 @@ impl Switching {
 
     /// Writes the GPU's activation to boot-scoped state.
     fn record(&self, gpu_id: &str, activation: Option<Activation>) {
+        if activation.as_ref().is_some_and(|a| a.failure.is_some())
+            && self
+                .store
+                .read(|d| d.automatic_failures.get(gpu_id) != Some(&self.state.boot_id))
+                .unwrap_or(false)
+        {
+            if let Err(error) = self.store.update(|d| {
+                d.automatic_failures
+                    .insert(gpu_id.into(), self.state.boot_id.clone());
+            }) {
+                eprintln!("Could not record the automatic failure for next startup: {error}");
+            }
+        }
         if let Err(error) = self.state.set(gpu_id, activation) {
             eprintln!("failed to record automatic switching state for {gpu_id}: {error}");
         }
@@ -963,12 +1074,13 @@ fn write_settings(
     cooling: &CoolingController,
     gpu_id: &str,
     settings: ProfileSettings,
+    retry: bool,
     expected_fans: Option<&BTreeSet<u32>>,
-) -> SettingOutcomes {
+) -> ProfileApplicationResponse {
     // A restart or game exit is not an explicit cooling retry. In particular, restoring a
     // healthy pre-game curve must not replace the automatic fallback of a faulted game curve.
-    if settings.cooling.is_some() && cooling.control(gpu_id).suspension.is_some() {
-        return SettingOutcomes::unattempted(&settings,
+    if !retry && settings.cooling.is_some() && cooling.control(gpu_id).suspension.is_some() {
+        return ProfileApplicationResponse::unattempted(&settings,
             "Cooling is suspended. Review and explicitly retry cooling before automatic switching can replace it.");
     }
     if let Some(expected) = expected_fans {
@@ -981,69 +1093,32 @@ fn write_settings(
                 .collect::<BTreeSet<_>>()
         });
         if expected.is_empty() || reported.as_ref() != Some(expected) {
-            return SettingOutcomes::unattempted(&settings,
+            return ProfileApplicationResponse::unattempted(&settings,
                 "Cooling: the pre-game fan identities are unavailable or the GPU's fans changed. Nothing was restored.");
         }
     }
-    let application = apply_unreviewed_profile(
+    apply_automatic_profile(
         backend,
         Some(cooling),
         ApplyGpuProfileRequest {
             gpu_id: gpu_id.into(),
             settings,
         },
-    );
-    let numeric = [
-        (ProfileSettingKey::PowerLimitWatts, application.power),
-        (ProfileSettingKey::GraphicsOffsetMhz, application.graphics),
-        (ProfileSettingKey::MemoryOffsetMhz, application.memory),
-    ]
-    .into_iter()
-    .filter_map(|(key, outcome)| Some((key, outcome?)))
-    .collect();
-    SettingOutcomes {
-        numeric,
-        cooling: application.cooling.map(|application| application.outcome),
-    }
+    )
 }
 
-struct SettingOutcomes {
-    numeric: Vec<(ProfileSettingKey, TuningOutcome)>,
-    cooling: Option<TuningOutcome>,
-}
-
-impl SettingOutcomes {
-    fn unattempted(settings: &ProfileSettings, message: &str) -> Self {
-        let outcome = || TuningOutcome {
-            status: TuningOutcomeStatus::Unattempted,
-            error: Some(message.into()),
-        };
-        Self {
-            numeric: ProfileSettingKey::ALL
-                .into_iter()
-                .filter(|key| settings.get(*key).is_some())
-                .map(|key| (key, outcome()))
-                .collect(),
-            cooling: settings.cooling.as_ref().map(|_| outcome()),
-        }
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &TuningOutcome> {
-        self.numeric
-            .iter()
-            .map(|(_, outcome)| outcome)
-            .chain(self.cooling.iter())
-    }
-}
-
-fn succeeded(outcome: &TuningOutcome) -> bool {
-    outcome.status == TuningOutcomeStatus::Succeeded
-}
-
-fn failure_message(outcomes: &SettingOutcomes) -> String {
+fn failure_message(outcomes: &ProfileApplicationResponse) -> String {
     outcomes
-        .iter()
+        .outcomes()
         .filter_map(|outcome| outcome.error.clone())
+        .chain(outcomes.cooling.iter().flat_map(|cooling| {
+            cooling.fans.iter().filter_map(|fan| {
+                fan.outcome
+                    .error
+                    .as_ref()
+                    .map(|error| format!("Fan {}: {error}", fan.fan_index + 1))
+            })
+        }))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>()
@@ -1077,6 +1152,7 @@ impl Snapshot {
                 ));
                 status.gpus = self.recovery_gpus.iter().map(|gpu_id| GpuSwitchingStatus {
                     gpu_id: gpu_id.clone(),
+                    application: None,
                     state: GpuSwitchingState::RecoveryRequired {
                         message: "The pre-game tuning values can't be read. The GPU has been left unchanged.".into(),
                     },
@@ -1101,6 +1177,17 @@ impl Snapshot {
                     }
                 } else {
                     match (&activation.failure, &activation.driving) {
+                        (Some(message), _)
+                            if activation
+                                .application
+                                .as_ref()
+                                .and_then(|a| a.rollback.as_ref())
+                                .is_some_and(|r| r.status == RollbackStatus::RestoreFailed) =>
+                        {
+                            GpuSwitchingState::RecoveryRequired {
+                                message: message.clone(),
+                            }
+                        }
                         (Some(message), _) => GpuSwitchingState::Failed {
                             message: message.clone(),
                         },
@@ -1124,17 +1211,22 @@ impl Snapshot {
                             }
                         }
                         (None, Some(_)) => GpuSwitchingState::AnotherUser {},
+                        (None, None) if activation.application.is_some() => {
+                            GpuSwitchingState::Restored {}
+                        }
                         (None, None) => return None,
                     }
                 };
                 Some(GpuSwitchingStatus {
                     gpu_id: gpu_id.clone(),
                     state,
+                    application: activation.application.clone(),
                 })
             })
             .collect();
         for (gpu_id, driving) in &self.wanted {
-            if !self.held.contains(gpu_id)
+            if activations.get(gpu_id).is_some_and(|a| a.failure.is_some())
+                || !self.held.contains(gpu_id)
                 || activations
                     .get(gpu_id)
                     .and_then(|a| a.manual_override.as_ref())
@@ -1160,6 +1252,7 @@ impl Snapshot {
             gpus.push(GpuSwitchingStatus {
                 gpu_id: gpu_id.clone(),
                 state,
+                application: None,
             });
         }
         for gpu_id in &document.switching_pauses {
@@ -1167,6 +1260,7 @@ impl Snapshot {
             gpus.push(GpuSwitchingStatus {
                 gpu_id: gpu_id.clone(),
                 state: GpuSwitchingState::Paused {},
+                application: activations.get(gpu_id).and_then(|a| a.application.clone()),
             });
         }
         gpus.sort_by(|a, b| a.gpu_id.cmp(&b.gpu_id));

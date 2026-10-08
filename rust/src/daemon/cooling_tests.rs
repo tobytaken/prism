@@ -525,7 +525,7 @@ fn any_failed_fan_write_suspends_the_gpus_curve_control() {
 }
 
 #[test]
-fn a_failed_write_without_a_curve_reports_no_suspension() {
+fn a_failed_fixed_write_reports_default_automatic_recovery_for_each_targeted_fan() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     daemon
         .gpus
@@ -537,7 +537,16 @@ fn a_failed_write_without_a_curve_reports_no_suspension() {
     );
 
     assert_eq!(application["outcome"]["status"], "failed");
-    assert_eq!(control(&daemon)["suspension"], Value::Null);
+    assert_eq!(
+        control(&daemon)["suspension"]["restoration"],
+        json!([
+            restoration(0, "restored", None),
+            restoration(1, "restored", None)
+        ])
+    );
+    assert!(fans(&daemon)
+        .iter()
+        .all(|fan| fan.0 == Some(FanControlMode::Auto)));
 }
 
 #[test]
@@ -1278,9 +1287,15 @@ fn mixed_modes_keep_success_failed_and_unattempted_fans_distinct() {
     );
     assert_eq!(
         state["suspension"]["restoration"],
-        json!([restoration(0, "restored", None)])
+        json!([
+            restoration(0, "restored", None),
+            restoration(1, "restored", None),
+            restoration(2, "restored", None)
+        ])
     );
-    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+    assert!(fans(&daemon)
+        .iter()
+        .all(|fan| fan.0 == Some(FanControlMode::Auto)));
     daemon.set_temperature("GPU-123", Some(85));
     daemon.run_curves_for(500);
     assert_eq!(control(&daemon)["requested"], json!([]));

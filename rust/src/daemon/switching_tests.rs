@@ -349,7 +349,13 @@ fn active_on_linked() -> Value {
         "game": { "kind": "steam", "appId": DOTA },
         "gameName": "Dota 2",
         "profile": { "id": "gaming", "name": "Gaming" }
-    } })
+    }, "application": successful_numeric_application() })
+}
+
+fn successful_numeric_application() -> Value {
+    json!({ "power": { "status": "succeeded", "error": null },
+        "graphics": { "status": "succeeded", "error": null }, "memory": null,
+        "rollback": { "status": "notNeeded", "power": null, "graphics": null, "memory": null, "cooling": null } })
 }
 
 fn writes_to(daemon: &Harness, gpu_id: &str) -> Vec<Setter> {
@@ -398,7 +404,7 @@ fn a_linked_game_applies_its_profile_to_linked_gpus_only_and_its_end_restores_th
     assert_eq!(last_applied(&daemon), manual);
     assert_eq!(
         status(&alice),
-        json!({ "condition": { "status": "ready" }, "gpus": [] })
+        json!({ "condition": { "status": "ready" }, "gpus": [{ "gpuId": LINKED, "state": {"status": "restored"}, "application": successful_numeric_application() }] })
     );
 }
 
@@ -590,7 +596,7 @@ fn status_is_pushed_live_and_another_users_game_shows_without_its_details() {
         .pushed_events()
         .contains(&json!({ "type": "automaticSwitchingChanged", "payload": active })));
     let other = json!({ "condition": { "status": "off" },
-        "gpus": [{ "gpuId": LINKED, "state": { "status": "anotherUser" } }] });
+        "gpus": [{ "gpuId": LINKED, "state": { "status": "anotherUser" }, "application": successful_numeric_application() }] });
     assert_eq!(status(&bob), other);
     assert!(bob
         .pushed_events()
@@ -660,13 +666,11 @@ fn a_partial_restoration_leaves_no_current_profile_and_reports_the_failure() {
 
     daemon.end_process(123);
     daemon.scan();
-    assert_eq!(values(&daemon), (Some(450), Some(150), Some(0)));
+    assert_eq!(values(&daemon), GAMING);
     assert_eq!(current_profile(&alice, LINKED), Value::Null);
     assert_eq!(
-        status(&alice)["gpus"],
-        json!([{ "gpuId": LINKED, "state": {
-            "status": "failed", "message": "Graphics offset write failed."
-        } }])
+        status(&alice)["gpus"][0]["state"],
+        json!({ "status": "failed", "message": "Graphics offset write failed." })
     );
     // A failed restoration isn't retried by later scans.
     let before = writes_to(&daemon, LINKED);
@@ -906,7 +910,7 @@ fn a_cooling_failure_does_not_mark_a_partly_applied_game_profile_as_current() {
     set_switching(&daemon, &alice, true);
     daemon.run_steam_game(123, 1000, 420, DOTA);
     daemon.scan();
-    assert_eq!(values(&daemon).0, Some(330));
+    assert_eq!(values(&daemon).0, Some(450));
     assert_eq!(current_profile(&alice, LINKED), Value::Null);
     assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
     assert_eq!(last_applied(&daemon), manual);
@@ -1862,4 +1866,550 @@ fn applying_manual_tuning_while_a_profile_waits_keeps_the_override_after_edit_ho
     daemon.scan();
     assert_eq!(daemon.gpus.writes(), before);
     assert_eq!(values(&daemon).0, Some(380));
+}
+
+#[test]
+fn partial_automatic_failure_rolls_back_and_waits_for_retry_even_when_the_game_changes() {
+    let (daemon, alice) = linked_dota();
+    ok(alice.send_json(
+        json!({ "type": "import_profiles", "payload": { "profiles": [
+        { "id": "partial", "name": "Partial", "gpuId": LINKED,
+          "settings": { "powerLimitWatts": value(300), "memoryOffsetMHz": value(100) } }
+    ] } }),
+    ));
+    link(&alice, LINKED, Some("partial"));
+    daemon
+        .gpus
+        .fail(LINKED, Setter::MemoryOffset, "Memory rejected");
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME, "power must roll back");
+    let failed = status(&alice)["gpus"][0].clone();
+    assert_eq!(failed["state"]["status"], "failed");
+    assert_eq!(failed["application"]["power"]["status"], "succeeded");
+    assert_eq!(failed["application"]["memory"]["status"], "failed");
+    assert_eq!(failed["application"]["rollback"]["status"], "restored");
+    let writes = writes_to(&daemon, LINKED);
+    link(&alice, LINKED, Some("cool"));
+    daemon.settle();
+    daemon.scan();
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    daemon.settle();
+    assert_eq!(values(&daemon), (Some(320), Some(60), Some(0)));
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+}
+
+#[test]
+fn failed_rollback_requires_recovery_and_retry_restores_the_baseline_after_the_game_ends() {
+    let (daemon, alice) = linked_dota();
+    daemon
+        .gpus
+        .fail(LINKED, Setter::GraphicsOffset, "Graphics rejected");
+    let gate = daemon.gpus.block(LINKED, Setter::GraphicsOffset);
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.core().scan_running_games();
+    gate.wait_until_entered();
+    daemon
+        .gpus
+        .fail(LINKED, Setter::PowerLimit, "Rollback rejected");
+    gate.release();
+    daemon.settle();
+    let failed = status(&alice)["gpus"][0].clone();
+    assert_eq!(failed["state"]["status"], "recoveryRequired");
+    assert_eq!(failed["application"]["rollback"]["status"], "restoreFailed");
+    assert_eq!(
+        failed["application"]["rollback"]["power"]["error"],
+        "Rollback rejected"
+    );
+    let writes = writes_to(&daemon, LINKED);
+    daemon.end_process(123);
+    daemon.scan();
+    daemon.scan();
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    daemon.gpus.stop_failing(LINKED, Setter::PowerLimit);
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "restored");
+}
+
+#[test]
+fn pause_and_resume_preserve_failure_results_and_still_require_retry() {
+    let (daemon, alice) = linked_dota();
+    daemon
+        .gpus
+        .fail(LINKED, Setter::GraphicsOffset, "Graphics rejected");
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let failed = status(&alice)["gpus"][0].clone();
+    assert_eq!(failed["state"]["status"], "failed");
+    daemon.gpus.stop_failing(LINKED, Setter::GraphicsOffset);
+    let writes = writes_to(&daemon, LINKED);
+
+    pause(&daemon, &alice, true);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "paused");
+    assert_eq!(
+        status(&alice)["gpus"][0]["application"],
+        failed["application"]
+    );
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+
+    pause(&daemon, &alice, false);
+    assert_eq!(status(&alice)["gpus"][0], failed);
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+    assert_eq!(values(&daemon), GAMING);
+}
+
+#[test]
+fn failure_pause_survives_daemon_restart_and_becomes_a_startup_note_after_reboot() {
+    let (mut daemon, alice) = linked_dota();
+    daemon
+        .gpus
+        .fail(LINKED, Setter::GraphicsOffset, "Graphics rejected");
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let failed = status(&alice)["gpus"].clone();
+    drop(alice);
+    let writes = writes_to(&daemon, LINKED);
+    daemon.restart();
+    daemon.clock.advance(5_000);
+    let alice = daemon.user(1000, "alice");
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    assert_eq!(status(&alice)["gpus"], failed);
+    drop(alice);
+    daemon.reboot();
+    let alice = daemon.user(1000, "alice");
+    let startup = ok(alice.send_json(json!({ "type": "get_startup_state" })));
+    let outcome = startup["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["gpuId"] == LINKED)
+        .unwrap();
+    assert_eq!(
+        outcome["previousFailure"],
+        "Automatic switching was paused after a failure during the previous boot."
+    );
+    assert_eq!(status(&alice)["gpus"], json!([]));
+}
+
+#[test]
+fn partial_game_failure_restores_complete_cooling_at_current_temperature_and_keeps_curves_running()
+{
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    let manual = last_applied(&daemon);
+    daemon
+        .gpus
+        .fail(LINKED, Setter::PowerLimit, "Power rejected");
+    let gate = daemon.gpus.block(LINKED, Setter::PowerLimit);
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.core().scan_running_games();
+    gate.wait_until_entered();
+    let during = cooling(&alice)["applied"].clone();
+    daemon.set_temperature(LINKED, Some(60));
+    gate.release();
+    daemon.settle();
+    assert_eq!(during, shared_curve());
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+    let failed = status(&alice)["gpus"][0].clone();
+    assert_eq!(
+        failed["application"]["cooling"]["outcome"]["status"],
+        "succeeded"
+    );
+    assert_eq!(
+        failed["application"]["rollback"]["cooling"]["outcome"]["status"],
+        "succeeded"
+    );
+    assert_eq!(failed["state"]["status"], "failed");
+    daemon.set_temperature(LINKED, Some(80));
+    daemon.run_curves_for(500);
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(100)
+    );
+    assert_eq!(last_applied(&daemon), manual);
+}
+
+#[test]
+fn restoration_and_retry_validate_fresh_baseline_ranges_without_clamping_or_partial_writes() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    daemon
+        .gpus
+        .update(LINKED, |gpu| gpu.power.max_limit_watts = Some(400));
+    let writes = writes_to(&daemon, LINKED);
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    assert_eq!(values(&daemon), GAMING);
+    let failed = status(&alice)["gpus"][0].clone();
+    assert_eq!(failed["state"]["status"], "failed");
+    assert_eq!(failed["application"]["power"]["status"], "unattempted");
+    assert_eq!(failed["application"]["graphics"]["status"], "unattempted");
+    assert_eq!(failed["application"]["rollback"]["status"], "notNeeded");
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    daemon
+        .gpus
+        .update(LINKED, |gpu| gpu.power.max_limit_watts = Some(600));
+    daemon.scan();
+    assert_eq!(
+        writes_to(&daemon, LINKED),
+        writes,
+        "range recovery alone must not retry"
+    );
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(values(&daemon), PRE_GAME);
+}
+
+#[test]
+fn rollback_runs_in_reverse_order_and_does_not_overwrite_an_unexpected_reading() {
+    for changed_outside in [false, true] {
+        let (daemon, alice) = linked_dota();
+        ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+            { "id": "all", "name": "All", "gpuId": LINKED, "settings": {
+                "powerLimitWatts": value(300), "graphicsOffsetMHz": value(100), "memoryOffsetMHz": value(100)
+            } }
+        ] } })));
+        link(&alice, LINKED, Some("all"));
+        daemon
+            .gpus
+            .fail(LINKED, Setter::MemoryOffset, "Memory rejected");
+        let gate = daemon.gpus.block(LINKED, Setter::MemoryOffset);
+        set_switching(&daemon, &alice, true);
+        let before = writes_to(&daemon, LINKED).len();
+        daemon.run_steam_game(123, 1000, 420, DOTA);
+        daemon.core().scan_running_games();
+        gate.wait_until_entered();
+        if changed_outside {
+            daemon
+                .gpus
+                .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(380));
+        }
+        gate.release();
+        daemon.settle();
+        let writes = writes_to(&daemon, LINKED);
+        let mut expected = vec![
+            Setter::PowerLimit,
+            Setter::GraphicsOffset,
+            Setter::MemoryOffset,
+            Setter::GraphicsOffset,
+        ];
+        if !changed_outside {
+            expected.push(Setter::PowerLimit);
+        }
+        assert_eq!(&writes[before..], expected);
+        assert_eq!(
+            values(&daemon),
+            (
+                Some(if changed_outside { 380 } else { 450 }),
+                Some(60),
+                Some(0)
+            )
+        );
+        assert_eq!(
+            status(&alice)["gpus"][0]["application"]["rollback"]["status"],
+            if changed_outside {
+                "restoreFailed"
+            } else {
+                "restored"
+            }
+        );
+    }
+}
+
+#[test]
+fn cooling_fault_fallback_results_are_reported_and_only_explicit_retry_can_restart_the_curve() {
+    for fallback in ["restored", "failed", "unverified"] {
+        let (daemon, alice) = cooled_dota();
+        apply_cooling(&alice, shared_curve());
+        daemon.gpus.fail(LINKED, Setter::FanSpeed, "Fan rejected");
+        if fallback == "failed" {
+            daemon
+                .gpus
+                .fail(LINKED, Setter::FanModeAuto, "Auto rejected");
+        }
+        let gate = daemon.gpus.block(LINKED, Setter::FanSpeed);
+        set_switching(&daemon, &alice, true);
+        daemon.run_steam_game(123, 1000, 420, DOTA);
+        daemon.core().scan_running_games();
+        gate.wait_until_entered();
+        if fallback == "unverified" {
+            daemon.gpus.hide_fan_mode(LINKED, 0);
+        }
+        gate.release();
+        daemon.settle();
+        let failed = status(&alice)["gpus"][0].clone();
+        assert_eq!(
+            failed["application"]["cooling"]["fans"][0]["outcome"]["status"],
+            "failed"
+        );
+        assert_eq!(
+            failed["application"]["rollback"]["coolingRestoration"][0]["status"],
+            fallback
+        );
+        assert_eq!(
+            failed["state"]["status"],
+            if fallback == "restored" {
+                "failed"
+            } else {
+                "recoveryRequired"
+            }
+        );
+        daemon.gpus.stop_failing(LINKED, Setter::FanSpeed);
+        let before = writes_to(&daemon, LINKED);
+        daemon.scan();
+        daemon.run_curves_for(500);
+        assert_eq!(writes_to(&daemon, LINKED), before);
+        if fallback == "restored" {
+            ok(alice.send_json(
+                json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } }),
+            ));
+            assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+            assert!(cooling(&alice)["suspension"].is_null());
+        }
+    }
+}
+
+#[test]
+fn a_partial_startup_uses_rollback_and_pauses_game_switching_until_retry() {
+    let (mut daemon, alice) = linked_dota();
+    ok(alice.send_json(json!({ "type": "set_startup_profile", "payload": { "gpuId": LINKED, "profileId": "gaming" } })));
+    ok(alice.send_json(
+        json!({ "type": "set_startup_behavior", "payload": { "behavior": "startupProfiles" } }),
+    ));
+    set_switching(&daemon, &alice, true);
+    daemon
+        .gpus
+        .fail(LINKED, Setter::GraphicsOffset, "Graphics rejected");
+    drop(alice);
+    daemon.reboot();
+    daemon.settle();
+    let alice = daemon.user(1000, "alice");
+    let outcomes = ok(alice.send_json(json!({ "type": "get_startup_state" })))["outcomes"].clone();
+    let outcome = outcomes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["gpuId"] == LINKED)
+        .unwrap();
+    assert_eq!(outcome["application"]["rollback"]["status"], "restored");
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+    link(&alice, LINKED, Some("cool"));
+    let writes = writes_to(&daemon, LINKED);
+    daemon.clock.advance(5_000);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(values(&daemon).0, Some(320));
+}
+
+#[test]
+fn successful_automatic_applications_and_restorations_report_each_setting_and_no_rollback_needed() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let applied = status(&alice)["gpus"][0].clone();
+    assert_eq!(applied["application"]["power"]["status"], "succeeded");
+    assert_eq!(applied["application"]["graphics"]["status"], "succeeded");
+    assert_eq!(applied["application"]["rollback"]["status"], "notNeeded");
+    daemon.end_process(123);
+    daemon.scan();
+    let restored = status(&alice)["gpus"][0].clone();
+    assert_eq!(restored["state"]["status"], "restored");
+    assert_eq!(restored["application"]["power"]["status"], "succeeded");
+    assert_eq!(restored["application"]["graphics"]["status"], "succeeded");
+    assert_eq!(restored["application"]["rollback"]["status"], "notNeeded");
+}
+
+#[test]
+fn retry_after_an_absent_failed_gpu_returns_uses_the_current_profile_instead_of_a_success_snapshot()
+{
+    let (daemon, alice) = linked_dota();
+    daemon
+        .gpus
+        .fail(LINKED, Setter::GraphicsOffset, "Graphics rejected");
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    alice.send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } }));
+    daemon.gpus.arrive(returning);
+    daemon.gpus.stop_failing(LINKED, Setter::GraphicsOffset);
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(values(&daemon), GAMING);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+}
+
+#[test]
+fn retry_can_capture_verified_automatic_cooling_after_a_fault_that_predates_game_tuning() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, shared_curve());
+    daemon.set_temperature(LINKED, None);
+    daemon.run_curves_for(500);
+    assert!(!cooling(&alice)["suspension"].is_null());
+    daemon.set_temperature(LINKED, Some(60));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+    assert!(cooling(&alice)["suspension"].is_null());
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"]["setting"]["mode"], "automatic");
+}
+
+#[test]
+fn retry_preserves_known_numeric_changes_made_outside_prism_during_a_failure_pause() {
+    let (daemon, alice) = linked_dota();
+    daemon
+        .gpus
+        .fail(LINKED, Setter::GraphicsOffset, "Graphics rejected");
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    daemon.gpus.stop_failing(LINKED, Setter::GraphicsOffset);
+    daemon
+        .gpus
+        .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(380));
+    let writes = writes_to(&daemon, LINKED);
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    assert_eq!(values(&daemon).0, Some(380));
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"],
+        json!({ "status": "manualOverride", "changedOutsidePrism": true })
+    );
+}
+
+#[test]
+fn retry_captures_a_mixed_automatic_and_fixed_fallback_without_reviving_the_faulted_curve() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    daemon.set_temperature(LINKED, None);
+    daemon.run_curves_for(500);
+    daemon.set_temperature(LINKED, Some(60));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(
+        cooling(&alice)["applied"],
+        json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 0, "setting": { "mode": "automatic" } },
+        { "fanIndex": 1, "setting": { "mode": "fixed", "speedPercent": 55 } }
+    ] })
+    );
+}
+
+#[test]
+fn partial_fixed_fan_failure_attempts_default_automatic_cooling_and_reports_every_fan() {
+    for fallback in ["restored", "failed", "unverified"] {
+        let (daemon, alice) = cooled_dota();
+        let fixed =
+            json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 75 } });
+        ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+            { "id": "fixed-failure", "name": "Fixed failure", "gpuId": LINKED, "settings": { "cooling": fixed } }
+        ] } })));
+        link(&alice, LINKED, Some("fixed-failure"));
+        daemon
+            .gpus
+            .fail_fan(LINKED, Setter::FanSpeed, 1, "Fixed target rejected");
+        if fallback == "failed" {
+            daemon
+                .gpus
+                .fail_fan(LINKED, Setter::FanModeAuto, 0, "Default rejected");
+        }
+        let gate = daemon.gpus.block(LINKED, Setter::FanSpeed);
+        set_switching(&daemon, &alice, true);
+        daemon.run_steam_game(123, 1000, 420, DOTA);
+        daemon.core().scan_running_games();
+        gate.wait_until_entered();
+        if fallback == "unverified" {
+            daemon.gpus.hide_fan_mode(LINKED, 0);
+        }
+        gate.release();
+        daemon.settle();
+        let failed = status(&alice)["gpus"][0].clone();
+        assert_eq!(
+            failed["application"]["cooling"]["fans"][0]["outcome"]["status"],
+            "succeeded"
+        );
+        assert_eq!(
+            failed["application"]["cooling"]["fans"][1]["outcome"]["status"],
+            "failed"
+        );
+        assert_eq!(
+            failed["application"]["rollback"]["coolingRestoration"][0]["status"],
+            fallback
+        );
+        assert_eq!(
+            failed["application"]["rollback"]["coolingRestoration"][1]["status"],
+            "restored"
+        );
+        assert_eq!(
+            failed["state"]["status"],
+            if fallback == "restored" {
+                "failed"
+            } else {
+                "recoveryRequired"
+            }
+        );
+        let writes = writes_to(&daemon, LINKED);
+        daemon.scan();
+        daemon.run_curves_for(500);
+        assert_eq!(writes_to(&daemon, LINKED), writes);
+        if fallback == "restored" {
+            ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+                { "id": "default-fans", "name": "Default fans", "gpuId": LINKED, "settings": { "cooling": { "arrangement": "shared", "setting": { "mode": "automatic" } } } }
+            ] } })));
+            link(&alice, LINKED, Some("default-fans"));
+            ok(alice.send_json(
+                json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } }),
+            ));
+            assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+        }
+    }
 }

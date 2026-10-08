@@ -1,3 +1,4 @@
+mod automatic_tuning;
 mod backend;
 mod boot_state;
 mod cooling;

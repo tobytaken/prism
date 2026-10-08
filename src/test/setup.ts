@@ -128,6 +128,9 @@ const prismStub: PrismDesktopApi = {
     remove: async () => {
       throw new Error("Removing games is not configured in this test");
     },
+    retrySwitching: async () => {
+      throw new Error("Retry is not configured in this test");
+    },
     setAutomaticSwitching: async () => {
       throw new Error("Automatic switching is not configured in this test");
     },

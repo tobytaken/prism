@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AutomaticSwitchingStatus } from "@/features/games/types";
 
 const SWITCHING_STATUS_QUERY_KEY = ["automatic-switching-status"];
@@ -51,4 +51,15 @@ export function useSwitchingStatus(): ShownSwitchingStatus | undefined {
       gpus: [],
     };
   return query.data;
+}
+
+/** Retry is an explicit request, never a timer or mutation retry loop. */
+export function useRetrySwitching() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (gpuId: string) => window.prism.games.retrySwitching({ gpuId }),
+    retry: false,
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: SWITCHING_STATUS_QUERY_KEY }),
+  });
 }
