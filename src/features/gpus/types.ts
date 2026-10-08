@@ -175,7 +175,7 @@ export interface CoolingInfo {
   /** Why the maximum operating temperature is unknown. */
   maxOperatingTemperatureReason: string | null;
   /** The daemon's judgement of shared fan curves; null when the readings bypassed the daemon. */
-  curve: FanCurveSupport | null;
+  curveSupport: FanCurveSupport | null;
 }
 
 /** A requested fan speed at a GPU temperature, in whole °C and whole percent. */

@@ -160,7 +160,7 @@ export function createPerformanceGpu(
         ],
         maxOperatingTemperatureC: 90,
         maxOperatingTemperatureReason: null,
-        curve: {
+        curveSupport: {
           status: "available",
           maxOperatingTemperatureC: 90,
           fullSpeedTemperatureC: 85,

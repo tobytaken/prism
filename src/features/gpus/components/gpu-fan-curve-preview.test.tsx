@@ -34,7 +34,7 @@ const sharedCooling: CoolingInfo = {
   })),
   maxOperatingTemperatureC: 90,
   maxOperatingTemperatureReason: null,
-  curve: {
+  curveSupport: {
     status: "available",
     maxOperatingTemperatureC: 90,
     fullSpeedTemperatureC: 85,
@@ -193,7 +193,7 @@ describe("Fan curve preview", () => {
     const fake = renderPerformance({
       ...sharedCooling,
       fans: sharedCooling.fans.map((fan) => ({ ...fan, minSpeedPercent: 0 })),
-      curve: {
+      curveSupport: {
         status: "available",
         maxOperatingTemperatureC: 90,
         fullSpeedTemperatureC: 85,
@@ -282,7 +282,7 @@ describe("Fan curve preview", () => {
       maxOperatingTemperatureC: null,
       maxOperatingTemperatureReason:
         "This GPU reports its thermal limit only as a T.Limit margin, not as a temperature.",
-      curve: {
+      curveSupport: {
         status: "unavailable",
         reason:
           "Fan curves need the GPU's maximum operating temperature. This GPU reports its thermal limit only as a T.Limit margin, not as a temperature.",
@@ -311,7 +311,7 @@ describe("Fan curve preview", () => {
   });
 
   it("needs the daemon's judgement before offering a curve", async () => {
-    renderPerformance({ ...sharedCooling, curve: null });
+    renderPerformance({ ...sharedCooling, curveSupport: null });
     const editor = await curveEditor();
 
     expect(

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::drivers::{request_host_reboot, DriverService};
-use crate::fan_curve::{self, FanCurvePreview};
+use crate::fan_curve::{self, FanCurvePreview, PreviewFanCurveRequest};
 use crate::gpu::{
     GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus, GpuPerformanceResponse,
     SetGpuClockOffsetsRequest,
@@ -553,19 +553,7 @@ impl DaemonCore {
                 .live_command(request.gpu_id.clone(), move |backend| {
                     backend.set_fan_mode_auto(request)
                 }),
-            DaemonRequest::PreviewFanCurve(request) => {
-                // A read: it never waits on, or adds to, the GPU's operation queue.
-                let performance = self.dependencies.backend.performance();
-                match performance.gpus.iter().find(|gpu| gpu.id == request.gpu_id) {
-                    Some(gpu) => DaemonResponse::FanCurvePreview(FanCurvePreview {
-                        problems: fan_curve::validate(&gpu.cooling, &request.points),
-                    }),
-                    None => DaemonResponse::Error(GpuCommandError::new(
-                        GpuCommandErrorCode::NotFound,
-                        "The GPU is unavailable. Refresh the GPU readings and try again.",
-                    )),
-                }
-            }
+            DaemonRequest::PreviewFanCurve(request) => self.preview_fan_curve(request),
             DaemonRequest::SetClockOffsets(request) => DaemonResponse::ClockOffsets(
                 self.live_write(request.gpu_id.clone(), move |backend| {
                     set_live_offsets(backend, request)
@@ -637,9 +625,24 @@ impl DaemonCore {
     fn performance(&self) -> GpuPerformanceResponse {
         let mut performance = self.dependencies.backend.performance();
         for gpu in &mut performance.gpus {
-            gpu.cooling.curve = Some(fan_curve::curve_support(&gpu.cooling));
+            gpu.cooling.curve_support = Some(fan_curve::curve_support(&gpu.cooling));
         }
         performance
+    }
+
+    /// Checks a draft curve against the GPU's current limits. A read: it never waits on, or
+    /// adds to, the GPU's operation queue.
+    fn preview_fan_curve(&self, request: PreviewFanCurveRequest) -> DaemonResponse {
+        let performance = self.dependencies.backend.performance();
+        match performance.gpus.iter().find(|gpu| gpu.id == request.gpu_id) {
+            Some(gpu) => DaemonResponse::FanCurvePreview(FanCurvePreview {
+                problems: fan_curve::validate(&gpu.cooling, &request.points),
+            }),
+            None => DaemonResponse::Error(GpuCommandError::new(
+                GpuCommandErrorCode::NotFound,
+                "The GPU is unavailable. Refresh the GPU readings and try again.",
+            )),
+        }
     }
 
     /// Queues a tuning write on the GPU's operation queue.

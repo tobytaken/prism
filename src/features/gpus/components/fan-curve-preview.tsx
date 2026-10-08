@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Minus, Plus, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -23,7 +23,7 @@ type AvailableCurve = Extract<FanCurveSupport, { status: "available" }>;
  * Previews one shared curve for every fan on the GPU. The daemon judges what the GPU supports
  * and checks the curve; nothing here writes to the GPU.
  */
-export function FanCurvePreview({
+export function FanCurvePreviewSection({
   gpu,
   draft,
   onDraftChange,
@@ -32,7 +32,7 @@ export function FanCurvePreview({
   draft: FanCurveDraftPoint[] | null;
   onDraftChange: (points: FanCurveDraftPoint[] | null) => void;
 }) {
-  const support = gpu.cooling.curve;
+  const support = gpu.cooling.curveSupport;
   if (support?.status !== "available") {
     return (
       <PreviewShell>
@@ -93,8 +93,14 @@ function FanCurveEditor({
     queryKey: ["fan-curve-preview", gpu.id, complete, support],
     queryFn: () => previewGpuFanCurve({ gpuId: gpu.id, points: complete! }),
     enabled: complete != null,
+    // While an edit is rechecked, the previous reasons stay rather than flickering away.
+    placeholderData: keepPreviousData,
   });
-  const problems = [...inputProblems, ...(preview.data?.problems ?? [])];
+  const checked = preview.isSuccess && !preview.isPlaceholderData;
+  const problems = [
+    ...inputProblems,
+    ...((complete && preview.data?.problems) || []),
+  ];
   const invalidPoints = new Set(problems.map((problem) => problem.point));
   const change = (index: number, point: Partial<FanCurveDraftPoint>) =>
     onDraftChange(
@@ -108,7 +114,8 @@ function FanCurveEditor({
     <PreviewShell>
       <p className="text-xs text-muted-foreground">
         Reaches {support.maxSpeedPercent}% by {support.fullSpeedTemperatureC}
-        °C, 5°C below the {support.maxOperatingTemperatureC}°C maximum operating
+        °C, {support.maxOperatingTemperatureC - support.fullSpeedTemperatureC}°C
+        below the {support.maxOperatingTemperatureC}°C maximum operating
         temperature. Speeds {support.minSpeedPercent}-{support.maxSpeedPercent}%
         for{" "}
         {fanCount === 1
@@ -197,7 +204,7 @@ function FanCurveEditor({
           <p className="text-destructive">
             Couldn't check this curve: {preview.error.message}
           </p>
-        ) : preview.isSuccess ? (
+        ) : checked ? (
           <p className="text-muted-foreground">
             Valid curve. Preview only: Prism doesn't apply fan curves yet, so
             your fans keep their current mode.

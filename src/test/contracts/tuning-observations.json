@@ -43,7 +43,7 @@
         "fans": [],
         "maxOperatingTemperatureC": null,
         "maxOperatingTemperatureReason": "This GPU or driver doesn't report a maximum operating temperature.",
-        "curve": {
+        "curveSupport": {
           "status": "unavailable",
           "reason": "Fan curves need controllable fans. No fans"
         }

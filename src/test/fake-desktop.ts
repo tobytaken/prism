@@ -763,7 +763,7 @@ export function createFakeDesktop({
     previewFanCurve: vi
       .spyOn(api, "previewFanCurve")
       .mockImplementation(async ({ gpuId, points }) => {
-        const support = byId(gpuId)?.cooling.curve;
+        const support = byId(gpuId)?.cooling.curveSupport;
         if (!support)
           throw new Error(
             "The GPU is unavailable. Refresh the GPU readings and try again.",

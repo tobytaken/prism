@@ -19,7 +19,7 @@ fn curve_support(daemon: &Harness, gpu_id: &str) -> Value {
         .unwrap()
         .iter()
         .find(|gpu| gpu["id"] == gpu_id)
-        .unwrap_or_else(|| panic!("no GPU {gpu_id} in {response}"))["cooling"]["curve"]
+        .unwrap_or_else(|| panic!("no GPU {gpu_id} in {response}"))["cooling"]["curveSupport"]
         .clone()
 }
 

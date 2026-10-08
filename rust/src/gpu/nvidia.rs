@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-
 use std::ops::RangeInclusive;
 
 use nvml_wrapper::enum_wrappers::device::{
@@ -430,7 +429,7 @@ fn query_cooling_controls(
             fans,
             max_operating_temperature_c,
             max_operating_temperature_reason: max_operating_temperature_reason.clone(),
-            curve: None,
+            curve_support: None,
         };
     match device.num_fans() {
         Ok(fan_count) if fan_count > 0 => {
@@ -1124,7 +1123,7 @@ mod tests {
             ],
             max_operating_temperature_c: Some(90),
             max_operating_temperature_reason: None,
-            curve: None,
+            curve_support: None,
         };
         let mut warnings = Vec::new();
 

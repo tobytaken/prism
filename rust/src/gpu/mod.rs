@@ -162,7 +162,7 @@ pub struct CoolingInfo {
     /// Whether one shared fan curve can control every fan, as judged by the daemon; unknown
     /// when the readings didn't come from the daemon.
     #[serde(default)]
-    pub curve: Option<FanCurveSupport>,
+    pub curve_support: Option<FanCurveSupport>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -642,7 +642,7 @@ mod tests {
                     }],
                     max_operating_temperature_c: Some(90),
                     max_operating_temperature_reason: None,
-                    curve: None,
+                    curve_support: None,
                 },
                 clocks: ClockOffsetsInfo {
                     graphics: ClockOffsetInfo {
