@@ -299,8 +299,9 @@ export function createFakeDesktop({
           detail: null,
         })),
     };
+    // Only a confirmed restoration means the driver reports automatic control.
     for (const { fanIndex, status } of control.suspension.restoration)
-      if (status !== "failed") gpu.cooling.fans[fanIndex].mode = "auto";
+      if (status === "restored") gpu.cooling.fans[fanIndex].mode = "auto";
     control.requested = [];
     control.curveTemperatureC = null;
   };
@@ -1046,20 +1047,32 @@ export function createFakeDesktop({
       const state = tuningState(owner(gpuId));
       for (const listener of tuningStateListeners) listener(state);
     },
-    /** Follows each running curve at the GPU's current temperature, as the daemon's loop does. */
-    followCurves() {
+    /**
+     * Follows each running curve at the GPU's current temperature, as the daemon's loop does.
+     * Rises apply at once; a drop applies only once the caller says demand has stayed lower for
+     * the daemon's five-second delay. A missing temperature suspends the curve.
+     */
+    followCurves({ decreaseDelayElapsed = false } = {}) {
       for (const gpu of response.gpus) {
         const control = gpu.cooling.control;
         const settings = fanSettings(control?.applied ?? null, gpu);
-        if (!control?.requested.length || gpu.telemetry.temperatureC == null)
+        if (!control?.requested.length) continue;
+        if (gpu.telemetry.temperatureC == null) {
+          suspendCurve(
+            gpu,
+            "The GPU's temperature is unavailable, so Prism stopped following its curve.",
+          );
           continue;
+        }
         for (const request of control.requested) {
           const setting = settings.get(request.fanIndex);
           if (setting?.mode !== "curve") continue;
-          request.speedPercent = requestedSpeed(
+          const demand = requestedSpeed(
             setting.points,
             gpu.telemetry.temperatureC,
           );
+          if (demand < request.speedPercent && !decreaseDelayElapsed) continue;
+          request.speedPercent = demand;
           gpu.cooling.fans[request.fanIndex].currentSpeedPercent =
             request.speedPercent;
         }

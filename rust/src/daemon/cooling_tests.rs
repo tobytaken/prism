@@ -646,7 +646,10 @@ fn cooling_payloads_round_trip_the_shared_contract() {
     assert_eq!(serde_json::to_value(request).unwrap(), contract["request"]);
     let application: CoolingApplication =
         serde_json::from_value(contract["application"].clone()).unwrap();
-    assert_eq!(serde_json::to_value(application).unwrap(), contract["application"]);
+    assert_eq!(
+        serde_json::to_value(application).unwrap(),
+        contract["application"]
+    );
     for control in contract["controls"].as_array().unwrap() {
         let typed: CoolingControl = serde_json::from_value(control.clone()).unwrap();
         assert_eq!(&serde_json::to_value(typed).unwrap(), control);
@@ -664,6 +667,77 @@ fn applied_curves_request_the_contracts_speeds() {
     for pair in contract["requestedAtTemperature"].as_array().unwrap() {
         daemon.set_temperature("GPU-123", Some(pair[0].as_u64().unwrap() as u32));
         apply(&daemon, contract["request"]["configuration"].clone());
-        assert_eq!(control(&daemon)["requested"][0]["speedPercent"], pair[1], "{pair}");
+        assert_eq!(
+            control(&daemon)["requested"][0]["speedPercent"],
+            pair[1],
+            "{pair}"
+        );
     }
+}
+
+#[test]
+fn a_stop_that_cant_wait_for_a_stuck_curve_write_leaves_its_fans_to_recovery() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    let gate = daemon.gpus.block("GPU-123", Setter::FanSpeed);
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.clock.advance(500);
+    let stuck = daemon.core();
+    stuck.follow_curves();
+    gate.wait_until_entered();
+
+    stuck.stop();
+    assert_eq!(fans(&daemon)[1].0, Some(FanControlMode::Auto));
+
+    // The hung write lands after the stop restored the fans.
+    gate.release();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while fans(&daemon)[0] != manual(90) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the hung write never landed"
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        control(&daemon)["requested"],
+        json!([]),
+        "the stopped curve came back"
+    );
+
+    // Whoever runs next returns the fan the late write took.
+    daemon.crash_daemon();
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+    assert_eq!(
+        control(&daemon)["suspension"]["restoration"][0],
+        restoration(0, "restored", None)
+    );
+}
+
+#[test]
+fn a_write_hanging_mid_application_is_a_stall_with_its_fans_already_recorded() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    let core = daemon.core();
+    let gate = daemon.gpus.block("GPU-123", Setter::FanSpeed);
+    let application = daemon.send_in_background(
+        serde_json::from_value(json!({
+            "type": "apply_cooling",
+            "payload": { "gpuId": "GPU-123", "configuration": shared_curve(&STARTER) },
+        }))
+        .unwrap(),
+    );
+    gate.wait_until_entered();
+
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(daemon.boot_path("cooling-control.json")).unwrap())
+            .unwrap();
+    assert_eq!(record["gpus"]["GPU-123"]["curveFans"], json!([0, 1]));
+    daemon.clock.advance(2_000);
+    assert!(!core.cooling_is_live(1_000));
+
+    gate.release();
+    application.response();
+    core.follow_curves();
+    daemon.settle();
+    assert!(core.cooling_is_live(1_000));
 }

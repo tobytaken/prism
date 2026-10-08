@@ -37,7 +37,7 @@ fn main() {
 }
 
 fn run_tests() {
-    let tests: [(&str, fn()); 3] = [
+    let tests: [(&str, fn()); 4] = [
         (
             "a_graceful_stop_restores_automatic_cooling",
             a_graceful_stop_restores_automatic_cooling,
@@ -45,6 +45,10 @@ fn run_tests() {
         (
             "after_an_abnormal_termination_the_stop_command_restores_automatic_cooling",
             after_an_abnormal_termination_the_stop_command_restores_automatic_cooling,
+        ),
+        (
+            "a_failed_restore_is_recorded_rather_than_reported_as_recovered",
+            a_failed_restore_is_recorded_rather_than_reported_as_recovered,
         ),
         (
             "a_stalled_curve_starves_the_watchdog_and_the_stop_command_still_recovers",
@@ -71,7 +75,8 @@ fn gpu_dir() -> PathBuf {
 }
 
 /// GPUs whose state lives in files the test can read: `gpus.json`, overlaid by a `temperature`
-/// file. While a `hang` file exists, fan speed writes never finish.
+/// file. While a `hang` file exists, fan speed writes never finish; while `fail-auto-<fan>`
+/// exists, the driver rejects returning that fan to automatic control.
 struct FileGpus(PathBuf);
 
 impl FileGpus {
@@ -123,6 +128,13 @@ impl DaemonBackend for FileGpus {
     }
 
     fn set_fan_mode_auto(&self, request: SetGpuFanModeAutoRequest) -> Result<(), String> {
+        if self
+            .0
+            .join(format!("fail-auto-{}", request.fan_index))
+            .exists()
+        {
+            return Err("Insufficient permissions".into());
+        }
         self.change_fan(request.fan_index, |fan| {
             fan.mode = Some(FanControlMode::Auto)
         });
@@ -422,4 +434,38 @@ fn a_stalled_curve_starves_the_watchdog_and_the_stop_command_still_recovers() {
     daemon.wait_for_exit();
     host.run_stop_command();
     host.wait_for_fan_modes(FanControlMode::Auto);
+    assert_eq!(
+        host.recorded_suspension()["reason"],
+        "The Prism daemon stopped unexpectedly while following this curve."
+    );
+}
+
+fn a_failed_restore_is_recorded_rather_than_reported_as_recovered() {
+    let host = Host::new();
+    let mut daemon = host.start_daemon(None);
+    host.apply_starter_curve();
+    std::fs::write(host.path("gpus/fail-auto-1"), "").unwrap();
+
+    daemon.signal(libc::SIGKILL);
+    daemon.wait_for_exit();
+    host.run_stop_command();
+
+    assert_eq!(
+        host.fan_modes(),
+        vec![Some(FanControlMode::Auto), Some(FanControlMode::Manual)]
+    );
+    let restoration = &host.recorded_suspension()["restoration"];
+    assert_eq!(restoration[0]["status"], "restored");
+    assert_eq!(restoration[1]["status"], "failed");
+    assert_eq!(restoration[1]["detail"], "Insufficient permissions");
+
+    // The next daemon keeps reporting the failure rather than trying to hide it.
+    std::fs::remove_file(host.path("gpus/fail-auto-1")).unwrap();
+    let _daemon = host.start_daemon(None);
+    let performance = host.send(json!({ "type": "get_performance" }));
+    assert_eq!(
+        performance["payload"]["gpus"][0]["cooling"]["control"]["suspension"]["restoration"][1]
+            ["status"],
+        "failed"
+    );
 }

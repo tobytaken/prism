@@ -123,8 +123,11 @@ pub fn curve_support(cooling: &CoolingInfo) -> FanCurveSupport {
 
 /// The problems that keep the points from forming a usable shared curve; none means valid.
 pub fn validate(cooling: &CoolingInfo, points: &[FanCurvePoint]) -> Vec<FanCurveProblem> {
-    let every_fan: Vec<u32> = cooling.fans.iter().map(|fan| fan.index).collect();
-    validate_for(cooling, &every_fan, points)
+    validate_for(cooling, &every_fan(cooling), points)
+}
+
+fn every_fan(cooling: &CoolingInfo) -> Vec<u32> {
+    cooling.fans.iter().map(|fan| fan.index).collect()
 }
 
 /// The problems that keep the points from forming one curve shared by these fans.
@@ -166,8 +169,7 @@ pub fn requested_speed(points: &[FanCurvePoint], temperature_c: i64) -> i64 {
 }
 
 fn curve_limits(cooling: &CoolingInfo) -> Result<CurveLimits, String> {
-    let every_fan: Vec<u32> = cooling.fans.iter().map(|fan| fan.index).collect();
-    curve_limits_for(cooling, &every_fan)
+    curve_limits_for(cooling, &every_fan(cooling))
 }
 
 fn curve_limits_for(cooling: &CoolingInfo, fan_indexes: &[u32]) -> Result<CurveLimits, String> {

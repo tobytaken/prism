@@ -101,11 +101,6 @@ pub(super) fn watchdog_interval() -> Option<std::time::Duration> {
     (usec > 0).then(|| std::time::Duration::from_micros(usec))
 }
 
-#[cfg(test)]
-fn notify_ready_to(path: &OsStr) -> std::io::Result<()> {
-    notify_to(path, b"READY=1")
-}
-
 fn notify_to(path: &OsStr, message: &[u8]) -> std::io::Result<()> {
     let address = if let Some(name) = path.as_bytes().strip_prefix(b"@") {
         SocketAddr::from_abstract_name(name)?
@@ -135,7 +130,7 @@ mod tests {
             socket
                 .set_read_timeout(Some(std::time::Duration::from_secs(1)))
                 .unwrap();
-            notify_ready_to(&path).unwrap();
+            notify_to(&path, b"READY=1").unwrap();
             let mut message = [0; 64];
             let size = socket.recv(&mut message).unwrap();
             assert_eq!(&message[..size], b"READY=1");

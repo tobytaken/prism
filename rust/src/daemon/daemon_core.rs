@@ -749,18 +749,17 @@ impl DaemonCore {
             .map(|uuid| {
                 let cooling = Arc::clone(&self.cooling);
                 let id = uuid.clone();
-                (
-                    uuid,
-                    self.submit_write(&id.clone(), move |backend| cooling.stop(backend, &id)),
-                )
+                let operation =
+                    self.submit_write(&uuid, move |backend| cooling.stop_following(backend, &id));
+                (uuid, operation)
             })
             .collect();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         for (uuid, operation) in pending {
-            if operation
-                .wait_timeout(std::time::Duration::from_secs(5))
-                .is_none()
-            {
-                self.cooling.stop(self.dependencies.backend.as_ref(), &uuid);
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if operation.wait_timeout(remaining).is_none() {
+                self.cooling
+                    .stop_following_stuck(self.dependencies.backend.as_ref(), &uuid);
             }
         }
     }
