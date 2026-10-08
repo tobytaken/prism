@@ -20,6 +20,38 @@ fn pause(daemon: &Harness, session: &FakeSession, paused: bool) {
 }
 
 #[test]
+fn resuming_after_gpu_return_keeps_the_cooling_baseline_when_driver_fan_policy_was_reset() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+        { "id": "fixed", "name": "Fixed", "gpuId": LINKED, "settings": {
+            "powerLimitWatts": value(350),
+            "cooling": { "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 50 } }
+        } }
+    ] } })));
+    link(&alice, LINKED, Some("fixed"));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    pause(&daemon, &alice, true);
+    let mut returning = daemon.gpus.gpu(LINKED);
+    for fan in &mut returning.cooling.fans {
+        fan.mode = Some(crate::gpu::FanControlMode::Auto);
+    }
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    daemon.gpus.arrive(returning);
+    daemon.scan();
+    pause(&daemon, &alice, false);
+    assert_eq!(cooling(&alice)["applied"]["setting"]["mode"], "fixed");
+    assert_eq!(cooling(&alice)["suspension"], Value::Null);
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+}
+
+#[test]
 fn a_paused_gpu_that_disappears_preserves_its_baseline_when_resumed_after_return() {
     let (daemon, alice) = linked_dota();
     set_switching(&daemon, &alice, true);

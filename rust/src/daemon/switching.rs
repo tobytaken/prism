@@ -21,6 +21,7 @@ use super::session::SessionPeer;
 use super::tuning::apply_unreviewed_profile;
 use super::tuning_store::{write_atomically, TuningDocument, TuningStore};
 use crate::cooling::{CoolingConfiguration, SuspensionKind};
+use crate::gpu::GpuPerformanceDevice;
 use crate::protocol::{
     ApplyGpuProfileRequest, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
     GpuSwitchingState, GpuSwitchingStatus, ProfileSetting, ProfileSettingKey, ProfileSettings,
@@ -74,6 +75,14 @@ struct Activation {
     failure: Option<String>,
     /// An override relinquishes the baseline. Keep an external-change notice after games end.
     manual_override: Option<ManualOverride>,
+}
+
+impl Activation {
+    fn numeric_changed(&self, gpu: &GpuPerformanceDevice) -> bool {
+        self.expected.iter().any(|(key, expected)| {
+            matches!((expected, reading(gpu, *key).current), (Some(before), Some(now)) if *before != now)
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,10 +210,16 @@ impl Switching {
             })?;
             let replaced = activations.get(gpu_id).is_some_and(|a| {
                 a.manual_override.is_some()
-                    || (!a.gpu_absent && a.expected.iter().any(|(key, expected)| {
-                        matches!((expected, reading(gpu, *key).current), (Some(before), Some(now)) if *before != now)
-                    }))
-                    || (a.cooling_baseline.is_some() && self.cooling.changed_outside_prism(gpu))
+                    || (!a.gpu_absent && a.numeric_changed(gpu))
+                    || (a.cooling_baseline.is_some()
+                        && if a.gpu_absent {
+                            self.cooling
+                                .control(gpu_id)
+                                .suspension
+                                .is_some_and(|s| s.kind == SuspensionKind::ExternalControl)
+                        } else {
+                            self.cooling.changed_outside_prism(gpu)
+                        })
             });
             if replaced {
                 // Relinquish the obsolete baseline durably before allowing automatic writes.
@@ -452,9 +467,10 @@ impl Switching {
                 } else {
                     self.cooling.changed_outside_prism(gpu)
                 };
-            let numeric_changed = !returning && activation.as_ref().is_some_and(|active| active.expected.iter().any(|(key, expected)| {
-                matches!((expected, reading(gpu, *key).current), (Some(before), Some(now)) if *before != now)
-            }));
+            let numeric_changed = !returning
+                && activation
+                    .as_ref()
+                    .is_some_and(|active| active.numeric_changed(gpu));
             if cooling_changed || numeric_changed {
                 self.record(
                     gpu_id,

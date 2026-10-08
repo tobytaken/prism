@@ -92,6 +92,14 @@ export function GameTuningPanel({
             )?.state;
             const resume =
               state?.status === "paused" || state?.status === "manualOverride";
+            const actions = [
+              {
+                label: "Pause",
+                paused: true,
+                shown: state?.status !== "paused",
+              },
+              { label: "Resume", paused: false, shown: resume },
+            ].filter((action) => action.shown);
             const unavailable =
               !workflow.switching ||
               ["unknown", "blocked"].includes(
@@ -111,19 +119,24 @@ export function GameTuningPanel({
                   }`}
                 </span>
                 {gpu.stableId && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={unavailable || switchingChange.isPending}
-                    onClick={() =>
-                      switchingChange.mutate({
-                        gpuId: gpu.stableId!,
-                        paused: !resume,
-                      })
-                    }
-                  >
-                    {resume ? "Resume" : "Pause"}
-                  </Button>
+                  <div className="flex gap-2">
+                    {actions.map((action) => (
+                      <Button
+                        key={action.label}
+                        size="sm"
+                        variant="outline"
+                        disabled={unavailable || switchingChange.isPending}
+                        onClick={() =>
+                          switchingChange.mutate({
+                            gpuId: gpu.stableId!,
+                            paused: action.paused,
+                          })
+                        }
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </div>
                 )}
               </li>
             );

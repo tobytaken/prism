@@ -350,6 +350,7 @@ fn request_timeout(request: &DaemonRequest) -> Duration {
             | DaemonRequest::ApplyProfileById(_)
             | DaemonRequest::CorrectAndApplyProfile(_)
             | DaemonRequest::SetStartupProfile(_)
+            | DaemonRequest::SetGpuSwitchingPaused(_)
     ) {
         Duration::from_secs(35)
     } else if request.is_game_request() {

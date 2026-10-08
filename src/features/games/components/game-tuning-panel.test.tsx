@@ -135,6 +135,12 @@ it("offers Resume for a manual override, reports a rejected request, and disable
   );
   expect(within(panel).getByRole("button", { name: "Resume" })).toBeEnabled();
   expect(panel).toHaveTextContent("Manual override");
+  // A temporary override can become a persistent pause without first applying game tuning.
+  await user.click(within(panel).getByRole("button", { name: "Pause" }));
+  await waitFor(() =>
+    expect(panel).toHaveTextContent("Paused. Current tuning is kept"),
+  );
+  expect(within(panel).queryByRole("button", { name: "Pause" })).toBeNull();
   await user.click(within(panel).getByRole("button", { name: "Resume" }));
   expect(
     await within(panel).findByRole("button", { name: "Pause" }),
