@@ -15,7 +15,6 @@ import {
   profileSelector,
   saveAsNew,
   saveAsNewAvailability,
-  switchWithoutSaving,
 } from "@/test/profile-selector";
 import { renderWithQueryClient } from "@/test/query-client";
 import type {
@@ -62,7 +61,7 @@ async function saveProfile(
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
 }
 
-it("keeps a numeric value equal to today's default fixed, while an explicit default follows a changed driver default", async () => {
+it("saves a numeric power limit equal to the driver default as a fixed value", async () => {
   const user = userEvent.setup();
   const response = createPerformanceResponse();
   const fake = fakeDesktopGpu(response);
@@ -83,6 +82,32 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
     kind: "value",
     value: 575,
   });
+});
+
+it("saves an explicit power default only after applying it", async () => {
+  const user = userEvent.setup();
+  const response = createPerformanceResponse({
+    gpus: [createPerformanceGpu({ power: { currentLimitWatts: 575 } })],
+  });
+  const fake = fakeDesktopGpu(
+    response,
+    [
+      {
+        id: "fixed",
+        name: "Fixed",
+        gpuId: "GPU-123",
+        settings: {
+          cooling: { arrangement: "shared", setting: { mode: "automatic" } },
+          powerLimitWatts: { kind: "value", value: 575 },
+          graphicsOffsetMHz: { kind: "value", value: 120 },
+        },
+      },
+    ],
+    { "GPU-123": "fixed" },
+  );
+  renderPerformancePage();
+  await waitFor(() => expect(profileSelector()).toHaveTextContent("Fixed"));
+  const power = screen.getByRole("spinbutton", { name: "Power limit" });
 
   await user.click(
     screen.getByRole("button", { name: "Use default power limit" }),
@@ -121,28 +146,52 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
     expect(screen.queryByText("Changes not saved to profile")).toBeNull(),
   );
 
-  // A driver update changes the reported default.
+  // A saved default intent tracks the driver default, even before applying the profile again.
   response.gpus[0].power.defaultLimitWatts = 520;
   await waitFor(() =>
     expect(profileSelector()).toHaveTextContent("Changes not saved to profile"),
   );
-  await chooseProfile(user, "Fixed");
-  await switchWithoutSaving(user);
-  await waitFor(() =>
-    expect(fake.applyProfileById).toHaveBeenLastCalledWith({
-      profileId: "profile-1",
-    }),
-  );
-  await waitFor(() =>
-    expect(response.gpus[0].power.currentLimitWatts).toBe(575),
-  );
-  await waitFor(() => expect(profileSelector()).toHaveTextContent("Fixed"));
-  await chooseProfile(user, "Default");
-  await waitFor(() => expect(power).toHaveValue(520));
-  expect(response.gpus[0].power.currentLimitWatts).toBe(520);
-  expect(within(powerRegion()).getByText("Uses default")).toBeInTheDocument();
-  expect(screen.queryByText("Changes not saved to profile")).toBeNull();
 });
+
+it.each<{
+  name: string;
+  setting: NonNullable<GpuTuningProfile["settings"]["powerLimitWatts"]>;
+  expectedWatts: number;
+}>([
+  { name: "Fixed", setting: { kind: "value", value: 575 }, expectedWatts: 575 },
+  { name: "Default", setting: { kind: "default" }, expectedWatts: 520 },
+])(
+  "applies $name power intent after the driver default changes",
+  async ({ name, setting, expectedWatts }) => {
+    const user = userEvent.setup();
+    const response = createPerformanceResponse();
+    const fake = fakeDesktopGpu(response, [
+      {
+        id: "saved",
+        name,
+        gpuId: "GPU-123",
+        settings: { powerLimitWatts: setting },
+      },
+    ]);
+    renderPerformancePage();
+    const power = await screen.findByRole("spinbutton", { name: "Power limit" });
+
+    // The saved value matched the old 575 W default. Apply must resolve any default intent
+    // against the driver now, while leaving a saved numeric value unchanged.
+    response.gpus[0].power.defaultLimitWatts = 520;
+    await chooseProfile(user, name);
+    await waitFor(() => expect(power).toHaveValue(expectedWatts));
+    expect(fake.applyProfileById).toHaveBeenLastCalledWith({ profileId: "saved" });
+    expect(response.gpus[0].power.currentLimitWatts).toBe(expectedWatts);
+    expect(profileSelector()).toHaveTextContent(name);
+    if (setting.kind === "default") {
+      expect(within(powerRegion()).getByText("Uses default")).toBeInTheDocument();
+    } else {
+      expect(within(powerRegion()).queryByText("Uses default")).toBeNull();
+    }
+    expect(screen.queryByText("Changes not saved to profile")).toBeNull();
+  },
+);
 
 it("treats switching between a number and Use default as an unapplied edit even when the resolved number matches", async () => {
   const user = userEvent.setup();
