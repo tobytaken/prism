@@ -80,9 +80,14 @@ export function useTuningEdits() {
   }
   function retryAction(gpu: GpuPerformanceDevice, setting: TuningSetting) {
     const device = devices[gpu.id];
+    if (
+      (setting === "cooling" || setting.startsWith("fan:")) &&
+      hasStaleCoolingDraft(device, gpu.cooling.control?.revision)
+    )
+      return null;
     const owner = device?.profileOwners?.[setting];
     const value = device?.edits[setting];
-    if (owner) {
+    if (owner && setting !== "cooling") {
       const key = profileSettingKey(setting);
       const instruction = profileInstruction(value);
       if (gpu.stableId !== owner || !key || !instruction) return null;
@@ -102,14 +107,15 @@ export function useTuningEdits() {
     handler: TuningMutationHandler,
     {
       reviewCorrections = false,
-      coolingRevision = gpu.cooling.control?.revision,
+      coolingRevision = gpu.cooling.control?.revision ?? 0,
     } = {},
   ): Promise<ProfileRangeCorrection[] | undefined> {
     const intentions = actionIntentions(action, gpu);
     const coolingAction =
       action.kind === "applyCooling" ||
       action.kind === "setFanSpeed" ||
-      action.kind === "setFanModeAuto";
+      action.kind === "setFanModeAuto" ||
+      (action.kind === "applyProfile" && action.settings.cooling != null);
     if (coolingAction && gpu.cooling.control) {
       const revision = gpu.cooling.control.revision;
       const device = devices[gpu.id];
@@ -162,21 +168,25 @@ export function useTuningEdits() {
       return {
         ...device,
         profileOwners,
-        coolingRevisions:
-          coolingAction && gpu.cooling.control
-            ? {
-                ...device.coolingRevisions,
-                ...Object.fromEntries(
-                  Object.keys(intentions).map((setting) => [
+        coolingRevisions: coolingAction
+          ? {
+              ...device.coolingRevisions,
+              ...Object.fromEntries(
+                Object.keys(intentions)
+                  .filter(
+                    (setting) =>
+                      setting === "cooling" || setting.startsWith("fan:"),
+                  )
+                  .map((setting) => [
                     setting,
                     setting in device.edits
                       ? (device.coolingRevisions?.[setting as TuningSetting] ??
-                        gpu.cooling.control!.revision)
-                      : gpu.cooling.control!.revision,
+                        coolingRevision)
+                      : coolingRevision,
                   ]),
-                ),
-              }
-            : device.coolingRevisions,
+              ),
+            }
+          : device.coolingRevisions,
         edits: { ...device.edits, ...intentions },
       };
     });
@@ -247,13 +257,9 @@ export function useTuningEdits() {
       const coolingRevisions = { ...device.coolingRevisions };
       // A completed own write acknowledges only drafts based on the revision it replaced.
       // A stale rejection or transport error never acknowledges competing changes.
-      if (
-        result?.coolingRevision != null &&
-        coolingAction &&
-        "expectedRevision" in action
-      ) {
+      if (result?.coolingRevision != null && coolingAction) {
         for (const key of Object.keys(coolingRevisions) as TuningSetting[]) {
-          if (coolingRevisions[key] === action.expectedRevision)
+          if (coolingRevisions[key] === coolingRevision)
             coolingRevisions[key] = result.coolingRevision;
         }
       }
@@ -529,9 +535,16 @@ function actionIntentions(
     case "applyProfile": {
       const intention = (setting: ProfileSetting) =>
         setting.kind === "default" ? ("default" as const) : setting.value;
-      const { powerLimitWatts, graphicsOffsetMHz, memoryOffsetMHz } =
+      const { powerLimitWatts, graphicsOffsetMHz, memoryOffsetMHz, cooling } =
         action.settings;
       return {
+        ...(cooling && {
+          cooling: {
+            ...coolingDraft(cooling),
+            stableId: action.stableId,
+            fanIndexes: gpu.cooling.fans.map((fan) => fan.index),
+          },
+        }),
         ...(powerLimitWatts && { power: intention(powerLimitWatts) }),
         ...(graphicsOffsetMHz && { graphics: intention(graphicsOffsetMHz) }),
         ...(memoryOffsetMHz && { memory: intention(memoryOffsetMHz) }),

@@ -1,4 +1,6 @@
 use super::backend::DaemonBackend;
+use super::cooling::{CoolingApplicationSource, CoolingController};
+use crate::cooling::{ApplyCoolingRequest, CoolingApplication};
 use crate::gpu::{GpuTargetRequest, SetGpuClockOffsetsRequest, SetGpuPowerLimitRequest};
 use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, ProfileApplicationResponse,
@@ -6,12 +8,23 @@ use crate::protocol::{
     TuningOutcomeStatus,
 };
 
+/// Manual operations may review range corrections and update manual intent. Temporary automatic
+/// applications/restorations use the same validation/controller but never become manual state.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TuningOrigin {
+    Manual,
+    TemporaryAutomatic,
+}
+
 // Validate the entire profile before any live write.
 pub(super) fn apply_profile(
     backend: &dyn DaemonBackend,
+    cooling: &CoolingController,
     request: ApplyGpuProfileRequest,
+    origin: TuningOrigin,
+    source: CoolingApplicationSource,
 ) -> ProfileApplicationResponse {
-    apply(backend, request, true)
+    apply(backend, Some(cooling), request, origin, source)
 }
 
 /// Boot results are shared across users. Only manual loads may disclose saved values
@@ -20,25 +33,39 @@ pub(super) fn apply_unreviewed_profile(
     backend: &dyn DaemonBackend,
     request: ApplyGpuProfileRequest,
 ) -> ProfileApplicationResponse {
-    apply(backend, request, false)
+    apply(
+        backend,
+        None,
+        request,
+        TuningOrigin::TemporaryAutomatic,
+        CoolingApplicationSource::NonManual,
+    )
 }
 
 fn apply(
     backend: &dyn DaemonBackend,
+    cooling: Option<&CoolingController>,
     request: ApplyGpuProfileRequest,
-    review_ranges: bool,
+    origin: TuningOrigin,
+    source: CoolingApplicationSource,
 ) -> ProfileApplicationResponse {
+    let review_ranges = origin == TuningOrigin::Manual;
     use crate::gpu::ControlSupport;
     let settings = &request.settings;
     let blocked = |message: String, corrections: Vec<ProfileRangeCorrection>| {
-        let outcome = |_| TuningOutcome {
+        let outcome = || TuningOutcome {
             status: TuningOutcomeStatus::Unattempted,
             error: Some(message.clone()),
         };
         ProfileApplicationResponse {
-            power: settings.power_limit_watts.map(outcome),
-            graphics: settings.graphics_offset_mhz.map(outcome),
-            memory: settings.memory_offset_mhz.map(outcome),
+            cooling: settings.cooling.as_ref().map(|_| CoolingApplication {
+                revision: cooling.map_or(0, |c| c.control(&request.gpu_id).revision),
+                outcome: outcome(),
+                fans: vec![],
+            }),
+            power: settings.power_limit_watts.map(|_| outcome()),
+            graphics: settings.graphics_offset_mhz.map(|_| outcome()),
+            memory: settings.memory_offset_mhz.map(|_| outcome()),
             corrections,
         }
     };
@@ -107,7 +134,7 @@ fn apply(
                             } else {
                                 format!("{label} is outside the current allowed range. Load the profile manually to review a correction.")
                             },
-                            ProfileRangeCorrection { setting: setting_key, saved_value: value, proposed_value, bound },
+                            ProfileRangeCorrection::Numeric(crate::protocol::NumericRangeCorrection { setting: setting_key, saved_value: value, proposed_value, bound }),
                         ));
                     },
                     _ => errors.push(format!("{label}: the current allowed range is unavailable. Refresh the GPU readings and try again.")),
@@ -146,6 +173,22 @@ fn apply(
         gpu.clocks.memory.min_offset_mhz.map(i64::from),
         gpu.clocks.memory.max_offset_mhz.map(i64::from),
     );
+    if let Some(configuration) = &settings.cooling {
+        if cooling.is_none() {
+            errors.push(
+                "Automatic cooling profile application is not available through this caller yet."
+                    .into(),
+            );
+        }
+        let problems = super::cooling_profiles::problems(gpu, configuration);
+        if !problems.is_empty() {
+            if let Some(correction) = super::cooling_profiles::correction(gpu, configuration) {
+                range_errors.push((problems.join("\n"), correction));
+            } else {
+                errors.extend(problems);
+            }
+        }
+    }
     // Range corrections are offered only when they alone would make the profile applicable.
     let (range_messages, corrections): (Vec<_>, Vec<_>) = range_errors.into_iter().unzip();
     errors.extend(range_messages);
@@ -181,7 +224,8 @@ fn apply(
             }
         }
     };
-    ProfileApplicationResponse {
+    let mut response = ProfileApplicationResponse {
+        cooling: None,
         power: power.map(|value| {
             execute(&mut || {
                 backend.set_power_limit(SetGpuPowerLimitRequest {
@@ -209,7 +253,34 @@ fn apply(
             })
         }),
         corrections: vec![],
-    }
+    };
+    response.cooling = settings.cooling.as_ref().map(|configuration| {
+        if failed {
+            CoolingApplication {
+                revision: cooling.unwrap().control(&request.gpu_id).revision,
+                outcome: TuningOutcome {
+                    status: TuningOutcomeStatus::Unattempted,
+                    error: Some(
+                        "An earlier profile setting failed. Retry or discard this instruction."
+                            .into(),
+                    ),
+                },
+                fans: vec![],
+            }
+        } else {
+            cooling.unwrap().apply(
+                backend,
+                ApplyCoolingRequest {
+                    gpu_id: request.gpu_id.clone(),
+                    configuration: configuration.clone(),
+                    expected_revision: None,
+                    fan_indexes: None,
+                },
+                source,
+            )
+        }
+    });
+    response
 }
 
 // Split the existing live command so a later failure cannot hide an earlier write.

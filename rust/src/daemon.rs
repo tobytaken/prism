@@ -7,6 +7,7 @@ mod host;
 mod migration;
 mod possibly_stale;
 mod profiles;
+mod cooling_profiles;
 mod queue;
 mod recognition;
 mod session;

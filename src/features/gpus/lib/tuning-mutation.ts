@@ -73,6 +73,21 @@ export async function runTuningMutation(
               settings: action.settings,
             });
       return {
+        ...(result.cooling && {
+          cooling: {
+            ...result.cooling.outcome,
+            error:
+              result.cooling.outcome.error ??
+              (result.cooling.fans
+                .filter((f) => f.outcome.error)
+                .map((f) => `Fan ${f.fanIndex + 1}: ${f.outcome.error}`)
+                .join("; ") ||
+                null),
+          },
+          ...(result.cooling.outcome.status !== "unattempted" && {
+            coolingRevision: result.cooling.revision,
+          }),
+        }),
         ...(result.power && { power: result.power }),
         ...(result.graphics && { graphics: result.graphics }),
         ...(result.memory && { memory: result.memory }),

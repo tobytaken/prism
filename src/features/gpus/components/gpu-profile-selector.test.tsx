@@ -204,6 +204,7 @@ it("Save to the current profile overwrites it with the applied values, and Save 
   expect(fake.saveProfileToCurrent.mock.calls[0][0].gpuId).toBe("GPU-123");
   await waitFor(() =>
     expect(fake.profiles[0].settings).toEqual({
+      cooling: { arrangement: "shared", setting: { mode: "automatic" } },
       powerLimitWatts: { kind: "value", value: 475 },
       graphicsOffsetMHz: { kind: "value", value: 120 },
     }),
@@ -261,6 +262,7 @@ it("shows the current profile's saved values above the controls and saves report
   );
   await waitFor(() => expect(note).not.toBeInTheDocument());
   expect(fake.profiles[0].settings).toEqual({
+    cooling: { arrangement: "shared", setting: { mode: "automatic" } },
     powerLimitWatts: { kind: "value", value: 475 },
     graphicsOffsetMHz: { kind: "value", value: 120 },
   });
@@ -380,6 +382,7 @@ it("offers to save applied changes to the current profile before switching to an
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   await waitFor(() => expect(profileSelector()).toHaveTextContent("Loud"));
   expect(fake.profiles[0].settings).toEqual({
+    cooling: { arrangement: "shared", setting: { mode: "automatic" } },
     powerLimitWatts: { kind: "value", value: 475 },
     graphicsOffsetMHz: { kind: "value", value: 120 },
   });

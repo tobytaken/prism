@@ -120,7 +120,7 @@ The once-per-boot marker and outcomes live in `/run/prism/startup-state.json`. T
 
 After you successfully apply a custom fan curve, Prism remembers the curve and shared or separate fan arrangement for your account and that individual GPU. Switching to Automatic or Fixed, closing Prism, reconnecting, and restarting the host retain this choice. Selecting Curve from shared control recalls the arrangement as an unapplied draft; review it and Apply to activate it. In separate controls, selecting Curve recalls that fan's curve when available and preserves other fan edits. Recalled curves must still meet the GPU's current limits. Discarded edits, failed applications, temporary automatic applications and their restorations, and normal curve output changes do not replace the remembered choice.
 
-The daemon stores remembered curves in tuning-store schema version 8, using the existing uid-and-username ownership safeguards and GPU UUIDs. Earlier stores upgrade without creating remembered choices.
+The daemon stores remembered curves and optional profile cooling configurations in tuning-store schema version 9, using the existing uid-and-username ownership safeguards and GPU UUIDs. Earlier stores upgrade without creating remembered choices or adding cooling to existing profiles; version 8 remembered curves are preserved.
 
 ## Games
 

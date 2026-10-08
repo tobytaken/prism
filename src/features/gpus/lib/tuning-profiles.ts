@@ -1,6 +1,8 @@
 import type { PerformanceMutationAction } from "@/features/gpus/components/gpu-tuning-controls";
 import type {
   ControlSupport,
+  CoolingConfiguration,
+  FanSetting,
   GpuPerformanceDevice,
   GpuProfileSettings,
   GpuTuningProfile,
@@ -116,9 +118,11 @@ export function captureProfileSettings(
     }
     settings[key] = setting;
   }
+  const cooling = captureCooling(gpu);
+  if (cooling) settings.cooling = cooling;
   if (Object.keys(settings).length === 0) {
     throw new Error(
-      "This GPU has no supported profile settings (power limit or clock offsets).",
+      "This GPU has no supported profile settings (power limit, clock offsets or cooling).",
     );
   }
   return settings;
@@ -142,8 +146,9 @@ export function compareProfile(
   let changed = false;
   let reportedChanged = false;
   let unavailable = false;
-  for (const key of Object.keys(profile.settings) as ProfileSettingKey[]) {
-    const setting = profile.settings[key]!;
+  for (const key of PROFILE_SETTING_KEYS) {
+    const setting = profile.settings[key];
+    if (!setting) continue;
     const applied = appliedSetting(
       readings[key],
       appliedDefaults.includes(key),
@@ -165,6 +170,18 @@ export function compareProfile(
       }
     }
   }
+  if (profile.settings.cooling) {
+    try {
+      const cooling = captureCooling(gpu);
+      if (!cooling) unavailable = true;
+      else if (!sameCooling(cooling, profile.settings.cooling)) {
+        changed = true;
+        reportedChanged = true;
+      }
+    } catch {
+      unavailable = true;
+    }
+  }
   return { changed, reportedChanged, unavailable };
 }
 
@@ -174,11 +191,15 @@ export function correctedSettings(
   corrections: readonly ProfileRangeCorrection[] = [],
 ): GpuProfileSettings {
   const corrected = { ...settings };
-  for (const correction of corrections)
-    corrected[correction.setting] = {
-      kind: "value",
-      value: correction.proposedValue,
-    };
+  for (const correction of corrections) {
+    if (correction.setting === "cooling")
+      corrected.cooling = correction.proposedValue;
+    else
+      corrected[correction.setting] = {
+        kind: "value",
+        value: correction.proposedValue,
+      };
+  }
   return corrected;
 }
 
@@ -196,4 +217,64 @@ export function profileApplication(
     profileId: profile.id,
     ...(corrections && { corrections }),
   };
+}
+
+/** A measured percentage cannot establish a fixed target or a curve definition. */
+export function captureCooling(
+  gpu: GpuPerformanceDevice,
+): CoolingConfiguration | undefined {
+  const cooling = gpu.cooling;
+  if (!cooling.isSupported) return undefined;
+  const unknown = () =>
+    new Error(
+      "Cooling: the current configured policy is unavailable. Apply cooling successfully before saving.",
+    );
+  if (!cooling.fans.length || cooling.control?.suspension) throw unknown();
+  const applied = cooling.control?.applied;
+  const fans = cooling.fans.map((fan) => {
+    const setting =
+      applied?.arrangement === "shared"
+        ? applied.setting
+        : applied?.fans.find((f) => f.fanIndex === fan.index)?.setting;
+    if ((!setting || setting.mode === "automatic") && fan.mode === "auto")
+      return {
+        fanIndex: fan.index,
+        setting: { mode: "automatic" } as FanSetting,
+      };
+    if (setting && setting.mode !== "automatic" && fan.mode === "manual")
+      return { fanIndex: fan.index, setting };
+    throw unknown();
+  });
+  if (applied?.arrangement === "shared") return applied;
+  if (!applied)
+    return { arrangement: "shared", setting: { mode: "automatic" } };
+  return { arrangement: "perFan", fans };
+}
+
+export function sameCooling(
+  a: CoolingConfiguration | undefined,
+  b: CoolingConfiguration | undefined,
+): boolean {
+  const canonical = (value: CoolingConfiguration | undefined) =>
+    value?.arrangement === "perFan"
+      ? {
+          arrangement: value.arrangement,
+          fans: [...value.fans].sort((a, b) => a.fanIndex - b.fanIndex),
+        }
+      : value;
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+}
+
+export function describeCooling(configuration: CoolingConfiguration): string {
+  const describe = (setting: FanSetting) =>
+    setting.mode === "automatic"
+      ? "Automatic"
+      : setting.mode === "fixed"
+        ? `Fixed ${setting.speedPercent}%`
+        : `Curve (${setting.points.map((p) => `${p.temperatureC}°C: ${p.speedPercent}%`).join(", ")})`;
+  return configuration.arrangement === "shared"
+    ? `Shared: ${describe(configuration.setting)}`
+    : configuration.fans
+        .map((fan) => `Fan ${fan.fanIndex + 1}: ${describe(fan.setting)}`)
+        .join("; ");
 }

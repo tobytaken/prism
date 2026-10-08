@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 8;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 9;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -42,6 +42,8 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // Version 7 adds users' game associations and automatic switching opt-ins, none until set.
     Ok,
     // Version 8 adds each user's remembered fan curves per GPU, empty until manually applied.
+    Ok,
+    // Version 9 adds optional complete cooling configurations; old profiles omit cooling.
     Ok,
 ];
 

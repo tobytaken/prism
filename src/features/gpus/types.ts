@@ -341,6 +341,7 @@ export type ProfileSetting =
   | { kind: "default" };
 
 export interface GpuProfileSettings {
+  cooling?: CoolingConfiguration;
   powerLimitWatts?: ProfileSetting;
   graphicsOffsetMHz?: ProfileSetting;
   memoryOffsetMHz?: ProfileSetting;
@@ -355,7 +356,7 @@ export interface GpuTuningProfile {
   settings: GpuProfileSettings;
 }
 
-export type ProfileSettingKey = keyof GpuProfileSettings;
+export type ProfileSettingKey = Exclude<keyof GpuProfileSettings, "cooling">;
 
 export interface SaveGpuProfileRequest {
   /** The owning GPU's UUID. The daemon captures its current values. */
@@ -384,7 +385,9 @@ export interface GpuTuningState {
   gpuId: string;
   revision: string;
   /** The current tuning values the revision covers; null where unreadable. */
-  reported: Record<ProfileSettingKey, number | null>;
+  reported: Record<ProfileSettingKey, number | null> & {
+    cooling?: CoolingConfiguration;
+  };
   currentProfile: CurrentProfile | null;
 }
 
@@ -405,13 +408,22 @@ export interface ApplyGpuProfileRequest {
 }
 
 export interface ProfileApplicationResponse extends ClockOffsetResponse {
+  cooling?: CoolingApplication;
   power: TuningOutcome | null;
   /** Present only when out-of-range values alone blocked application; nothing was written. */
   corrections?: ProfileRangeCorrection[];
 }
 
-export interface ProfileRangeCorrection {
-  setting: keyof GpuProfileSettings;
+export type ProfileRangeCorrection =
+  | NumericRangeCorrection
+  | {
+      setting: "cooling";
+      savedValue: CoolingConfiguration;
+      proposedValue: CoolingConfiguration;
+    };
+
+export interface NumericRangeCorrection {
+  setting: ProfileSettingKey;
   savedValue: number;
   proposedValue: number;
   bound: RangeBound;

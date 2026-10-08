@@ -461,7 +461,11 @@ function validateApplyCoolingPayload(
     !isObject(payload.configuration)
   )
     return false;
-  const configuration = payload.configuration;
+  return isCoolingConfiguration(payload.configuration);
+}
+
+function isCoolingConfiguration(configuration: unknown) {
+  if (!isObject(configuration)) return false;
   if (configuration.arrangement === "shared")
     return (
       hasOnlyKeys(configuration, ["arrangement", "setting"]) &&
@@ -535,6 +539,17 @@ function validateCorrectProfilePayload(
     return false;
   const settings = new Set<unknown>();
   return payload.corrections.every((correction: unknown) => {
+    if (isObject(correction) && correction.setting === "cooling") {
+      if (
+        !hasOnlyKeys(correction, ["setting", "savedValue", "proposedValue"]) ||
+        settings.has("cooling") ||
+        !isCoolingConfiguration(correction.savedValue) ||
+        !isCoolingConfiguration(correction.proposedValue)
+      )
+        return false;
+      settings.add("cooling");
+      return true;
+    }
     if (
       !isObject(correction) ||
       !hasOnlyKeys(correction, CORRECTION_KEYS) ||
@@ -805,9 +820,10 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       !isObject(payload.settings) ||
       Array.isArray(payload.settings) ||
       Object.keys(payload.settings).length === 0 ||
-      Object.entries(payload.settings).some(
-        ([key, setting]) =>
-          !isProfileSettingKey(key) || !isProfileSetting(setting),
+      Object.entries(payload.settings).some(([key, setting]) =>
+        key === "cooling"
+          ? !isCoolingConfiguration(setting)
+          : !isProfileSettingKey(key) || !isProfileSetting(setting),
       )
     ) {
       throw new Error("Invalid applyProfile payload");

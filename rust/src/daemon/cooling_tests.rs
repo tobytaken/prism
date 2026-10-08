@@ -963,6 +963,7 @@ fn curve_output_changes_are_not_tuning_changes() {
         session.send_json(json!({ "type": "get_tuning_states" }))["payload"][0]["revision"].clone()
     };
     let before = revision(&session);
+    let manual_state = daemon.persistent_file("tuning-state.json");
     session.pushed_events();
 
     daemon.set_temperature("GPU-123", Some(80));
@@ -976,9 +977,7 @@ fn curve_output_changes_are_not_tuning_changes() {
         .all(|event| event["type"] != "tuningStateChanged"));
     let startup = session.send_json(json!({ "type": "get_startup_state" }));
     assert_eq!(startup["payload"]["possiblyStale"], json!([]));
-    assert!(daemon
-        .persistent_file("tuning-state.json")
-        .is_none_or(|state| !String::from_utf8_lossy(&state).contains("speed")));
+    assert_eq!(daemon.persistent_file("tuning-state.json"), manual_state);
 }
 
 /// The same payloads hold the desktop boundary and the fake desktop to the daemon.
