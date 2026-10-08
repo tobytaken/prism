@@ -43,6 +43,11 @@ export function describeGpuSwitching(
           : "Holding current values: recognition unavailable.",
       chip: "Recognition unavailable",
     };
+  if (state?.status === "waitingForEdits")
+    return {
+      summary: `Automatic profile "${state.profile.name}" is waiting for unapplied tuning changes.`,
+      chip: "Waiting for edits",
+    };
   if (state?.status === "active")
     return {
       summary: `${state.profile.name} applied for ${state.gameName}.`,

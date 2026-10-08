@@ -24,6 +24,7 @@ fn manual_native_program_switches_by_file_identity_and_re_resolves_updates() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu_with_id(
         "GPU-A",
     )]));
+    daemon.clock.advance(5_000);
     let alice = daemon.user(1000, "alice");
     daemon.write_host_file("/games/game", "first version");
     let game = json!({"kind":"program", "path":"/games/game"});
@@ -105,6 +106,7 @@ fn wine_mapped_image_switches_without_matching_the_shared_preloader_or_another_u
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu_with_id(
         "GPU-A",
     )]));
+    daemon.clock.advance(5_000);
     let alice = daemon.user(1000, "alice");
     for file in [
         "/games/game.exe",

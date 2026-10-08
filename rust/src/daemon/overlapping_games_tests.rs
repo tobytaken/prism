@@ -25,7 +25,9 @@ fn example_gpu() -> Harness {
     gpu.power.min_limit_watts = Some(100);
     gpu.clocks.memory.min_offset_mhz = Some(-1000);
     gpu.clocks.memory.max_offset_mhz = Some(1000);
-    Harness::start(FakeGpuBackend::with_gpus(vec![gpu]))
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    daemon.clock.advance(5_000);
+    daemon
 }
 
 /// A user who opted in, with the given profiles on GPU-A and the given Steam games added.
@@ -290,6 +292,7 @@ fn on_a_shared_gpu_the_most_recently_started_game_of_either_user_wins() {
 /// Restarts the daemon, runs its first scan and reconnects both users.
 fn restart(daemon: &mut Harness) -> (FakeSession, FakeSession) {
     daemon.restart();
+    daemon.clock.advance(5_000);
     daemon.settle();
     daemon.scan();
     (daemon.user(1000, "alice"), daemon.user(1001, "bob"))

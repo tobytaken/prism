@@ -24,6 +24,7 @@ struct Connection {
     next_id: u64,
     pending: HashMap<u64, Sender<Reply>>,
     failure: Option<GpuCommandError>,
+    edit_holds: Option<crate::protocol::SetEditHoldsRequest>,
 }
 
 #[derive(Default)]
@@ -35,6 +36,10 @@ pub(super) struct SessionTransport {
 
 impl SessionTransport {
     pub fn request(&self, request: DaemonRequest) -> Reply {
+        if let DaemonRequest::SetEditHolds(holds) = &request {
+            // Retain the latest renderer intent even while disconnected.
+            self.connection.lock().unwrap().edit_holds = Some(holds.clone());
+        }
         let deadline = Instant::now() + super::request_timeout(&request);
         let (sender, receiver) = mpsc::channel();
         let id = {
@@ -62,6 +67,12 @@ impl SessionTransport {
             connection.next_id += 1;
             let id = connection.next_id;
             connection.pending.insert(id, sender);
+            // A hold update waiting for reconnection must not overwrite a newer cached set.
+            let request = if matches!(request, DaemonRequest::SetEditHolds(_)) {
+                DaemonRequest::SetEditHolds(connection.edit_holds.clone().unwrap())
+            } else {
+                request
+            };
             if let Err(error) = write_frame(
                 connection.writer.as_mut().unwrap(),
                 &SessionRequest { id, request },
@@ -121,8 +132,17 @@ pub enum SessionNotification {
 }
 
 /// One session for the sidecar's lifetime. Probes and driver requests remain one-shot.
-pub fn start_session(notify: impl Fn(SessionNotification) + Send + 'static) -> SessionClient {
-    let transport = Arc::new(SessionTransport::default());
+pub fn start_session(
+    initial_holds: Option<crate::protocol::SetEditHoldsRequest>,
+    notify: impl Fn(SessionNotification) + Send + 'static,
+) -> SessionClient {
+    let transport = Arc::new(SessionTransport {
+        connection: Mutex::new(Connection {
+            edit_holds: initial_holds,
+            ..Connection::default()
+        }),
+        ..SessionTransport::default()
+    });
     assert!(
         SESSION.set(Arc::clone(&transport)).is_ok(),
         "a sidecar has only one daemon session"
@@ -206,6 +226,17 @@ fn connect_and_receive(
         let mut connection = transport.connection.lock().unwrap();
         if transport.stopping.load(Ordering::SeqCst) {
             return Ok(());
+        }
+        if let Some(holds) = connection.edit_holds.clone() {
+            connection.next_id += 1;
+            write_frame(
+                &mut stream,
+                &SessionRequest {
+                    id: connection.next_id,
+                    request: DaemonRequest::SetEditHolds(holds),
+                },
+            )
+            .map_err(super::map_io_error)?;
         }
         connection.opening = None;
         connection.writer = Some(stream.try_clone().map_err(super::map_io_error)?);

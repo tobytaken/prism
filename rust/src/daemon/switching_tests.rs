@@ -26,6 +26,7 @@ fn linked_dota() -> (Harness, FakeSession) {
         tunable_gpu_with_id(LINKED),
         tunable_gpu_with_id(UNLINKED),
     ]));
+    daemon.clock.advance(5_000);
     daemon.install_steam_app("alice", DOTA, "Dota 2");
     let alice = daemon.user(1000, "alice");
     ok(alice.send_json(
@@ -370,6 +371,7 @@ fn a_daemon_restart_mid_game_keeps_the_pre_game_values_for_restoration() {
 
     let before = writes_to(&daemon, LINKED);
     daemon.restart();
+    daemon.clock.advance(5_000);
     daemon.settle();
     daemon.scan();
     assert_eq!(writes_to(&daemon, LINKED), before);
@@ -771,6 +773,7 @@ fn an_external_change_at_game_end_preserves_every_value_and_reports_changed_outs
     assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
     drop(alice);
     daemon.restart();
+    daemon.clock.advance(5_000);
     let alice = daemon.user(1000, "alice");
     let before = daemon.gpus.writes();
     daemon.end_process(123);
@@ -1070,6 +1073,7 @@ fn a_previous_boots_unreadable_activation_does_not_block_new_game_tuning() {
     .unwrap();
     daemon.end_process(123);
     daemon.reboot_with_retained_boot_state();
+    daemon.clock.advance(5_000);
     daemon.settle();
     let alice = daemon.user(1000, "alice");
     assert_eq!(status(&alice)["condition"]["status"], "ready");
@@ -1131,6 +1135,7 @@ fn a_faulted_game_curve_is_not_resurrected_by_restoration_after_a_daemon_restart
     daemon.set_temperature(LINKED, Some(60));
     let before = daemon.gpus.writes();
     daemon.start_daemon();
+    daemon.clock.advance(5_000);
     daemon.scan();
     let alice = daemon.user(1000, "alice");
     assert_eq!(daemon.gpus.writes(), before);
@@ -1162,6 +1167,7 @@ fn a_game_ending_while_the_daemon_is_down_restores_only_after_a_complete_scan_wi
     std::fs::remove_file(daemon.host_path("/proc/300/stat")).unwrap();
     let before = daemon.gpus.writes();
     daemon.start_daemon();
+    daemon.clock.advance(5_000);
     daemon.settle();
     let alice = daemon.user(1000, "alice");
     assert_eq!(daemon.gpus.writes(), before);
@@ -1242,6 +1248,7 @@ fn restart_preserves_the_game_and_baseline_curves_while_recognition_waits() {
     let manual = last_applied(&daemon);
     drop(alice);
     daemon.restart();
+    daemon.clock.advance(5_000);
     daemon.settle();
     let alice = daemon.user(1000, "alice");
     assert_eq!(status(&alice), shown);
@@ -1325,6 +1332,7 @@ fn the_same_running_game_reconciles_reset_controls_when_its_gpu_returns() {
     drop(alice);
     // Observed absence must survive a daemon restart as well.
     daemon.restart();
+    daemon.clock.advance(5_000);
     daemon.settle();
     returning.power.current_limit_watts = Some(575);
     returning.cooling = super::harness::cooled_gpu().cooling;
@@ -1398,6 +1406,140 @@ fn absence_is_remembered_while_recognition_is_unavailable_but_return_waits_for_a
 }
 
 #[test]
+fn edit_holds_from_two_sessions_defer_until_the_last_session_closes() {
+    let (daemon, alice) = linked_dota();
+    let other = daemon.user(1000, "alice");
+    for session in [&alice, &other] {
+        ok(session
+            .send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    }
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"],
+        json!({
+            "status": "waitingForEdits", "profile": { "id": "gaming", "name": "Gaming" }
+        })
+    );
+    ok(other.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [] } })));
+    daemon.settle();
+    assert_eq!(values(&daemon), PRE_GAME);
+    drop(other);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    drop(alice);
+    daemon.scan();
+    assert_eq!(values(&daemon), GAMING);
+}
+
+#[test]
+fn restart_grace_allows_a_reconnected_session_to_resend_its_edit_holds() {
+    let (mut daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    drop(alice);
+    daemon.restart();
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.clock.advance(4_999);
+    daemon.scan();
+    assert_eq!(
+        values(&daemon),
+        PRE_GAME,
+        "no automatic write in the grace period"
+    );
+    let alice = daemon.user(1000, "alice");
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    daemon.clock.advance(1);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [] } })));
+    daemon.settle();
+    assert_eq!(values(&daemon), GAMING);
+}
+
+#[test]
+fn a_cooling_edit_hold_defers_profile_replacement_but_the_applied_curve_keeps_running() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    daemon.set_temperature(LINKED, Some(60));
+    daemon.run_curves_for(500);
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[1].current_speed_percent,
+        Some(55)
+    );
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"]["status"],
+        "waitingForEdits"
+    );
+    drop(alice);
+    daemon.scan();
+    let reopened = daemon.user(1000, "alice");
+    assert_eq!(cooling(&reopened)["applied"], shared_curve());
+    assert_eq!(current_profile(&reopened, LINKED)["id"], "fans");
+}
+
+#[test]
+fn every_session_receives_the_waiting_status_and_other_users_do_not_see_private_profile_names() {
+    let (daemon, alice) = linked_dota();
+    let second = daemon.user(1000, "alice");
+    let bob = daemon.user(1001, "bob");
+    ok(second.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    set_switching(&daemon, &alice, true);
+    for session in [&alice, &second, &bob] {
+        session.pushed_events();
+    }
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    for session in [&alice, &second] {
+        assert!(session
+            .pushed_events()
+            .iter()
+            .any(|event| event["type"] == "automaticSwitchingChanged"
+                && event["payload"]["gpus"][0]["state"]["status"] == "waitingForEdits"));
+    }
+    assert_eq!(
+        status(&bob)["gpus"][0]["state"],
+        json!({ "status": "anotherUser" })
+    );
+}
+
+#[test]
+fn gpu_absence_is_remembered_during_an_edit_hold_and_reconciled_after_release() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    let mut returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    returning.power.current_limit_watts = Some(575);
+    daemon.gpus.arrive(returning);
+    let before = daemon.gpus.writes();
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(values(&daemon).0, Some(575));
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [] } })));
+    daemon.settle();
+    assert_eq!(values(&daemon), GAMING);
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+}
+
+#[test]
 fn a_returning_gpu_keeps_manual_and_external_overrides_even_if_the_game_ended_while_absent() {
     for external in [false, true] {
         for ends_while_absent in [false, true] {
@@ -1444,4 +1586,37 @@ fn a_returning_gpu_keeps_manual_and_external_overrides_even_if_the_game_ended_wh
             }
         }
     }
+}
+
+#[test]
+fn applying_manual_tuning_while_a_profile_waits_keeps_the_override_after_edit_holds_release() {
+    let (daemon, alice) = linked_dota();
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"]["status"],
+        "waitingForEdits"
+    );
+
+    ok(alice.send_json(json!({ "type": "set_power_limit",
+        "payload": { "gpuId": LINKED, "limitWatts": 380 } })));
+    daemon.settle();
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"],
+        json!({ "status": "manualOverride", "changedOutsidePrism": false })
+    );
+    let before = daemon.gpus.writes();
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [] } })));
+    daemon.settle();
+    assert_eq!(values(&daemon).0, Some(380));
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"]["status"],
+        "manualOverride"
+    );
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(values(&daemon).0, Some(380));
 }

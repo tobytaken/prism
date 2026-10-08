@@ -725,6 +725,97 @@ fn startup_choices_and_outcomes_cross_the_sidecar_session() {
 }
 
 #[test]
+fn edit_holds_are_resent_before_a_reconnected_session_reports_ready() {
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
+    let mut first = accept_session(&listener);
+    lines.recv_timeout(Duration::from_secs(2)).unwrap();
+    writeln!(
+        sidecar.0.stdin.as_mut().unwrap(),
+        "{}",
+        json!({
+            "id": 42, "method": "games.setEditHolds", "params": { "gpuIds": ["GPU-A"] }
+        })
+    )
+    .unwrap();
+    let request = read_frame::<SessionRequest>(&mut first).unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(&request.request).unwrap(),
+        json!({
+            "type": "set_edit_holds", "payload": { "gpuIds": ["GPU-A"] }
+        })
+    );
+    write_frame(
+        &mut first,
+        &SessionMessage::Response {
+            id: request.id,
+            response: DaemonResponse::Command(prism_rust::protocol::DaemonCommandResponse {
+                success: true,
+                error: None,
+            }),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["id"],
+        42
+    );
+    drop(first);
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["params"]["reachable"],
+        false
+    );
+    let mut resumed = accept_session(&listener);
+    let replay = read_frame::<SessionRequest>(&mut resumed).unwrap().unwrap();
+    assert_eq!(replay.request, request.request);
+    // Holds arrive before ordinary requests can use the reconnected transport.
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["params"]["reachable"],
+        true
+    );
+}
+
+#[test]
+fn a_replacement_sidecar_sends_the_renderers_existing_holds_on_its_first_connection() {
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = Sidecar(
+        Command::new(env!("CARGO_BIN_EXE_prism_backend"))
+            .env("PRISM_SOCKET_PATH", &socket)
+            .env(
+                "PRISM_INITIAL_EDIT_HOLDS",
+                json!({ "gpuIds": ["GPU-A"] }).to_string(),
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let lines = output_lines(&mut sidecar);
+    let mut session = accept_session(&listener);
+    let request = read_frame::<SessionRequest>(&mut session).unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(request.request).unwrap(),
+        json!({
+            "type": "set_edit_holds", "payload": { "gpuIds": ["GPU-A"] }
+        })
+    );
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap()["params"]["reachable"],
+        true
+    );
+}
+
+#[test]
 fn browsed_program_recovers_document_portal_host_path_before_sending_to_daemon() {
     use serde_json::json;
     use std::ffi::CString;

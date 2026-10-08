@@ -190,6 +190,14 @@ function isGpuSwitchingState(value: unknown) {
         typeof value.profile.id === "string" &&
         typeof value.profile.name === "string"
       );
+    case "waitingForEdits":
+      return (
+        hasKeys(value, ["status", "profile"]) &&
+        isRecord(value.profile) &&
+        hasKeys(value.profile, ["id", "name"]) &&
+        typeof value.profile.id === "string" &&
+        typeof value.profile.name === "string"
+      );
     case "manualOverride":
       return (
         hasKeys(value, ["status", "changedOutsidePrism"]) &&

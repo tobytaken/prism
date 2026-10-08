@@ -125,6 +125,8 @@ export interface PrismDesktopApi {
     get(): Promise<GamesState>;
     getRunning(): Promise<RunningGamesState>;
     onRunningChanged(callback: (state: RunningGamesState) => void): () => void;
+    /** Replaces the session's complete set of GPUs with unapplied tuning changes. */
+    setEditHolds(gpuIds: string[]): Promise<GpuCommandResponse>;
     /** The caller's automatic switching status, then pushed changes. */
     getSwitchingStatus(): Promise<AutomaticSwitchingStatus>;
     onSwitchingStatusChanged(

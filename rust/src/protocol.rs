@@ -564,20 +564,35 @@ pub enum GpuSwitchingState {
         game_name: String,
         profile: CurrentProfile,
     },
+    WaitingForEdits {
+        profile: CurrentProfile,
+    },
     /// Another user's running game drives the GPU; its details stay private.
     AnotherUser {},
     #[serde(rename_all = "camelCase")]
     ManualOverride { changed_outside_prism: bool },
     /// The latest automatic application or restoration didn't complete.
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
     /// Boot-scoped recovery state is unreadable; this GPU is left unchanged.
-    RecoveryRequired { message: String },
+    RecoveryRequired {
+        message: String,
+    },
+}
+
+/// Replaces this connection's complete set of GPUs with unapplied profile-scope edits.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetEditHoldsRequest {
+    pub gpu_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
     OpenSession,
+    SetEditHolds(SetEditHoldsRequest),
     GetInventory,
     GetPerformance,
     GetDaemonStatus,

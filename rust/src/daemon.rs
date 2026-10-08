@@ -368,6 +368,19 @@ fn handle_session_connection(
     let result = loop {
         match read_frame::<SessionRequest>(&mut reader) {
             Ok(Some(request)) => {
+                // Hold updates are ordered on the connection before dispatching later writes.
+                if matches!(request.request, DaemonRequest::SetEditHolds(_)) {
+                    let response = core.handle_session(&session, request.request);
+                    write_frame(
+                        &mut *writer.lock().unwrap(),
+                        &SessionMessage::Response {
+                            id: request.id,
+                            response,
+                        },
+                    )
+                    .map_err(|error| error.to_string())?;
+                    continue;
+                }
                 let core = Arc::clone(core);
                 let writer = Arc::clone(&writer);
                 // The admitted caller remains attached to this connection. Requests can finish

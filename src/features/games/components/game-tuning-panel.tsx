@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { gameKey } from "@/features/games/hooks/use-games";
 import { useRunningGames } from "@/features/games/hooks/use-running-games";
@@ -11,9 +12,19 @@ import type { GpuPerformanceDevice } from "@/features/gpus/types";
 export function GameTuningPanel({
   workflow,
   gpus,
+  hasEdits = false,
+  busy = false,
+  applyDisabled = false,
+  onApply,
+  onDiscard,
 }: {
   workflow: GpuProfileWorkflow;
   gpus: GpuPerformanceDevice[];
+  hasEdits?: boolean;
+  busy?: boolean;
+  applyDisabled?: boolean;
+  onApply?: () => void;
+  onDiscard?: () => void;
 }) {
   const running = useRunningGames();
   const games = workflow.games;
@@ -75,6 +86,33 @@ export function GameTuningPanel({
             </li>
           ))}
         </ul>
+      )}
+      {workflow.switching?.gpus.some(
+        (gpu) => gpu.state.status === "waitingForEdits",
+      ) && (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            disabled={!hasEdits || busy || applyDisabled}
+            onClick={onApply}
+          >
+            Apply my changes
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!hasEdits || busy}
+            onClick={onDiscard}
+          >
+            Discard my changes
+          </Button>
+          {!hasEdits && (
+            <p className="text-sm text-muted-foreground">
+              Apply or discard the edits in the Prism session where they were
+              made.
+            </p>
+          )}
+        </div>
       )}
       {(games.query.error || games.changeError) && (
         <p role="alert" className="text-sm text-destructive">

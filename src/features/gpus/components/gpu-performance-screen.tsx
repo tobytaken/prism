@@ -1,3 +1,5 @@
+import { useEditHolds } from "@/features/gpus/hooks/use-edit-holds";
+import { DiscardTuningDialog } from "./discard-tuning-dialog";
 import { GameTuningPanel } from "@/features/games/components/game-tuning-panel";
 import { describeGpuSwitching } from "@/features/games/lib/switching-status";
 import { UnavailableGpuEdits } from "./unavailable-gpu-edits";
@@ -93,6 +95,7 @@ export function GpuPerformanceScreen({
 }: GpuPerformanceScreenProps) {
   const editStore = useTuningEdits();
   const gpus = inventory?.gpus ?? EMPTY_PERFORMANCE_GPUS;
+  const holds = useEditHolds(editStore, gpus);
   const warnings = inventory?.warnings ?? EMPTY_WARNINGS;
   const historyByGpuId = useGpuMetricHistory();
   const busy = editStore.applyAllPending || pendingAction != null;
@@ -124,7 +127,50 @@ export function GpuPerformanceScreen({
         )}
       </div>
 
-      {profiles && <GameTuningPanel workflow={profiles} gpus={gpus} />}
+      <DiscardTuningDialog
+        busy={busy}
+        onDiscard={editStore.discardAll}
+        affected={Object.entries(editStore.devices)
+          .filter(([, device]) => Object.keys(device.edits).length > 0)
+          .map(([id]) => {
+            const gpu =
+              gpus.find((gpu) => gpu.id === id) ?? holds.knownGpus.get(id);
+            const switching =
+              gpu?.stableId && profiles
+                ? describeGpuSwitching(profiles.switching, gpu.stableId)
+                : null;
+            return {
+              id,
+              name: gpu
+                ? `${gpu.name}${gpu.busId ? ` (${gpu.busId})` : ""}`
+                : id,
+              waiting:
+                switching?.chip === "Waiting for edits"
+                  ? switching.summary
+                  : null,
+            };
+          })}
+      />
+      {holds.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {holds.error}
+        </p>
+      )}
+      {profiles && (
+        <GameTuningPanel
+          workflow={profiles}
+          gpus={gpus}
+          hasEdits={hasEdits}
+          busy={busy}
+          applyDisabled={
+            daemonStatus?.reachable !== true || isLoading || !onMutationAction
+          }
+          onApply={() =>
+            onMutationAction && void editStore.applyAll(gpus, onMutationAction)
+          }
+          onDiscard={editStore.discardAll}
+        />
+      )}
 
       {daemonDisconnected && daemonStatus && (
         <Alert
@@ -347,6 +393,14 @@ function GpuTelemetrySurface({
           <div className="mb-7 empty:hidden">
             <GpuProfileFeedback selector={profileSelector} />
           </div>
+        )}
+        {switching?.chip === "Waiting for edits" && (
+          <p
+            role="status"
+            className="mb-4 text-sm text-amber-600 dark:text-amber-400"
+          >
+            {switching.summary}
+          </p>
         )}
         <div className="flex flex-col gap-8 xl:flex-row">
           <OcControlRail

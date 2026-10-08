@@ -83,6 +83,11 @@ impl DaemonCore {
         session: &DaemonSession,
         request: DaemonRequest,
     ) -> DaemonResponse {
+        if let DaemonRequest::SetEditHolds(request) = request {
+            session.set_edit_holds(request.gpu_ids);
+            self.evaluate_switching();
+            return startup_command();
+        }
         self.handle_for_peer(session.peer(), request)
     }
 
@@ -553,6 +558,7 @@ impl DaemonCore {
             Arc::clone(&cooling),
             Arc::clone(&recognition),
             Arc::clone(&dependencies.users),
+            Arc::clone(&dependencies.clock),
         );
         let core = Self {
             dependencies,
@@ -609,10 +615,12 @@ impl DaemonCore {
     pub fn handle(&self, request: DaemonRequest) -> DaemonResponse {
         let drivers = &self.dependencies.drivers;
         match request {
-            DaemonRequest::OpenSession => DaemonResponse::Error(GpuCommandError::new(
-                GpuCommandErrorCode::InvalidArgument,
-                "OpenSession requires a framed connection",
-            )),
+            DaemonRequest::OpenSession | DaemonRequest::SetEditHolds(_) => {
+                DaemonResponse::Error(GpuCommandError::new(
+                    GpuCommandErrorCode::InvalidArgument,
+                    "This request requires a framed session connection",
+                ))
+            }
             DaemonRequest::GetInventory => {
                 DaemonResponse::Inventory(self.dependencies.backend.inventory())
             }

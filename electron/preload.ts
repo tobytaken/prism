@@ -233,6 +233,8 @@ const prismApi = {
         isRunningGamesState,
         callback,
       ),
+    setEditHolds: (gpuIds: string[]) =>
+      ipcRenderer.invoke("prism:games:setEditHolds", { gpuIds }),
     getSwitchingStatus: () =>
       ipcRenderer.invoke(
         "prism:games:getSwitchingStatus",
