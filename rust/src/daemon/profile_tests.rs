@@ -725,3 +725,96 @@ fn cooling_application_keeps_working_with_an_unhealthy_store_and_reports_unrecor
         Some(&preserved[..])
     );
 }
+
+#[test]
+fn per_fan_profiles_must_cover_the_complete_current_fan_inventory() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(
+        vec![super::harness::cooled_gpu()],
+    ));
+    let result = daemon.send_json(json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
+        "powerLimitWatts":{"kind":"value","value":500},
+        "cooling":{"arrangement":"perFan","fans":[{"fanIndex":0,"setting":{"mode":"fixed","speedPercent":60}}]}
+    }}}));
+    assert_eq!(
+        result["payload"]["power"]["status"], "unattempted",
+        "{result}"
+    );
+    assert!(daemon.gpus.writes().is_empty());
+}
+
+#[test]
+fn cooling_corrections_do_not_require_speed_bounds_for_automatic_fans() {
+    let mut gpu = super::harness::cooled_gpu();
+    gpu.cooling.fans[0].min_speed_percent = None;
+    gpu.cooling.fans[0].max_speed_percent = None;
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    let result = daemon.send_json(
+        json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
+            "cooling":{"arrangement":"perFan","fans":[
+                {"fanIndex":0,"setting":{"mode":"automatic"}},
+                {"fanIndex":1,"setting":{"mode":"fixed","speedPercent":10}}
+            ]}
+        }}}),
+    );
+    assert_eq!(
+        result["payload"]["corrections"][0]["proposedValue"]["fans"][1]["setting"]["speedPercent"],
+        20,
+        "{result}"
+    );
+    assert!(daemon.gpus.writes().is_empty());
+}
+
+#[test]
+fn unrecorded_manual_cooling_is_reported_as_possibly_stale_until_cooling_is_recorded() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(
+        vec![super::harness::cooled_gpu()],
+    ));
+    let alice = daemon.user(1000, "alice");
+    alice.send_json(json!({"type":"reset_power_limit","payload":{"gpuId":"GPU-123"}}));
+    let blocker = daemon.persistent_path(&format!("{TUNING_STORE_FILE_NAME}.tmp"));
+    std::fs::create_dir(&blocker).unwrap();
+    let result = alice.send_json(
+        json!({"type":"apply_cooling","payload":{"gpuId":"GPU-123","configuration":{
+            "arrangement":"shared","setting":{"mode":"fixed","speedPercent":70}
+        }}}),
+    );
+    assert_eq!(result["payload"]["outcome"]["status"], "succeeded");
+    drop(alice);
+    std::fs::remove_dir(&blocker).unwrap();
+    daemon.restart();
+    let alice = daemon.user(1000, "alice");
+    let startup = || {
+        let response = alice.send_json(json!({"type":"get_startup_state"}));
+        assert_eq!(response["type"], "startup_state", "{response}");
+        response["payload"]["possiblyStale"].clone()
+    };
+    assert_eq!(startup(), json!(["GPU-123"]));
+    alice.send_json(json!({"type":"reset_power_limit","payload":{"gpuId":"GPU-123"}}));
+    assert_eq!(startup(), json!(["GPU-123"]));
+    alice.send_json(
+        json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
+            "cooling":{"arrangement":"shared","setting":{"mode":"automatic"}}
+        }}}),
+    );
+    assert_eq!(startup(), json!([]));
+}
+
+#[test]
+fn curve_range_review_preserves_valid_full_speed_plateau_points() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(
+        vec![super::harness::cooled_gpu()],
+    ));
+    let result = daemon.send_json(json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
+        "cooling":{"arrangement":"shared","setting":{"mode":"curve","points":[
+            {"temperatureC":45,"speedPercent":10}, {"temperatureC":85,"speedPercent":100}, {"temperatureC":90,"speedPercent":100}
+        ]}}
+    }}}));
+    assert_eq!(
+        result["payload"]["corrections"][0]["proposedValue"]["setting"]["points"],
+        json!([
+            {"temperatureC":45,"speedPercent":20}, {"temperatureC":85,"speedPercent":100}, {"temperatureC":90,"speedPercent":100}
+        ]),
+        "{result}"
+    );
+    assert!(daemon.gpus.writes().is_empty());
+}

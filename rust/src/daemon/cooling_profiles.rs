@@ -25,6 +25,16 @@ pub(super) fn problems(
         ),
     };
     let mut problems = super::cooling::application_problems(gpu, shared, &targets);
+    if !shared
+        && (targets.len() != gpu.cooling.fans.len()
+            || gpu
+                .cooling
+                .fans
+                .iter()
+                .any(|fan| !targets.iter().any(|(index, _)| *index == fan.index)))
+    {
+        problems.push("A per-fan profile must configure every fan currently reported by the GPU. Review its cooling configuration.".into());
+    }
     for (index, setting) in &targets {
         if matches!(setting, FanSetting::Fixed { .. }) && gpu.cooling.fans.iter().find(|f| f.index == *index).is_some_and(|f| !matches!((f.min_speed_percent, f.max_speed_percent), (Some(min), Some(max)) if min <= max)) {
             problems.push(format!("Fan {}: the current allowed speed range is unavailable.", index + 1));
@@ -41,6 +51,9 @@ pub(super) fn correction(
         return None;
     }
     let correct = |setting: &mut FanSetting, indexes: Vec<u32>| -> Option<()> {
+        if matches!(setting, FanSetting::Automatic {}) {
+            return Some(());
+        }
         let fans: Option<Vec<_>> = indexes
             .iter()
             .map(|index| gpu.cooling.fans.iter().find(|f| f.index == *index))
@@ -67,12 +80,22 @@ pub(super) fn correction(
                 *speed_percent = (*speed_percent).clamp(min, max)
             }
             FanSetting::Curve { points } => {
-                let boundary = i64::from(gpu.cooling.max_operating_temperature_c?)
-                    - crate::fan_curve::FULL_SPEED_MARGIN_C;
-                for point in points {
-                    point.speed_percent = point.speed_percent.clamp(min, max);
-                    point.temperature_c = point.temperature_c.clamp(0, boundary.max(0));
+                let maximum = i64::from(gpu.cooling.max_operating_temperature_c?);
+                let boundary = maximum - crate::fan_curve::FULL_SPEED_MARGIN_C;
+                if boundary < 0 {
+                    return None;
                 }
+                for point in points.iter_mut() {
+                    point.speed_percent = point.speed_percent.clamp(min, max);
+                    point.temperature_c = point.temperature_c.clamp(0, maximum);
+                }
+                // The deadline constrains when maximum speed is reached, not every point.
+                // Keep later plateau points; validate ordering after proposing any move.
+                if !points.iter().any(|point| point.speed_percent == max) {
+                    points.last_mut()?.speed_percent = max;
+                }
+                let full_speed = points.iter_mut().find(|point| point.speed_percent == max)?;
+                full_speed.temperature_c = full_speed.temperature_c.min(boundary);
             }
         }
         Some(())

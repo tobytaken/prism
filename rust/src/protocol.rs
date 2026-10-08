@@ -164,7 +164,7 @@ pub enum RangeBound {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum ProfileRangeCorrection {
     Numeric(NumericRangeCorrection),
     Cooling {
@@ -176,7 +176,7 @@ pub enum ProfileRangeCorrection {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CoolingSettingKey {
     #[serde(rename = "cooling")]
     Cooling,

@@ -113,6 +113,7 @@ it("keeps a numeric value equal to today's default fixed, while an explicit defa
     revision: expect.any(String),
   });
   expect(fake.profiles[1].settings).toEqual({
+    cooling: { arrangement: "shared", setting: { mode: "automatic" } },
     powerLimitWatts: { kind: "default" },
     graphicsOffsetMHz: { kind: "value", value: 120 },
   });
@@ -176,7 +177,7 @@ it("treats switching between a number and Use default as an unapplied edit even 
   );
   expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
   expect((await saveAsNewAvailability(user)).text).toContain(
-    "Apply or discard unapplied power-limit or clock-offset changes before saving a profile.",
+    "Apply or discard unapplied tuning changes before saving a profile.",
   );
   await user.click(
     screen.getByRole("button", { name: "Discard power limit change" }),
@@ -257,6 +258,7 @@ it("preserves explicit default choices after applying, saving, and reloading, wi
   await saveProfile(user, "Copy");
   await waitFor(() => expect(fake.profiles).toHaveLength(2));
   expect(fake.profiles[1].settings).toEqual({
+    cooling: { arrangement: "shared", setting: { mode: "automatic" } },
     powerLimitWatts: { kind: "default" },
     graphicsOffsetMHz: { kind: "default" },
   });
@@ -330,7 +332,7 @@ it("blocks applying when a requested default is unavailable, without changing in
   expect((await saveAsNewAvailability(user)).enabled).toBe(true);
 });
 
-it("keeps failed default offset edits for retry through Apply all while failed fan edits do not block saving", async () => {
+it("keeps failed default offset edits for retry through Apply all and requires discarding failed fan edits before saving", async () => {
   const user = userEvent.setup();
   const response = createPerformanceResponse();
   const fake = fakeDesktopGpu(response);
@@ -385,10 +387,15 @@ it("keeps failed default offset edits for retry through Apply all while failed f
   expect(
     screen.getByText("Fan 1: Failed — Fan write denied"),
   ).toBeInTheDocument();
+  expect((await saveAsNewAvailability(user)).enabled).toBe(false);
+  await user.click(
+    screen.getByRole("button", { name: "Discard fan 1 change" }),
+  );
   expect((await saveAsNewAvailability(user)).enabled).toBe(true);
   await saveProfile(user, "Q");
   await waitFor(() => expect(fake.profiles).toHaveLength(1));
   expect(fake.profiles[0].settings).toEqual({
+    cooling: { arrangement: "shared", setting: { mode: "automatic" } },
     powerLimitWatts: { kind: "value", value: 475 },
     graphicsOffsetMHz: { kind: "default" },
   });

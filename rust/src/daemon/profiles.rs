@@ -448,10 +448,11 @@ impl TuningDocument {
             .ok_or_else(profile_missing)?;
         let mut corrected = profile.settings.clone();
         let mut seen = std::collections::BTreeSet::new();
+        let mut cooling_seen = false;
         for correction in corrections {
             let valid = match correction {
                 ProfileRangeCorrection::Numeric(c) => {
-                    let distinct = seen.insert(format!("{:?}", c.setting));
+                    let distinct = seen.insert(c.setting);
                     let reviewed = match c.bound {
                         RangeBound::Maximum => c.proposed_value < c.saved_value,
                         RangeBound::Minimum => c.proposed_value > c.saved_value,
@@ -473,9 +474,10 @@ impl TuningDocument {
                     proposed_value,
                     ..
                 } => {
-                    let valid = seen.insert("cooling".into())
+                    let valid = !cooling_seen
                         && corrected.cooling.as_ref() == Some(saved_value)
                         && saved_value != proposed_value;
+                    cooling_seen = true;
                     corrected.cooling = Some(proposed_value.clone());
                     valid
                 }

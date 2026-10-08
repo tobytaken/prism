@@ -9,11 +9,19 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use super::tuning_store::write_atomically;
-use crate::protocol::ProfileSettingKey;
+use crate::protocol::{CoolingSettingKey, ProfileSettingKey};
+use serde::{Deserialize, Serialize};
 
 pub const POSSIBLY_STALE_FILE_NAME: &str = "last-applied-possibly-stale.json";
 
-type StaleSettings = BTreeMap<String, BTreeSet<ProfileSettingKey>>;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(untagged)]
+enum RecordedSetting {
+    Numeric(ProfileSettingKey),
+    Cooling(CoolingSettingKey),
+}
+
+type StaleSettings = BTreeMap<String, BTreeSet<RecordedSetting>>;
 
 pub(super) struct PossiblyStale {
     path: PathBuf,
@@ -53,7 +61,10 @@ impl PossiblyStale {
     /// The settings' latest manual writes reached the GPU without being recorded.
     pub fn mark(&self, uuid: &str, keys: impl IntoIterator<Item = ProfileSettingKey>) {
         self.change(|settings| {
-            settings.entry(uuid.into()).or_default().extend(keys);
+            settings
+                .entry(uuid.into())
+                .or_default()
+                .extend(keys.into_iter().map(RecordedSetting::Numeric));
         });
     }
 
@@ -62,11 +73,28 @@ impl PossiblyStale {
         self.change(|settings| {
             if let Some(stale) = settings.get_mut(uuid) {
                 for key in keys {
-                    stale.remove(&key);
+                    stale.remove(&RecordedSetting::Numeric(key));
                 }
                 if stale.is_empty() {
                     settings.remove(uuid);
                 }
+            }
+        });
+    }
+
+    /// Cooling is one complete policy, tracked independently of scalar tuning values.
+    pub fn cooling_recorded(&self, uuid: &str, recorded: bool) {
+        self.change(|settings| {
+            let key = RecordedSetting::Cooling(CoolingSettingKey::Cooling);
+            if recorded {
+                if let Some(stale) = settings.get_mut(uuid) {
+                    stale.remove(&key);
+                    if stale.is_empty() {
+                        settings.remove(uuid);
+                    }
+                }
+            } else {
+                settings.entry(uuid.into()).or_default().insert(key);
             }
         });
     }

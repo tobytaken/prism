@@ -189,3 +189,105 @@ it("reviews cooling corrections, leaves cancellation unchanged, and retains fail
   expect(fake.profiles[0].settings.cooling).toEqual(proposed);
   expect((await saveAsNewAvailability(user)).enabled).toBe(false);
 });
+
+it("requires review when another session changes cooling after a failed profile application", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    profiles: [
+      {
+        id: "fixed",
+        name: "Fixed",
+        gpuId: "GPU-123",
+        settings: {
+          cooling: {
+            arrangement: "shared",
+            setting: { mode: "fixed", speedPercent: 70 },
+          },
+        },
+      },
+    ],
+  });
+  fake.gpu.cooling.control = {
+    revision: 0,
+    applied: null,
+    requested: [],
+    curveTemperatureC: null,
+    suspension: null,
+  };
+  fake.fanFailures[0] = "Fan denied";
+  const { queryClient } = renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
+  await chooseProfile(user, "Fixed");
+  await screen.findByText(/Cooling: Failed/);
+  expect(
+    screen.queryByRole("button", { name: "Review cooling change" }),
+  ).not.toBeInTheDocument();
+  await act(async () => {
+    await fake.applyCooling({
+      gpuId: "GPU-123",
+      configuration: { arrangement: "shared", setting: { mode: "automatic" } },
+    });
+    await queryClient.invalidateQueries();
+  });
+  expect(
+    await screen.findByRole("button", { name: "Review cooling change" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Retry cooling change" }),
+  ).toBeDisabled();
+});
+
+it("does not acknowledge competing cooling when profile cooling was never attempted", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    profiles: [
+      {
+        id: "fixed",
+        name: "Fixed",
+        gpuId: "GPU-123",
+        settings: {
+          cooling: {
+            arrangement: "shared",
+            setting: { mode: "fixed", speedPercent: 70 },
+          },
+        },
+      },
+    ],
+  });
+  fake.gpu.cooling.control = {
+    revision: 0,
+    applied: null,
+    requested: [],
+    curveTemperatureC: null,
+    suspension: null,
+  };
+  fake.applyProfileById.mockImplementationOnce(async () => {
+    const external = await fake.applyCooling({
+      gpuId: "GPU-123",
+      configuration: { arrangement: "shared", setting: { mode: "automatic" } },
+    });
+    return {
+      power: null,
+      graphics: null,
+      memory: null,
+      cooling: {
+        revision: external.revision,
+        outcome: { status: "unattempted", error: "Profile validation failed" },
+        fans: [],
+      },
+    };
+  });
+  renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
+  await chooseProfile(user, "Fixed");
+  await screen.findByText(/Cooling: Not attempted/);
+  expect(
+    await screen.findByRole("button", { name: "Review cooling change" }),
+  ).toBeInTheDocument();
+});

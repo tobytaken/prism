@@ -699,6 +699,7 @@ impl DaemonCore {
     fn apply_cooling(&self, request: ApplyCoolingRequest) -> crate::cooling::CoolingApplication {
         let cooling = Arc::clone(&self.cooling);
         let store = Arc::clone(&self.tuning_store);
+        let stale = Arc::clone(&self.possibly_stale);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
             let uuid = request.gpu_id.clone();
             let mut response = cooling.apply(backend, request);
@@ -707,13 +708,17 @@ impl DaemonCore {
                 if let Some(gpu) = &mut gpu {
                     gpu.cooling.control = Some(cooling.control(&uuid));
                     if let Ok(Some(configuration)) = super::profiles::capture_cooling(gpu) {
-                        if store
+                        let recorded = store
                             .update(|document| {
-                                document.last_applied.entry(uuid).or_default().cooling =
-                                    Some(configuration)
+                                document
+                                    .last_applied
+                                    .entry(uuid.clone())
+                                    .or_default()
+                                    .cooling = Some(configuration)
                             })
-                            .is_err()
-                        {
+                            .is_ok();
+                        stale.cooling_recorded(&uuid, recorded);
+                        if !recorded {
                             response.outcome.error = Some(NOT_RECORDED.into());
                         }
                     }
@@ -747,6 +752,7 @@ impl DaemonCore {
                 fans: vec![FanConfiguration { fan_index, setting }],
             },
         });
+        let record_warning = application.outcome.error.clone();
         let outcome = application
             .fans
             .into_iter()
@@ -755,7 +761,7 @@ impl DaemonCore {
             .unwrap_or(application.outcome);
         DaemonResponse::Command(DaemonCommandResponse {
             success: outcome.status == TuningOutcomeStatus::Succeeded,
-            error: outcome.error,
+            error: outcome.error.or(record_warning),
         })
     }
 
@@ -929,6 +935,9 @@ pub(super) fn apply_recorded_profile(
             CurrentProfileChange::Keep => {}
         }
     });
+    if cooling_succeeded {
+        stale.cooling_recorded(&uuid, recorded);
+    }
     if !recorded {
         response.not_recorded();
     }

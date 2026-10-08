@@ -84,7 +84,9 @@ export async function runTuningMutation(
                 .join("; ") ||
                 null),
           },
-          coolingRevision: result.cooling.revision,
+          ...(result.cooling.outcome.status !== "unattempted" && {
+            coolingRevision: result.cooling.revision,
+          }),
         }),
         ...(result.power && { power: result.power }),
         ...(result.graphics && { graphics: result.graphics }),
