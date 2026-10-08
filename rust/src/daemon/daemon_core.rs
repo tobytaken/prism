@@ -15,7 +15,7 @@ use crate::protocol::{
 };
 
 use super::backend::DaemonBackend;
-use super::host::{Clock, HostShutdownSignal};
+use super::host::{Clock, HostShutdownSignal, UserDirectory};
 use super::possibly_stale::{PossiblyStale, POSSIBLY_STALE_FILE_NAME};
 use super::profiles::{capture_settings, new_profile_id, profile_name, uuid_of, verified_gpu};
 use super::queue::{GpuOperationQueues, PendingOperation};
@@ -38,6 +38,8 @@ pub struct CoreDependencies {
     pub socket_path: PathBuf,
     /// Where the host's file system is read from, such as callers' Steam libraries.
     pub host_root: PathBuf,
+    /// Tells which user a running game's uid belongs to now.
+    pub users: Arc<dyn UserDirectory>,
 }
 
 /// The daemon below the socket. Requests may arrive from several connections at once: reads
@@ -454,6 +456,7 @@ impl DaemonCore {
             &dependencies.boot_id,
             Arc::clone(&tuning_store),
             Arc::clone(&recognition),
+            Arc::clone(&dependencies.users),
         );
         let core = Self {
             dependencies,
