@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FanCurveGraph } from "./fan-curve-graph";
 import { previewGpuFanCurve } from "@/features/gpus/api";
+import { fanCurvePreviewOptions } from "@/features/gpus/lib/fan-curve-preview";
 import type { FanCurveDraftPoint } from "@/features/gpus/hooks/use-tuning-edits";
 import type {
   FanCurvePoint,
@@ -27,19 +28,21 @@ type CurveState = "unapplied" | "applied" | null;
  */
 export function FanCurveSection({
   gpu,
+  fanIndex,
   draft,
   busy,
   onDraftChange,
   onApply,
 }: {
   gpu: GpuPerformanceDevice;
+  fanIndex?: number;
   /** The edited curve, or null to show the applied curve, else the starter curve. */
   draft: FanCurveDraftPoint[] | null;
   busy: boolean;
   onDraftChange: (points: FanCurveDraftPoint[] | null) => void;
   onApply: (points: FanCurvePoint[]) => void;
 }) {
-  const support = gpu.cooling.curveSupport;
+  const support = useFanCurveSupport(gpu, fanIndex);
   if (support?.status !== "available") {
     return (
       <CurveShell state={null}>
@@ -50,11 +53,23 @@ export function FanCurveSection({
       </CurveShell>
     );
   }
-  const applied = appliedCurve(gpu);
+  const appliedConfiguration = gpu.cooling.control?.applied;
+  const fanSetting =
+    appliedConfiguration?.arrangement === "perFan"
+      ? appliedConfiguration.fans.find((fan) => fan.fanIndex === fanIndex)
+          ?.setting
+      : null;
+  const applied =
+    fanIndex == null
+      ? appliedCurve(gpu)
+      : fanSetting?.mode === "curve"
+        ? fanSetting.points
+        : null;
   const points = draft ?? applied ?? support.starter;
   return (
     <FanCurveEditor
       gpu={gpu}
+      fanIndex={fanIndex}
       support={support}
       points={points}
       state={draft != null ? "unapplied" : applied ? "applied" : null}
@@ -63,6 +78,28 @@ export function FanCurveSection({
       onApply={onApply}
     />
   );
+}
+
+/** The daemon owns capability rules, including ranges that differ between fans. */
+export function useFanCurveSupport(
+  gpu: GpuPerformanceDevice,
+  fanIndex?: number,
+) {
+  const fan = gpu.cooling.fans.find((fan) => fan.index === fanIndex);
+  const targeted = useQuery({
+    queryKey: [
+      "fan-curve-support",
+      gpu.id,
+      gpu.stableId,
+      fanIndex,
+      fan?.minSpeedPercent,
+      fan?.maxSpeedPercent,
+      gpu.cooling.maxOperatingTemperatureC,
+    ],
+    queryFn: () => previewGpuFanCurve({ gpuId: gpu.id, fanIndex, points: [] }),
+    enabled: fanIndex != null,
+  });
+  return fanIndex == null ? gpu.cooling.curveSupport : targeted.data?.support;
 }
 
 /** The curve every fan follows, when Prism applied one shared curve. */
@@ -75,9 +112,11 @@ function appliedCurve(gpu: GpuPerformanceDevice): FanCurvePoint[] | null {
 
 function CurveShell({
   state,
+  fanIndex,
   children,
 }: {
   state: CurveState;
+  fanIndex?: number;
   children: ReactNode;
 }) {
   return (
@@ -88,7 +127,7 @@ function CurveShell({
     >
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
-          Fan curve · all fans
+          Fan curve · {fanIndex == null ? "all fans" : `fan ${fanIndex + 1}`}
         </p>
         {state && (
           <Badge variant="outline">
@@ -103,6 +142,7 @@ function CurveShell({
 
 function FanCurveEditor({
   gpu,
+  fanIndex,
   support,
   points,
   state,
@@ -111,6 +151,7 @@ function FanCurveEditor({
   onApply,
 }: {
   gpu: GpuPerformanceDevice;
+  fanIndex?: number;
   support: AvailableCurve;
   points: FanCurveDraftPoint[];
   state: CurveState;
@@ -128,9 +169,7 @@ function FanCurveEditor({
     inputProblems.length === 0 ? (points as FanCurvePoint[]) : null;
   // Keyed by the limits too, so a capability change rechecks the curve.
   const preview = useQuery({
-    queryKey: ["fan-curve-preview", gpu.id, complete, support],
-    queryFn: () => previewGpuFanCurve({ gpuId: gpu.id, points: complete! }),
-    enabled: complete != null,
+    ...fanCurvePreviewOptions(gpu, complete, fanIndex),
     // While an edit is rechecked, the previous reasons stay rather than flickering away.
     placeholderData: keepPreviousData,
   });
@@ -147,7 +186,7 @@ function FanCurveEditor({
     onDraftChange(changed);
     return changed;
   };
-  const fanCount = gpu.cooling.fans.length;
+  const fanCount = fanIndex == null ? gpu.cooling.fans.length : 1;
   const valid = checked && problems.length === 0;
   // Graph moves preserve a valid curve. Let a gesture continue while preview catches up,
   // but never use an old preview to authorize graph edits of an unchecked numeric draft.
@@ -173,7 +212,7 @@ function FanCurveEditor({
     thermalEndpoints.length === 1 ? thermalEndpoints[0] : null;
 
   return (
-    <CurveShell state={state}>
+    <CurveShell state={state} fanIndex={fanIndex}>
       <p className="text-xs text-muted-foreground">
         Reaches {support.maxSpeedPercent}% by {support.fullSpeedTemperatureC}
         °C, {support.maxOperatingTemperatureC - support.fullSpeedTemperatureC}°C
@@ -293,8 +332,8 @@ function FanCurveEditor({
         ) : checked ? (
           <p className="text-muted-foreground">
             {state === "applied"
-              ? "Valid curve. Prism follows it for every fan, even after you close the app."
-              : "Valid curve. Apply it to have Prism follow it for every fan, even after you close the app."}
+              ? `Valid curve. Prism follows it for ${fanIndex == null ? "every fan" : "this fan"}, even after you close the app.`
+              : `Valid curve. Apply it to have Prism follow it for ${fanIndex == null ? "every fan" : "this fan"}, even after you close the app.`}
           </p>
         ) : (
           <p className="text-muted-foreground">Checking the curve…</p>

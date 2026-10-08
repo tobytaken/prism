@@ -65,8 +65,16 @@ export function retryTuningAction(
   if (setting === "cooling") {
     const draft = value as TuningEdits["cooling"];
     const configuration = draft && coolingConfiguration(draft);
-    return configuration && gpu.stableId
-      ? { kind: "applyCooling", gpuId, stableId: gpu.stableId, configuration }
+    return configuration &&
+      gpu.stableId &&
+      (!draft?.stableId || draft.stableId === gpu.stableId)
+      ? {
+          kind: "applyCooling",
+          gpuId,
+          stableId: gpu.stableId,
+          configuration,
+          fanIndexes: draft?.fanIndexes,
+        }
       : null;
   }
   const fanIndex = Number(setting.slice(4));

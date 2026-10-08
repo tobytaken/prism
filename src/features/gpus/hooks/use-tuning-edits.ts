@@ -7,6 +7,7 @@ import type {
 } from "@/features/gpus/lib/tuning-mutation";
 import type {
   CoolingConfiguration,
+  FanSetting,
   GpuPerformanceDevice,
   GpuProfileSettings,
   ProfileSetting,
@@ -25,7 +26,7 @@ export type TuningEdits = {
   power?: number | null | "default";
   graphics?: number | null | "default";
   memory?: number | null | "default";
-  /** One cooling configuration shared by every fan. */
+  /** A complete cooling draft, including its reviewed GPU and fan identities. */
   cooling?: CoolingDraft;
 } & Partial<Record<`fan:${number}`, number | null | "auto">>;
 /** A fan curve point as typed; null is an empty input. */
@@ -33,17 +34,38 @@ export type FanCurveDraftPoint = {
   temperatureC: number | null;
   speedPercent: number | null;
 };
-/** A shared cooling configuration as edited; a curve can hold incomplete points. */
-export type CoolingDraft =
+export type FanSettingDraft =
   | { mode: "automatic" }
+  | { mode: "fixed"; speedPercent: number | null }
   | { mode: "curve"; points: FanCurveDraftPoint[] };
+export type CoolingDraft = (
+  | FanSettingDraft
+  | {
+      mode: "perFan";
+      fans: { fanIndex: number; setting: FanSettingDraft }[];
+    }
+) & { stableId?: string | null; fanIndexes?: number[] };
 type DeviceEdits = {
   edits: TuningEdits;
+  coolingRevisions?: Partial<Record<TuningSetting, number>>;
   outcomes: Partial<Record<TuningSetting, TuningOutcome>>;
   profileOwners?: Partial<Record<TuningSetting, string>>;
   // Profile settings whose last successful application was an explicit default request.
   appliedDefaults?: Partial<Record<ProfileSettingKey, true>>;
 };
+
+function hasStaleCoolingDraft(
+  device: DeviceEdits | undefined,
+  revision: number | undefined,
+) {
+  return (
+    revision != null &&
+    Object.entries(device?.coolingRevisions ?? {}).some(
+      ([setting, expected]) =>
+        setting in (device?.edits ?? {}) && expected !== revision,
+    )
+  );
+}
 
 // Observations never acknowledge an intention: only a command outcome or discard does.
 export function useTuningEdits() {
@@ -78,9 +100,34 @@ export function useTuningEdits() {
     action: PerformanceMutationAction,
     gpu: GpuPerformanceDevice,
     handler: TuningMutationHandler,
-    { reviewCorrections = false } = {},
+    {
+      reviewCorrections = false,
+      coolingRevision = gpu.cooling.control?.revision,
+    } = {},
   ): Promise<ProfileRangeCorrection[] | undefined> {
     const intentions = actionIntentions(action, gpu);
+    const coolingAction =
+      action.kind === "applyCooling" ||
+      action.kind === "setFanSpeed" ||
+      action.kind === "setFanModeAuto";
+    if (coolingAction && gpu.cooling.control) {
+      const revision = gpu.cooling.control.revision;
+      const device = devices[gpu.id];
+      if (hasStaleCoolingDraft(device, revision)) {
+        return;
+      }
+      if (action.kind === "applyCooling")
+        action = { ...action, expectedRevision: coolingRevision };
+      else if (
+        action.kind === "setFanSpeed" ||
+        action.kind === "setFanModeAuto"
+      )
+        action = {
+          ...action,
+          expectedRevision: coolingRevision,
+          stableId: gpu.stableId ?? undefined,
+        };
+    }
     // Existing Apply buttons also retry retained profile instructions through validation.
     if (action.kind !== "applyProfile") {
       const owner = (Object.keys(intentions) as TuningSetting[])
@@ -115,6 +162,21 @@ export function useTuningEdits() {
       return {
         ...device,
         profileOwners,
+        coolingRevisions:
+          coolingAction && gpu.cooling.control
+            ? {
+                ...device.coolingRevisions,
+                ...Object.fromEntries(
+                  Object.keys(intentions).map((setting) => [
+                    setting,
+                    setting in device.edits
+                      ? (device.coolingRevisions?.[setting as TuningSetting] ??
+                        gpu.cooling.control!.revision)
+                      : gpu.cooling.control!.revision,
+                  ]),
+                ),
+              }
+            : device.coolingRevisions,
         edits: { ...device.edits, ...intentions },
       };
     });
@@ -155,7 +217,13 @@ export function useTuningEdits() {
     }
     update(gpu.id, (device) => {
       const edits = { ...device.edits };
-      const outcomes = { ...device.outcomes };
+      const outcomes: DeviceEdits["outcomes"] = { ...device.outcomes };
+      if (action.kind === "applyCooling" && result) {
+        for (const [key, outcome] of Object.entries(result)) {
+          if (key.startsWith("fan:"))
+            outcomes[key as `fan:${number}`] = outcome as TuningOutcome;
+        }
+      }
       const profileOwners = { ...device.profileOwners };
       const appliedDefaults = { ...device.appliedDefaults };
       for (const setting of Object.keys(intentions) as TuningSetting[]) {
@@ -176,12 +244,50 @@ export function useTuningEdits() {
           delete profileOwners[setting];
         }
       }
-      return { edits, outcomes, profileOwners, appliedDefaults };
+      const coolingRevisions = { ...device.coolingRevisions };
+      // A completed own write acknowledges only drafts based on the revision it replaced.
+      // A stale rejection or transport error never acknowledges competing changes.
+      if (
+        result?.coolingRevision != null &&
+        coolingAction &&
+        "expectedRevision" in action
+      ) {
+        for (const key of Object.keys(coolingRevisions) as TuningSetting[]) {
+          if (coolingRevisions[key] === action.expectedRevision)
+            coolingRevisions[key] = result.coolingRevision;
+        }
+      }
+      return {
+        ...device,
+        edits,
+        outcomes,
+        profileOwners,
+        appliedDefaults,
+        coolingRevisions,
+      };
     });
   }
 
   return {
     devices,
+    coolingNeedsReview(gpu: GpuPerformanceDevice) {
+      return hasStaleCoolingDraft(
+        devices[gpu.id],
+        gpu.cooling.control?.revision,
+      );
+    },
+    reviewCooling(gpuId: string, revision: number) {
+      update(gpuId, (device) => ({
+        ...device,
+        coolingRevisions: Object.fromEntries(
+          Object.keys(device.edits)
+            .filter(
+              (setting) => setting === "cooling" || setting.startsWith("fan:"),
+            )
+            .map((setting) => [setting, revision]),
+        ),
+      }));
+    },
     retryAction,
     appliedDefaults(gpuId: string): ProfileSettingKey[] {
       return Object.keys(
@@ -200,6 +306,10 @@ export function useTuningEdits() {
         for (const [gpuId, device] of Object.entries(devices)) {
           const gpu = gpus.find((gpu) => gpu.id === gpuId);
           const actions: PerformanceMutationAction[] = [];
+          const fans: Extract<
+            CoolingConfiguration,
+            { arrangement: "perFan" }
+          >["fans"] = [];
           for (const setting of Object.keys(device.edits) as TuningSetting[]) {
             const action = gpu && retryAction(gpu, setting);
             if (!action) {
@@ -217,6 +327,21 @@ export function useTuningEdits() {
                   },
                 },
               }));
+              continue;
+            }
+            if (
+              gpu?.stableId &&
+              gpu.cooling.control &&
+              (action.kind === "setFanSpeed" ||
+                action.kind === "setFanModeAuto")
+            ) {
+              fans.push({
+                fanIndex: action.fanIndex,
+                setting:
+                  action.kind === "setFanSpeed"
+                    ? { mode: "fixed", speedPercent: action.speedPercent }
+                    : { mode: "automatic" },
+              });
               continue;
             }
             const clocks = actions.find(
@@ -237,8 +362,31 @@ export function useTuningEdits() {
               actions.push(action);
             }
           }
-          if (gpu)
-            for (const action of actions) await apply(action, gpu, handler);
+          if (fans.length && gpu?.stableId)
+            actions.push({
+              kind: "applyCooling",
+              gpuId,
+              stableId: gpu.stableId,
+              configuration: { arrangement: "perFan", fans },
+              individualFanEdits: true,
+            });
+          if (gpu) {
+            // Keep the original draft check, but advance the queue precondition after our own
+            // writes. Another session changing cooling between requests still fails that check.
+            let coolingRevision = gpu.cooling.control?.revision;
+            for (const action of actions) {
+              await apply(
+                action,
+                gpu,
+                async (request) => {
+                  const result = await handler(request);
+                  coolingRevision = result?.coolingRevision ?? coolingRevision;
+                  return result ?? {};
+                },
+                { coolingRevision },
+              );
+            }
+          }
         }
       } finally {
         applyAllRunning.current = false;
@@ -249,74 +397,113 @@ export function useTuningEdits() {
       gpuId: string,
       setting: K,
       value: TuningEdits[K],
+      coolingRevision?: number,
     ) {
-      update(gpuId, ({ edits, outcomes, profileOwners, appliedDefaults }) => {
-        const nextOutcomes = { ...outcomes };
-        const nextOwners = { ...profileOwners };
-        delete nextOwners[setting];
-        delete nextOutcomes[setting];
-        return {
-          edits: { ...edits, [setting]: value },
-          outcomes: nextOutcomes,
-          profileOwners: nextOwners,
+      update(
+        gpuId,
+        ({
+          edits,
+          outcomes,
+          profileOwners,
           appliedDefaults,
-        };
-      });
+          coolingRevisions,
+        }) => {
+          const nextOutcomes = { ...outcomes };
+          const nextOwners = { ...profileOwners };
+          delete nextOwners[setting];
+          delete nextOutcomes[setting];
+          return {
+            coolingRevisions:
+              coolingRevision == null
+                ? coolingRevisions
+                : {
+                    ...coolingRevisions,
+                    [setting]:
+                      setting in edits
+                        ? (coolingRevisions?.[setting] ?? coolingRevision)
+                        : coolingRevision,
+                  },
+            edits: { ...edits, [setting]: value },
+            outcomes: nextOutcomes,
+            profileOwners: nextOwners,
+            appliedDefaults,
+          };
+        },
+      );
     },
     discard(gpuId: string, setting: TuningSetting) {
-      update(gpuId, ({ edits, outcomes, profileOwners, appliedDefaults }) => {
-        const nextEdits = { ...edits };
-        const nextOutcomes = { ...outcomes };
-        const nextOwners = { ...profileOwners };
-        delete nextEdits[setting];
-        delete nextOutcomes[setting];
-        delete nextOwners[setting];
-        return {
-          edits: nextEdits,
-          outcomes: nextOutcomes,
-          profileOwners: nextOwners,
+      update(
+        gpuId,
+        ({
+          edits,
+          outcomes,
+          profileOwners,
           appliedDefaults,
-        };
-      });
+          coolingRevisions,
+        }) => {
+          const nextEdits = { ...edits };
+          const nextOutcomes = { ...outcomes };
+          const nextOwners = { ...profileOwners };
+          delete nextEdits[setting];
+          delete nextOutcomes[setting];
+          delete nextOwners[setting];
+          return {
+            coolingRevisions,
+            edits: nextEdits,
+            outcomes: nextOutcomes,
+            profileOwners: nextOwners,
+            appliedDefaults,
+          };
+        },
+      );
     },
     apply,
   };
 }
 export type TuningEditStore = ReturnType<typeof useTuningEdits>;
 
-/** The shared configuration's draft; fixed speeds are still edited per fan. */
-function coolingDraft(
-  configuration: Extract<CoolingConfiguration, { arrangement: "shared" }>,
+/** Preserve the complete configuration after a failed application. */
+export function coolingDraft(
+  configuration: CoolingConfiguration,
 ): CoolingDraft {
-  const { setting } = configuration;
-  return setting.mode === "curve"
-    ? { mode: "curve", points: setting.points }
-    : { mode: "automatic" };
+  return configuration.arrangement === "shared"
+    ? configuration.setting
+    : { mode: "perFan", fans: configuration.fans };
 }
 
-/** The draft as a shared configuration, once every curve point is a whole number. */
 export function coolingConfiguration(
   draft: CoolingDraft,
 ): CoolingConfiguration | null {
-  if (draft.mode === "automatic")
-    return { arrangement: "shared", setting: { mode: "automatic" } };
-  const complete = draft.points.every(
-    (point) =>
-      Number.isInteger(point.temperatureC) &&
-      Number.isInteger(point.speedPercent),
-  );
-  return complete
-    ? {
-        arrangement: "shared",
-        setting: {
+  function setting(value: FanSettingDraft): FanSetting | null {
+    if (value.mode === "automatic") return { mode: "automatic" };
+    if (value.mode === "fixed")
+      return Number.isInteger(value.speedPercent)
+        ? { mode: "fixed", speedPercent: value.speedPercent! }
+        : null;
+    return value.points.every(
+      (p) =>
+        Number.isInteger(p.temperatureC) && Number.isInteger(p.speedPercent),
+    )
+      ? {
           mode: "curve",
-          points: draft.points.map((point) => ({
-            temperatureC: point.temperatureC!,
-            speedPercent: point.speedPercent!,
+          points: value.points.map((p) => ({
+            temperatureC: p.temperatureC!,
+            speedPercent: p.speedPercent!,
           })),
-        },
-      }
-    : null;
+        }
+      : null;
+  }
+  if (draft.mode !== "perFan") {
+    const complete = setting(draft);
+    return complete ? { arrangement: "shared", setting: complete } : null;
+  }
+  const fans = [];
+  for (const fan of draft.fans) {
+    const complete = setting(fan.setting);
+    if (!complete) return null;
+    fans.push({ fanIndex: fan.fanIndex, setting: complete });
+  }
+  return { arrangement: "perFan", fans };
 }
 
 function profileInstruction(value: unknown): ProfileSetting | null {
@@ -368,9 +555,32 @@ function actionIntentions(
         }),
       };
     case "applyCooling":
-      return action.configuration.arrangement === "shared"
-        ? { cooling: coolingDraft(action.configuration) }
-        : {};
+      if (
+        action.individualFanEdits &&
+        action.configuration.arrangement === "perFan"
+      )
+        return Object.fromEntries(
+          action.configuration.fans.flatMap(({ fanIndex, setting }) =>
+            setting.mode === "curve"
+              ? []
+              : [
+                  [
+                    `fan:${fanIndex}`,
+                    setting.mode === "automatic"
+                      ? "auto"
+                      : setting.speedPercent,
+                  ],
+                ],
+          ),
+        );
+      return {
+        cooling: {
+          ...coolingDraft(action.configuration),
+          stableId: action.stableId,
+          fanIndexes:
+            action.fanIndexes ?? gpu.cooling.fans.map((fan) => fan.index),
+        },
+      };
     case "resetClockOffsets":
       return {
         ...(gpu.clocks.graphics.support !== "unsupported" && {

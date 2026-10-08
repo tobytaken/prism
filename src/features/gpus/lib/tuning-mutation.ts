@@ -9,6 +9,7 @@ import type {
 
 export type TuningOutcomeMap = Partial<Record<TuningSetting, TuningOutcome>>;
 export type TuningMutationResult = TuningOutcomeMap & {
+  coolingRevision?: number;
   /** Proposed by fresh validation when only range bounds blocked a profile; nothing was written. */
   corrections?: ProfileRangeCorrection[];
 };
@@ -28,6 +29,34 @@ export function mutationErrorMessage(
 export async function runTuningMutation(
   action: PerformanceMutationAction,
 ): Promise<TuningMutationResult> {
+  if (
+    (action.kind === "setFanSpeed" || action.kind === "setFanModeAuto") &&
+    action.stableId &&
+    action.expectedRevision != null
+  ) {
+    const result = await api.applyGpuCooling({
+      gpuId: action.stableId,
+      expectedRevision: action.expectedRevision,
+      configuration: {
+        arrangement: "perFan",
+        fans: [
+          {
+            fanIndex: action.fanIndex,
+            setting:
+              action.kind === "setFanSpeed"
+                ? { mode: "fixed", speedPercent: action.speedPercent }
+                : { mode: "automatic" },
+          },
+        ],
+      },
+    });
+    return {
+      [`fan:${action.fanIndex}`]: result.fans[0]?.outcome ?? result.outcome,
+      ...(result.outcome.status !== "unattempted" && {
+        coolingRevision: result.revision,
+      }),
+    };
+  }
   switch (action.kind) {
     case "applyProfile": {
       const result = action.corrections
@@ -80,11 +109,28 @@ export async function runTuningMutation(
       const application = await api.applyGpuCooling({
         gpuId: action.stableId,
         configuration: action.configuration,
+        ...(action.fanIndexes && { fanIndexes: action.fanIndexes }),
+        expectedRevision: action.expectedRevision,
       });
+      const fanOutcomes =
+        action.configuration.arrangement === "perFan"
+          ? action.configuration.fans.map(({ fanIndex }) => ({
+              fanIndex,
+              outcome:
+                application.fans.find((fan) => fan.fanIndex === fanIndex)
+                  ?.outcome ?? application.outcome,
+            }))
+          : application.fans;
       const unsuccessful = application.fans
         .filter((fan) => fan.outcome.status === "failed")
         .map((fan) => `Fan ${fan.fanIndex + 1}: ${fan.outcome.error}`);
       return {
+        ...Object.fromEntries(
+          fanOutcomes.map((fan) => [`fan:${fan.fanIndex}`, fan.outcome]),
+        ),
+        ...(application.outcome.status !== "unattempted" && {
+          coolingRevision: application.revision,
+        }),
         cooling: {
           status: application.outcome.status,
           error:

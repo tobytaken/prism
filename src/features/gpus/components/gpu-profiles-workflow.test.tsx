@@ -119,9 +119,10 @@ describe("GPU tuning profiles", () => {
       profiles: [quiet],
       currentProfiles: { "GPU-123": "quiet" },
     });
-    fake.setFanSpeed.mockResolvedValue({
-      success: false,
-      error: "Fan denied",
+    fake.applyCooling.mockResolvedValue({
+      revision: 0,
+      outcome: { status: "failed", error: "Fan denied" },
+      fans: [],
     });
     renderPerformancePage();
     await waitFor(() => expect(profileSelector()).toHaveTextContent("Quiet"));
@@ -175,7 +176,17 @@ describe("GPU tuning profiles", () => {
           finishFan = resolve;
         },
       );
-      fake.setFanSpeed.mockReturnValue(fanResult);
+      fake.applyCooling.mockImplementation(async () => {
+        const result = await fanResult;
+        return {
+          revision: 0,
+          outcome: {
+            status: result.success ? "succeeded" : "failed",
+            error: result.error,
+          },
+          fans: [],
+        };
+      });
       if (surface === "Performance") renderPerformancePage();
       else
         renderWithQueryClient(
