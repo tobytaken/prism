@@ -137,6 +137,89 @@
       "recovery": null
     },
     {
+      "applied": {
+        "arrangement": "shared",
+        "setting": {
+          "mode": "curve",
+          "points": [
+            {
+              "temperatureC": 45,
+              "speedPercent": 20
+            },
+            {
+              "temperatureC": 85,
+              "speedPercent": 100
+            }
+          ]
+        }
+      },
+      "requested": [
+        {
+          "fanIndex": 0,
+          "speedPercent": 90
+        }
+      ],
+      "curveTemperatureC": 80,
+      "suspension": null,
+      "revision": 3,
+      "recovery": {
+        "status": "resumed",
+        "fans": [
+          {
+            "fanIndex": 0,
+            "outcome": {
+              "status": "succeeded",
+              "error": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "applied": {
+        "arrangement": "shared",
+        "setting": {
+          "mode": "curve",
+          "points": [
+            {
+              "temperatureC": 45,
+              "speedPercent": 20
+            },
+            {
+              "temperatureC": 85,
+              "speedPercent": 100
+            }
+          ]
+        }
+      },
+      "requested": [],
+      "curveTemperatureC": null,
+      "suspension": {
+        "kind": "fault",
+        "reason": "After the Prism daemon restarted, the curve couldn't resume. Fan 1: Unknown error",
+        "restoration": [
+          {
+            "fanIndex": 0,
+            "status": "restored",
+            "detail": null
+          }
+        ]
+      },
+      "revision": 3,
+      "recovery": {
+        "status": "retryRequired",
+        "fans": [
+          {
+            "fanIndex": 0,
+            "outcome": {
+              "status": "failed",
+              "error": "Unknown error"
+            }
+          }
+        ]
+      }
+    },
+    {
       "applied": null,
       "requested": [],
       "curveTemperatureC": null,

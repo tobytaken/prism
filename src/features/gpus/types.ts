@@ -224,6 +224,21 @@ export interface CoolingControl {
   curveTemperatureC: number | null;
   /** Why curve control stopped; only a new application resumes the kept curve. */
   suspension: CurveSuspension | null;
+  /**
+   * What the daemon did with the applied curves when it restarted within this host boot, until
+   * an application or a later suspension replaces it.
+   */
+  recovery: CoolingRecovery | null;
+}
+
+/**
+ * A restarted daemon's attempt to resume the curves it was following when it stopped. A curve
+ * that couldn't resume is suspended and waits for a retry.
+ */
+export interface CoolingRecovery {
+  status: "resumed" | "retryRequired";
+  /** Each interrupted curve fan's resumption. */
+  fans: { fanIndex: number; outcome: TuningOutcome }[];
 }
 
 export interface CurveSuspension {

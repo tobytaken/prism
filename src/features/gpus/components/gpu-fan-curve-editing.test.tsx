@@ -48,6 +48,7 @@ const sharedCooling: CoolingInfo = {
     requested: [],
     curveTemperatureC: null,
     suspension: null,
+    recovery: null,
   },
 };
 

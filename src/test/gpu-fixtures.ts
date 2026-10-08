@@ -179,6 +179,7 @@ export function createPerformanceGpu(
           requested: [],
           curveTemperatureC: null,
           suspension: null,
+          recovery: null,
         },
       },
       clocks: {
