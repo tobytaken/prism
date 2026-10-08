@@ -80,6 +80,8 @@ impl FanCurveProblem {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreviewFanCurveRequest {
     pub gpu_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fan_index: Option<u32>,
     pub points: Vec<FanCurvePoint>,
 }
 
@@ -87,6 +89,8 @@ pub struct PreviewFanCurveRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FanCurvePreview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support: Option<FanCurveSupport>,
     pub problems: Vec<FanCurveProblem>,
 }
 
@@ -100,7 +104,11 @@ struct CurveLimits {
 
 /// Judges whether a shared curve can control every fan the GPU reports.
 pub fn curve_support(cooling: &CoolingInfo) -> FanCurveSupport {
-    match curve_limits(cooling) {
+    curve_support_for(cooling, &every_fan(cooling))
+}
+
+pub fn curve_support_for(cooling: &CoolingInfo, fan_indexes: &[u32]) -> FanCurveSupport {
+    match curve_limits_for(cooling, fan_indexes) {
         Ok(limits) => {
             let starter = starter_curve(limits);
             if !validate_points(limits, &starter).is_empty() {
@@ -166,10 +174,6 @@ pub fn requested_speed(points: &[FanCurvePoint], temperature_c: i64) -> i64 {
         }
     }
     speed
-}
-
-fn curve_limits(cooling: &CoolingInfo) -> Result<CurveLimits, String> {
-    curve_limits_for(cooling, &every_fan(cooling))
 }
 
 fn curve_limits_for(cooling: &CoolingInfo, fan_indexes: &[u32]) -> Result<CurveLimits, String> {

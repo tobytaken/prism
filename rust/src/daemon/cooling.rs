@@ -139,6 +139,9 @@ impl GpuCooling {
     }
 
     fn configuration(&self) -> Option<CoolingConfiguration> {
+        if self.fans.is_empty() {
+            return None;
+        }
         let setting = |state: &FanState| match state {
             FanState::Automatic => FanSetting::Automatic {},
             FanState::Fixed(speed_percent) => FanSetting::Fixed {
@@ -277,6 +280,16 @@ impl CoolingController {
                 "The GPU is absent or its stable identity could not be verified. Refresh the GPU readings and try again.",
             );
         };
+        if let Some(expected) = &request.fan_indexes {
+            let actual: BTreeSet<_> = gpu.cooling.fans.iter().map(|fan| fan.index).collect();
+            let reviewed: BTreeSet<_> = expected.iter().copied().collect();
+            if actual != reviewed || reviewed.len() != expected.len() {
+                return unattempted(
+                    expected,
+                    "The targeted fans changed. Review the current fan inventory before applying.",
+                );
+            }
+        }
         let shared = matches!(request.configuration, CoolingConfiguration::Shared { .. });
         let targets: Vec<(u32, FanSetting)> = match request.configuration {
             CoolingConfiguration::Shared { setting } => gpu
@@ -345,8 +358,16 @@ impl CoolingController {
             };
             let state = FanState::new(setting, output);
             match result {
-                Ok(()) => fans.push(fan_outcome(fan_index, TuningOutcomeStatus::Succeeded, None)),
+                Ok(()) => {
+                    fans.push(fan_outcome(fan_index, TuningOutcomeStatus::Succeeded, None));
+                    states.push((fan_index, state));
+                }
                 Err(error) => {
+                    // Keep a requested curve for explicit retry, visibly suspended below.
+                    // A rejected automatic/fixed command must not replace the applied setting.
+                    if matches!(state, FanState::Curve { .. }) {
+                        states.push((fan_index, state));
+                    }
                     failure = Some(format!("Fan {}: {error}", fan_index + 1));
                     fans.push(fan_outcome(
                         fan_index,
@@ -355,7 +376,6 @@ impl CoolingController {
                     ));
                 }
             }
-            states.push((fan_index, state));
         }
         let mut gpus = self.lock();
         let cooling = gpus

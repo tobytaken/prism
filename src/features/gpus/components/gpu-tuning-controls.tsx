@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CoolingControlStatus } from "@/features/gpus/components/cooling-control-status";
-import { FanCurveSection } from "@/features/gpus/components/fan-curve-section";
+import { CoolingArrangementEditor } from "@/features/gpus/components/cooling-arrangement-editor";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
 import {
   useTuningEdits,
@@ -74,6 +74,7 @@ export type PerformanceMutationAction =
     }
   | {
       kind: "applyCooling";
+      fanIndexes?: number[];
       gpuId: string;
       /** The GPU's UUID, which the daemon's cooling control is keyed by. */
       stableId: string;
@@ -256,13 +257,17 @@ export function GpuTuningControls({
     </PerformanceSection>
   );
 
-  const applyCooling = (configuration: CoolingConfiguration) =>
+  const applyCooling = (
+    configuration: CoolingConfiguration,
+    fanIndexes?: number[],
+  ) =>
     gpu.stableId &&
     onMutationAction({
       kind: "applyCooling",
       gpuId: gpu.id,
       stableId: gpu.stableId,
       configuration,
+      fanIndexes,
     });
 
   const coolingSection = (
@@ -301,21 +306,13 @@ export function GpuTuningControls({
         busy={pendingAction != null}
         onApply={applyCooling}
       />
-      <FanCurveSection
+      <CoolingArrangementEditor
+        key={gpu.id}
         gpu={gpu}
-        draft={edits.cooling?.mode === "curve" ? edits.cooling.points : null}
+        draft={edits.cooling}
         busy={pendingAction != null}
-        onDraftChange={(points) =>
-          points
-            ? editStore.change(gpu.id, "cooling", { mode: "curve", points })
-            : editStore.discard(gpu.id, "cooling")
-        }
-        onApply={(points) =>
-          applyCooling({
-            arrangement: "shared",
-            setting: { mode: "curve", points },
-          })
-        }
+        onChange={(draft) => editStore.change(gpu.id, "cooling", draft)}
+        onApply={applyCooling}
       />
     </PerformanceSection>
   );

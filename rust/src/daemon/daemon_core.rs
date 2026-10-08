@@ -688,6 +688,7 @@ impl DaemonCore {
             });
         };
         let application = self.apply_cooling(ApplyCoolingRequest {
+            fan_indexes: None,
             gpu_id: uuid,
             configuration: CoolingConfiguration::PerFan {
                 fans: vec![FanConfiguration { fan_index, setting }],
@@ -770,7 +771,13 @@ impl DaemonCore {
         let performance = self.dependencies.backend.performance();
         match performance.gpus.iter().find(|gpu| gpu.id == request.gpu_id) {
             Some(gpu) => DaemonResponse::FanCurvePreview(FanCurvePreview {
-                problems: fan_curve::validate(&gpu.cooling, &request.points),
+                problems: match request.fan_index {
+                    Some(index) => fan_curve::validate_for(&gpu.cooling, &[index], &request.points),
+                    None => fan_curve::validate(&gpu.cooling, &request.points),
+                },
+                support: request
+                    .fan_index
+                    .map(|index| fan_curve::curve_support_for(&gpu.cooling, &[index])),
             }),
             None => DaemonResponse::Error(GpuCommandError::new(
                 GpuCommandErrorCode::NotFound,

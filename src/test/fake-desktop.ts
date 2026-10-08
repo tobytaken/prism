@@ -90,6 +90,48 @@ function control(gpu: GpuPerformanceDevice, key: ProfileSettingKey): Control {
 
 const succeeded: TuningOutcome = { status: "succeeded", error: null };
 
+/** Targeted support at the same desktop boundary as the shared preview fixture. */
+function targetedCurveSupport(
+  gpu: GpuPerformanceDevice,
+  fanIndex: number,
+): FanCurveSupport {
+  const fan = gpu.cooling.fans.find((fan) => fan.index === fanIndex);
+  const maxTemperature = gpu.cooling.maxOperatingTemperatureC;
+  if (
+    !fan ||
+    fan.minSpeedPercent == null ||
+    fan.maxSpeedPercent == null ||
+    maxTemperature == null
+  )
+    return {
+      status: "unavailable",
+      reason:
+        "The fan's speed range or maximum operating temperature is unavailable.",
+    };
+  const min = fan.minSpeedPercent,
+    max = fan.maxSpeedPercent,
+    full = maxTemperature - 5;
+  return {
+    status: "available",
+    maxOperatingTemperatureC: maxTemperature,
+    fullSpeedTemperatureC: full,
+    minSpeedPercent: min,
+    maxSpeedPercent: max,
+    starter: [
+      { temperatureC: full - 40, speedPercent: min },
+      {
+        temperatureC: full - 20,
+        speedPercent: Math.ceil(min + (max - min) * 0.5),
+      },
+      {
+        temperatureC: full - 10,
+        speedPercent: Math.ceil(min + (max - min) * 0.75),
+      },
+      { temperatureC: full, speedPercent: max },
+    ],
+  };
+}
+
 /** The daemon's shared fan curve validation, against the limits it reported for the GPU. */
 function fanCurveProblems(
   support: FanCurveSupport,
@@ -301,7 +343,8 @@ export function createFakeDesktop({
     };
     // Only a confirmed restoration means the driver reports automatic control.
     for (const { fanIndex, status } of control.suspension.restoration)
-      if (status === "restored") gpu.cooling.fans[fanIndex].mode = "auto";
+      if (status === "restored")
+        gpu.cooling.fans.find((fan) => fan.index === fanIndex)!.mode = "auto";
     control.requested = [];
     control.curveTemperatureC = null;
   };
@@ -326,20 +369,23 @@ export function createFakeDesktop({
         });
         continue;
       }
-      const fan = gpu.cooling.fans[fanIndex];
+      const fan = gpu.cooling.fans.find((fan) => fan.index === fanIndex)!;
       const speed =
         setting.mode === "fixed"
           ? setting.speedPercent
           : setting.mode === "curve"
             ? requestedSpeed(setting.points, gpu.telemetry.temperatureC!)
             : null;
-      control.requested = control.requested.filter(
-        (request) => request.fanIndex !== fanIndex,
-      );
-      settings.set(fanIndex, setting);
-      if (setting.mode === "curve")
-        control.requested.push({ fanIndex, speedPercent: speed! });
-      if (fanFailures[fanIndex] && speed != null) {
+      const rejected = fanFailures[fanIndex] && speed != null;
+      if (!rejected || setting.mode === "curve") {
+        control.requested = control.requested.filter(
+          (request) => request.fanIndex !== fanIndex,
+        );
+        settings.set(fanIndex, setting);
+        if (setting.mode === "curve")
+          control.requested.push({ fanIndex, speedPercent: speed! });
+      }
+      if (rejected) {
         failure = `Fan ${fanIndex + 1}: ${fanFailures[fanIndex]}`;
         outcomes.push({
           fanIndex,
@@ -358,7 +404,12 @@ export function createFakeDesktop({
     control.requested.sort((a, b) => a.fanIndex - b.fanIndex);
     control.applied =
       configuration.arrangement === "shared" &&
-      outcomes.every((fan) => fan.outcome.status !== "unattempted")
+      outcomes.every(
+        (fan) =>
+          fan.outcome.status === "succeeded" ||
+          (configuration.setting.mode === "curve" &&
+            fan.outcome.status === "failed"),
+      )
         ? configuration
         : {
             arrangement: "perFan",
@@ -909,7 +960,7 @@ export function createFakeDesktop({
       }),
     applyCooling: vi
       .spyOn(api, "applyCooling")
-      .mockImplementation(async ({ gpuId, configuration }) => {
+      .mockImplementation(async ({ gpuId, configuration, fanIndexes }) => {
         const gpu = response.gpus.find((gpu) => gpu.stableId === gpuId);
         const targets: [number, FanSetting][] =
           configuration.arrangement === "shared"
@@ -923,14 +974,42 @@ export function createFakeDesktop({
           problems.push(
             "The GPU is absent or its stable identity could not be verified. Refresh the GPU readings and try again.",
           );
-        for (const [, setting] of gpu ? targets : [])
+        if (
+          gpu &&
+          fanIndexes &&
+          (fanIndexes.length !== gpu.cooling.fans.length ||
+            fanIndexes.some(
+              (index) => !gpu.cooling.fans.some((fan) => fan.index === index),
+            ))
+        )
+          problems.push(
+            "The targeted fans changed. Review the current fan inventory before applying.",
+          );
+        const seen = new Set<number>();
+        for (const [index, setting] of gpu ? targets : []) {
+          const fan = gpu!.cooling.fans.find((fan) => fan.index === index);
+          if (!fan || seen.has(index))
+            problems.push(`Fan ${index + 1} is missing or duplicated.`);
+          seen.add(index);
+          if (
+            fan &&
+            setting.mode === "fixed" &&
+            (setting.speedPercent < (fan.minSpeedPercent ?? 0) ||
+              setting.speedPercent > (fan.maxSpeedPercent ?? 100))
+          )
+            problems.push(
+              `Fan ${index + 1}: speed is outside its supported range.`,
+            );
           if (setting.mode === "curve")
             problems.push(
               ...fanCurveProblems(
-                gpu!.cooling.curveSupport!,
+                configuration.arrangement === "shared"
+                  ? gpu!.cooling.curveSupport!
+                  : targetedCurveSupport(gpu!, index),
                 setting.points,
               ).map((problem) => problem.message),
             );
+        }
         if (
           gpu?.telemetry.temperatureC == null &&
           targets.some(([, setting]) => setting.mode === "curve")
@@ -952,13 +1031,21 @@ export function createFakeDesktop({
       }),
     previewFanCurve: vi
       .spyOn(api, "previewFanCurve")
-      .mockImplementation(async ({ gpuId, points }) => {
-        const support = byId(gpuId)?.cooling.curveSupport;
+      .mockImplementation(async ({ gpuId, points, fanIndex }) => {
+        const gpu = byId(gpuId);
+        const support =
+          gpu &&
+          (fanIndex == null
+            ? gpu.cooling.curveSupport
+            : targetedCurveSupport(gpu, fanIndex));
         if (!support)
           throw new Error(
             "The GPU is unavailable. Refresh the GPU readings and try again.",
           );
-        return { problems: fanCurveProblems(support, points) };
+        return {
+          problems: fanCurveProblems(support, points),
+          ...(fanIndex != null && { support }),
+        };
       }),
     setFanModeAuto: vi
       .spyOn(api, "setFanModeAuto")
@@ -1073,8 +1160,9 @@ export function createFakeDesktop({
           );
           if (demand < request.speedPercent && !decreaseDelayElapsed) continue;
           request.speedPercent = demand;
-          gpu.cooling.fans[request.fanIndex].currentSpeedPercent =
-            request.speedPercent;
+          gpu.cooling.fans.find(
+            (fan) => fan.index === request.fanIndex,
+          )!.currentSpeedPercent = request.speedPercent;
         }
         control.curveTemperatureC = gpu.telemetry.temperatureC;
       }

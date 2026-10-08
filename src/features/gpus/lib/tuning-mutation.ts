@@ -80,11 +80,15 @@ export async function runTuningMutation(
       const application = await api.applyGpuCooling({
         gpuId: action.stableId,
         configuration: action.configuration,
+        ...(action.fanIndexes && { fanIndexes: action.fanIndexes }),
       });
       const unsuccessful = application.fans
         .filter((fan) => fan.outcome.status === "failed")
         .map((fan) => `Fan ${fan.fanIndex + 1}: ${fan.outcome.error}`);
       return {
+        ...Object.fromEntries(
+          application.fans.map((fan) => [`fan:${fan.fanIndex}`, fan.outcome]),
+        ),
         cooling: {
           status: application.outcome.status,
           error:

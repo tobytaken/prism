@@ -392,7 +392,10 @@ function validateFanCurvePreviewPayload(
 ): payload is PreviewFanCurveRequest {
   return (
     isObject(payload) &&
-    hasOnlyKeys(payload, ["gpuId", "points"]) &&
+    hasOnlyKeys(payload, ["gpuId", "points", "fanIndex"]) &&
+    (payload.fanIndex === undefined ||
+      (Number.isSafeInteger(payload.fanIndex) &&
+        Number(payload.fanIndex) >= 0)) &&
     isString(payload.gpuId) &&
     Array.isArray(payload.points) &&
     payload.points.every(
@@ -440,7 +443,12 @@ function validateApplyCoolingPayload(
 ): payload is ApplyCoolingRequest {
   if (
     !isObject(payload) ||
-    !hasOnlyKeys(payload, ["gpuId", "configuration"]) ||
+    !hasOnlyKeys(payload, ["gpuId", "configuration", "fanIndexes"]) ||
+    (payload.fanIndexes !== undefined &&
+      (!Array.isArray(payload.fanIndexes) ||
+        !payload.fanIndexes.every(
+          (index) => Number.isSafeInteger(index) && index >= 0,
+        ))) ||
     !isString(payload.gpuId) ||
     !isObject(payload.configuration)
   )

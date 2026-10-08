@@ -464,7 +464,10 @@ fn any_failed_fan_write_suspends_the_gpus_curve_control() {
     assert_eq!(control["applied"]["arrangement"], "perFan");
     assert_eq!(
         control["suspension"]["restoration"],
-        json!([restoration(1, "restored", None)])
+        json!([
+            restoration(0, "restored", None),
+            restoration(1, "restored", None)
+        ])
     );
 }
 
@@ -740,4 +743,125 @@ fn a_write_hanging_mid_application_is_a_stall_with_its_fans_already_recorded() {
     core.follow_curves();
     daemon.settle();
     assert!(core.cooling_is_live(1_000));
+}
+
+#[test]
+fn a_failed_fixed_command_keeps_the_previous_applied_configuration() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(
+        &daemon,
+        json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 40 } }),
+    );
+    daemon
+        .gpus
+        .fail_fan("GPU-123", Setter::FanSpeed, 1, "Rejected");
+    let result = apply(
+        &daemon,
+        json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 0, "setting": { "mode": "automatic" } },
+        { "fanIndex": 1, "setting": { "mode": "fixed", "speedPercent": 60 } }
+    ] }),
+    );
+    assert_eq!(result["fans"][0]["outcome"]["status"], "succeeded");
+    assert_eq!(result["fans"][1]["outcome"]["status"], "failed");
+    assert_eq!(
+        control(&daemon)["applied"],
+        json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 0, "setting": { "mode": "automatic" } },
+        { "fanIndex": 1, "setting": { "mode": "fixed", "speedPercent": 40 } }
+    ] })
+    );
+}
+
+#[test]
+fn separate_fans_preview_and_apply_against_their_own_limits_and_identities() {
+    let mut gpu = cooled_gpu();
+    gpu.cooling.fans[0].index = 7;
+    gpu.cooling.fans[0].max_speed_percent = Some(80);
+    gpu.cooling.fans.reverse();
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    let curve = points(&[(45, 20), (85, 80)]);
+    let preview = daemon.send_json(json!({ "type": "preview_fan_curve", "payload": {
+        "gpuId": "GPU-123", "fanIndex": 7, "points": curve
+    }}));
+    assert_eq!(preview["payload"]["problems"], json!([]), "{preview}");
+    assert_eq!(preview["payload"]["support"]["maxSpeedPercent"], 80);
+    let result = apply(
+        &daemon,
+        json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 7, "setting": { "mode": "curve", "points": curve } },
+        { "fanIndex": 1, "setting": { "mode": "fixed", "speedPercent": 55 } }
+    ] }),
+    );
+    assert_eq!(result["outcome"]["status"], "succeeded", "{result}");
+    assert_eq!(fans(&daemon), vec![manual(55), manual(59)]);
+    daemon.set_temperature("GPU-123", Some(85));
+    daemon.run_curves_for(500);
+    assert_eq!(fans(&daemon), vec![manual(55), manual(80)]);
+}
+
+#[test]
+fn shared_applications_require_the_reviewed_fan_inventory() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    let request = |indexes: Value| {
+        daemon.send_json(json!({ "type": "apply_cooling", "payload": {
+        "gpuId": "GPU-123", "fanIndexes": indexes,
+        "configuration": { "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 55 } }
+    }}))
+    };
+    for indexes in [json!([0]), json!([0, 7]), json!([0, 0, 1])] {
+        let result = request(indexes);
+        assert_eq!(
+            result["payload"]["outcome"]["status"], "unattempted",
+            "{result}"
+        );
+        assert!(control(&daemon)["applied"].is_null());
+    }
+    let result = request(json!([1, 0]));
+    assert_eq!(result["payload"]["outcome"]["status"], "succeeded");
+    assert_eq!(fans(&daemon), vec![manual(55), manual(55)]);
+}
+
+#[test]
+fn mixed_modes_keep_success_failed_and_unattempted_fans_distinct() {
+    let mut gpu = cooled_gpu();
+    let mut third = gpu.cooling.fans[0].clone();
+    third.index = 2;
+    gpu.cooling.fans.push(third);
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
+    apply(
+        &daemon,
+        json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 40 } }),
+    );
+    daemon
+        .gpus
+        .fail_fan("GPU-123", Setter::FanSpeed, 1, "Rejected");
+    let result = apply(
+        &daemon,
+        json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 0, "setting": { "mode": "curve", "points": points(&STARTER) } },
+        { "fanIndex": 1, "setting": { "mode": "fixed", "speedPercent": 55 } },
+        { "fanIndex": 2, "setting": { "mode": "automatic" } }
+    ] }),
+    );
+    assert_eq!(result["fans"][0]["outcome"]["status"], "succeeded");
+    assert_eq!(result["fans"][1]["outcome"]["status"], "failed");
+    assert_eq!(result["fans"][2]["outcome"]["status"], "unattempted");
+    let state = control(&daemon);
+    assert_eq!(
+        state["applied"]["fans"][1]["setting"],
+        json!({ "mode": "fixed", "speedPercent": 40 })
+    );
+    assert_eq!(
+        state["applied"]["fans"][2]["setting"],
+        json!({ "mode": "fixed", "speedPercent": 40 })
+    );
+    assert_eq!(
+        state["suspension"]["restoration"],
+        json!([restoration(0, "restored", None)])
+    );
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+    daemon.set_temperature("GPU-123", Some(85));
+    daemon.run_curves_for(500);
+    assert_eq!(control(&daemon)["requested"], json!([]));
 }

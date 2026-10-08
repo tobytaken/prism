@@ -92,6 +92,7 @@ describe("Applying a shared fan curve", () => {
     await waitFor(() =>
       expect(fake.applyCooling).toHaveBeenCalledWith({
         gpuId: "GPU-123",
+        fanIndexes: [0, 1],
         configuration: sharedCurve(),
       }),
     );
@@ -103,7 +104,7 @@ describe("Applying a shared fan curve", () => {
       within(status).getByText("The curve requests 72% at 71°C."),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Driver reports manual mode")).toHaveLength(2);
-    expect(screen.queryByText(/fixed/i)).not.toBeInTheDocument();
+    expect(within(status).queryByText(/fixed/i)).not.toBeInTheDocument();
     expect(within(editor).getByText("Applied")).toBeInTheDocument();
     expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
     expect(fake.setFanSpeed).not.toHaveBeenCalled();
@@ -138,6 +139,7 @@ describe("Applying a shared fan curve", () => {
       expect(fake.applyCooling).toHaveBeenCalledWith({
         gpuId: "GPU-123",
         configuration: applied,
+        fanIndexes: [0, 1],
       }),
     );
     await waitFor(() =>
