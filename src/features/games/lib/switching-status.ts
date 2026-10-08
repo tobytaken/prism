@@ -12,6 +12,11 @@ export function describeGpuSwitching(
   if (!status) return { summary: "Reading status…", chip: null };
   const { condition } = status;
   const state = gpuState(status, gpuId);
+  if (state?.status === "recoveryRequired")
+    return {
+      summary: `Recovery required: ${state.message}`,
+      chip: "Recovery required",
+    };
   if (condition.status === "unknown")
     return {
       summary: `Status unknown: ${condition.reason}`,
