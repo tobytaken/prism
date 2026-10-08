@@ -109,7 +109,7 @@ An explicit, persistent hold on automatic changes to one GPU until the user resu
 _Avoid_: Automatic switching off, manual override
 
 **Failure pause**:
-A suspension of automatic writes to one GPU following an unsuccessful automatic application or recovery, retaining recovery state until the user requests a retry.
+A suspension of automatic profile applications and restorations on one GPU following an unsuccessful automatic application or recovery, retaining recovery state until the user requests a retry. A healthy applied fan curve continues responding to temperature; a cooling fault instead suspends curve control and attempts default automatic cooling.
 _Avoid_: Manual override, automatic switching off
 
 **Profile setting**:
@@ -121,7 +121,7 @@ Adjustment of a GPU's power, clock, or cooling controls.
 _Avoid_: Overclocking as an umbrella term for all tuning
 
 **Current tuning values**:
-The control values currently reported for a GPU, such as its power limit or clock offsets; these can differ from saved values and from telemetry measurements.
+The control settings currently in effect on a GPU, such as its reported power limit, clock offsets, or applied cooling configuration; these can differ from saved values and from telemetry measurements. A curve's changing output percentage is distinct from its applied definition.
 _Avoid_: Saved configuration, desired values
 
 **Unapplied tuning changes**:
@@ -130,7 +130,7 @@ _Avoid_: Unsaved profile changes when the edits have not reached the GPU
 
 **Changes not saved to profile**:
 Applied tuning values or explicit default choices within a profile's scope that differ from the current profile.
-_Avoid_: Unapplied changes, fan changes when cooling is outside the profile's scope
+_Avoid_: Unapplied changes
 
 **Live tuning change**:
 A change to current GPU controls made outside a profile application, which updates no GPU tuning profile.
@@ -157,8 +157,20 @@ A signed frequency adjustment for the graphics or memory clock, expressed in MHz
 _Avoid_: Clock lock, absolute clock speed
 
 **Fan control mode**:
-The choice between automatic cooling control and a manual speed target for an individual GPU fan.
+The choice between the GPU's default automatic cooling, a fixed manual speed target, and temperature-based control using a fan curve. All fans on a GPU can share one cooling configuration, or each fan can have its own mode and settings.
 _Avoid_: Fan curve when referring to a fixed manual target
+
+**Fan curve**:
+A user-defined relationship between GPU temperature and requested fan speed, expressing the user's preferred balance between cooling and fan noise across temperatures.
+_Avoid_: Fixed fan speed, temperature target
+
+**Applied fan curve**:
+The fan curve currently selected to govern cooling, distinct from unapplied edits or a saved profile's curve; its requested speed changes with GPU temperature. Selecting a curve alone does not establish that curve control is operating successfully.
+_Avoid_: Current fan speed, saved fan curve when referring to the applied curve
+
+**Remembered fan curve**:
+A user's last manually applied custom curve and fan arrangement for a GPU, retained for reuse even when another cooling mode is applied. Recalling it creates unapplied tuning changes; temporary game curves do not replace it.
+_Avoid_: Applied fan curve, GPU tuning profile
 
 ### Driver management
 
