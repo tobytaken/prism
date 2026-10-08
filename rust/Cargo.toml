@@ -18,6 +18,10 @@ path = "src/bin/prism_backend.rs"
 name = "prismd"
 path = "src/bin/prismd.rs"
 
+[[test]]
+name = "cooling_supervision"
+harness = false
+
 [dependencies]
 libc = "0.2.177"
 nvml-wrapper = "0.12.1"

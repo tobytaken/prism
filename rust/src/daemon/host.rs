@@ -80,19 +80,39 @@ pub fn read_boot_id() -> String {
 /// systemd holds services ordered after prismd until this notification arrives.
 /// An interactive daemon invocation has no notification socket.
 pub(super) fn notify_ready() -> std::io::Result<()> {
+    notify(b"READY=1")
+}
+
+/// Sends a notification to systemd, if the daemon runs under it.
+pub(super) fn notify(message: &[u8]) -> std::io::Result<()> {
     match std::env::var_os("NOTIFY_SOCKET") {
-        Some(path) => notify_ready_to(&path),
+        Some(path) => notify_to(&path, message),
         None => Ok(()),
     }
 }
 
+/// How often systemd expects to hear from the daemon, when it watches it.
+pub(super) fn watchdog_interval() -> Option<std::time::Duration> {
+    let pid = std::env::var("WATCHDOG_PID").ok();
+    if pid.is_some_and(|pid| pid.parse() != Ok(std::process::id())) {
+        return None;
+    }
+    let usec: u64 = std::env::var("WATCHDOG_USEC").ok()?.parse().ok()?;
+    (usec > 0).then(|| std::time::Duration::from_micros(usec))
+}
+
+#[cfg(test)]
 fn notify_ready_to(path: &OsStr) -> std::io::Result<()> {
+    notify_to(path, b"READY=1")
+}
+
+fn notify_to(path: &OsStr, message: &[u8]) -> std::io::Result<()> {
     let address = if let Some(name) = path.as_bytes().strip_prefix(b"@") {
         SocketAddr::from_abstract_name(name)?
     } else {
         SocketAddr::from_pathname(path)?
     };
-    UnixDatagram::unbound()?.send_to_addr(b"READY=1", &address)?;
+    UnixDatagram::unbound()?.send_to_addr(message, &address)?;
     Ok(())
 }
 

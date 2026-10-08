@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::cooling::{ApplyCoolingRequest, CoolingConfiguration, FanConfiguration, FanSetting};
 use crate::drivers::{request_host_reboot, DriverService};
 use crate::fan_curve::{self, FanCurvePreview, PreviewFanCurveRequest};
 use crate::gpu::{
@@ -17,6 +18,7 @@ use crate::protocol::{
 };
 
 use super::backend::DaemonBackend;
+use super::cooling::{recover_abandoned_curves, CoolingController, EVALUATION_INTERVAL_MS};
 use super::host::{Clock, HostShutdownSignal, UserDirectory};
 use super::possibly_stale::{PossiblyStale, POSSIBLY_STALE_FILE_NAME};
 use super::profiles::{capture_settings, new_profile_id, profile_name, uuid_of, verified_gpu};
@@ -56,6 +58,7 @@ pub struct DaemonCore {
     pub(super) switching: super::switching::Switching,
     pub(super) stopping: Arc<AtomicBool>,
     pub(super) startup_operations: Mutex<Vec<PendingOperation<()>>>,
+    pub(super) cooling: Arc<CoolingController>,
 }
 
 impl DaemonCore {
@@ -452,6 +455,17 @@ impl DaemonCore {
         let possibly_stale = Arc::new(PossiblyStale::open(
             dependencies.persistent_dir.join(POSSIBLY_STALE_FILE_NAME),
         ));
+        // Fans an earlier daemon left following a curve return to automatic cooling first.
+        recover_abandoned_curves(
+            dependencies.backend.as_ref(),
+            &dependencies.boot_dir,
+            &dependencies.boot_id,
+        );
+        let cooling = Arc::new(CoolingController::open(
+            &dependencies.boot_dir,
+            &dependencies.boot_id,
+            Arc::clone(&dependencies.clock),
+        ));
         let recognition = Arc::default();
         let switching = super::switching::Switching::open(
             &dependencies.boot_dir,
@@ -462,6 +476,7 @@ impl DaemonCore {
         );
         let core = Self {
             dependencies,
+            cooling,
             boot_state,
             possibly_stale,
             stopping: Arc::default(),
@@ -484,6 +499,7 @@ impl DaemonCore {
     /// unclean-shutdown guard; a daemon restart mid-boot records nothing.
     pub fn stop(&self) {
         self.stopping.store(true, Ordering::SeqCst);
+        self.stop_cooling();
         if !self.dependencies.host_shutting_down.host_shutting_down() {
             return;
         }
@@ -545,15 +561,20 @@ impl DaemonCore {
                     )
                 }))
             }
-            DaemonRequest::SetFanSpeed(request) => self
-                .live_command(request.gpu_id.clone(), move |backend| {
-                    backend.set_fan_speed(request)
-                }),
-            DaemonRequest::SetFanModeAuto(request) => self
-                .live_command(request.gpu_id.clone(), move |backend| {
-                    backend.set_fan_mode_auto(request)
-                }),
+            DaemonRequest::SetFanSpeed(request) => self.set_one_fan(
+                request.gpu_id,
+                request.fan_index,
+                FanSetting::Fixed {
+                    speed_percent: i64::from(request.speed_percent),
+                },
+            ),
+            DaemonRequest::SetFanModeAuto(request) => {
+                self.set_one_fan(request.gpu_id, request.fan_index, FanSetting::Automatic {})
+            }
             DaemonRequest::PreviewFanCurve(request) => self.preview_fan_curve(request),
+            DaemonRequest::ApplyCooling(request) => {
+                DaemonResponse::CoolingApplication(self.apply_cooling(request))
+            }
             DaemonRequest::SetClockOffsets(request) => DaemonResponse::ClockOffsets(
                 self.live_write(request.gpu_id.clone(), move |backend| {
                     set_live_offsets(backend, request)
@@ -621,13 +642,127 @@ impl DaemonCore {
         }
     }
 
-    /// The GPUs' readings, with the daemon's judgement of the fan curves each can use.
+    /// The GPUs' readings, with the daemon's judgement of the fan curves each can use and Prism's
+    /// control of each identified GPU's fans.
     fn performance(&self) -> GpuPerformanceResponse {
         let mut performance = self.dependencies.backend.performance();
-        for gpu in &mut performance.gpus {
+        let identified: Vec<_> = performance
+            .gpus
+            .iter()
+            .map(|gpu| {
+                gpu.stable_id
+                    .as_deref()
+                    .filter(|uuid| verified_gpu(&performance, uuid).is_ok())
+                    .map(str::to_string)
+            })
+            .collect();
+        for (gpu, uuid) in performance.gpus.iter_mut().zip(identified) {
             gpu.cooling.curve_support = Some(fan_curve::curve_support(&gpu.cooling));
+            gpu.cooling.control = uuid.map(|uuid| self.cooling.control(&uuid));
         }
         performance
+    }
+
+    /// Applies cooling on the GPU's queue, so it never races a curve being followed.
+    fn apply_cooling(&self, request: ApplyCoolingRequest) -> crate::cooling::CoolingApplication {
+        let cooling = Arc::clone(&self.cooling);
+        self.write(&request.gpu_id.clone(), move |backend| {
+            cooling.apply(backend, request)
+        })
+    }
+
+    /// A single fan's live change, which replaces only that fan's applied setting. A GPU without a
+    /// verified identity can't follow curves, so its fan is written directly.
+    fn set_one_fan(&self, gpu_id: String, fan_index: u32, setting: FanSetting) -> DaemonResponse {
+        let Some(uuid) = uuid_of(&self.dependencies.backend.performance(), &gpu_id) else {
+            return self.live_command(gpu_id.clone(), move |backend| match setting {
+                FanSetting::Fixed { speed_percent } => {
+                    backend.set_fan_speed(crate::gpu::SetGpuFanSpeedRequest {
+                        gpu_id,
+                        fan_index,
+                        speed_percent: speed_percent as u32,
+                    })
+                }
+                _ => backend
+                    .set_fan_mode_auto(crate::gpu::SetGpuFanModeAutoRequest { gpu_id, fan_index }),
+            });
+        };
+        let application = self.apply_cooling(ApplyCoolingRequest {
+            gpu_id: uuid,
+            configuration: CoolingConfiguration::PerFan {
+                fans: vec![FanConfiguration { fan_index, setting }],
+            },
+        });
+        let outcome = application
+            .fans
+            .into_iter()
+            .next()
+            .map(|fan| fan.outcome)
+            .unwrap_or(application.outcome);
+        DaemonResponse::Command(DaemonCommandResponse {
+            success: outcome.status == TuningOutcomeStatus::Succeeded,
+            error: outcome.error,
+        })
+    }
+
+    /// Follows every running curve once, on each GPU's queue, without waiting. A GPU whose last
+    /// evaluation hasn't finished is skipped rather than queued twice.
+    pub(super) fn follow_curves(&self) {
+        for uuid in self.cooling.claim_due() {
+            let cooling = Arc::clone(&self.cooling);
+            let id = uuid.clone();
+            drop(self.submit_write(&uuid, move |backend| cooling.follow(backend, &id)));
+        }
+    }
+
+    /// Starts the loop that follows applied curves every 500 ms.
+    pub fn start_cooling(self: &Arc<Self>) -> std::io::Result<()> {
+        let core = Arc::downgrade(self);
+        std::thread::Builder::new()
+            .name("prismd-cooling".into())
+            .spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(EVALUATION_INTERVAL_MS));
+                let Some(core) = core.upgrade() else {
+                    break;
+                };
+                if core.stopping.load(Ordering::SeqCst) {
+                    break;
+                }
+                core.follow_curves();
+            })?;
+        Ok(())
+    }
+
+    /// Whether the curve loop, and every curve it follows, has made progress within the window.
+    pub fn cooling_is_live(&self, window_ms: u64) -> bool {
+        self.cooling.is_live(window_ms)
+    }
+
+    /// Stops following curves and returns their fans to automatic cooling. A GPU whose queue
+    /// doesn't free up in time is restored directly, since its curve can no longer make progress.
+    fn stop_cooling(&self) {
+        self.cooling.begin_stopping();
+        let pending: Vec<_> = self
+            .cooling
+            .running_gpus()
+            .into_iter()
+            .map(|uuid| {
+                let cooling = Arc::clone(&self.cooling);
+                let id = uuid.clone();
+                (
+                    uuid,
+                    self.submit_write(&id.clone(), move |backend| cooling.stop(backend, &id)),
+                )
+            })
+            .collect();
+        for (uuid, operation) in pending {
+            if operation
+                .wait_timeout(std::time::Duration::from_secs(5))
+                .is_none()
+            {
+                self.cooling.stop(self.dependencies.backend.as_ref(), &uuid);
+            }
+        }
     }
 
     /// Checks a draft curve against the GPU's current limits. A read: it never waits on, or

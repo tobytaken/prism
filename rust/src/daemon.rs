@@ -1,5 +1,6 @@
 mod backend;
 mod boot_state;
+mod cooling;
 mod daemon_core;
 mod games;
 mod host;
@@ -15,6 +16,8 @@ mod switching;
 mod tuning;
 mod tuning_store;
 
+#[cfg(test)]
+mod cooling_tests;
 #[cfg(test)]
 mod current_profile_tests;
 #[cfg(test)]
@@ -114,12 +117,17 @@ struct PeerCredentials {
 }
 
 pub fn run() -> Result<(), String> {
+    run_with(Arc::new(RealDaemonBackend))
+}
+
+/// Runs the daemon on these GPUs, configured from the environment like the installed service.
+pub fn run_with(backend: Arc<dyn DaemonBackend>) -> Result<(), String> {
     let stop_signals = block_stop_signals().map_err(|error| error.to_string())?;
     let paths = DaemonPaths::from_environment();
     let config = load_config(&paths).map_err(|error| error.to_string())?;
     let listener = bind_listener(&paths, &config).map_err(|error| error.to_string())?;
     let core = DaemonCore::start(CoreDependencies {
-        backend: Arc::new(RealDaemonBackend),
+        backend,
         drivers: DriverService::new(paths.driver_jobs_path.clone()),
         persistent_dir: paths.persistent_dir.clone(),
         boot_dir: paths.boot_dir.clone(),
@@ -134,6 +142,14 @@ pub fn run() -> Result<(), String> {
     let core = Arc::new(core);
     core.start_recognition()
         .map_err(|error| error.to_string())?;
+    core.start_cooling().map_err(|error| error.to_string())?;
+    if let Some(interval) = host::watchdog_interval() {
+        let supervised = Arc::clone(&core);
+        thread::Builder::new()
+            .name("prismd-watchdog".into())
+            .spawn(move || supervise_cooling(&supervised, interval))
+            .map_err(|error| error.to_string())?;
+    }
     let stopping = Arc::clone(&core);
     thread::Builder::new()
         .name("prismd-stop".into())
@@ -156,6 +172,39 @@ pub fn run() -> Result<(), String> {
         })
         .map_err(|error| error.to_string())?;
     serve(listener, core, Arc::new(config));
+    Ok(())
+}
+
+/// Tells the service manager the daemon is alive only while the curve loop, and each curve it
+/// follows, keeps making progress. When pings stop, the service manager aborts the daemon and its
+/// stop command returns abandoned curve fans to automatic cooling, without relying on the stalled
+/// loop.
+fn supervise_cooling(core: &DaemonCore, interval: std::time::Duration) {
+    let ping_every = interval / 3;
+    let window_ms = (interval / 2).as_millis() as u64;
+    loop {
+        if core.cooling_is_live(window_ms) {
+            if let Err(error) = host::notify(b"WATCHDOG=1") {
+                eprintln!("failed to notify systemd's watchdog: {error}");
+            }
+        } else {
+            eprintln!(
+                "Prism's fan curve control has stalled; letting the watchdog stop the daemon"
+            );
+        }
+        thread::sleep(ping_every);
+    }
+}
+
+/// Returns fans that a stopped daemon left following a curve to the GPU's default automatic
+/// cooling. The service manager runs this after the daemon stops for any reason.
+pub fn restore_cooling() -> Result<(), String> {
+    restore_cooling_with(&RealDaemonBackend)
+}
+
+pub fn restore_cooling_with(backend: &dyn DaemonBackend) -> Result<(), String> {
+    let paths = DaemonPaths::from_environment();
+    cooling::recover_abandoned_curves(backend, &paths.boot_dir, &read_boot_id());
     Ok(())
 }
 

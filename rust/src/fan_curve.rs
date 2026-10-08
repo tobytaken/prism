@@ -123,14 +123,55 @@ pub fn curve_support(cooling: &CoolingInfo) -> FanCurveSupport {
 
 /// The problems that keep the points from forming a usable shared curve; none means valid.
 pub fn validate(cooling: &CoolingInfo, points: &[FanCurvePoint]) -> Vec<FanCurveProblem> {
-    match curve_limits(cooling) {
+    let every_fan: Vec<u32> = cooling.fans.iter().map(|fan| fan.index).collect();
+    validate_for(cooling, &every_fan, points)
+}
+
+/// The problems that keep the points from forming one curve shared by these fans.
+pub fn validate_for(
+    cooling: &CoolingInfo,
+    fan_indexes: &[u32],
+    points: &[FanCurvePoint],
+) -> Vec<FanCurveProblem> {
+    match curve_limits_for(cooling, fan_indexes) {
         Ok(limits) => validate_points(limits, points),
         Err(reason) => vec![FanCurveProblem::curve(reason)],
     }
 }
 
+/// The speed the curve requests at the temperature: a straight line between neighbouring points,
+/// rounded up to whole percent, and the nearest end point's speed beyond either end.
+pub fn requested_speed(points: &[FanCurvePoint], temperature_c: i64) -> i64 {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return 0;
+    };
+    if temperature_c <= first.temperature_c {
+        return first.speed_percent;
+    }
+    if temperature_c >= last.temperature_c {
+        return last.speed_percent;
+    }
+    let mut speed = last.speed_percent;
+    for pair in points.windows(2) {
+        let (low, high) = (pair[0], pair[1]);
+        if temperature_c <= high.temperature_c {
+            let span = high.temperature_c - low.temperature_c;
+            let rise =
+                (high.speed_percent - low.speed_percent) * (temperature_c - low.temperature_c);
+            speed = low.speed_percent + (rise + span - 1).div_euclid(span);
+            break;
+        }
+    }
+    speed
+}
+
 fn curve_limits(cooling: &CoolingInfo) -> Result<CurveLimits, String> {
-    if !cooling.is_supported || cooling.fans.is_empty() {
+    let every_fan: Vec<u32> = cooling.fans.iter().map(|fan| fan.index).collect();
+    curve_limits_for(cooling, &every_fan)
+}
+
+fn curve_limits_for(cooling: &CoolingInfo, fan_indexes: &[u32]) -> Result<CurveLimits, String> {
+    if !cooling.is_supported || cooling.fans.is_empty() || fan_indexes.is_empty() {
         return Err(format!(
             "Fan curves need controllable fans. {}",
             cooling
@@ -141,8 +182,11 @@ fn curve_limits(cooling: &CoolingInfo) -> Result<CurveLimits, String> {
     }
     let mut min_speed = 0;
     let mut max_speed = None;
-    for fan in &cooling.fans {
-        let number = fan.index + 1;
+    for &index in fan_indexes {
+        let number = index + 1;
+        let Some(fan) = cooling.fans.iter().find(|fan| fan.index == index) else {
+            return Err(format!("Fan {number} isn't reported by this GPU."));
+        };
         let (Some(min), Some(max)) = (fan.min_speed_percent, fan.max_speed_percent) else {
             return Err(format!(
                 "Fan {number} doesn't report its supported speed range."
