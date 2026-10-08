@@ -231,6 +231,27 @@ it("shows each GPU's automatic switching status live, a header chip when it isn'
     "Switching blocked",
   );
 
+  push({
+    condition: { status: "blocked", reason: "The boot state cannot be read." },
+    gpus: [
+      {
+        gpuId: "GPU-123",
+        state: {
+          status: "recoveryRequired",
+          message: "The pre-game tuning values cannot be read.",
+        },
+      },
+    ],
+  });
+  await waitFor(() =>
+    expect(row).toHaveTextContent(
+      "Recovery required: The pre-game tuning values cannot be read.",
+    ),
+  );
+  expect(within(header).getByTestId("switching-chip")).toHaveTextContent(
+    "Recovery required",
+  );
+
   push({ condition: { status: "ready" }, gpus: [] });
   await waitFor(() =>
     expect(row).toHaveTextContent("Waiting for a linked game to run."),

@@ -546,6 +546,8 @@ pub enum GpuSwitchingState {
     ManualOverride { changed_outside_prism: bool },
     /// The latest automatic application or restoration didn't complete.
     Failed { message: String },
+    /// Boot-scoped recovery state is unreadable; this GPU is left unchanged.
+    RecoveryRequired { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

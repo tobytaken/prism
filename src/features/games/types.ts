@@ -73,6 +73,7 @@ export type GpuSwitchingState =
     }
   | { status: "anotherUser" }
   | { status: "manualOverride"; changedOutsidePrism: boolean }
+  | { status: "recoveryRequired"; message: string }
   | { status: "failed"; message: string };
 
 /**

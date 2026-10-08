@@ -1,6 +1,8 @@
 [
   {
-    "condition": { "status": "ready" },
+    "condition": {
+      "status": "ready"
+    },
     "gpus": [
       {
         "gpuId": "GPU-123",
@@ -24,16 +26,31 @@
         "gpuId": "GPU-123",
         "state": {
           "status": "active",
-          "game": { "kind": "steam", "appId": 570 },
+          "game": {
+            "kind": "steam",
+            "appId": 570
+          },
           "gameName": "Dota 2",
-          "profile": { "id": "gaming", "name": "Gaming" }
+          "profile": {
+            "id": "gaming",
+            "name": "Gaming"
+          }
         }
       }
     ]
   },
   {
-    "condition": { "status": "off" },
-    "gpus": [{ "gpuId": "GPU-123", "state": { "status": "anotherUser" } }]
+    "condition": {
+      "status": "off"
+    },
+    "gpus": [
+      {
+        "gpuId": "GPU-123",
+        "state": {
+          "status": "anotherUser"
+        }
+      }
+    ]
   },
   {
     "condition": {
@@ -56,5 +73,20 @@
       "reason": "Automatic switching is suspended because Prism's tuning store can't be used."
     },
     "gpus": []
+  },
+  {
+    "condition": {
+      "status": "blocked",
+      "reason": "Prism's boot state can't be read."
+    },
+    "gpus": [
+      {
+        "gpuId": "GPU-123",
+        "state": {
+          "status": "recoveryRequired",
+          "message": "The pre-game tuning values cannot be read."
+        }
+      }
+    ]
   }
 ]
