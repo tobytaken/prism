@@ -18,7 +18,9 @@ use crate::protocol::{
 };
 
 use super::backend::DaemonBackend;
-use super::cooling::{recover_abandoned_curves, CoolingController, EVALUATION_INTERVAL_MS};
+use super::cooling::{
+    recover_abandoned_curves, CoolingApplicationSource, CoolingController, EVALUATION_INTERVAL_MS,
+};
 use super::host::{Clock, HostShutdownSignal, UserDirectory};
 use super::possibly_stale::{PossiblyStale, POSSIBLY_STALE_FILE_NAME};
 use super::profiles::{capture_settings, new_profile_id, profile_name, uuid_of, verified_gpu};
@@ -100,6 +102,15 @@ impl DaemonCore {
                 | DaemonRequest::RenameProfile(_)
         );
         let response = match request {
+            DaemonRequest::GetPerformance => {
+                Ok(DaemonResponse::Performance(self.performance(Some(peer))))
+            }
+            DaemonRequest::ApplyProfile(request) => Ok(DaemonResponse::ProfileApplication(
+                self.apply_profile_settings(request, Some(peer.clone())),
+            )),
+            DaemonRequest::ApplyCooling(request) => Ok(DaemonResponse::CoolingApplication(
+                self.apply_cooling(request, CoolingApplicationSource::Manual(peer.clone())),
+            )),
             DaemonRequest::AdoptMigratedProfile(request) => self
                 .tuning_store
                 .try_update(|document| document.adopt_migrated_profile(peer, &request.profile_id))
@@ -155,7 +166,7 @@ impl DaemonCore {
                 .map_err(GpuCommandError::from)
                 .map(DaemonResponse::Profiles),
             DaemonRequest::GetTuningStates => {
-                let performance = self.performance();
+                let performance = self.performance(Some(peer));
                 self.tuning_store
                     .read(|document| {
                         performance
@@ -394,6 +405,7 @@ impl DaemonCore {
                 },
                 Some(profile.id),
                 TuningOrigin::Manual,
+                Some(peer),
             ))
         })
     }
@@ -401,6 +413,7 @@ impl DaemonCore {
     fn apply_profile_settings(
         &self,
         request: ApplyGpuProfileRequest,
+        peer: Option<SessionPeer>,
     ) -> ProfileApplicationResponse {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
@@ -414,6 +427,7 @@ impl DaemonCore {
                 request,
                 None,
                 TuningOrigin::Manual,
+                peer,
             )
         })
     }
@@ -497,6 +511,7 @@ impl DaemonCore {
             &dependencies.boot_dir,
             &dependencies.boot_id,
             Arc::clone(&dependencies.clock),
+            Arc::clone(&tuning_store),
         ));
         let recognition = Arc::default();
         let switching = super::switching::Switching::open(
@@ -519,6 +534,7 @@ impl DaemonCore {
             tuning_store,
         };
 
+        core.resume_interrupted_curves();
         if let Err(error) = core.start_startup() {
             eprintln!("Startup is suspended: {}", error.message);
         }
@@ -567,9 +583,9 @@ impl DaemonCore {
             DaemonRequest::GetInventory => {
                 DaemonResponse::Inventory(self.dependencies.backend.inventory())
             }
-            DaemonRequest::GetPerformance => DaemonResponse::Performance(self.performance()),
+            DaemonRequest::GetPerformance => DaemonResponse::Performance(self.performance(None)),
             DaemonRequest::ApplyProfile(request) => {
-                DaemonResponse::ProfileApplication(self.apply_profile_settings(request))
+                DaemonResponse::ProfileApplication(self.apply_profile_settings(request, None))
             }
             DaemonRequest::GetDaemonStatus => {
                 DaemonResponse::DaemonStatus(GpuDaemonStatus::connected(
@@ -604,9 +620,9 @@ impl DaemonCore {
                 self.set_one_fan(request.gpu_id, request.fan_index, FanSetting::Automatic {})
             }
             DaemonRequest::PreviewFanCurve(request) => self.preview_fan_curve(request),
-            DaemonRequest::ApplyCooling(request) => {
-                DaemonResponse::CoolingApplication(self.apply_cooling(request))
-            }
+            DaemonRequest::ApplyCooling(request) => DaemonResponse::CoolingApplication(
+                self.apply_cooling(request, CoolingApplicationSource::UnidentifiedManual),
+            ),
             DaemonRequest::SetClockOffsets(request) => DaemonResponse::ClockOffsets(
                 self.live_write(request.gpu_id.clone(), move |backend| {
                     set_live_offsets(backend, request)
@@ -676,8 +692,20 @@ impl DaemonCore {
 
     /// The GPUs' readings, with the daemon's judgement of the fan curves each can use and Prism's
     /// control of each identified GPU's fans.
-    fn performance(&self) -> GpuPerformanceResponse {
+    fn performance(&self, peer: Option<&SessionPeer>) -> GpuPerformanceResponse {
         let mut performance = self.dependencies.backend.performance();
+        let remembered = peer
+            .and_then(|peer| {
+                self.tuning_store
+                    .read(|document| {
+                        document
+                            .user(peer.uid, &peer.username)
+                            .map(|user| user.remembered_curves.clone())
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default();
         let identified: Vec<_> = performance
             .gpus
             .iter()
@@ -690,20 +718,29 @@ impl DaemonCore {
             .collect();
         for (gpu, uuid) in performance.gpus.iter_mut().zip(identified) {
             gpu.cooling.curve_support = Some(fan_curve::curve_support(&gpu.cooling));
-            gpu.cooling.control = uuid.map(|uuid| self.cooling.control(&uuid));
+            gpu.cooling.control = uuid.map(|uuid| {
+                let mut control = self.cooling.control(&uuid);
+                control.remembered_curve = remembered.get(&uuid).cloned();
+                control
+            });
         }
         performance
     }
 
     /// Applies cooling on the GPU's queue, so it never races a curve being followed.
-    fn apply_cooling(&self, request: ApplyCoolingRequest) -> crate::cooling::CoolingApplication {
+    pub(super) fn apply_cooling(
+        &self,
+        request: ApplyCoolingRequest,
+        source: CoolingApplicationSource,
+    ) -> crate::cooling::CoolingApplication {
         let cooling = Arc::clone(&self.cooling);
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
             let uuid = request.gpu_id.clone();
-            let mut response = cooling.apply(backend, request);
-            if response.outcome.status == TuningOutcomeStatus::Succeeded {
+            let manual = !matches!(source, CoolingApplicationSource::NonManual);
+            let mut response = cooling.apply(backend, request, source);
+            if manual && response.outcome.status == TuningOutcomeStatus::Succeeded {
                 let mut gpu = verified_gpu(&backend.performance(), &uuid).ok().cloned();
                 if let Some(gpu) = &mut gpu {
                     gpu.cooling.control = Some(cooling.control(&uuid));
@@ -744,14 +781,17 @@ impl DaemonCore {
                     .set_fan_mode_auto(crate::gpu::SetGpuFanModeAutoRequest { gpu_id, fan_index }),
             });
         };
-        let application = self.apply_cooling(ApplyCoolingRequest {
-            fan_indexes: None,
-            expected_revision: None,
-            gpu_id: uuid,
-            configuration: CoolingConfiguration::PerFan {
-                fans: vec![FanConfiguration { fan_index, setting }],
+        let application = self.apply_cooling(
+            ApplyCoolingRequest {
+                fan_indexes: None,
+                expected_revision: None,
+                gpu_id: uuid,
+                configuration: CoolingConfiguration::PerFan {
+                    fans: vec![FanConfiguration { fan_index, setting }],
+                },
             },
-        });
+            CoolingApplicationSource::UnidentifiedManual,
+        );
         let record_warning = application.outcome.error.clone();
         let outcome = application
             .fans
@@ -773,6 +813,24 @@ impl DaemonCore {
             let id = uuid.clone();
             drop(self.submit_write(&uuid, move |backend| cooling.follow(backend, &id)));
         }
+    }
+
+    /// Queues the resumption of curves an earlier daemon of this boot was following when it
+    /// stopped, ahead of any other write to their GPUs. Readiness waits for them.
+    fn resume_interrupted_curves(&self) {
+        for uuid in self.cooling.interrupted_gpus() {
+            let cooling = Arc::clone(&self.cooling);
+            let id = uuid.clone();
+            let pending = self.submit_write(&uuid, move |backend| {
+                cooling.resume_interrupted(backend, &id)
+            });
+            self.startup_operations.lock().unwrap().push(pending);
+        }
+    }
+
+    /// Records whether curve control has stalled, for whoever recovers after the daemon stops.
+    pub fn record_cooling_stall(&self, stalled: bool) {
+        self.cooling.record_stall(stalled);
     }
 
     /// Starts the loop that follows applied curves every 500 ms.
@@ -804,7 +862,7 @@ impl DaemonCore {
         self.cooling.begin_stopping();
         let pending: Vec<_> = self
             .cooling
-            .running_gpus()
+            .gpus_to_stop()
             .into_iter()
             .map(|uuid| {
                 let cooling = Arc::clone(&self.cooling);
@@ -883,10 +941,16 @@ pub(super) fn apply_recorded_profile(
     request: ApplyGpuProfileRequest,
     profile_id: Option<String>,
     origin: TuningOrigin,
+    peer: Option<SessionPeer>,
 ) -> ProfileApplicationResponse {
     let uuid = request.gpu_id.clone();
     let settings = request.settings.clone();
-    let mut response = apply_profile(backend, cooling, request, origin);
+    let source = match (origin, peer) {
+        (TuningOrigin::Manual, Some(peer)) => CoolingApplicationSource::Manual(peer),
+        (TuningOrigin::Manual, None) => CoolingApplicationSource::UnidentifiedManual,
+        (TuningOrigin::TemporaryAutomatic, _) => CoolingApplicationSource::NonManual,
+    };
+    let mut response = apply_profile(backend, cooling, request, origin, source);
     if origin == TuningOrigin::TemporaryAutomatic {
         return response;
     }

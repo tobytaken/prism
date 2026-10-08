@@ -13,11 +13,12 @@ use serde::{Deserialize, Serialize};
 use super::backend::DaemonBackend;
 use super::host::Clock;
 use super::profiles::verified_gpu;
-use super::tuning_store::write_atomically;
+use super::tuning_store::{write_atomically, TuningStore};
+use super::SessionPeer;
 use crate::cooling::{
-    ApplyCoolingRequest, CoolingApplication, CoolingConfiguration, CoolingControl, CurveSuspension,
-    FanConfiguration, FanOutcome, FanRequest, FanRestoration, FanSetting, RestorationStatus,
-    SuspensionKind,
+    ApplyCoolingRequest, CoolingApplication, CoolingConfiguration, CoolingControl, CoolingRecovery,
+    CurveSuspension, FanConfiguration, FanOutcome, FanRequest, FanRestoration, FanSetting,
+    RecoveryStatus, RestorationStatus, SuspensionKind,
 };
 use crate::fan_curve::{self, FanCurvePoint};
 use crate::gpu::{
@@ -33,12 +34,12 @@ pub const DECREASE_DELAY_MS: u64 = 5_000;
 pub(super) const COOLING_RECORD_FILE_NAME: &str = "cooling-control.json";
 const RECORD_SCHEMA_VERSION: u64 = 1;
 
-pub(super) const STOPPED_REASON: &str =
-    "The Prism daemon stopped, so it stopped following this curve.";
-pub(super) const STOPPED_UNEXPECTEDLY_REASON: &str =
-    "The Prism daemon stopped unexpectedly while following this curve.";
+const STALLED_REASON: &str =
+    "Prism's fan curve control stopped responding, so the daemon stopped following this curve.";
+const NOT_RESUMED_REASON: &str = "After the Prism daemon restarted, the curve couldn't resume.";
 
 pub(super) struct CoolingController {
+    tuning_store: Arc<TuningStore>,
     gpus: Mutex<HashMap<String, GpuCooling>>,
     record_path: PathBuf,
     boot_id: String,
@@ -47,9 +48,22 @@ pub(super) struct CoolingController {
     loop_heartbeat_ms: AtomicU64,
     /// Once stopping, curves write nothing more.
     stopping: AtomicBool,
+    /// Whether curve control has stopped making progress, so curves it leaves behind are faults
+    /// that the next daemon must not resume.
+    stalled: AtomicBool,
     /// When each GPU's current fan operation started, so a hung driver call counts as a stall
     /// wherever it happens.
     operations: Mutex<HashMap<String, u64>>,
+}
+
+/// All controller callers declare why they apply a configuration. Only an identified manual
+/// application (live or profile) replaces that user's remembered choice. Automatic applications,
+/// restorations and calls without an identified user never acquire ownership of that choice.
+pub(super) enum CoolingApplicationSource {
+    Manual(SessionPeer),
+    /// Legacy manual callers update host manual state without claiming a user's remembered curve.
+    UnidentifiedManual,
+    NonManual,
 }
 
 /// What Prism applied to one GPU's fans, by fan index.
@@ -68,6 +82,9 @@ struct GpuCooling {
     /// an application, or released while their GPU's queue was stuck. They stay recorded for
     /// whoever recovers after the daemon stops.
     unreleased: BTreeSet<u32>,
+    /// Curves an earlier daemon of this boot was following, healthy, when it stopped.
+    interrupted: Option<InterruptedCurves>,
+    recovery: Option<CoolingRecovery>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +155,8 @@ impl GpuCooling {
             last_followed_ms: now_ms,
             follow_queued: false,
             unreleased: BTreeSet::new(),
+            interrupted: None,
+            recovery: None,
         }
     }
 
@@ -215,6 +234,7 @@ impl GpuCooling {
             })
             .collect();
         CoolingControl {
+            remembered_curve: None,
             revision: self.revision,
             applied: self.configuration(),
             curve_temperature_c: (!requested.is_empty())
@@ -222,25 +242,45 @@ impl GpuCooling {
                 .flatten(),
             requested,
             suspension: self.suspension.clone(),
+            recovery: self.recovery.clone(),
         }
+    }
+
+    /// Stops following every running curve, returning the fans that were following one.
+    fn release_running(&mut self) -> Vec<u32> {
+        let fans = self.running_curve_fans();
+        for fan_index in &fans {
+            if let Some(FanState::Curve { output, .. }) = self.fans.get_mut(fan_index) {
+                *output = None;
+            }
+        }
+        fans
     }
 }
 
 impl CoolingController {
     /// Opens the controller on the boot-scoped record of curves an earlier daemon followed.
-    pub fn open(boot_dir: &Path, boot_id: &str, clock: Arc<dyn Clock>) -> Self {
+    pub fn open(
+        boot_dir: &Path,
+        boot_id: &str,
+        clock: Arc<dyn Clock>,
+        tuning_store: Arc<TuningStore>,
+    ) -> Self {
         let record_path = boot_dir.join(COOLING_RECORD_FILE_NAME);
         let gpus = read_record(&record_path, boot_id)
+            .gpus
             .into_iter()
             .map(|(uuid, recorded)| (uuid, recorded.into_suspended()))
             .collect();
         Self {
+            tuning_store,
             gpus: Mutex::new(gpus),
             record_path,
             boot_id: boot_id.into(),
             loop_heartbeat_ms: AtomicU64::new(clock.now_monotonic_ms()),
             clock,
             stopping: AtomicBool::new(false),
+            stalled: AtomicBool::new(false),
             operations: Mutex::default(),
         }
     }
@@ -275,10 +315,28 @@ impl CoolingController {
         &self,
         backend: &dyn DaemonBackend,
         request: ApplyCoolingRequest,
+        source: CoolingApplicationSource,
     ) -> CoolingApplication {
         let uuid = request.gpu_id.clone();
+        let custom_curve = request.configuration.contains_curve();
         let mut application = self.apply_configuration(backend, request);
-        application.revision = self.control(&uuid).revision;
+        let control = self.control(&uuid);
+        application.revision = control.revision;
+        if custom_curve && application.outcome.status == TuningOutcomeStatus::Succeeded {
+            if let (CoolingApplicationSource::Manual(peer), Some(configuration)) =
+                (source, control.applied)
+            {
+                if let Err(error) = self.tuning_store.update(|document| {
+                    document
+                        .user_mut(peer.uid, &peer.username)
+                        .remembered_curves
+                        .insert(uuid, configuration);
+                }) {
+                    // Hardware success stays success. Store health reports the persistence failure.
+                    eprintln!("Could not remember the manually applied fan curve: {error}");
+                }
+            }
+        }
         application
     }
 
@@ -415,6 +473,8 @@ impl CoolingController {
         cooling.fans.extend(states);
         cooling.curve_temperature_c = temperature;
         cooling.last_followed_ms = now;
+        cooling.interrupted = None;
+        cooling.recovery = None;
         if !has_suspended_curve(cooling) {
             cooling.suspension = None;
         }
@@ -532,6 +592,7 @@ impl CoolingController {
             cooling.unreleased.clear();
             cooling.follow_queued = false;
             cooling.curve_temperature_c = None;
+            cooling.recovery = None;
             cooling.revision += 1;
             cooling.suspension = Some(CurveSuspension {
                 kind: SuspensionKind::ExternalControl,
@@ -579,29 +640,209 @@ impl CoolingController {
     /// GPU's default automatic cooling, reporting what happened to each fan.
     fn suspend(&self, backend: &dyn DaemonBackend, uuid: &str, reason: &str) {
         let _operation = self.operating(uuid);
-        let fans = {
-            let mut gpus = self.lock();
-            let Some(cooling) = gpus.get_mut(uuid) else {
-                return;
-            };
-            let fans = cooling.running_curve_fans();
-            for fan_index in &fans {
-                if let Some(FanState::Curve { output, .. }) = cooling.fans.get_mut(fan_index) {
-                    *output = None;
-                }
-            }
-            fans
-        };
+        let fans = self
+            .lock()
+            .get_mut(uuid)
+            .map(GpuCooling::release_running)
+            .unwrap_or_default();
         if fans.is_empty() {
             return;
         }
         let restoration = restore_automatic(backend, uuid, &fans);
         if let Some(cooling) = self.lock().get_mut(uuid) {
             cooling.revision += 1;
+            cooling.recovery = None;
             cooling.suspension = Some(CurveSuspension {
                 kind: SuspensionKind::Fault,
                 reason: reason.into(),
                 restoration,
+            });
+        }
+        self.save_record();
+    }
+
+    /// Stops following the GPU's running curves because the daemon stops, and returns their fans
+    /// to automatic cooling. The curves were healthy, so the next daemon of this boot may resume
+    /// them.
+    fn interrupt(&self, backend: &dyn DaemonBackend, uuid: &str) {
+        let _operation = self.operating(uuid);
+        let fans = self
+            .lock()
+            .get_mut(uuid)
+            .map(GpuCooling::release_running)
+            .unwrap_or_default();
+        if fans.is_empty() {
+            return;
+        }
+        let restoration = restore_automatic(backend, uuid, &fans);
+        if let Some(cooling) = self.lock().get_mut(uuid) {
+            cooling.revision += 1;
+            cooling
+                .interrupted
+                .get_or_insert_with(InterruptedCurves::default)
+                .add(restoration);
+        }
+        self.save_record();
+    }
+
+    /// The GPUs with curves an earlier daemon of this boot was following when it stopped.
+    pub fn interrupted_gpus(&self) -> Vec<String> {
+        self.lock()
+            .iter()
+            .filter(|(_, cooling)| cooling.interrupted.is_some())
+            .map(|(uuid, _)| uuid.clone())
+            .collect()
+    }
+
+    /// Resumes the curves an earlier daemon of this boot was following, healthy, when it stopped,
+    /// once fresh readings show the same GPU and fans, limits the curve still fits, and the
+    /// current temperature. Each curve starts at the speed it requests at that temperature. A
+    /// curve that can't resume returns its fans to automatic cooling and waits for a retry.
+    pub fn resume_interrupted(&self, backend: &dyn DaemonBackend, uuid: &str) {
+        let _operation = self.operating(uuid);
+        if self.stopping.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(cooling) = self.lock().get(uuid).cloned() else {
+            return;
+        };
+        let Some(interrupted) = cooling.interrupted.clone() else {
+            return;
+        };
+        let fans = interrupted.fans();
+        let performance = backend.performance();
+        let Ok(gpu) = verified_gpu(&performance, uuid) else {
+            return self.not_resumed(
+                backend,
+                uuid,
+                &fans,
+                "The GPU is absent or its stable identity could not be verified.",
+            );
+        };
+        let targets = match resumption(gpu, &cooling, &interrupted) {
+            Ok(targets) => targets,
+            Err(NotResumable::Problems(problems)) => {
+                return self.not_resumed(backend, uuid, &fans, &problems.join(" "))
+            }
+            Err(NotResumable::ExternalControl(reason)) => {
+                return self.leave_to_external_control(uuid, &fans, &reason)
+            }
+        };
+        // Validation rejected a missing temperature.
+        let temperature = gpu.telemetry.temperature_c.map(i64::from).unwrap_or(0);
+        // Recorded before they are written, so whoever runs after a crash mid-resumption returns
+        // them to automatic cooling.
+        if let Some(cooling) = self.lock().get_mut(uuid) {
+            cooling.unreleased.extend(&fans);
+        }
+        self.save_record();
+        let mut outcomes = Vec::new();
+        let mut outputs = Vec::new();
+        let mut failure = None;
+        for (fan_index, points) in targets {
+            if failure.is_some() {
+                outcomes.push(fan_outcome(
+                    fan_index,
+                    TuningOutcomeStatus::Unattempted,
+                    Some("An earlier fan failed. Retry the curve.".into()),
+                ));
+                continue;
+            }
+            let demand = fan_curve::requested_speed(&points, temperature);
+            outputs.push((fan_index, CurveOutput::start(demand)));
+            match set_speed(backend, gpu, fan_index, demand) {
+                Ok(()) => {
+                    outcomes.push(fan_outcome(fan_index, TuningOutcomeStatus::Succeeded, None))
+                }
+                Err(error) => {
+                    failure = Some(format!("Fan {}: {error}", fan_index + 1));
+                    outcomes.push(fan_outcome(
+                        fan_index,
+                        TuningOutcomeStatus::Failed,
+                        Some(error),
+                    ));
+                }
+            }
+        }
+        let now = self.clock.now_monotonic_ms();
+        if let Some(cooling) = self.lock().get_mut(uuid) {
+            for fan_index in &fans {
+                cooling.unreleased.remove(fan_index);
+            }
+            for (fan_index, started) in outputs {
+                if let Some(FanState::Curve { output, .. }) = cooling.fans.get_mut(&fan_index) {
+                    *output = Some(started);
+                }
+            }
+            if failure.is_none() {
+                cooling.revision += 1;
+                cooling.interrupted = None;
+                cooling.curve_temperature_c = Some(temperature);
+                cooling.last_followed_ms = now;
+                cooling.recovery = Some(CoolingRecovery {
+                    status: RecoveryStatus::Resumed,
+                    fans: outcomes.clone(),
+                });
+                if !has_suspended_curve(cooling) {
+                    cooling.suspension = None;
+                }
+            }
+        }
+        match failure {
+            Some(reason) => self.fail_resumption(backend, uuid, &fans, &reason, outcomes),
+            None => self.save_record(),
+        }
+    }
+
+    /// Reports interrupted curves that fresh readings rule out, before any curve write.
+    fn not_resumed(&self, backend: &dyn DaemonBackend, uuid: &str, fans: &[u32], reason: &str) {
+        self.fail_resumption(backend, uuid, fans, reason, unattempted(fans, reason).fans);
+    }
+
+    /// Returns the interrupted curves' fans to automatic cooling and suspends the curves until an
+    /// explicit retry, reporting each fan's resumption and restoration.
+    fn fail_resumption(
+        &self,
+        backend: &dyn DaemonBackend,
+        uuid: &str,
+        fans: &[u32],
+        reason: &str,
+        outcomes: Vec<FanOutcome>,
+    ) {
+        if let Some(cooling) = self.lock().get_mut(uuid) {
+            cooling.release_running();
+        }
+        let restoration = restore_automatic(backend, uuid, fans);
+        if let Some(cooling) = self.lock().get_mut(uuid) {
+            cooling.revision += 1;
+            cooling.interrupted = None;
+            cooling.curve_temperature_c = None;
+            cooling.suspension = Some(CurveSuspension {
+                kind: SuspensionKind::Fault,
+                reason: format!("{NOT_RESUMED_REASON} {reason}"),
+                restoration,
+            });
+            cooling.recovery = Some(CoolingRecovery {
+                status: RecoveryStatus::RetryRequired,
+                fans: outcomes,
+            });
+        }
+        self.save_record();
+    }
+
+    /// Leaves fans another tool took over while no daemon ran to that tool, writing nothing.
+    fn leave_to_external_control(&self, uuid: &str, fans: &[u32], reason: &str) {
+        if let Some(cooling) = self.lock().get_mut(uuid) {
+            cooling.revision += 1;
+            cooling.interrupted = None;
+            cooling.suspension = Some(CurveSuspension {
+                kind: SuspensionKind::ExternalControl,
+                reason: reason.into(),
+                restoration: vec![],
+            });
+            cooling.recovery = Some(CoolingRecovery {
+                status: RecoveryStatus::RetryRequired,
+                fans: unattempted(fans, reason).fans,
             });
         }
         self.save_record();
@@ -644,30 +885,33 @@ impl CoolingController {
                     && running.all(|cooling| fresh(cooling.last_followed_ms))))
     }
 
-    /// The GPUs with a running curve.
-    pub fn running_gpus(&self) -> Vec<String> {
+    /// The GPUs with a running curve, or one still resuming, that a stop must wait for.
+    pub fn gpus_to_stop(&self) -> Vec<String> {
         self.lock()
             .iter()
-            .filter(|(_, cooling)| cooling.has_running_curve())
+            .filter(|(_, cooling)| cooling.has_running_curve() || cooling.interrupted.is_some())
             .map(|(uuid, _)| uuid.clone())
             .collect()
     }
 
-    /// Stops following the GPU's curves and returns its curve fans to automatic cooling. Runs on
-    /// the GPU's queue, so no curve write can follow it.
+    /// Stops following the GPU's curves and returns its curve fans to automatic cooling, for the
+    /// next daemon of this boot to resume. Runs on the GPU's queue, so no curve write can follow
+    /// it.
     pub fn stop_following(&self, backend: &dyn DaemonBackend, uuid: &str) {
         self.stopping.store(true, Ordering::SeqCst);
-        self.suspend(backend, uuid, STOPPED_REASON);
+        self.interrupt(backend, uuid);
     }
 
     /// Like `stop_following`, for a GPU whose queue is stuck: a hung curve write may still land
-    /// after this restoration, so the fans stay recorded for recovery once the daemon has gone.
+    /// after this restoration, so the fans stay recorded to be returned to automatic cooling once
+    /// the daemon has gone, as a stall the next daemon doesn't resume.
     pub fn stop_following_stuck(&self, backend: &dyn DaemonBackend, uuid: &str) {
         let fans = self
             .lock()
             .get(uuid)
             .map(GpuCooling::running_curve_fans)
             .unwrap_or_default();
+        self.stalled.store(true, Ordering::SeqCst);
         self.stop_following(backend, uuid);
         if let Some(cooling) = self.lock().get_mut(uuid) {
             cooling.unreleased.extend(fans);
@@ -677,6 +921,15 @@ impl CoolingController {
 
     pub fn begin_stopping(&self) {
         self.stopping.store(true, Ordering::SeqCst);
+    }
+
+    /// Records whether curve control has stalled, as judged by the supervisor outside the curve
+    /// loop. While it has, curves the daemon leaves behind, however it stops, are faults that the
+    /// next daemon doesn't resume.
+    pub fn record_stall(&self, stalled: bool) {
+        if self.stalled.swap(stalled, Ordering::SeqCst) != stalled {
+            self.save_record();
+        }
     }
 
     fn save_record(&self) {
@@ -692,11 +945,18 @@ impl CoolingController {
                         fans: cooling.fans.keys().copied().collect(),
                         curve_fans: cooling.owned_curve_fans(),
                         suspension: cooling.suspension.clone(),
+                        interrupted: cooling.interrupted.clone(),
+                        recovery: cooling.recovery.clone(),
                     },
                 )
             })
             .collect();
-        write_record(&self.record_path, &self.boot_id, gpus);
+        write_record(
+            &self.record_path,
+            &self.boot_id,
+            gpus,
+            self.stalled.load(Ordering::SeqCst),
+        );
     }
 }
 
@@ -721,6 +981,75 @@ fn has_suspended_curve(cooling: &GpuCooling) -> bool {
         .fans
         .values()
         .any(|state| matches!(state, FanState::Curve { output: None, .. }))
+}
+
+enum NotResumable {
+    Problems(Vec<String>),
+    /// Another tool took manual control of a fan after the stopping daemon returned it to
+    /// automatic cooling.
+    ExternalControl(String),
+}
+
+/// Each interrupted fan's curve, once fresh readings show it can resume: the same fans, no other
+/// tool controlling them, limits the curve still fits and a current temperature.
+fn resumption(
+    gpu: &GpuPerformanceDevice,
+    cooling: &GpuCooling,
+    interrupted: &InterruptedCurves,
+) -> Result<Vec<(u32, Vec<FanCurvePoint>)>, NotResumable> {
+    let reported: BTreeSet<u32> = gpu.cooling.fans.iter().map(|fan| fan.index).collect();
+    let configured: BTreeSet<u32> = cooling.fans.keys().copied().collect();
+    let fans_match = if cooling.shared {
+        reported == configured
+    } else {
+        configured.is_subset(&reported)
+    };
+    if !fans_match {
+        return Err(NotResumable::Problems(vec![
+            "The GPU's fans changed since the curve was applied.".into(),
+        ]));
+    }
+    let mut targets = Vec::new();
+    for fan_index in interrupted.fans() {
+        let Some(FanState::Curve { points, .. }) = cooling.fans.get(&fan_index) else {
+            return Err(NotResumable::Problems(vec![format!(
+                "Prism's record of fan {} has no curve to resume.",
+                fan_index + 1
+            )]));
+        };
+        targets.push((fan_index, points.clone()));
+    }
+    for restoration in &interrupted.restoration {
+        let mode = gpu
+            .cooling
+            .fans
+            .iter()
+            .find(|fan| fan.index == restoration.fan_index)
+            .and_then(|fan| fan.mode);
+        if restoration.status == RestorationStatus::Restored && mode == Some(FanControlMode::Manual)
+        {
+            return Err(NotResumable::ExternalControl(format!(
+                "While the Prism daemon was stopped, fan {} came under manual control from elsewhere. Prism left those controls alone.",
+                restoration.fan_index + 1
+            )));
+        }
+    }
+    let settings: Vec<(u32, FanSetting)> = targets
+        .iter()
+        .map(|(fan_index, points)| {
+            (
+                *fan_index,
+                FanSetting::Curve {
+                    points: points.clone(),
+                },
+            )
+        })
+        .collect();
+    let problems = application_problems(gpu, cooling.shared, &settings);
+    if !problems.is_empty() {
+        return Err(NotResumable::Problems(problems));
+    }
+    Ok(targets)
 }
 
 /// Why the configuration can't be applied to the GPU now; none means it can.
@@ -895,14 +1224,29 @@ fn unattempted(fans: &[u32], message: &str) -> CoolingApplication {
     }
 }
 
-/// The boot-scoped record of the curves Prism follows, so whoever runs after an unexpected stop
-/// knows which fans to return to automatic cooling, and which suspensions to keep reporting.
+/// The boot-scoped record of the cooling Prism applied and the curves it follows, so whoever runs
+/// after the daemon stops knows which fans to return to automatic cooling, which curves the next
+/// daemon of this boot may resume, and which suspensions to keep reporting.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CoolingRecord {
     schema_version: u64,
     boot_id: String,
     gpus: BTreeMap<String, RecordedGpu>,
+    /// Curve control had stalled: curves left behind are faults, not interruptions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    stalled: bool,
+}
+
+impl CoolingRecord {
+    fn empty(boot_id: &str) -> Self {
+        Self {
+            schema_version: RECORD_SCHEMA_VERSION,
+            boot_id: boot_id.into(),
+            gpus: BTreeMap::new(),
+            stalled: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -917,6 +1261,35 @@ struct RecordedGpu {
     /// Fans whose curve was being followed: no one has returned them to automatic cooling yet.
     curve_fans: Vec<u32>,
     suspension: Option<CurveSuspension>,
+    // Omitted when empty, so an earlier daemon version can still read the record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    interrupted: Option<InterruptedCurves>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<CoolingRecovery>,
+}
+
+/// Curve fans that were following their curve, healthy, when the daemon stopped, and how each
+/// returned to automatic cooling meanwhile.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InterruptedCurves {
+    restoration: Vec<FanRestoration>,
+}
+
+impl InterruptedCurves {
+    fn fans(&self) -> Vec<u32> {
+        self.restoration.iter().map(|fan| fan.fan_index).collect()
+    }
+
+    /// Adds fans that have just been returned to automatic cooling, replacing older outcomes.
+    fn add(&mut self, restoration: Vec<FanRestoration>) {
+        for fan in restoration {
+            self.restoration
+                .retain(|known| known.fan_index != fan.fan_index);
+            self.restoration.push(fan);
+        }
+        self.restoration.sort_by_key(|fan| fan.fan_index);
+    }
 }
 
 impl RecordedGpu {
@@ -943,14 +1316,18 @@ impl RecordedGpu {
             revision: self.revision,
             fans,
             suspension: self.suspension,
+            interrupted: self.interrupted,
+            recovery: self.recovery,
             ..GpuCooling::new(shared, 0)
         }
     }
 }
 
-fn read_record(path: &Path, boot_id: &str) -> BTreeMap<String, RecordedGpu> {
+/// This boot's record. A previous boot's, or one that can't be read, holds nothing: it never
+/// becomes a configuration to resume.
+fn read_record(path: &Path, boot_id: &str) -> CoolingRecord {
     let Ok(bytes) = fs::read(path) else {
-        return BTreeMap::new();
+        return CoolingRecord::empty(boot_id);
     };
     match serde_json::from_slice::<CoolingRecord>(&bytes) {
         Ok(record)
@@ -958,51 +1335,67 @@ fn read_record(path: &Path, boot_id: &str) -> BTreeMap<String, RecordedGpu> {
                 && record.boot_id == boot_id
                 && !boot_id.is_empty() =>
         {
-            record.gpus
+            record
         }
-        Ok(_) => BTreeMap::new(),
+        Ok(_) => CoolingRecord::empty(boot_id),
         Err(error) => {
             eprintln!("ignoring an unreadable record of Prism's fan curve control: {error}");
-            BTreeMap::new()
+            CoolingRecord::empty(boot_id)
         }
     }
 }
 
-/// Returns fans whose curve an earlier daemon was following to automatic cooling, and records
-/// the outcome as that curve's suspension. Runs at daemon start and from the service manager after
-/// the daemon stops, without needing the daemon or its curve loop.
+/// Returns fans whose curve an earlier daemon was following to automatic cooling. A healthy curve
+/// is recorded as interrupted, for the next daemon of this boot to resume; if curve control had
+/// stalled, every curve the daemon left behind is suspended as a fault instead. Runs at daemon
+/// start and from the service manager after the daemon stops, without needing the daemon or its
+/// curve loop.
 pub fn recover_abandoned_curves(backend: &dyn DaemonBackend, boot_dir: &Path, boot_id: &str) {
     let path = boot_dir.join(COOLING_RECORD_FILE_NAME);
-    let mut gpus = read_record(&path, boot_id);
-    if gpus.values().all(|gpu| gpu.curve_fans.is_empty()) {
+    let mut record = read_record(&path, boot_id);
+    if !record.stalled && record.gpus.values().all(|gpu| gpu.curve_fans.is_empty()) {
         return;
     }
-    for (uuid, gpu) in &mut gpus {
-        if gpu.curve_fans.is_empty() {
-            continue;
-        }
+    for (uuid, gpu) in &mut record.gpus {
         let fans = std::mem::take(&mut gpu.curve_fans);
-        let restoration = restore_automatic(backend, uuid, &fans);
-        gpu.revision += 1;
-        gpu.suspension = Some(CurveSuspension {
-            kind: SuspensionKind::Fault,
-            reason: STOPPED_UNEXPECTEDLY_REASON.into(),
-            restoration,
-        });
+        let restoration = if fans.is_empty() {
+            vec![]
+        } else {
+            restore_automatic(backend, uuid, &fans)
+        };
+        if record.stalled {
+            let mut stopped = gpu.interrupted.take().unwrap_or_default();
+            stopped.add(restoration);
+            if stopped.restoration.is_empty() {
+                continue;
+            }
+            gpu.revision += 1;
+            gpu.recovery = None;
+            gpu.suspension = Some(CurveSuspension {
+                kind: SuspensionKind::Fault,
+                reason: STALLED_REASON.into(),
+                restoration: stopped.restoration,
+            });
+        } else if !restoration.is_empty() {
+            gpu.revision += 1;
+            gpu.interrupted
+                .get_or_insert_with(InterruptedCurves::default)
+                .add(restoration);
+        }
     }
-    write_record(&path, boot_id, gpus);
+    write_record(&path, boot_id, record.gpus, false);
 }
 
 /// Records the curves for this boot. Without a boot id, nothing could tell a later reader which
 /// boot the record belongs to, so none is kept.
-fn write_record(path: &Path, boot_id: &str, gpus: BTreeMap<String, RecordedGpu>) {
+fn write_record(path: &Path, boot_id: &str, gpus: BTreeMap<String, RecordedGpu>, stalled: bool) {
     if boot_id.is_empty() {
         return;
     }
     let record = CoolingRecord {
-        schema_version: RECORD_SCHEMA_VERSION,
-        boot_id: boot_id.into(),
         gpus,
+        stalled,
+        ..CoolingRecord::empty(boot_id)
     };
     if let Err(error) = write_atomically(path, &serde_json::to_vec_pretty(&record).unwrap()) {
         eprintln!("failed to record Prism's fan curve control: {error}");

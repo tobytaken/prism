@@ -1,5 +1,5 @@
 use super::backend::DaemonBackend;
-use super::cooling::CoolingController;
+use super::cooling::{CoolingApplicationSource, CoolingController};
 use crate::cooling::{ApplyCoolingRequest, CoolingApplication};
 use crate::gpu::{GpuTargetRequest, SetGpuClockOffsetsRequest, SetGpuPowerLimitRequest};
 use crate::protocol::{
@@ -22,8 +22,9 @@ pub(super) fn apply_profile(
     cooling: &CoolingController,
     request: ApplyGpuProfileRequest,
     origin: TuningOrigin,
+    source: CoolingApplicationSource,
 ) -> ProfileApplicationResponse {
-    apply(backend, Some(cooling), request, origin)
+    apply(backend, Some(cooling), request, origin, source)
 }
 
 /// Boot results are shared across users. Only manual loads may disclose saved values
@@ -32,7 +33,13 @@ pub(super) fn apply_unreviewed_profile(
     backend: &dyn DaemonBackend,
     request: ApplyGpuProfileRequest,
 ) -> ProfileApplicationResponse {
-    apply(backend, None, request, TuningOrigin::TemporaryAutomatic)
+    apply(
+        backend,
+        None,
+        request,
+        TuningOrigin::TemporaryAutomatic,
+        CoolingApplicationSource::NonManual,
+    )
 }
 
 fn apply(
@@ -40,6 +47,7 @@ fn apply(
     cooling: Option<&CoolingController>,
     request: ApplyGpuProfileRequest,
     origin: TuningOrigin,
+    source: CoolingApplicationSource,
 ) -> ProfileApplicationResponse {
     let review_ranges = origin == TuningOrigin::Manual;
     use crate::gpu::ControlSupport;
@@ -268,6 +276,7 @@ fn apply(
                     expected_revision: None,
                     fan_indexes: None,
                 },
+                source,
             )
         }
     });

@@ -333,6 +333,7 @@ export function createFakeDesktop({
       requested: [],
       curveTemperatureC: null,
       suspension: null,
+      recovery: null,
     });
   /** Like the daemon, stops the GPU's curve and returns its fans to automatic cooling. */
   const suspendCurve = (
@@ -343,6 +344,7 @@ export function createFakeDesktop({
     const control = coolingControl(gpu);
     if (!control.requested.length) return;
     control.revision += 1;
+    control.recovery = null;
     control.suspension = {
       kind: "fault",
       reason,
@@ -369,6 +371,7 @@ export function createFakeDesktop({
   ): CoolingApplication => {
     const control = coolingControl(gpu);
     control.revision += 1;
+    control.recovery = null;
     const outcomes: CoolingApplication["fans"] = [];
     const settings = fanSettings(control.applied, gpu);
     let failure: string | null = null;
@@ -578,7 +581,15 @@ export function createFakeDesktop({
         outcome: succeeded,
         fans: [],
       };
-    return applyFans(gpu!, configuration, targets);
+    const application = applyFans(gpu!, configuration, targets);
+    if (
+      application.outcome.status === "succeeded" &&
+      targets.some(([, setting]) => setting.mode === "curve")
+    ) {
+      const control = coolingControl(gpu!);
+      control.rememberedCurve = structuredClone(control.applied!);
+    }
+    return application;
   }
   function writeSettings(
     gpuId: string,
@@ -1242,6 +1253,7 @@ export function createFakeDesktop({
           })
         ) {
           control.revision += 1;
+          control.recovery = null;
           control.suspension = {
             kind: "externalControl",
             reason:
@@ -1273,6 +1285,64 @@ export function createFakeDesktop({
           )!.currentSpeedPercent = request.speedPercent;
         }
         control.curveTemperatureC = gpu.telemetry.temperatureC;
+      }
+    },
+    /**
+     * Restarts the daemon within this host boot. Like the daemon, each running curve resumes at
+     * the current temperature, or returns its fans to automatic cooling and waits for a retry
+     * when the temperature is unavailable or a fan write fails.
+     */
+    restartDaemon() {
+      for (const gpu of response.gpus) {
+        const control = gpu.cooling.control;
+        if (!control?.requested.length) continue;
+        const settings = fanSettings(control.applied, gpu);
+        const temperature = gpu.telemetry.temperatureC;
+        control.revision += 1;
+        const unavailable =
+          temperature == null
+            ? "The GPU's temperature is unavailable, so a curve can't be followed. Refresh the GPU readings and try again."
+            : null;
+        let failure: string | null = unavailable;
+        const fans: CoolingApplication["fans"] = control.requested.map(
+          ({ fanIndex }) => {
+            if (failure)
+              return {
+                fanIndex,
+                outcome: {
+                  status: "unattempted",
+                  error:
+                    unavailable ?? "An earlier fan failed. Retry the curve.",
+                },
+              };
+            const error = fanFailures[fanIndex];
+            if (error) {
+              failure = `Fan ${fanIndex + 1}: ${error}`;
+              return { fanIndex, outcome: { status: "failed", error } };
+            }
+            return { fanIndex, outcome: succeeded };
+          },
+        );
+        if (failure) {
+          suspendCurve(
+            gpu,
+            `After the Prism daemon restarted, the curve couldn't resume. ${failure}`,
+          );
+          control.recovery = { status: "retryRequired", fans };
+          continue;
+        }
+        control.revision += 1;
+        for (const request of control.requested) {
+          const setting = settings.get(request.fanIndex);
+          if (setting?.mode !== "curve") continue;
+          request.speedPercent = requestedSpeed(setting.points, temperature!);
+          Object.assign(
+            gpu.cooling.fans.find((fan) => fan.index === request.fanIndex)!,
+            { mode: "manual", currentSpeedPercent: request.speedPercent },
+          );
+        }
+        control.curveTemperatureC = temperature;
+        control.recovery = { status: "resumed", fans };
       }
     },
     /** Suspends the first GPU's curve after a fault, as the daemon reports it. */

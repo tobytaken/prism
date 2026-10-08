@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import type {
   CoolingConfiguration,
   CoolingControl,
+  CoolingRecovery,
   FanRestoration,
   FanSetting,
   GpuPerformanceDevice,
@@ -24,7 +25,7 @@ export function CoolingControlStatus({
   const control = gpu.cooling.control;
   if (!control || !gpu.cooling.isSupported || gpu.cooling.fans.length === 0)
     return null;
-  const { applied, suspension } = control;
+  const { applied, suspension, recovery } = control;
   const yielded = suspension?.kind === "externalControl";
   const automatic =
     applied?.arrangement === "shared" && applied.setting.mode === "automatic";
@@ -41,6 +42,12 @@ export function CoolingControlStatus({
           : "Prism hasn't applied cooling to this GPU."}
       </p>
       <RequestedSpeeds control={control} />
+      {recovery?.status === "resumed" && (
+        <p className="text-muted-foreground">
+          After the Prism daemon restarted, it resumed this curve from the
+          current temperature.
+        </p>
+      )}
       {control.requested.length > 0 && (
         <p className="text-muted-foreground">
           Prism can detect reported fan control mode changes. Other tools'
@@ -52,6 +59,9 @@ export function CoolingControlStatus({
           <p className="text-destructive">
             Curve control suspended: {suspension.reason}
           </p>
+          {recovery?.status === "retryRequired" && (
+            <RecoveryOutcomes recovery={recovery} />
+          )}
           <ul className="space-y-0.5 text-muted-foreground">
             {suspension.restoration.map((fan) => (
               <li key={fan.fanIndex}>{restorationText(fan)}</li>
@@ -86,6 +96,29 @@ export function CoolingControlStatus({
         </Button>
       )}
     </div>
+  );
+}
+
+/** Each interrupted curve fan's resumption by the restarted daemon. */
+function RecoveryOutcomes({ recovery }: { recovery: CoolingRecovery }) {
+  return (
+    <>
+      <p className="text-muted-foreground">
+        The restarted daemon didn't resume this curve:
+      </p>
+      <ul className="space-y-0.5 text-muted-foreground">
+        {recovery.fans.map(({ fanIndex, outcome }) => (
+          <li key={fanIndex}>
+            {`Fan ${fanIndex + 1}: `}
+            {outcome.status === "succeeded"
+              ? "set, then stopped with the other fans"
+              : outcome.status === "failed"
+                ? `not resumed${outcome.error ? ` — ${outcome.error}` : ""}`
+                : "not attempted"}
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

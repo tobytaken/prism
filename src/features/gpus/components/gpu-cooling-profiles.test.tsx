@@ -213,6 +213,7 @@ it("requires review when another session changes cooling after a failed profile 
     requested: [],
     curveTemperatureC: null,
     suspension: null,
+    recovery: null,
   };
   fake.fanFailures[0] = "Fan denied";
   const { queryClient } = renderWithQueryClient(
@@ -263,6 +264,7 @@ it("does not acknowledge competing cooling when profile cooling was never attemp
     requested: [],
     curveTemperatureC: null,
     suspension: null,
+    recovery: null,
   };
   fake.applyProfileById.mockImplementationOnce(async () => {
     const external = await fake.applyCooling({

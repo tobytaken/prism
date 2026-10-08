@@ -37,6 +37,18 @@ export function CoolingArrangementEditor({
 }) {
   const [joining, setJoining] = useState(false);
   const applied = gpu.cooling.control?.applied;
+  const remembered = gpu.cooling.control?.rememberedCurve;
+  const recall = remembered
+    ? () =>
+        onChange({
+          ...coolingDraft(remembered),
+          stableId: gpu.stableId,
+          fanIndexes:
+            remembered.arrangement === "perFan"
+              ? remembered.fans.map((fan) => fan.fanIndex)
+              : gpu.cooling.fans.map((fan) => fan.index),
+        })
+    : undefined;
   const current =
     draft ?? (applied ? coolingDraft(applied) : { mode: "automatic" as const });
   const indexes = draft?.fanIndexes ?? gpu.cooling.fans.map((fan) => fan.index);
@@ -139,6 +151,14 @@ export function CoolingArrangementEditor({
           {separate ? "Share one configuration" : "Separate fans"}
         </Button>
       </div>
+      {remembered && (
+        <p className="text-xs text-muted-foreground">
+          {separate
+            ? "Selecting Curve recalls that fan's last manually applied curve when available. Other fan edits stay unchanged."
+            : "Selecting Curve recalls your last manually applied cooling arrangement as a draft."}{" "}
+          Review it before applying.
+        </p>
+      )}
       {(identityChanged || fansChanged) && (
         <p role="alert">
           The GPU or targeted fans changed. Discard this cooling draft and
@@ -198,6 +218,7 @@ export function CoolingArrangementEditor({
           setting={current}
           busy={blocked}
           draft={draft != null}
+          onRecall={recall}
           onChange={change}
           onApply={apply}
         />
@@ -250,6 +271,7 @@ function SettingEditor({
   draft = true,
   known = true,
   canApply = true,
+  onRecall,
   onChange,
   onApply,
 }: {
@@ -260,10 +282,18 @@ function SettingEditor({
   draft?: boolean;
   known?: boolean;
   canApply?: boolean;
+  onRecall?: () => void;
   onChange: (setting: FanSettingDraft) => void;
   onApply: (setting: FanSettingDraft) => void;
 }) {
   const support = useFanCurveSupport(gpu, fanIndex);
+  const remembered = gpu.cooling.control?.rememberedCurve;
+  const rememberedSetting =
+    remembered?.arrangement === "shared"
+      ? remembered.setting
+      : remembered?.fans.find((fan) => fan.fanIndex === fanIndex)?.setting;
+  const rememberedPoints =
+    rememberedSetting?.mode === "curve" ? rememberedSetting.points : undefined;
   return (
     <div className="space-y-3">
       <label className="flex items-center gap-2 text-sm">
@@ -277,11 +307,16 @@ function SettingEditor({
               onChange({ mode: "automatic" });
             if (event.target.value === "fixed")
               onChange({ mode: "fixed", speedPercent: null });
-            if (event.target.value === "curve")
-              onChange({
-                mode: "curve",
-                points: support?.status === "available" ? support.starter : [],
-              });
+            if (event.target.value === "curve") {
+              if (onRecall) onRecall();
+              else
+                onChange({
+                  mode: "curve",
+                  points:
+                    rememberedPoints ??
+                    (support?.status === "available" ? support.starter : []),
+                });
+            }
           }}
         >
           {!known && (
@@ -291,7 +326,12 @@ function SettingEditor({
           )}
           <option value="automatic">Automatic</option>
           <option value="fixed">Fixed</option>
-          <option value="curve" disabled={support?.status !== "available"}>
+          <option
+            value="curve"
+            disabled={
+              !onRecall && !rememberedPoints && support?.status !== "available"
+            }
+          >
             Curve
           </option>
         </select>

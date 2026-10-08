@@ -576,6 +576,11 @@ fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omiss
         result["payload"]["cooling"]["outcome"]["status"], "succeeded",
         "{result}"
     );
+    let performance = alice.send_json(json!({"type":"get_performance"}));
+    assert_eq!(
+        performance["payload"]["gpus"][0]["cooling"]["control"]["rememberedCurve"],
+        cooling
+    );
     assert_eq!(
         daemon.gpus.gpu("GPU-123").cooling.fans[0].current_speed_percent,
         Some(90)
@@ -817,4 +822,42 @@ fn curve_range_review_preserves_valid_full_speed_plateau_points() {
         "{result}"
     );
     assert!(daemon.gpus.writes().is_empty());
+}
+
+#[test]
+fn version_eight_remembered_curves_survive_adding_profile_cooling() {
+    let curve = json!({"arrangement":"shared","setting":{"mode":"curve","points":[
+        {"temperatureC":45,"speedPercent":20}, {"temperatureC":85,"speedPercent":100}
+    ]}});
+    let state = serde_json::to_vec(&json!({"schemaVersion":8,"users":[{
+        "uid":1000,"username":"alice","rememberedCurves":{"GPU-123":curve},
+        "profiles":[{"id":"legacy","name":"Legacy","gpuId":"GPU-123","settings":{"powerLimitWatts":{"kind":"default"}}}]
+    }]})).unwrap();
+    let mut daemon = Harness::start_with_persistent_files(
+        FakeGpuBackend::with_gpus(vec![super::harness::cooled_gpu()]),
+        &[(TUNING_STORE_FILE_NAME, &state)],
+    );
+    let alice = daemon.user(1000, "alice");
+    let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "With cooling")));
+    assert_eq!(
+        profile["settings"]["cooling"],
+        json!({"arrangement":"shared","setting":{"mode":"automatic"}})
+    );
+    drop(alice);
+    daemon.restart();
+    let alice = daemon.user(1000, "alice");
+    let profiles = list(alice.send_json(LIST()));
+    assert!(
+        profiles.iter().find(|p| p["id"] == "legacy").unwrap()["settings"]
+            .get("cooling")
+            .is_none()
+    );
+    let performance = alice.send_json(json!({"type":"get_performance"}));
+    assert_eq!(
+        performance["payload"]["gpus"][0]["cooling"]["control"]["rememberedCurve"],
+        curve
+    );
+    let stored: Value =
+        serde_json::from_slice(&daemon.persistent_file(TUNING_STORE_FILE_NAME).unwrap()).unwrap();
+    assert_eq!(stored["schemaVersion"], 9);
 }

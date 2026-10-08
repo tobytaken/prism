@@ -1,6 +1,7 @@
 //! Process-level supervision of fan curves against fake hardware: the daemon runs as its own
 //! process, and the test plays the service manager. Recovery after a graceful stop, an abnormal
-//! termination and a stalled curve loop must not depend on that loop or on an app.
+//! termination and a stalled curve loop must not depend on that loop or on an app, and the next
+//! daemon of the boot resumes only curves that were healthy.
 //!
 //! This binary re-runs itself as the daemon (`PRISM_TEST_ROLE=daemon`) or as the service
 //! manager's stop command (`PRISM_TEST_ROLE=restore`), with GPUs kept in files.
@@ -39,8 +40,8 @@ fn main() {
 fn run_tests() {
     let tests: [(&str, fn()); 4] = [
         (
-            "a_graceful_stop_restores_automatic_cooling",
-            a_graceful_stop_restores_automatic_cooling,
+            "a_graceful_stop_restores_automatic_cooling_and_the_next_daemon_resumes_the_curve",
+            a_graceful_stop_restores_automatic_cooling_and_the_next_daemon_resumes_the_curve,
         ),
         (
             "after_an_abnormal_termination_the_stop_command_restores_automatic_cooling",
@@ -298,12 +299,18 @@ impl Host {
         }
     }
 
-    /// The suspension recorded for the GPU's curve, as the next daemon will report it.
-    fn recorded_suspension(&self) -> Value {
+    /// What the boot-scoped record holds about the GPU's cooling, for the next daemon.
+    fn recorded(&self) -> Value {
         let record: Value =
             serde_json::from_slice(&std::fs::read(self.path("run/cooling-control.json")).unwrap())
                 .unwrap();
-        record["gpus"]["GPU-123"]["suspension"].clone()
+        record["gpus"]["GPU-123"].clone()
+    }
+
+    /// Prism's control of the GPU's fans, as the running daemon reports it.
+    fn control(&self) -> Value {
+        self.send(json!({ "type": "get_performance" }))["payload"]["gpus"][0]["cooling"]["control"]
+            .clone()
     }
 
     /// Runs the service manager's stop command, as ExecStopPost does after any stop.
@@ -360,7 +367,7 @@ fn cooled_gpu() -> GpuPerformanceDevice {
     gpu
 }
 
-fn a_graceful_stop_restores_automatic_cooling() {
+fn a_graceful_stop_restores_automatic_cooling_and_the_next_daemon_resumes_the_curve() {
     let host = Host::new();
     let mut daemon = host.start_daemon(None);
     host.apply_starter_curve();
@@ -368,12 +375,21 @@ fn a_graceful_stop_restores_automatic_cooling() {
 
     daemon.signal(libc::SIGTERM);
     daemon.wait_for_exit();
+    host.run_stop_command();
 
     assert_eq!(host.fan_modes(), vec![Some(FanControlMode::Auto); 2]);
     assert_eq!(
-        host.recorded_suspension()["reason"],
-        "The Prism daemon stopped, so it stopped following this curve."
+        host.recorded()["interrupted"]["restoration"][1]["status"],
+        "restored"
     );
+    assert_eq!(host.recorded()["suspension"], Value::Null);
+
+    std::fs::write(host.path("gpus/temperature"), "80").unwrap();
+    let _daemon = host.start_daemon(None);
+    assert_eq!(host.fan_modes(), vec![Some(FanControlMode::Manual); 2]);
+    let control = host.control();
+    assert_eq!(control["recovery"]["status"], "resumed");
+    assert_eq!(control["requested"][1]["speedPercent"], 90);
 }
 
 fn after_an_abnormal_termination_the_stop_command_restores_automatic_cooling() {
@@ -387,12 +403,15 @@ fn after_an_abnormal_termination_the_stop_command_restores_automatic_cooling() {
     host.run_stop_command();
 
     assert_eq!(host.fan_modes(), vec![Some(FanControlMode::Auto); 2]);
-    let suspension = host.recorded_suspension();
     assert_eq!(
-        suspension["reason"],
-        "The Prism daemon stopped unexpectedly while following this curve."
+        host.recorded()["interrupted"]["restoration"][1]["status"],
+        "restored"
     );
-    assert_eq!(suspension["restoration"][1]["status"], "restored");
+
+    // The service manager restarts the daemon, which resumes the healthy curve.
+    let _daemon = host.start_daemon(None);
+    assert_eq!(host.fan_modes(), vec![Some(FanControlMode::Manual); 2]);
+    assert_eq!(host.control()["recovery"]["status"], "resumed");
 }
 
 fn a_stalled_curve_starves_the_watchdog_and_the_stop_command_still_recovers() {
@@ -435,9 +454,15 @@ fn a_stalled_curve_starves_the_watchdog_and_the_stop_command_still_recovers() {
     host.run_stop_command();
     host.wait_for_fan_modes(FanControlMode::Auto);
     assert_eq!(
-        host.recorded_suspension()["reason"],
-        "The Prism daemon stopped unexpectedly while following this curve."
+        host.recorded()["suspension"]["reason"],
+        "Prism's fan curve control stopped responding, so the daemon stopped following this curve."
     );
+
+    // A stalled curve is a fault: the restarted daemon doesn't resume it.
+    std::fs::remove_file(host.path("gpus/hang")).unwrap();
+    let _daemon = host.start_daemon(None);
+    assert_eq!(host.fan_modes(), vec![Some(FanControlMode::Auto); 2]);
+    assert_eq!(host.control()["requested"], json!([]));
 }
 
 fn a_failed_restore_is_recorded_rather_than_reported_as_recovered() {
@@ -454,18 +479,16 @@ fn a_failed_restore_is_recorded_rather_than_reported_as_recovered() {
         host.fan_modes(),
         vec![Some(FanControlMode::Auto), Some(FanControlMode::Manual)]
     );
-    let restoration = &host.recorded_suspension()["restoration"];
+    let restoration = &host.recorded()["interrupted"]["restoration"];
     assert_eq!(restoration[0]["status"], "restored");
     assert_eq!(restoration[1]["status"], "failed");
     assert_eq!(restoration[1]["detail"], "Insufficient permissions");
 
-    // The next daemon keeps reporting the failure rather than trying to hide it.
-    std::fs::remove_file(host.path("gpus/fail-auto-1")).unwrap();
+    // The next daemon can't resume without a temperature, and reports that fan 2 still couldn't
+    // return to automatic cooling rather than hiding it.
+    std::fs::write(host.path("gpus/temperature"), "unavailable").unwrap();
     let _daemon = host.start_daemon(None);
-    let performance = host.send(json!({ "type": "get_performance" }));
-    assert_eq!(
-        performance["payload"]["gpus"][0]["cooling"]["control"]["suspension"]["restoration"][1]
-            ["status"],
-        "failed"
-    );
+    let control = host.control();
+    assert_eq!(control["recovery"]["status"], "retryRequired");
+    assert_eq!(control["suspension"]["restoration"][1]["status"], "failed");
 }
