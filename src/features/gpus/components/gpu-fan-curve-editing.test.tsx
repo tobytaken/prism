@@ -1,5 +1,5 @@
 import { MemoryRouter } from "react-router-dom";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -131,6 +131,266 @@ describe("Editing a fan curve", () => {
     );
     expectNoFanWrites(fake);
   });
+
+  it("edits graph points by keyboard in the same draft as numeric inputs, then applies it", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const editor = await curveEditor();
+    const handle = within(editor).getByRole("button", {
+      name: "Point 2: 65°C, 60%",
+    });
+    within(editor).getByRole("button", { name: "Point 1: 45°C, 20%" }).focus();
+    await user.tab();
+    expect(handle).toHaveFocus();
+    await user.keyboard("{ArrowRight}{ArrowUp}");
+    expect(pointValues(editor)[1]).toEqual([66, 61]);
+    expect(handle).toHaveAccessibleName("Point 2: 66°C, 61%");
+    expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
+    expectNoFanWrites(fake);
+
+    const speed = within(editor).getByRole("spinbutton", {
+      name: "Point 2 speed (%)",
+    });
+    await user.clear(speed);
+    await user.type(speed, "70");
+    expect(
+      within(editor).getByRole("button", { name: "Point 2: 66°C, 70%" }),
+    ).toBeInTheDocument();
+    await within(editor).findByText(/^Valid curve/);
+    await user.click(
+      within(editor).getByRole("button", { name: "Apply curve" }),
+    );
+    await waitFor(() =>
+      expect(fake.applyCooling).toHaveBeenCalledWith({
+        gpuId: "GPU-123",
+        expectedRevision: 0,
+        fanIndexes: [0, 1],
+        configuration: {
+          arrangement: "shared",
+          setting: {
+            mode: "curve",
+            points: [
+              starter[0],
+              { temperatureC: 66, speedPercent: 70 },
+              ...starter.slice(2),
+            ],
+          },
+        },
+      }),
+    );
+    expect(await screen.findByText("Cooling: Applied")).toBeInTheDocument();
+  });
+
+  it("drags a point into the shared draft, retains it through telemetry, and applies through Apply all", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const editor = await curveEditor();
+    const graph = within(editor).getByRole("group", {
+      name: "Fan curve graph editor",
+    });
+    await within(editor).findByText(/^Valid curve/);
+    const validate = fake.previewFanCurve.getMockImplementation()!;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fake.previewFanCurve.mockImplementation(async (request) => {
+      await pending;
+      return validate(request);
+    });
+    // jsdom has no layout or pointer capture; supply only these browser boundaries.
+    vi.spyOn(graph, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(100, 50, 640, 360),
+    );
+    const handle = within(editor).getByRole("button", {
+      name: "Point 2: 65°C, 60%",
+    });
+    handle.setPointerCapture = vi.fn();
+    handle.releasePointerCapture = vi.fn();
+    await user.pointer({
+      target: handle,
+      keys: "[MouseLeft>]",
+      coords: { clientX: 564, clientY: 188 },
+    });
+    await user.pointer({
+      target: handle,
+      coords: { clientX: 583, clientY: 174 },
+    });
+    expect(pointValues(editor)[1]).toEqual([68, 65]);
+    // Keep dragging while the previous position's preview is still pending.
+    // On the doubled-size graph, this is 70°C and 70% on the labelled axes.
+    await user.pointer({
+      target: handle,
+      coords: { clientX: 596, clientY: 159 },
+    });
+    await user.pointer({ keys: "[/MouseLeft]" });
+    expect(pointValues(editor)[1]).toEqual([70, 70]);
+    expect(handle).toHaveAccessibleName("Point 2: 70°C, 70%");
+    await act(async () => release());
+    fake.gpu.telemetry.temperatureC = 80;
+    await within(editor).findByRole("img", {
+      name: /GPU temperature now 80°C/,
+    });
+    expect(pointValues(editor)).toEqual([
+      [45, 20],
+      [70, 70],
+      [75, 80],
+      [85, 100],
+    ]);
+    expectNoFanWrites(fake);
+    // Moving after release must not keep editing.
+    await user.pointer({
+      target: handle,
+      coords: { clientX: 650, clientY: 100 },
+    });
+    expect(pointValues(editor)[1]).toEqual([70, 70]);
+    await user.click(screen.getByRole("button", { name: "Apply all" }));
+    await waitFor(() =>
+      expect(fake.applyCooling).toHaveBeenCalledWith({
+        gpuId: "GPU-123",
+        expectedRevision: 0,
+        fanIndexes: [0, 1],
+        configuration: {
+          arrangement: "shared",
+          setting: {
+            mode: "curve",
+            points: [
+              starter[0],
+              { temperatureC: 70, speedPercent: 70 },
+              ...starter.slice(2),
+            ],
+          },
+        },
+      }),
+    );
+    expect(await screen.findByText("Cooling: Applied")).toBeInTheDocument();
+  });
+
+  it("keeps graph moves and point removal inside the supported curve constraints", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const editor = await curveEditor();
+    const handle = (point: number) =>
+      within(editor).getByRole("button", {
+        name: new RegExp(`^Point ${point}:`),
+      });
+    handle(1).focus();
+    await user.keyboard("{ArrowDown}{ArrowLeft>50/}");
+    expect(pointValues(editor)[0]).toEqual([0, 20]);
+    handle(2).focus();
+    await user.keyboard("{ArrowRight>20/}{ArrowUp>30/}");
+    expect(pointValues(editor)[1]).toEqual([74, 80]);
+    handle(4).focus();
+    await user.keyboard("{ArrowRight}{ArrowDown}");
+    expect(pointValues(editor)[3]).toEqual([85, 100]);
+    expect(
+      within(editor).getByRole("button", { name: "Remove point 4" }),
+    ).toBeDisabled();
+    await user.click(
+      within(editor).getByRole("button", { name: "Remove point 3" }),
+    );
+    expect(pointValues(editor)).toEqual([
+      [0, 20],
+      [74, 80],
+      [85, 100],
+    ]);
+    expect(await within(editor).findByText(/^Valid curve/)).toBeInTheDocument();
+    expectNoFanWrites(fake);
+  });
+
+  it("does not add duplicate temperatures when no whole-degree gap remains", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const editor = await curveEditor();
+    for (const [number, temperature] of [
+      [2, 46],
+      [3, 47],
+      [4, 48],
+    ]) {
+      const input = within(editor).getByRole("spinbutton", {
+        name: `Point ${number} temperature (°C)`,
+      });
+      await user.clear(input);
+      await user.type(input, String(temperature));
+    }
+    expect(await within(editor).findByText(/^Valid curve/)).toBeInTheDocument();
+    expect(
+      within(editor).getByRole("button", { name: "Add point" }),
+    ).toBeDisabled();
+    expect(pointValues(editor)).toEqual([
+      [45, 20],
+      [46, 60],
+      [47, 80],
+      [48, 100],
+    ]);
+    expectNoFanWrites(fake);
+  });
+
+  it("waits for the current numeric draft's validation before allowing graph edits", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const editor = await curveEditor();
+    await within(editor).findByText(/^Valid curve/);
+    const validate = fake.previewFanCurve.getMockImplementation()!;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fake.previewFanCurve.mockImplementation(async (request) => {
+      await pending;
+      return validate(request);
+    });
+    const speed = within(editor).getByRole("spinbutton", {
+      name: "Point 1 speed (%)",
+    });
+    await user.clear(speed);
+    await user.type(speed, "10");
+    within(editor).getByRole("button", { name: "Point 1: 45°C, 10%" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(pointValues(editor)[0]).toEqual([45, 10]);
+    await act(async () => release());
+    expect(
+      await within(editor).findByText(/speed must be between 20% and 100%/),
+    ).toBeInTheDocument();
+    expect(
+      within(editor).getByRole("button", { name: "Apply curve" }),
+    ).toBeDisabled();
+    expectNoFanWrites(fake);
+  });
+
+  it.each([
+    ["", /enter a speed/],
+    ["19.5", /whole percentage/],
+    ["10", /speed must be between 20% and 100%/],
+  ])(
+    "preserves invalid numeric speed %s through graph and point-list interaction",
+    async (value, error) => {
+      const user = userEvent.setup();
+      const fake = renderPerformance();
+      const editor = await curveEditor();
+      const input = within(editor).getByRole("spinbutton", {
+        name: "Point 1 speed (%)",
+      });
+      await user.clear(input);
+      if (value) await user.type(input, value);
+      await within(editor).findByText(error);
+      const handle = within(editor).getByRole("button", {
+        name: "Point 2: 65°C, 60%",
+      });
+      handle.focus();
+      await user.keyboard("{ArrowLeft}{ArrowDown}");
+      expect(pointValues(editor)[1]).toEqual([65, 60]);
+      await user.click(
+        within(editor).getByRole("button", { name: "Add point" }),
+      );
+      expect(input).toHaveValue(value ? Number(value) : null);
+      expect(await within(editor).findByText(error)).toBeInTheDocument();
+      expect(
+        within(editor).getByRole("button", { name: "Apply curve" }),
+      ).toBeDisabled();
+      expectNoFanWrites(fake);
+    },
+  );
 
   it("keeps invalid edits visible with the daemon's reasons while readings refresh", async () => {
     const user = userEvent.setup();
@@ -344,6 +604,11 @@ describe("Shared and separate cooling arrangements", () => {
     const second = screen.getByRole("group", { name: "Fan 2 configuration" });
     expect(pointValues(first)[0]).toEqual([45, 30]);
     expect(pointValues(second)[0]).toEqual([45, 30]);
+    await within(first).findByText(/^Valid curve/);
+    within(first).getByRole("button", { name: "Point 1: 45°C, 30%" }).focus();
+    await user.keyboard("{ArrowUp}");
+    expect(pointValues(first)[0]).toEqual([45, 31]);
+    expect(pointValues(second)[0]).toEqual([45, 30]);
     await user.selectOptions(
       within(second).getByRole("combobox", { name: "Control mode" }),
       "fixed",
@@ -366,7 +631,7 @@ describe("Shared and separate cooling arrangements", () => {
             setting: {
               mode: "curve",
               points: [
-                { temperatureC: 45, speedPercent: 30 },
+                { temperatureC: 45, speedPercent: 31 },
                 ...starter.slice(1),
               ],
             },
