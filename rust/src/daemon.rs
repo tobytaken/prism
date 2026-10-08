@@ -26,6 +26,8 @@ mod manage_profile_tests;
 #[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
+mod overlapping_games_tests;
+#[cfg(test)]
 mod profile_tests;
 #[cfg(test)]
 mod recognition_tests;
