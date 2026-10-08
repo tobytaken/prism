@@ -428,7 +428,31 @@ pub struct SteamApp {
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum GameId {
     #[serde(rename_all = "camelCase")]
-    Steam { app_id: u32 },
+    Steam {
+        app_id: u32,
+    },
+    Program {
+        path: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AddProgramRequest {
+    pub path: String,
+}
+
+/// One of the caller's running processes, with a verified host location when recoverable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunningProgram {
+    pub pid: u32,
+    pub name: String,
+    pub path: Option<String>,
+    pub launcher: Option<String>,
+    pub environment: Vec<String>,
+    pub helper: bool,
+    pub recognition_warning: Option<String>,
 }
 
 /// One of the caller's game associations.
@@ -582,6 +606,8 @@ pub enum DaemonRequest {
     CorrectAndApplyProfile(CorrectAndApplyProfileRequest),
     ImportProfiles(ImportProfilesRequest),
     ListSteamApps,
+    AddProgram(AddProgramRequest),
+    ListRunningPrograms,
     GetGames,
     GetRunningGames,
     AddSteamGame(AddSteamGameRequest),
@@ -602,6 +628,8 @@ impl DaemonRequest {
         matches!(
             self,
             Self::ListSteamApps
+                | Self::AddProgram(_)
+                | Self::ListRunningPrograms
                 | Self::GetGames
                 | Self::AddSteamGame(_)
                 | Self::SetGameProfile(_)
@@ -630,6 +658,7 @@ pub enum DaemonResponse {
     CorrectedProfileApplication(CorrectedProfileApplication),
     ProfileImport(ProfileImportResponse),
     SteamApps(Vec<SteamApp>),
+    RunningPrograms(Vec<RunningProgram>),
     Games(GamesState),
     RunningGames(RunningGamesState),
     AutomaticSwitchingStatus(AutomaticSwitchingStatus),
@@ -867,6 +896,9 @@ mod session_tests {
         );
         for request in [
             serde_json::json!({ "type": "list_steam_apps" }),
+            serde_json::json!({ "type": "list_running_programs" }),
+            serde_json::json!({ "type": "add_program", "payload": { "path": "/games/game.exe" } }),
+            serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "program", "path": "/games/game.exe" }, "gpuId": "GPU-123", "profileId": "quiet" } }),
             serde_json::json!({ "type": "get_games" }),
             serde_json::json!({ "type": "add_steam_game", "payload": { "appId": 570 } }),
             serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123", "profileId": "quiet" } }),

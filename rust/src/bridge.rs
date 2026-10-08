@@ -138,6 +138,32 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
             "gpu.importProfiles",
             |request| daemon_client::import_gpu_profiles(request).map_err(BridgeError::from),
         ),
+        "games.listRunningPrograms" => daemon_client::list_running_programs()
+            .map_err(BridgeError::from)
+            .and_then(serialize_result),
+        "games.addProgramFile" => {
+            parse_and_serialize_result::<crate::protocol::AddProgramRequest, _, _>(
+                request.params,
+                "games.addProgramFile",
+                |mut request| {
+                    request.path =
+                        crate::document_portal::host_path(&request.path).map_err(|error| {
+                            BridgeError {
+                                code: "io".into(),
+                                message: error.to_string(),
+                            }
+                        })?;
+                    daemon_client::add_program(request).map_err(BridgeError::from)
+                },
+            )
+        }
+        "games.addProgram" => {
+            parse_and_serialize_result::<crate::protocol::AddProgramRequest, _, _>(
+                request.params,
+                "games.addProgram",
+                |request| daemon_client::add_program(request).map_err(BridgeError::from),
+            )
+        }
         "games.listSteamApps" => daemon_client::list_steam_apps()
             .map_err(BridgeError::from)
             .and_then(serialize_result),

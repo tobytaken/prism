@@ -1,13 +1,14 @@
 mod backend;
 mod boot_state;
 mod cooling;
+mod cooling_profiles;
 mod daemon_core;
 mod games;
 mod host;
 mod migration;
 mod possibly_stale;
 mod profiles;
-mod cooling_profiles;
+mod programs;
 mod queue;
 mod recognition;
 mod session;
@@ -19,8 +20,6 @@ mod tuning_store;
 
 #[cfg(test)]
 mod cooling_tests;
-#[cfg(test)]
-mod remembered_curve_tests;
 #[cfg(test)]
 mod current_profile_tests;
 #[cfg(test)]
@@ -38,7 +37,11 @@ mod overlapping_games_tests;
 #[cfg(test)]
 mod profile_tests;
 #[cfg(test)]
+mod program_tests;
+#[cfg(test)]
 mod recognition_tests;
+#[cfg(test)]
+mod remembered_curve_tests;
 #[cfg(test)]
 mod restore_tests;
 #[cfg(test)]

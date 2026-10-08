@@ -37,6 +37,7 @@ import type {
   GameEntry,
   GameId,
   SteamApp,
+  RunningProgram,
   RunningGamesState,
 } from "@/features/games/types";
 import { createPerformanceResponse } from "./gpu-fixtures";
@@ -228,6 +229,9 @@ export function createFakeDesktop({
   possiblyStale = [],
   steamApps = [],
   games = [],
+  programs = [],
+  programFiles = [],
+  selectedProgramFile = null,
   automaticSwitching = false,
   runningGames = { status: "available", games: [] },
   switchingStatus = { condition: { status: "off" }, gpus: [] },
@@ -247,6 +251,9 @@ export function createFakeDesktop({
   steamApps?: SteamApp[];
   /** The caller's game associations; installed is derived from steamApps. */
   games?: Omit<GameEntry, "installed">[];
+  programs?: RunningProgram[];
+  programFiles?: string[];
+  selectedProgramFile?: string | null;
   automaticSwitching?: boolean;
   runningGames?: RunningGamesState;
   switchingStatus?: AutomaticSwitchingStatus;
@@ -783,14 +790,19 @@ export function createFakeDesktop({
   }
 
   const sameGame = (a: GameId, b: GameId) =>
-    a.kind === b.kind && a.appId === b.appId;
+    a.kind === "steam" && b.kind === "steam"
+      ? a.appId === b.appId
+      : a.kind === "program" && b.kind === "program" && a.path === b.path;
   /** The caller's games by name, each installed while its Steam app is, as the daemon reports. */
   function gamesState() {
     return structuredClone({
       automaticSwitching,
       games: games
         .map((game) => {
-          const app = steamApps.find(({ appId }) => appId === game.game.appId);
+          const id = game.game;
+          if (id.kind === "program")
+            return { ...game, installed: programFiles.includes(id.path) };
+          const app = steamApps.find(({ appId }) => appId === id.appId);
           return { ...game, name: app?.name ?? game.name, installed: !!app };
         })
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -822,6 +834,26 @@ export function createFakeDesktop({
     },
   );
   const gameSpies = {
+    browseProgram: vi
+      .spyOn(gamesApi, "browseProgram")
+      .mockImplementation(async () =>
+        selectedProgramFile === null
+          ? null
+          : gamesApi.addProgram({ path: selectedProgramFile }),
+      ),
+    listRunningPrograms: vi
+      .spyOn(gamesApi, "listRunningPrograms")
+      .mockImplementation(async () => structuredClone(programs)),
+    addProgram: vi
+      .spyOn(gamesApi, "addProgram")
+      .mockImplementation(async ({ path }) => {
+        if (!programFiles.includes(path))
+          throw new Error("Program not found at this host location.");
+        const game: GameId = { kind: "program", path };
+        if (!games.some((entry) => sameGame(entry.game, game)))
+          games.push({ game, name: path.split("/").at(-1)!, profiles: {} });
+        return gamesState();
+      }),
     listSteamApps: vi
       .spyOn(gamesApi, "listSteamApps")
       .mockImplementation(async () =>
@@ -840,7 +872,11 @@ export function createFakeDesktop({
           throw new Error(
             `Steam app ${appId} isn't installed in your Steam libraries.`,
           );
-        if (!games.some(({ game }) => game.appId === appId))
+        if (
+          !games.some(
+            ({ game }) => game.kind === "steam" && game.appId === appId,
+          )
+        )
           games.push({
             game: { kind: "steam", appId },
             name: app.name,

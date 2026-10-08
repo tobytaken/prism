@@ -30,6 +30,17 @@ export function useGames() {
     mutationFn: (appId: number) => window.prism.games.addSteamGame({ appId }),
     ...changed,
   });
+  const addProgram = useMutation({
+    mutationFn: (path: string) => window.prism.games.addProgram({ path }),
+    ...changed,
+  });
+  const browseProgram = useMutation({
+    mutationFn: () => window.prism.games.browseProgram(),
+    onSuccess: (state) => {
+      if (state) changed.onSuccess(state);
+    },
+    onError: changed.onError,
+  });
   const setProfile = useMutation({
     mutationFn: (request: SetGameProfileRequest) =>
       window.prism.games.setProfile(request),
@@ -51,6 +62,8 @@ export function useGames() {
   return {
     query,
     addSteamGame,
+    addProgram,
+    browseProgram,
     setProfile,
     remove,
     setAutomaticSwitching,
@@ -72,5 +85,5 @@ export type GamesWorkflow = ReturnType<typeof useGames>;
 
 /** A stable key for a game, for lists and comparisons. */
 export function gameKey(game: GameId) {
-  return `${game.kind}:${game.appId}`;
+  return game.kind === "steam" ? `steam:${game.appId}` : `program:${game.path}`;
 }

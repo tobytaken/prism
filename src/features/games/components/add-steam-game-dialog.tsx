@@ -32,7 +32,10 @@ export function AddSteamGameDialog({
   });
   const available =
     apps.data?.filter(
-      (app) => !added.some((game) => game.game.appId === app.appId),
+      (app) =>
+        !added.some(
+          (game) => game.game.kind === "steam" && game.game.appId === app.appId,
+        ),
     ) ?? [];
   const pending = workflow.addSteamGame.isPending;
   async function add(appId: number) {

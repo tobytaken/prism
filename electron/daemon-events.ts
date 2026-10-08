@@ -118,7 +118,7 @@ export function isRunningGamesState(
       (entry: unknown) =>
         isRecord(entry) &&
         hasKeys(entry, ["game", "pid", "startTimeTicks"]) &&
-        isSteamGame(entry.game) &&
+        isGameId(entry.game) &&
         positiveU32(entry.pid) &&
         Number.isSafeInteger(entry.startTimeTicks) &&
         typeof entry.startTimeTicks === "number" &&
@@ -148,13 +148,22 @@ export function runningGamesNotification(
     return value.params;
 }
 
-function isSteamGame(value: unknown) {
+export function isProgramPath(value: unknown): value is string {
   return (
-    isRecord(value) &&
-    hasKeys(value, ["kind", "appId"]) &&
-    value.kind === "steam" &&
-    positiveU32(value.appId)
+    typeof value === "string" &&
+    value.startsWith("/") &&
+    !value.includes("\0") &&
+    !value.split("/").includes("..")
   );
+}
+
+export function isGameId(value: unknown) {
+  if (!isRecord(value)) return false;
+  return value.kind === "steam"
+    ? hasKeys(value, ["kind", "appId"]) && positiveU32(value.appId)
+    : value.kind === "program" &&
+        hasKeys(value, ["kind", "path"]) &&
+        isProgramPath(value.path);
 }
 
 function isSwitchingCondition(value: unknown) {
@@ -174,7 +183,7 @@ function isGpuSwitchingState(value: unknown) {
     case "active":
       return (
         hasKeys(value, ["status", "game", "gameName", "profile"]) &&
-        isSteamGame(value.game) &&
+        isGameId(value.game) &&
         typeof value.gameName === "string" &&
         isRecord(value.profile) &&
         hasKeys(value.profile, ["id", "name"]) &&
