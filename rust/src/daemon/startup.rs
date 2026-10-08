@@ -63,13 +63,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::automatic_tuning::apply_with_baseline;
 use super::backend::DaemonBackend;
 use super::boot_state::STARTUP_IN_PROGRESS;
 use super::cooling::CoolingController;
 use super::daemon_core::{tuning_state, DaemonCore};
 use super::host::Clock;
 use super::profiles::verified_gpu;
-use super::tuning::apply_unreviewed_profile;
+use super::switching::Switching;
 use super::tuning_store::{RestoreAttempt, TuningStore};
 use crate::protocol::{
     ApplyGpuProfileRequest, DaemonEvent, ProfileSettings, StartupBehavior, StartupOutcome,
@@ -150,6 +151,7 @@ impl DaemonCore {
             .filter(|uuid| !uuid.is_empty())
             .chain(document.startup_profiles.keys().cloned())
             .chain(targets.keys().cloned())
+            .chain(document.automatic_failures.keys().cloned())
             .chain(
                 (behavior == StartupBehavior::RestoreLastApplied)
                     .then(|| restorable().map(|(gpu_id, _)| gpu_id.clone()))
@@ -172,6 +174,9 @@ impl DaemonCore {
                     StartupBehavior::RestoreLastApplied => "No last applied tuning values.",
                 };
                 StartupOutcome {
+                    previous_failure: document.automatic_failures.get(&gpu_id)
+                        .filter(|failed_boot| **failed_boot != boot_id)
+                        .map(|_| "Automatic switching was paused after a failure during the previous boot.".into()),
                     behavior,
                     profile: (behavior != StartupBehavior::RestoreLastApplied)
                         .then(|| designated(&gpu_id).map(|(_, profile)| profile))
@@ -191,6 +196,9 @@ impl DaemonCore {
         }
         let restoring = behavior == StartupBehavior::RestoreLastApplied && !targets.is_empty();
         let prepare = |document: &mut TuningDocument| {
+            document
+                .automatic_failures
+                .retain(|_, failed_boot| *failed_boot == boot_id);
             // A previous boot's current profile describes this boot only where its last applied
             // values are restored.
             document
@@ -227,6 +235,7 @@ impl DaemonCore {
             let gpu_id = outcome.gpu_id.clone();
             let backend = Arc::clone(&self.dependencies.backend);
             let cooling = Arc::clone(&self.cooling);
+            let switching = self.switching.clone();
             let store = Arc::clone(&self.tuning_store);
             let boot = Arc::clone(&self.boot_state);
             let clock = Arc::clone(&self.dependencies.clock);
@@ -237,6 +246,7 @@ impl DaemonCore {
                 let Some(full) = apply_target(
                     backend.as_ref(),
                     &cooling,
+                    &switching,
                     &store,
                     clock.as_ref(),
                     &stopping,
@@ -286,6 +296,7 @@ impl DaemonCore {
 fn apply_target(
     backend: &dyn DaemonBackend,
     cooling: &CoolingController,
+    switching: &Switching,
     store: &TuningStore,
     clock: &dyn Clock,
     stopping: &AtomicBool,
@@ -312,7 +323,7 @@ fn apply_target(
         outcome.reason = Some("Startup was skipped because the tuning store is unhealthy.".into());
         return Some(false);
     }
-    let application = apply_unreviewed_profile(
+    let (application, before) = apply_with_baseline(
         backend,
         Some(cooling),
         ApplyGpuProfileRequest {
@@ -360,6 +371,9 @@ fn apply_target(
             .collect::<Vec<_>>()
             .join("\n")
     });
+    if !full {
+        switching.startup_failed(backend, gpu_id, before, application.clone());
+    }
     outcome.application = Some(application);
     Some(full)
 }

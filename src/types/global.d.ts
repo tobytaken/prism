@@ -129,6 +129,9 @@ export interface PrismDesktopApi {
     setEditHolds(gpuIds: string[]): Promise<GpuCommandResponse>;
     /** The caller's automatic switching status, then pushed changes. */
     getSwitchingStatus(): Promise<AutomaticSwitchingStatus>;
+    retrySwitching(request: {
+      gpuId: string;
+    }): Promise<AutomaticSwitchingStatus>;
     onSwitchingStatusChanged(
       callback: (status: AutomaticSwitchingStatus) => void,
     ): () => void;

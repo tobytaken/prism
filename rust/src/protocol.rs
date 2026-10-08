@@ -127,6 +127,9 @@ pub struct ApplyGpuProfileRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileApplicationResponse {
+    /// Automatic operations only. Manual applications never roll back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback: Option<RollbackResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cooling: Option<crate::cooling::CoolingApplication>,
     pub power: Option<TuningOutcome>,
@@ -135,6 +138,27 @@ pub struct ProfileApplicationResponse {
     // Present only when out-of-range numeric values are the sole obstacle; nothing was written.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub corrections: Vec<ProfileRangeCorrection>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RollbackResult {
+    pub status: RollbackStatus,
+    pub power: Option<TuningOutcome>,
+    pub graphics: Option<TuningOutcome>,
+    pub memory: Option<TuningOutcome>,
+    pub cooling: Option<crate::cooling::CoolingApplication>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cooling_restoration: Vec<crate::cooling::FanRestoration>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RollbackStatus {
+    Restored,
+    RestoreFailed,
+    #[default]
+    NotNeeded,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -391,6 +415,8 @@ pub enum StartupOutcomeStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartupOutcome {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_failure: Option<String>,
     pub gpu_id: String,
     /// The startup behavior this boot ran.
     #[serde(default)]
@@ -552,6 +578,8 @@ pub struct GpuSwitchingStatus {
     /// The GPU's UUID.
     pub gpu_id: String,
     pub state: GpuSwitchingState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application: Option<ProfileApplicationResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -569,8 +597,12 @@ pub enum GpuSwitchingState {
     },
     /// Another user's running game drives the GPU; its details stay private.
     AnotherUser {},
+    /// The latest automatic operation fully restored the pre-game tuning values.
+    Restored {},
     #[serde(rename_all = "camelCase")]
-    ManualOverride { changed_outside_prism: bool },
+    ManualOverride {
+        changed_outside_prism: bool,
+    },
     /// The latest automatic application or restoration didn't complete.
     Failed {
         message: String,
@@ -634,6 +666,7 @@ pub enum DaemonRequest {
     RemoveGame(GameRequest),
     SetAutomaticSwitching(SetAutomaticSwitchingRequest),
     GetAutomaticSwitchingStatus,
+    RetryAutomaticSwitching(StartupGpuRequest),
     GetDriverStatus,
     StartDriverAction(StartDriverActionRequest),
     GetDriverJob(DriverJobRequest),

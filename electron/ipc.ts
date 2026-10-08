@@ -852,6 +852,21 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     return backend.invoke("games.remove", payload);
   });
   ipcMain.handle(
+    "prism:games:retrySwitching",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["gpuId"]) ||
+        !isString(payload.gpuId) ||
+        !payload.gpuId.trim()
+      )
+        throw new Error("Invalid retrySwitching payload");
+      return backend.invoke("games.retrySwitching", payload);
+    },
+  );
+
+  ipcMain.handle(
     "prism:games:setAutomaticSwitching",
     async (event, payload: unknown) => {
       assertTrustedSender(event, getMainWindow);

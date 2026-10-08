@@ -35,16 +35,10 @@ pub(super) fn apply_unreviewed_profile(
     cooling: Option<&CoolingController>,
     request: ApplyGpuProfileRequest,
 ) -> ProfileApplicationResponse {
-    apply(
-        backend,
-        cooling,
-        request,
-        TuningOrigin::TemporaryAutomatic,
-        CoolingApplicationSource::NonManual,
-    )
+    super::automatic_tuning::apply(backend, cooling, request)
 }
 
-fn apply(
+pub(super) fn apply(
     backend: &dyn DaemonBackend,
     cooling: Option<&CoolingController>,
     request: ApplyGpuProfileRequest,
@@ -60,6 +54,7 @@ fn apply(
             error: Some(message.clone()),
         };
         ProfileApplicationResponse {
+            rollback: None,
             cooling: settings.cooling.as_ref().map(|_| CoolingApplication {
                 revision: cooling.map_or(0, |c| c.control(&request.gpu_id).revision),
                 outcome: outcome(),
@@ -202,7 +197,42 @@ fn apply(
         };
         return blocked(errors.join("\n"), corrections);
     }
-    let mut failed = false;
+    let apply_cooling = |failed: bool, source| {
+        settings.cooling.as_ref().map(|configuration| {
+            if failed {
+                CoolingApplication {
+                    revision: cooling.unwrap().control(&request.gpu_id).revision,
+                    outcome: TuningOutcome {
+                        status: TuningOutcomeStatus::Unattempted,
+                        error: Some(
+                            "An earlier profile setting failed. Retry or discard this instruction."
+                                .into(),
+                        ),
+                    },
+                    fans: vec![],
+                }
+            } else {
+                cooling.unwrap().apply(
+                    backend,
+                    ApplyCoolingRequest {
+                        gpu_id: request.gpu_id.clone(),
+                        configuration: configuration.clone(),
+                        expected_revision: None,
+                        fan_indexes: None,
+                    },
+                    source,
+                )
+            }
+        })
+    };
+    // Cooling first for automatic operations: if a later setting fails, the complete previous
+    // configuration is restored. Manual operations retain their existing order and no rollback.
+    let automatic_cooling = (origin == TuningOrigin::TemporaryAutomatic)
+        .then(|| apply_cooling(false, CoolingApplicationSource::NonManual))
+        .flatten();
+    let mut failed = automatic_cooling
+        .as_ref()
+        .is_some_and(|c| c.outcome.status != TuningOutcomeStatus::Succeeded);
     let mut execute = |operation: &mut dyn FnMut() -> Result<(), String>| {
         if failed {
             return TuningOutcome {
@@ -227,7 +257,8 @@ fn apply(
         }
     };
     let mut response = ProfileApplicationResponse {
-        cooling: None,
+        rollback: None,
+        cooling: automatic_cooling,
         power: power.map(|value| {
             execute(&mut || {
                 backend.set_power_limit(SetGpuPowerLimitRequest {
@@ -256,32 +287,9 @@ fn apply(
         }),
         corrections: vec![],
     };
-    response.cooling = settings.cooling.as_ref().map(|configuration| {
-        if failed {
-            CoolingApplication {
-                revision: cooling.unwrap().control(&request.gpu_id).revision,
-                outcome: TuningOutcome {
-                    status: TuningOutcomeStatus::Unattempted,
-                    error: Some(
-                        "An earlier profile setting failed. Retry or discard this instruction."
-                            .into(),
-                    ),
-                },
-                fans: vec![],
-            }
-        } else {
-            cooling.unwrap().apply(
-                backend,
-                ApplyCoolingRequest {
-                    gpu_id: request.gpu_id.clone(),
-                    configuration: configuration.clone(),
-                    expected_revision: None,
-                    fan_indexes: None,
-                },
-                source,
-            )
-        }
-    });
+    if origin == TuningOrigin::Manual {
+        response.cooling = apply_cooling(failed, source);
+    }
     response
 }
 

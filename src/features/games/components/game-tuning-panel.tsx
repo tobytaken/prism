@@ -1,3 +1,5 @@
+import { useRetrySwitching } from "@/features/games/hooks/use-switching-status";
+import { AutomaticTuningOutcomes } from "@/features/gpus/components/automatic-tuning-outcomes";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { gameKey } from "@/features/games/hooks/use-games";
@@ -27,6 +29,7 @@ export function GameTuningPanel({
   onDiscard?: () => void;
 }) {
   const running = useRunningGames();
+  const retry = useRetrySwitching();
   const games = workflow.games;
   return (
     <section
@@ -75,16 +78,45 @@ export function GameTuningPanel({
           aria-label="Automatic switching status"
           className="space-y-1 text-sm"
         >
-          {gpus.map((gpu) => (
-            <li key={gpu.id} className="text-muted-foreground">
-              {`${gpu.name}: ${
-                gpu.stableId
-                  ? describeGpuSwitching(workflow.switching, gpu.stableId)
-                      .summary
-                  : "Unavailable: this GPU reports no stable identity (UUID)."
-              }`}
-            </li>
-          ))}
+          {gpus.map((gpu) => {
+            const entry = workflow.switching?.gpus.find(
+              (entry) => entry.gpuId === gpu.stableId,
+            );
+            const failed =
+              entry?.state.status === "failed" ||
+              entry?.state.status === "recoveryRequired";
+            return (
+              <li key={gpu.id} className="text-muted-foreground">
+                {`${gpu.name}: ${
+                  gpu.stableId
+                    ? describeGpuSwitching(workflow.switching, gpu.stableId)
+                        .summary
+                    : "Unavailable: this GPU reports no stable identity (UUID)."
+                }`}
+                {entry?.application && (
+                  <AutomaticTuningOutcomes application={entry.application} />
+                )}
+                {failed && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Retry automatic switching for ${gpu.name}`}
+                    disabled={
+                      retry.isPending ||
+                      busy ||
+                      hasEdits ||
+                      workflow.switching?.condition.status === "blocked"
+                    }
+                    onClick={() => gpu.stableId && retry.mutate(gpu.stableId)}
+                  >
+                    {retry.isPending && retry.variables === gpu.stableId
+                      ? "Retrying…"
+                      : "Retry"}
+                  </Button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
       {workflow.switching?.gpus.some(
@@ -117,6 +149,11 @@ export function GameTuningPanel({
       {(games.query.error || games.changeError) && (
         <p role="alert" className="text-sm text-destructive">
           {(games.query.error ?? games.changeError)?.message}
+        </p>
+      )}
+      {retry.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {retry.error.message}
         </p>
       )}
       <MigrationNotice workflow={workflow} />

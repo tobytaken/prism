@@ -304,7 +304,10 @@ fn manual_associations_survive_restart_and_upgrade_the_versioned_store_without_l
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(document["schemaVersion"], 10);
+    assert_eq!(
+        document["schemaVersion"],
+        super::tuning_store::TUNING_STORE_SCHEMA_VERSION
+    );
     drop(alice);
     daemon.restart();
     let alice = daemon.user(1000, "alice");

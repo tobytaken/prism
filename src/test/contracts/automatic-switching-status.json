@@ -6,21 +6,31 @@
     "gpus": [
       {
         "gpuId": "GPU-123",
-        "state": { "status": "manualOverride", "changedOutsidePrism": false }
+        "state": {
+          "status": "manualOverride",
+          "changedOutsidePrism": false
+        }
       }
     ]
   },
   {
-    "condition": { "status": "ready" },
+    "condition": {
+      "status": "ready"
+    },
     "gpus": [
       {
         "gpuId": "GPU-123",
-        "state": { "status": "manualOverride", "changedOutsidePrism": true }
+        "state": {
+          "status": "manualOverride",
+          "changedOutsidePrism": true
+        }
       }
     ]
   },
   {
-    "condition": { "status": "ready" },
+    "condition": {
+      "status": "ready"
+    },
     "gpus": [
       {
         "gpuId": "GPU-123",
@@ -123,6 +133,48 @@
           "profile": {
             "id": "gaming",
             "name": "Gaming"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "condition": {
+      "status": "ready"
+    },
+    "gpus": [
+      {
+        "gpuId": "GPU-123",
+        "state": {
+          "status": "recoveryRequired",
+          "message": "Memory failed; power rollback failed."
+        },
+        "application": {
+          "power": {
+            "status": "succeeded",
+            "error": null
+          },
+          "graphics": null,
+          "memory": {
+            "status": "failed",
+            "error": "Memory rejected."
+          },
+          "rollback": {
+            "status": "restoreFailed",
+            "power": {
+              "status": "failed",
+              "error": "Power rollback rejected."
+            },
+            "graphics": null,
+            "memory": null,
+            "cooling": null,
+            "coolingRestoration": [
+              {
+                "fanIndex": 0,
+                "status": "unverified",
+                "detail": "Fan mode is unavailable."
+              }
+            ]
           }
         }
       }

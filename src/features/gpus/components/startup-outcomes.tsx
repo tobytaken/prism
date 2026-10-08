@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import type { GpuProfileWorkflow } from "@/features/gpus/hooks/use-gpu-profiles";
 import type { GpuPerformanceDevice } from "@/features/gpus/types";
-import { TuningOutcomes } from "./tuning-outcomes";
+import { AutomaticTuningOutcomes } from "./automatic-tuning-outcomes";
 
 export function StartupOutcomes({
   workflow,
@@ -43,26 +43,14 @@ export function StartupOutcomes({
                     ? "Failed"
                     : "Not attempted"}
               </p>
+              {outcome.previousFailure && <p>{outcome.previousFailure}</p>}
               {outcome.reason && (
                 <p className="text-muted-foreground whitespace-pre-line">
                   {outcome.reason}
                 </p>
               )}
               {application && (
-                <TuningOutcomes
-                  outcomes={{
-                    power: application.power ?? undefined,
-                    graphics: application.graphics ?? undefined,
-                    memory: application.memory ?? undefined,
-                    cooling: application.cooling?.outcome,
-                    ...Object.fromEntries(
-                      (application.cooling?.fans ?? []).map((fan) => [
-                        `fan:${fan.fanIndex}`,
-                        fan.outcome,
-                      ]),
-                    ),
-                  }}
-                />
+                <AutomaticTuningOutcomes application={application} />
               )}
               {outcome.profile && outcome.status !== "applied" && (
                 <p className="text-muted-foreground">

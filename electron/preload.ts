@@ -275,6 +275,11 @@ const prismApi = {
       ) as Promise<GamesState>,
     remove: (request: GameRequest) =>
       ipcRenderer.invoke("prism:games:remove", request) as Promise<GamesState>,
+    retrySwitching: (request: { gpuId: string }) =>
+      ipcRenderer.invoke(
+        "prism:games:retrySwitching",
+        request,
+      ) as Promise<AutomaticSwitchingStatus>,
     setAutomaticSwitching: (request: SetAutomaticSwitchingRequest) =>
       ipcRenderer.invoke(
         "prism:games:setAutomaticSwitching",

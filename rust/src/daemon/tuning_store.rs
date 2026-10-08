@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 10;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 11;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -47,12 +47,16 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     Ok,
     // Version 10 adds manually identified programs to game associations; existing Steam links remain valid.
     Ok,
+    // Version 11 records the boot of automatic failures for the next startup outcome.
+    Ok,
 ];
 
 /// The tuning store's contents.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TuningDocument {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub automatic_failures: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ownerless_profiles: Vec<GpuTuningProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
