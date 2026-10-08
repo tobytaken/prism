@@ -7,6 +7,7 @@ import type {
 } from "@/features/gpus/lib/tuning-mutation";
 import type {
   CoolingConfiguration,
+  FanSetting,
   GpuPerformanceDevice,
   GpuProfileSettings,
   ProfileSetting,
@@ -25,7 +26,7 @@ export type TuningEdits = {
   power?: number | null | "default";
   graphics?: number | null | "default";
   memory?: number | null | "default";
-  /** One cooling configuration shared by every fan. */
+  /** A complete cooling draft, including its reviewed GPU and fan identities. */
   cooling?: CoolingDraft;
 } & Partial<Record<`fan:${number}`, number | null | "auto">>;
 /** A fan curve point as typed; null is an empty input. */
@@ -33,10 +34,17 @@ export type FanCurveDraftPoint = {
   temperatureC: number | null;
   speedPercent: number | null;
 };
-/** A shared cooling configuration as edited; a curve can hold incomplete points. */
-export type CoolingDraft =
+export type FanSettingDraft =
   | { mode: "automatic" }
+  | { mode: "fixed"; speedPercent: number | null }
   | { mode: "curve"; points: FanCurveDraftPoint[] };
+export type CoolingDraft = (
+  | FanSettingDraft
+  | {
+      mode: "perFan";
+      fans: { fanIndex: number; setting: FanSettingDraft }[];
+    }
+) & { stableId?: string | null; fanIndexes?: number[] };
 type DeviceEdits = {
   edits: TuningEdits;
   coolingRevisions?: Partial<Record<TuningSetting, number>>;
@@ -209,7 +217,13 @@ export function useTuningEdits() {
     }
     update(gpu.id, (device) => {
       const edits = { ...device.edits };
-      const outcomes = { ...device.outcomes };
+      const outcomes: DeviceEdits["outcomes"] = { ...device.outcomes };
+      if (action.kind === "applyCooling" && result) {
+        for (const [key, outcome] of Object.entries(result)) {
+          if (key.startsWith("fan:"))
+            outcomes[key as `fan:${number}`] = outcome as TuningOutcome;
+        }
+      }
       const profileOwners = { ...device.profileOwners };
       const appliedDefaults = { ...device.appliedDefaults };
       for (const setting of Object.keys(intentions) as TuningSetting[]) {
@@ -354,6 +368,7 @@ export function useTuningEdits() {
               gpuId,
               stableId: gpu.stableId,
               configuration: { arrangement: "perFan", fans },
+              individualFanEdits: true,
             });
           if (gpu) {
             // Keep the original draft check, but advance the queue precondition after our own
@@ -447,39 +462,48 @@ export function useTuningEdits() {
 }
 export type TuningEditStore = ReturnType<typeof useTuningEdits>;
 
-/** The shared configuration's draft; fixed speeds are still edited per fan. */
-function coolingDraft(
-  configuration: Extract<CoolingConfiguration, { arrangement: "shared" }>,
+/** Preserve the complete configuration after a failed application. */
+export function coolingDraft(
+  configuration: CoolingConfiguration,
 ): CoolingDraft {
-  const { setting } = configuration;
-  return setting.mode === "curve"
-    ? { mode: "curve", points: setting.points }
-    : { mode: "automatic" };
+  return configuration.arrangement === "shared"
+    ? configuration.setting
+    : { mode: "perFan", fans: configuration.fans };
 }
 
-/** The draft as a shared configuration, once every curve point is a whole number. */
 export function coolingConfiguration(
   draft: CoolingDraft,
 ): CoolingConfiguration | null {
-  if (draft.mode === "automatic")
-    return { arrangement: "shared", setting: { mode: "automatic" } };
-  const complete = draft.points.every(
-    (point) =>
-      Number.isInteger(point.temperatureC) &&
-      Number.isInteger(point.speedPercent),
-  );
-  return complete
-    ? {
-        arrangement: "shared",
-        setting: {
+  function setting(value: FanSettingDraft): FanSetting | null {
+    if (value.mode === "automatic") return { mode: "automatic" };
+    if (value.mode === "fixed")
+      return Number.isInteger(value.speedPercent)
+        ? { mode: "fixed", speedPercent: value.speedPercent! }
+        : null;
+    return value.points.every(
+      (p) =>
+        Number.isInteger(p.temperatureC) && Number.isInteger(p.speedPercent),
+    )
+      ? {
           mode: "curve",
-          points: draft.points.map((point) => ({
-            temperatureC: point.temperatureC!,
-            speedPercent: point.speedPercent!,
+          points: value.points.map((p) => ({
+            temperatureC: p.temperatureC!,
+            speedPercent: p.speedPercent!,
           })),
-        },
-      }
-    : null;
+        }
+      : null;
+  }
+  if (draft.mode !== "perFan") {
+    const complete = setting(draft);
+    return complete ? { arrangement: "shared", setting: complete } : null;
+  }
+  const fans = [];
+  for (const fan of draft.fans) {
+    const complete = setting(fan.setting);
+    if (!complete) return null;
+    fans.push({ fanIndex: fan.fanIndex, setting: complete });
+  }
+  return { arrangement: "perFan", fans };
 }
 
 function profileInstruction(value: unknown): ProfileSetting | null {
@@ -531,22 +555,32 @@ function actionIntentions(
         }),
       };
     case "applyCooling":
-      return action.configuration.arrangement === "shared"
-        ? { cooling: coolingDraft(action.configuration) }
-        : Object.fromEntries(
-            action.configuration.fans.flatMap(({ fanIndex, setting }) =>
-              setting.mode === "curve"
-                ? []
-                : [
-                    [
-                      `fan:${fanIndex}`,
-                      setting.mode === "automatic"
-                        ? "auto"
-                        : setting.speedPercent,
-                    ],
+      if (
+        action.individualFanEdits &&
+        action.configuration.arrangement === "perFan"
+      )
+        return Object.fromEntries(
+          action.configuration.fans.flatMap(({ fanIndex, setting }) =>
+            setting.mode === "curve"
+              ? []
+              : [
+                  [
+                    `fan:${fanIndex}`,
+                    setting.mode === "automatic"
+                      ? "auto"
+                      : setting.speedPercent,
                   ],
-            ),
-          );
+                ],
+          ),
+        );
+      return {
+        cooling: {
+          ...coolingDraft(action.configuration),
+          stableId: action.stableId,
+          fanIndexes:
+            action.fanIndexes ?? gpu.cooling.fans.map((fan) => fan.index),
+        },
+      };
     case "resetClockOffsets":
       return {
         ...(gpu.clocks.graphics.support !== "unsupported" && {

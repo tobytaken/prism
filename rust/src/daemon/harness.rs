@@ -310,7 +310,12 @@ impl DaemonBackend for FakeGpuBackend {
             Setter::FanSpeed,
             request.fan_index,
             |gpu| {
-                if let Some(fan) = gpu.cooling.fans.get_mut(request.fan_index as usize) {
+                if let Some(fan) = gpu
+                    .cooling
+                    .fans
+                    .iter_mut()
+                    .find(|fan| fan.index == request.fan_index)
+                {
                     fan.current_speed_percent = Some(request.speed_percent);
                     fan.mode = Some(FanControlMode::Manual);
                 }
@@ -324,7 +329,12 @@ impl DaemonBackend for FakeGpuBackend {
             Setter::FanModeAuto,
             request.fan_index,
             |gpu| {
-                if let Some(fan) = gpu.cooling.fans.get_mut(request.fan_index as usize) {
+                if let Some(fan) = gpu
+                    .cooling
+                    .fans
+                    .iter_mut()
+                    .find(|fan| fan.index == request.fan_index)
+                {
                     fan.mode = Some(FanControlMode::Auto);
                 }
             },

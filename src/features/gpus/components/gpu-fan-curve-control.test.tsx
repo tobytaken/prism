@@ -149,7 +149,9 @@ describe("Applying a shared fan curve", () => {
     );
     expect(fake.gpu.cooling.control?.suspension?.kind).toBe("externalControl");
     fake.gpu.telemetry.temperatureC = 80;
-    await user.click(screen.getByRole("button", { name: "Resume curve" }));
+    await user.click(
+      screen.getByRole("button", { name: "Retry cooling change" }),
+    );
     await screen.findByText("The curve requests 90% at 80°C.");
     expect(
       screen.queryByRole("button", { name: "Resume curve" }),
@@ -207,7 +209,7 @@ describe("Applying a shared fan curve", () => {
     expect(fake.gpu.cooling.fans[0].currentSpeedPercent).toBe(60);
   });
 
-  it("applies a shared curve and an individual fan draft without treating its own write as a conflict", async () => {
+  it("applies a mixed cooling draft without treating its own write as a conflict", async () => {
     const user = userEvent.setup();
     const fake = renderPerformance();
     const speed = await within(await curveEditor()).findByRole("spinbutton", {
@@ -215,9 +217,13 @@ describe("Applying a shared fan curve", () => {
     });
     await user.clear(speed);
     await user.type(speed, "35");
-    const fan = screen.getByRole("spinbutton", { name: "Fan 1 manual target" });
-    await user.clear(fan);
-    await user.type(fan, "55");
+    await user.click(screen.getByRole("button", { name: "Separate fans" }));
+    const first = screen.getByRole("group", { name: "Fan 1 configuration" });
+    await user.selectOptions(within(first).getByRole("combobox"), "fixed");
+    await user.type(
+      within(first).getByRole("spinbutton", { name: "Fixed target (%)" }),
+      "55",
+    );
     await user.click(screen.getByRole("button", { name: "Apply all" }));
     await screen.findByText("Fan 1: Applied");
     expect(fake.gpu.cooling.fans.map((fan) => fan.currentSpeedPercent)).toEqual(
@@ -227,6 +233,59 @@ describe("Applying a shared fan curve", () => {
     expect(
       screen.queryByRole("button", { name: "Review cooling change" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("reviews the complete mixed draft after another session changes cooling", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    await user.click(
+      await screen.findByRole("button", { name: "Separate fans" }),
+    );
+    const first = screen.getByRole("group", { name: "Fan 1 configuration" });
+    const second = screen.getByRole("group", { name: "Fan 2 configuration" });
+    await user.selectOptions(within(first).getByRole("combobox"), "fixed");
+    await user.type(
+      within(first).getByRole("spinbutton", { name: "Fixed target (%)" }),
+      "55",
+    );
+    await waitFor(() =>
+      expect(
+        within(second).getByRole("option", { name: "Curve" }),
+      ).toBeEnabled(),
+    );
+    await user.selectOptions(within(second).getByRole("combobox"), "curve");
+    await window.prism.gpu.applyCooling({
+      gpuId: "GPU-123",
+      configuration: { arrangement: "shared", setting: { mode: "automatic" } },
+    });
+    await screen.findByText(/Cooling changed since/);
+    await user.click(screen.getByRole("button", { name: "Apply all" }));
+    expect(fake.applyCooling).toHaveBeenCalledTimes(1);
+    await user.click(
+      screen.getByRole("button", { name: "Review cooling change" }),
+    );
+    const review = screen.getByRole("dialog", {
+      name: "Review cooling change",
+    });
+    expect(
+      within(review).getByText(
+        /Your draft: Fan 1: Fixed 55%; Fan 2: 45°C → 20%/,
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      within(review).getByRole("button", { name: "Keep draft for applying" }),
+    );
+    expect(fake.applyCooling).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Apply all" }));
+    await screen.findByText("Cooling: Applied");
+    expect(fake.gpu.cooling.control?.applied).toEqual({
+      arrangement: "perFan",
+      fans: [
+        { fanIndex: 0, setting: { mode: "fixed", speedPercent: 55 } },
+        { fanIndex: 1, setting: { mode: "curve", points: starter } },
+      ],
+    });
+    expect(screen.queryByText(/Cooling changed since/)).not.toBeInTheDocument();
   });
 
   it("applies multiple fan drafts in one revision without conflicting with its own first fan", async () => {
@@ -271,6 +330,7 @@ describe("Applying a shared fan curve", () => {
       expect(fake.applyCooling).toHaveBeenCalledWith({
         expectedRevision: expect.any(Number),
         gpuId: "GPU-123",
+        fanIndexes: [0, 1],
         configuration: sharedCurve(),
       }),
     );
@@ -282,7 +342,7 @@ describe("Applying a shared fan curve", () => {
       within(status).getByText("The curve requests 72% at 71°C."),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Driver reports manual mode")).toHaveLength(2);
-    expect(screen.queryByText(/fixed/i)).not.toBeInTheDocument();
+    expect(within(status).queryByText(/fixed/i)).not.toBeInTheDocument();
     expect(within(editor).getByText("Applied")).toBeInTheDocument();
     expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
     expect(fake.setFanSpeed).not.toHaveBeenCalled();
@@ -318,6 +378,7 @@ describe("Applying a shared fan curve", () => {
         expectedRevision: expect.any(Number),
         gpuId: "GPU-123",
         configuration: applied,
+        fanIndexes: [0, 1],
       }),
     );
     await waitFor(() =>

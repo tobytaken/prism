@@ -42,6 +42,9 @@ pub enum CoolingConfiguration {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ApplyCoolingRequest {
+    /// The fan inventory reviewed by the caller; a changed inventory requires a new review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fan_indexes: Option<Vec<u32>>,
     /// The GPU's UUID.
     pub gpu_id: String,
     pub configuration: CoolingConfiguration,

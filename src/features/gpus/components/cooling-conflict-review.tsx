@@ -11,6 +11,7 @@ import type { CoolingControl, FanControlInfo } from "@/features/gpus/types";
 import type {
   TuningEdits,
   FanCurveDraftPoint,
+  FanSettingDraft,
 } from "@/features/gpus/hooks/use-tuning-edits";
 
 export function CoolingConflictReview({
@@ -90,10 +91,15 @@ export function CoolingConflictReview({
               )}
               <p>
                 Your draft:{" "}
-                {edits.cooling?.mode === "curve"
-                  ? curveText(edits.cooling.points)
-                  : edits.cooling?.mode === "automatic"
-                    ? "Automatic cooling"
+                {edits.cooling?.mode === "perFan"
+                  ? edits.cooling.fans
+                      .map(
+                        (fan) =>
+                          `Fan ${fan.fanIndex + 1}: ${settingText(fan.setting)}`,
+                      )
+                      .join("; ")
+                  : edits.cooling
+                    ? settingText(edits.cooling)
                     : "Individual fan changes"}
               </p>
               {Object.entries(edits)
@@ -138,4 +144,12 @@ function curveText(points: FanCurveDraftPoint[]) {
         `${point.temperatureC ?? "?"}°C → ${point.speedPercent ?? "?"}%`,
     )
     .join(", ");
+}
+
+function settingText(setting: FanSettingDraft) {
+  return setting.mode === "curve"
+    ? curveText(setting.points)
+    : setting.mode === "fixed"
+      ? `Fixed ${setting.speedPercent ?? "Incomplete"}%`
+      : "Automatic cooling";
 }

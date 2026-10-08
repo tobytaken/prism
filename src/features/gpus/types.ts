@@ -195,6 +195,7 @@ export type CoolingConfiguration =
     };
 
 export interface ApplyCoolingRequest {
+  fanIndexes?: number[];
   expectedRevision?: number;
   /** The GPU's UUID. */
   gpuId: string;
@@ -262,6 +263,7 @@ export type FanCurveSupport =
   | { status: "unavailable"; reason: string };
 
 export interface PreviewFanCurveRequest {
+  fanIndex?: number;
   gpuId: string;
   points: FanCurvePoint[];
 }
@@ -274,6 +276,7 @@ export interface FanCurveProblem {
 
 /** The daemon's check of a draft curve; nothing is applied. */
 export interface FanCurvePreview {
+  support?: FanCurveSupport;
   problems: FanCurveProblem[];
 }
 
