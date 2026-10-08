@@ -20,7 +20,7 @@ use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
 use super::tuning::apply_unreviewed_profile;
 use super::tuning_store::{write_atomically, TuningDocument, TuningStore};
-use crate::cooling::CoolingConfiguration;
+use crate::cooling::{CoolingConfiguration, SuspensionKind};
 use crate::protocol::{
     ApplyGpuProfileRequest, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
     GpuSwitchingState, GpuSwitchingStatus, ProfileSetting, ProfileSettingKey, ProfileSettings,
@@ -28,9 +28,9 @@ use crate::protocol::{
 };
 
 pub(super) const SWITCHING_STATE_FILE_NAME: &str = "switching-state.json";
-// Version 1 has numeric baselines only. Preserve and reject older files for this boot rather
+// Earlier versions lack expected readings. Preserve and reject them for this boot rather
 // than discard restoration state on upgrade; a normal reboot clears this boot-scoped file.
-const SCHEMA_VERSION: u64 = 2;
+const SCHEMA_VERSION: u64 = 3;
 
 /// The user's running game, with its linked profile, that automatic switching puts into effect
 /// on a GPU.
@@ -59,6 +59,8 @@ struct Activation {
     /// The pre-game tuning values: the actual value of each setting automation wrote, captured
     /// when it first wrote that setting.
     baseline: BTreeMap<ProfileSettingKey, i64>,
+    /// Last readback for each numeric setting still controlled by automation.
+    expected: BTreeMap<ProfileSettingKey, Option<i64>>,
     /// The complete cooling configuration, never a curve's sampled output.
     cooling_baseline: Option<CoolingConfiguration>,
     /// Fan identity at capture, including for a shared configuration. An older record without
@@ -70,6 +72,22 @@ struct Activation {
     /// Why the latest automatic application or restoration didn't complete. It isn't retried
     /// until what drives the GPU changes.
     failure: Option<String>,
+    /// An override relinquishes the baseline. Keep an external-change notice after games end.
+    manual_override: Option<ManualOverride>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManualOverride {
+    origin: OverrideOrigin,
+    games_ended: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum OverrideOrigin {
+    Prism,
+    External,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -92,6 +110,7 @@ struct SwitchingState {
     recovery_gpus: BTreeSet<String>,
     /// GPUs with a reconciliation queued that hasn't started yet.
     queued: Mutex<BTreeSet<String>>,
+    pending_manual: Mutex<HashMap<String, usize>>,
     /// Serializes status pushes, so an older status is never pushed after a newer one.
     publishing: Mutex<()>,
     /// The status last pushed to each user.
@@ -219,6 +238,7 @@ impl Switching {
                 activations: Mutex::new(activations),
                 recovery_gpus,
                 queued: Mutex::default(),
+                pending_manual: Mutex::default(),
                 publishing: Mutex::default(),
                 published: Mutex::default(),
             }),
@@ -233,27 +253,41 @@ impl Switching {
         let Ok(activations) = self.state.activations() else {
             return vec![];
         };
-        let Ok(wanted) = self.store.read(|document| {
-            running
-                .as_ref()
-                .map(|running| winning_games(document, running, self.users.as_ref()))
+        let Ok(games) = self.store.read(|document| {
+            running.as_ref().map(|running| {
+                (
+                    winning_games(document, running, self.users.as_ref(), true),
+                    winning_games(document, running, self.users.as_ref(), false),
+                )
+            })
         }) else {
             return vec![];
         };
-        let mut queued = self.state.queued.lock().unwrap();
         let readings = backend.performance();
-        wanted
+        let pending = self.state.pending_manual.lock().unwrap();
+        let mut queued = self.state.queued.lock().unwrap();
+        games
             .iter()
-            .flat_map(|games| games.keys())
+            .flat_map(|(wanted, _)| wanted.keys())
             .chain(activations.keys())
+            .filter(|gpu_id| !pending.contains_key(*gpu_id))
             .filter(|gpu_id| {
                 let activation = activations.get(*gpu_id);
+                if let Some(overridden) = activation.and_then(|a| a.manual_override.as_ref()) {
+                    return games.as_ref().is_some_and(|(_, linked)| {
+                        if overridden.games_ended {
+                            linked.contains_key(*gpu_id)
+                        } else {
+                            !linked.contains_key(*gpu_id)
+                        }
+                    });
+                }
                 let absent = verified_gpu(&readings, gpu_id).is_err();
                 let presence_changed = activation.is_some_and(|a| a.gpu_absent != absent);
                 (presence_changed && absent)
-                    || wanted.as_ref().is_some_and(|games| {
+                    || games.as_ref().is_some_and(|(wanted, _)| {
                         presence_changed
-                            || games.get(*gpu_id) != activation.and_then(|a| a.driving.as_ref())
+                            || wanted.get(*gpu_id) != activation.and_then(|a| a.driving.as_ref())
                     })
             })
             .filter(|gpu_id| queued.insert((*gpu_id).clone()))
@@ -271,26 +305,58 @@ impl Switching {
     /// from the latest scan and saved state. Runs on the GPU's queue.
     pub fn reconcile(&self, backend: &dyn DaemonBackend, gpu_id: &str) {
         self.state.queued.lock().unwrap().remove(gpu_id);
+        if self
+            .state
+            .pending_manual
+            .lock()
+            .unwrap()
+            .contains_key(gpu_id)
+        {
+            return;
+        }
         let Ok(document) = self.store.read(Clone::clone) else {
             return;
         };
         let Ok(mut activations) = self.state.activations() else {
             return;
         };
-        let activation = activations.remove(gpu_id);
-        // Absence is temporary within a boot. Keep the last driving game and its baseline
-        // until this UUID can be reconciled; a device in its old slot owns none of that state.
-        if verified_gpu(&backend.performance(), gpu_id).is_err() {
+        let mut activation = activations.remove(gpu_id);
+        let running = self.running();
+        // An override has no restoration baseline. Its lifetime follows linked games,
+        // even while the GPU is absent; returning hardware cannot bypass it.
+        if let Some(overridden) = activation.as_mut().and_then(|a| a.manual_override.as_mut()) {
+            let Ok(running) = &running else {
+                return;
+            };
+            let linked =
+                winning_games(&document, running, self.users.as_ref(), false).contains_key(gpu_id);
+            if !overridden.games_ended {
+                if !linked {
+                    overridden.games_ended = true;
+                    let notice = overridden.origin == OverrideOrigin::External;
+                    self.record(gpu_id, if notice { activation } else { None });
+                }
+                return;
+            }
+            if !linked {
+                return;
+            }
+            activation = None;
+        }
+        // Remember absence even during an incomplete process scan, without consuming the
+        // driving game or its baseline. Replacement UUIDs inherit neither.
+        let readings = backend.performance();
+        if verified_gpu(&readings, gpu_id).is_err() {
             if let Some(mut activation) = activation.filter(|a| !a.gpu_absent) {
                 activation.gpu_absent = true;
                 self.record(gpu_id, Some(activation));
             }
             return;
         }
-        let Ok(running) = self.running() else {
+        let Ok(running) = running else {
             return;
         };
-        let wanted = winning_games(&document, &running, self.users.as_ref()).remove(gpu_id);
+        let wanted = winning_games(&document, &running, self.users.as_ref(), true).remove(gpu_id);
         let returning = activation.as_ref().is_some_and(|a| a.gpu_absent);
         let same_game = wanted.as_ref() == activation.as_ref().and_then(|a| a.driving.as_ref());
         if same_game && !returning {
@@ -305,6 +371,64 @@ impl Switching {
                 return;
             }
         }
+        let controls_cooling = activation
+            .as_ref()
+            .is_some_and(|a| a.cooling_baseline.is_some())
+            || wanted
+                .as_ref()
+                .and_then(|game| document.any_profile(&game.profile_id))
+                .is_some_and(|profile| profile.settings.cooling.is_some());
+        // Resuming an interrupted curve may have just changed fan policy.
+        let readings = backend.performance();
+        if let Ok(gpu) = verified_gpu(&readings, gpu_id) {
+            // Controls may reset across a confirmed GPU absence. Reconcile the recorded
+            // application on return, but never resume cooling that already yielded control.
+            let cooling_changed = controls_cooling
+                && if returning {
+                    self.cooling
+                        .control(gpu_id)
+                        .suspension
+                        .is_some_and(|s| s.kind == SuspensionKind::ExternalControl)
+                } else {
+                    self.cooling.changed_outside_prism(gpu)
+                };
+            let numeric_changed = !returning && activation.as_ref().is_some_and(|active| active.expected.iter().any(|(key, expected)| {
+                matches!((expected, reading(gpu, *key).current), (Some(before), Some(now)) if *before != now)
+            }));
+            if cooling_changed || numeric_changed {
+                self.record(
+                    gpu_id,
+                    Some(Activation {
+                        manual_override: Some(ManualOverride {
+                            origin: OverrideOrigin::External,
+                            games_ended: !winning_games(
+                                &document,
+                                &running,
+                                self.users.as_ref(),
+                                false,
+                            )
+                            .contains_key(gpu_id),
+                        }),
+                        ..Activation::default()
+                    }),
+                );
+                return;
+            }
+            if let Some(active) = activation.as_ref().filter(|_| !returning) {
+                if active.expected.iter().any(|(key, expected)| {
+                    expected.is_none() || reading(gpu, *key).current.is_none()
+                }) {
+                    let mut active = active.clone();
+                    active.driving = wanted;
+                    active.failure = Some(
+                        "Current tuning values could not be verified, so nothing was changed."
+                            .into(),
+                    );
+                    self.record(gpu_id, Some(active));
+                    return;
+                }
+            }
+        }
         match (wanted, activation) {
             (Some(game), activation) => {
                 let activation = activation.unwrap_or_else(|| Activation {
@@ -315,6 +439,60 @@ impl Switching {
             }
             (None, Some(activation)) => self.restore(backend, gpu_id, activation),
             (None, None) => {}
+        }
+    }
+
+    /// Reserve precedence at request arrival; the running automatic operation may finish.
+    pub fn manual_requested(&self, gpu_id: &str) -> PendingManual {
+        *self
+            .state
+            .pending_manual
+            .lock()
+            .unwrap()
+            .entry(gpu_id.into())
+            .or_default() += 1;
+        PendingManual {
+            switching: self.clone(),
+            gpu_id: gpu_id.into(),
+        }
+    }
+
+    /// Called on the GPU queue when a manual tuning attempt starts, even if it fails.
+    pub fn manual_started(&self, gpu_id: &str) {
+        let linked = self
+            .running()
+            .ok()
+            .and_then(|running| {
+                self.store
+                    .read(|document| {
+                        winning_games(document, &running, self.users.as_ref(), false)
+                            .contains_key(gpu_id)
+                    })
+                    .ok()
+            })
+            .unwrap_or(false);
+        let active = self
+            .state
+            .activations()
+            .ok()
+            .and_then(|mut all| all.remove(gpu_id))
+            .is_some_and(|a| {
+                a.manual_override
+                    .as_ref()
+                    .is_none_or(|overridden| !overridden.games_ended)
+            });
+        if linked || active {
+            self.record(
+                gpu_id,
+                Some(Activation {
+                    manual_override: Some(ManualOverride {
+                        origin: OverrideOrigin::Prism,
+                        games_ended: false,
+                    }),
+                    ..Activation::default()
+                }),
+            );
+            self.publish();
         }
     }
 
@@ -365,6 +543,7 @@ impl Switching {
                 return self.abandon(gpu_id, activation, &captured, failure);
             };
             activation.baseline.insert(key, current);
+            activation.expected.insert(key, Some(current));
             captured.push(key);
         }
         let captured_cooling = profile.cooling.is_some() && activation.cooling_baseline.is_none();
@@ -456,7 +635,18 @@ impl Switching {
         if outcomes.iter().any(succeeded) {
             self.set_current_profile(gpu_id, full.then_some(game.profile_id));
         }
+        self.observe(backend, gpu_id, &mut activation);
         self.record(gpu_id, Some(activation));
+    }
+
+    fn observe(&self, backend: &dyn DaemonBackend, gpu_id: &str, activation: &mut Activation) {
+        let readings = backend.performance();
+        let gpu = verified_gpu(&readings, gpu_id).ok();
+        activation.expected = activation
+            .baseline
+            .keys()
+            .map(|key| (*key, gpu.and_then(|gpu| reading(gpu, *key).current)))
+            .collect();
     }
 
     fn restore(&self, backend: &dyn DaemonBackend, gpu_id: &str, mut activation: Activation) {
@@ -500,6 +690,7 @@ impl Switching {
                 if outcomes.iter().any(succeeded) {
                     self.set_current_profile(gpu_id, None);
                 }
+                self.observe(backend, gpu_id, &mut activation);
                 return self.abandon(gpu_id, activation, &[], failure_message(&outcomes));
             }
         }
@@ -524,6 +715,7 @@ impl Switching {
     ) {
         for key in captured {
             activation.baseline.remove(key);
+            activation.expected.remove(key);
         }
         activation.failure = Some(failure);
         self.record(gpu_id, Some(activation));
@@ -592,6 +784,30 @@ impl Switching {
     }
 }
 
+/// Releases the reservation even when a manual operation panics or its queue is dropped.
+pub(super) struct PendingManual {
+    switching: Switching,
+    gpu_id: String,
+}
+
+impl PendingManual {
+    pub fn started(&self) {
+        self.switching.manual_started(&self.gpu_id);
+    }
+}
+
+impl Drop for PendingManual {
+    fn drop(&mut self) {
+        let mut pending = self.switching.state.pending_manual.lock().unwrap();
+        if let Some(count) = pending.get_mut(&self.gpu_id) {
+            *count -= 1;
+            if *count == 0 {
+                pending.remove(&self.gpu_id);
+            }
+        }
+    }
+}
+
 /// Each GPU's winning game: of the running games linked to it by users who opted in, the most
 /// recently started, by its earliest process's start time, with ties to the lower pid. A uid's
 /// games belong only to the account that has that uid now, so a renamed account's earlier state
@@ -600,13 +816,14 @@ fn winning_games(
     document: &TuningDocument,
     running: &GamesByUser,
     accounts: &dyn UserDirectory,
+    automatic_only: bool,
 ) -> BTreeMap<String, DrivingGame> {
     let mut wanted: BTreeMap<String, ((u64, Reverse<u32>), DrivingGame)> = BTreeMap::new();
     let mut usernames = HashMap::new();
     let users = document
         .users
         .iter()
-        .filter(|user| user.automatic_switching);
+        .filter(|user| !automatic_only || user.automatic_switching);
     for user in users {
         let Some(games) = running.get(&user.uid) else {
             continue;
@@ -787,31 +1004,37 @@ impl Snapshot {
         let gpus: Vec<_> = activations
             .iter()
             .filter_map(|(gpu_id, activation)| {
-                let state = match (&activation.failure, &activation.driving) {
-                    (Some(message), _) => GpuSwitchingState::Failed {
-                        message: message.clone(),
-                    },
-                    (None, Some(driving)) if own(driving) => {
-                        let profile = document.any_profile(&driving.profile_id)?;
-                        GpuSwitchingState::Active {
-                            game: driving.game.clone(),
-                            game_name: user
-                                .and_then(|user| {
-                                    user.games.iter().find(|linked| linked.game == driving.game)
-                                })
-                                .map(|linked| linked.name.clone())
-                                .unwrap_or_else(|| match &driving.game {
-                                    GameId::Steam { app_id } => format!("Steam app {app_id}"),
-                                    GameId::Program { path } => path.clone(),
-                                }),
-                            profile: CurrentProfile {
-                                id: profile.id.clone(),
-                                name: profile.name.clone(),
-                            },
-                        }
+                let state = if let Some(overridden) = &activation.manual_override {
+                    GpuSwitchingState::ManualOverride {
+                        changed_outside_prism: overridden.origin == OverrideOrigin::External,
                     }
-                    (None, Some(_)) => GpuSwitchingState::AnotherUser {},
-                    (None, None) => return None,
+                } else {
+                    match (&activation.failure, &activation.driving) {
+                        (Some(message), _) => GpuSwitchingState::Failed {
+                            message: message.clone(),
+                        },
+                        (None, Some(driving)) if own(driving) => {
+                            let profile = document.any_profile(&driving.profile_id)?;
+                            GpuSwitchingState::Active {
+                                game: driving.game.clone(),
+                                game_name: user
+                                    .and_then(|user| {
+                                        user.games.iter().find(|linked| linked.game == driving.game)
+                                    })
+                                    .map(|linked| linked.name.clone())
+                                    .unwrap_or_else(|| match &driving.game {
+                                        GameId::Steam { app_id } => format!("Steam app {app_id}"),
+                                        GameId::Program { path } => path.clone(),
+                                    }),
+                                profile: CurrentProfile {
+                                    id: profile.id.clone(),
+                                    name: profile.name.clone(),
+                                },
+                            }
+                        }
+                        (None, Some(_)) => GpuSwitchingState::AnotherUser {},
+                        (None, None) => return None,
+                    }
                 };
                 Some(GpuSwitchingStatus {
                     gpu_id: gpu_id.clone(),

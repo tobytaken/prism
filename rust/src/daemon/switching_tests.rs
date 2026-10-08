@@ -257,7 +257,11 @@ fn saving_a_linked_profile_mid_activation_takes_effect_at_its_next_application()
 
     daemon.end_process(123);
     daemon.scan();
-    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(
+        values(&daemon),
+        (Some(340), Some(150), Some(0)),
+        "manual values are kept"
+    );
     daemon.run_steam_game(124, 1000, 800, DOTA);
     daemon.scan();
     assert_eq!(values(&daemon), (Some(380), Some(150), Some(0)));
@@ -556,10 +560,10 @@ fn cooling_is_untouched_when_omitted_and_captured_only_when_automation_first_wri
     assert_eq!(cooling(&alice)["revision"], before["revision"]);
     assert_eq!(cooling(&alice)["applied"], shared_curve());
 
+    // No automatic cooling write yet: this unsaved manual arrangement is the next baseline.
+    apply_cooling(&alice, separate_cooling());
     daemon.run_steam_game(124, 1000, 800, DOTA);
     daemon.scan();
-    // No automatic cooling write yet: this later manual arrangement is the baseline.
-    apply_cooling(&alice, separate_cooling());
     link(&alice, LINKED, Some("fans"));
     daemon.settle();
     assert_eq!(cooling(&alice)["applied"], shared_curve());
@@ -679,6 +683,322 @@ fn unreadable_pre_game_cooling_prevents_any_profile_write() {
     daemon.end_process(123);
     daemon.scan();
     assert_eq!(daemon.gpus.writes(), before);
+}
+
+#[test]
+fn a_manual_attempt_overrides_only_its_gpu_and_keeps_its_values_after_the_game_ends() {
+    let (daemon, alice) = linked_dota();
+    link(&alice, UNLINKED, Some("quiet"));
+    let other_before = daemon.gpus.gpu(UNLINKED).power.current_limit_watts;
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    ok(alice.send_json(json!({ "type": "set_power_limit",
+        "payload": { "gpuId": LINKED, "limitWatts": 380 } })));
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"],
+        json!({ "status": "manualOverride", "changedOutsidePrism": false })
+    );
+    link(&alice, LINKED, Some("cool"));
+    daemon.settle();
+    assert_eq!(values(&daemon), (Some(380), Some(150), Some(0)));
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), (Some(380), Some(150), Some(0)));
+    assert_eq!(
+        daemon.gpus.gpu(UNLINKED).power.current_limit_watts,
+        other_before
+    );
+    // A later game captures the manual values as its new baseline.
+    daemon.run_steam_game(124, 1000, 500, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon).0, Some(320));
+    daemon.end_process(124);
+    daemon.scan();
+    assert_eq!(values(&daemon), (Some(380), Some(150), Some(0)));
+}
+
+#[test]
+fn a_manual_request_during_an_automatic_write_finishes_its_setters_but_drops_queued_automation() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    let before = writes_to(&daemon, LINKED).len();
+    let gate = daemon.gpus.block(LINKED, Setter::PowerLimit);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.core().scan_running_games();
+    gate.wait_until_entered();
+    // Queue another automatic application while the first is inside its setter.
+    link(&alice, LINKED, Some("cool"));
+    let mut manual = daemon.send_in_background(
+        serde_json::from_value(json!({
+            "type": "set_power_limit", "payload": { "gpuId": LINKED, "limitWatts": 380 }
+        }))
+        .unwrap(),
+    );
+    assert!(manual.is_pending());
+    assert_ne!(
+        status(&alice)["gpus"][0]["state"]["status"],
+        "manualOverride",
+        "the override is recorded when the manual write starts"
+    );
+    gate.release();
+    manual.response();
+    daemon.settle();
+    assert_eq!(
+        &writes_to(&daemon, LINKED)[before..],
+        &[
+            Setter::PowerLimit,
+            Setter::GraphicsOffset,
+            Setter::PowerLimit
+        ]
+    );
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), (Some(380), Some(150), Some(0)));
+}
+
+#[test]
+fn an_external_change_at_game_end_preserves_every_value_and_reports_changed_outside_prism() {
+    let (mut daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    daemon
+        .gpus
+        .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(390));
+    // Detection happens at automatic writes, not on every scan or read.
+    daemon.scan();
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+    drop(alice);
+    daemon.restart();
+    let alice = daemon.user(1000, "alice");
+    let before = daemon.gpus.writes();
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(values(&daemon), (Some(390), Some(150), Some(0)));
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"],
+        json!({ "status": "manualOverride", "changedOutsidePrism": true })
+    );
+    daemon.scan();
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"]["changedOutsidePrism"],
+        true
+    );
+}
+
+#[test]
+fn external_cooling_yields_the_curve_and_blocks_restoration_until_explicit_manual_application() {
+    let (daemon, alice) = cooled_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    // Physical speed is not an independently observable manual target.
+    daemon.gpus.update(LINKED, |gpu| {
+        gpu.cooling.fans[0].current_speed_percent = Some(77)
+    });
+    daemon.set_temperature(LINKED, Some(60));
+    daemon.run_curves_for(500);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+    daemon.gpus.update(LINKED, |gpu| {
+        gpu.cooling.fans[0].mode = Some(crate::gpu::FanControlMode::Auto)
+    });
+    let before = daemon.gpus.writes();
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"]["changedOutsidePrism"],
+        true
+    );
+    assert_eq!(cooling(&alice)["applied"], shared_curve());
+    assert_eq!(cooling(&alice)["suspension"]["kind"], "externalControl");
+    daemon.run_curves_for(5_000);
+    assert_eq!(daemon.gpus.writes(), before);
+    daemon.run_steam_game(124, 1000, 500, DOTA);
+    daemon.scan();
+    assert_eq!(
+        daemon.gpus.writes(),
+        before,
+        "automation cannot resume a yielded curve"
+    );
+    apply_cooling(&alice, shared_curve());
+    assert_eq!(cooling(&alice)["suspension"], Value::Null);
+}
+
+#[test]
+fn automatic_switching_rejects_a_save_using_the_apps_old_values() {
+    let (daemon, alice) = linked_dota();
+    let old = ok(alice.send_json(json!({ "type": "get_tuning_states" })))[0]["revision"].clone();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    for request in [
+        json!({ "type": "save_profile_as_new", "payload": { "gpuId": LINKED, "name": "Stale", "revision": old } }),
+        json!({ "type": "save_to_current_profile", "payload": { "gpuId": LINKED, "revision": old } }),
+    ] {
+        let response = alice.send_json(request);
+        assert_eq!(response["type"], "error");
+        assert_eq!(
+            response["payload"]["message"],
+            "The GPU's values changed since you last looked. Review them and save again."
+        );
+    }
+    assert_eq!(values(&daemon), GAMING);
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(
+        values(&daemon),
+        PRE_GAME,
+        "saving is not a manual tuning attempt"
+    );
+}
+
+#[test]
+fn manual_profile_cooling_and_failed_attempts_all_override_and_survive_a_daemon_restart() {
+    for request in [
+        json!({ "type": "apply_profile_by_id", "payload": { "profileId": "cool" } }),
+        json!({ "type": "apply_cooling", "payload": { "gpuId": LINKED, "configuration": separate_cooling() } }),
+        json!({ "type": "set_power_limit", "payload": { "gpuId": LINKED, "limitWatts": 9999 } }),
+    ] {
+        let (mut daemon, alice) = cooled_dota();
+        set_switching(&daemon, &alice, true);
+        daemon.run_steam_game(123, 1000, 420, DOTA);
+        daemon.scan();
+        alice.send_json(request);
+        assert_eq!(
+            status(&alice)["gpus"][0]["state"]["status"],
+            "manualOverride"
+        );
+        let values_after = values(&daemon);
+        let cooling_after = cooling(&alice)["applied"].clone();
+        drop(alice);
+        daemon.restart();
+        let alice = daemon.user(1000, "alice");
+        daemon.scan();
+        assert_eq!(
+            status(&alice)["gpus"][0]["state"]["status"],
+            "manualOverride"
+        );
+        daemon.end_process(123);
+        daemon.scan();
+        assert_eq!(values(&daemon), values_after);
+        assert_eq!(cooling(&alice)["applied"], cooling_after);
+    }
+}
+
+#[test]
+fn external_changes_are_checked_before_switching_profiles_but_only_for_controlled_settings() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    daemon.gpus.update(LINKED, |gpu| {
+        gpu.clocks.memory.current_offset_mhz = Some(100)
+    });
+    link(&alice, LINKED, Some("cool"));
+    daemon.settle();
+    assert_eq!(values(&daemon), (Some(320), Some(60), Some(100)));
+    daemon
+        .gpus
+        .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(390));
+    let before = daemon.gpus.writes();
+    link(&alice, LINKED, Some("gaming"));
+    daemon.settle();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"]["changedOutsidePrism"],
+        true
+    );
+    assert!(alice
+        .pushed_events()
+        .iter()
+        .any(|event| event["payload"]["gpus"][0]["state"]["changedOutsidePrism"] == true));
+}
+
+#[test]
+fn an_override_waits_for_all_linked_games_even_when_switching_is_disabled() {
+    let (daemon, alice) = linked_dota();
+    daemon.install_steam_app("alice", 730, "Counter-Strike");
+    ok(alice.send_json(json!({ "type": "add_steam_game", "payload": { "appId": 730 } })));
+    ok(
+        alice.send_json(json!({ "type": "set_game_profile", "payload": {
+        "game": { "kind": "steam", "appId": 730 }, "gpuId": LINKED, "profileId": "cool"
+    } })),
+    );
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.run_steam_game(124, 1000, 500, 730);
+    daemon.scan();
+    ok(alice.send_json(json!({ "type": "set_power_limit",
+        "payload": { "gpuId": LINKED, "limitWatts": 380 } })));
+    set_switching(&daemon, &alice, false);
+    daemon.end_process(124);
+    daemon.scan();
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"]["status"],
+        "manualOverride"
+    );
+    set_switching(&daemon, &alice, true);
+    assert_eq!(values(&daemon).0, Some(380));
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon).0, Some(380));
+    assert_eq!(status(&alice)["gpus"], json!([]));
+}
+
+#[test]
+fn adjusting_and_applying_a_profile_reserves_manual_precedence_before_saving_the_correction() {
+    let (daemon, alice) = linked_dota();
+    ok(alice.send_json(
+        json!({ "type": "import_profiles", "payload": { "profiles": [
+        { "id": "loud", "name": "Loud", "gpuId": LINKED,
+          "settings": { "powerLimitWatts": value(650) } }
+    ] } }),
+    ));
+    set_switching(&daemon, &alice, true);
+    let before = writes_to(&daemon, LINKED).len();
+    let applying = daemon.user(1000, "alice");
+    let gate = daemon.gpus.block(LINKED, Setter::PowerLimit);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.core().scan_running_games();
+    gate.wait_until_entered();
+    link(&alice, LINKED, Some("cool"));
+    let (sent, response) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        sent.send(
+            applying.send_json(json!({ "type": "correct_and_apply_profile", "payload": {
+            "profileId": "loud", "corrections": [{ "setting": "powerLimitWatts",
+                "savedValue": 650, "proposedValue": 600, "bound": "maximum" }]
+        } })),
+        )
+        .unwrap();
+    });
+    assert!(matches!(
+        response.recv_timeout(std::time::Duration::from_millis(200)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    gate.release();
+    let result = response
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(
+        result["payload"]["application"]["power"]["status"], "succeeded",
+        "{result}"
+    );
+    daemon.settle();
+    assert_eq!(
+        &writes_to(&daemon, LINKED)[before..],
+        &[
+            Setter::PowerLimit,
+            Setter::GraphicsOffset,
+            Setter::PowerLimit
+        ]
+    );
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), (Some(600), Some(150), Some(0)));
 }
 
 #[test]
@@ -1033,9 +1353,12 @@ fn returning_mid_game_reconciles_the_applied_settings_instead_of_later_saved_pro
     set_switching(&daemon, &alice, true);
     daemon.run_steam_game(123, 1000, 420, DOTA);
     daemon.scan();
-    ok(alice.send_json(
-        json!({ "type": "set_power_limit", "payload": { "gpuId": LINKED, "limitWatts": 380 } }),
-    ));
+    // Save fresh external readings without a manual tuning attempt: saving itself must
+    // neither reapply the profile nor establish a manual override. The GPU leaves before
+    // any automatic write can check these readings for an external change.
+    daemon
+        .gpus
+        .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(380));
     let revision =
         ok(alice.send_json(json!({ "type": "get_tuning_states" })))[0]["revision"].clone();
     ok(alice.send_json(json!({ "type": "save_to_current_profile", "payload": { "gpuId": LINKED, "revision": revision } })));
@@ -1072,4 +1395,53 @@ fn absence_is_remembered_while_recognition_is_unavailable_but_return_waits_for_a
     daemon.end_process(123);
     daemon.scan();
     assert_eq!(values(&daemon), PRE_GAME);
+}
+
+#[test]
+fn a_returning_gpu_keeps_manual_and_external_overrides_even_if_the_game_ended_while_absent() {
+    for external in [false, true] {
+        for ends_while_absent in [false, true] {
+            let (daemon, alice) = linked_dota();
+            set_switching(&daemon, &alice, true);
+            daemon.run_steam_game(123, 1000, 420, DOTA);
+            daemon.scan();
+            if external {
+                daemon
+                    .gpus
+                    .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(380));
+                link(&alice, LINKED, Some("cool"));
+                daemon.settle();
+            } else {
+                ok(alice.send_json(json!({ "type": "set_power_limit",
+                    "payload": { "gpuId": LINKED, "limitWatts": 380 } })));
+            }
+            assert_eq!(
+                status(&alice)["gpus"][0]["state"]["status"],
+                "manualOverride"
+            );
+            let mut returning = daemon.gpus.gpu(LINKED);
+            daemon.gpus.depart(LINKED);
+            daemon.scan();
+            if ends_while_absent {
+                daemon.end_process(123);
+                daemon.scan();
+            }
+            // The returning GPU may report reset controls; an override still forbids writes.
+            returning.power.current_limit_watts = Some(410);
+            let before = daemon.gpus.writes();
+            daemon.gpus.arrive(returning);
+            daemon.scan();
+            assert_eq!(daemon.gpus.writes(), before);
+            assert_eq!(values(&daemon).0, Some(410));
+            if !ends_while_absent {
+                assert_eq!(
+                    status(&alice)["gpus"][0]["state"]["status"],
+                    "manualOverride"
+                );
+                daemon.end_process(123);
+                daemon.scan();
+                assert_eq!(daemon.gpus.writes(), before);
+            }
+        }
+    }
 }

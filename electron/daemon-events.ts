@@ -190,6 +190,11 @@ function isGpuSwitchingState(value: unknown) {
         typeof value.profile.id === "string" &&
         typeof value.profile.name === "string"
       );
+    case "manualOverride":
+      return (
+        hasKeys(value, ["status", "changedOutsidePrism"]) &&
+        typeof value.changedOutsidePrism === "boolean"
+      );
     case "anotherUser":
       return hasKeys(value, ["status"]);
     case "failed":

@@ -368,6 +368,12 @@ impl DaemonCore {
         peer: &SessionPeer,
         request: CorrectAndApplyProfileRequest,
     ) -> Result<CorrectedProfileApplication, GpuCommandError> {
+        let target = self
+            .tuning_store
+            .read(|document| document.profile_of(peer, &request.profile_id))??;
+        // Corrections wait on the same queue before applying. Reserve precedence now, while
+        // recording the override only when apply_saved_profile starts the manual write.
+        let _pending = self.switching.manual_requested(&target.gpu_id);
         let peer_owned = peer.clone();
         let corrections = request.corrections;
         let backend = Arc::clone(&self.dependencies.backend);
@@ -405,7 +411,7 @@ impl DaemonCore {
         let stale = Arc::clone(&self.possibly_stale);
         let cooling = Arc::clone(&self.cooling);
         let peer = peer.clone();
-        self.tracked_write(&profile.gpu_id, move |backend| {
+        self.manual_write(&profile.gpu_id, move |backend| {
             // A profile can be deleted or edited while this application waits on the GPU's queue.
             let profile = store.read(|document| document.profile_of(&peer, &profile.id))??;
             Ok(apply_recorded_profile(
@@ -432,7 +438,7 @@ impl DaemonCore {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
         let cooling = Arc::clone(&self.cooling);
-        self.tracked_write(&request.gpu_id.clone(), move |backend| {
+        self.manual_write(&request.gpu_id.clone(), move |backend| {
             apply_recorded_profile(
                 backend,
                 &cooling,
@@ -457,7 +463,7 @@ impl DaemonCore {
     ) -> T {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
-        self.tracked_write(&gpu_id.clone(), move |backend| {
+        self.manual_write(&gpu_id.clone(), move |backend| {
             let (mut response, applied) = write(backend);
             if !applied.is_empty() {
                 if let Some(uuid) = uuid_of(&backend.performance(), &gpu_id) {
@@ -467,6 +473,18 @@ impl DaemonCore {
                 }
             }
             response
+        })
+    }
+
+    fn manual_write<T: Send + 'static>(
+        &self,
+        gpu_id: &str,
+        operation: impl FnOnce(&dyn DaemonBackend) -> T + Send + 'static,
+    ) -> T {
+        let pending = self.switching.manual_requested(gpu_id);
+        self.tracked_write(gpu_id, move |backend| {
+            pending.started();
+            operation(backend)
         })
     }
 
@@ -753,9 +771,13 @@ impl DaemonCore {
         let cooling = Arc::clone(&self.cooling);
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
+        let manual = !matches!(source, CoolingApplicationSource::NonManual);
+        let pending = manual.then(|| self.switching.manual_requested(&request.gpu_id));
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
             let uuid = request.gpu_id.clone();
-            let manual = !matches!(source, CoolingApplicationSource::NonManual);
+            if let Some(pending) = &pending {
+                pending.started();
+            }
             let mut response = cooling.apply(backend, request, source);
             if manual && response.outcome.status == TuningOutcomeStatus::Succeeded {
                 let mut gpu = verified_gpu(&backend.performance(), &uuid).ok().cloned();

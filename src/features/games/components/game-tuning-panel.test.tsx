@@ -279,3 +279,35 @@ it("shows each GPU's automatic switching status live, a header chip when it isn'
     expect(row).toHaveTextContent("Another user's game is running."),
   );
 });
+
+it("shows manual overrides and changes outside Prism in the GPU row and header chip", async () => {
+  const fake = createFakeDesktop();
+  const router = createMemoryRouter(appRoutes, {
+    initialEntries: ["/performance"],
+  });
+  renderWithQueryClient(<RouterProvider router={router} />);
+  const panel = await screen.findByRole("region", { name: "Game tuning" });
+  await findProfileControls();
+  const header = profileSelector().closest("summary")!;
+  for (const changedOutsidePrism of [false, true]) {
+    act(() =>
+      fake.pushSwitchingStatus({
+        condition: { status: "ready" },
+        gpus: [
+          {
+            gpuId: "GPU-123",
+            state: { status: "manualOverride", changedOutsidePrism },
+          },
+        ],
+      }),
+    );
+    const label = changedOutsidePrism
+      ? "Manual override · changed outside Prism"
+      : "Manual override";
+    await waitFor(() => expect(panel).toHaveTextContent(label));
+    expect(within(header).getByTestId("switching-chip")).toHaveTextContent(
+      label,
+    );
+    expect(profileSelector()).not.toHaveTextContent("auto ·");
+  }
+});
