@@ -35,6 +35,20 @@ impl Clock for SystemClock {
     }
 }
 
+/// The host's accounts, by uid.
+pub trait UserDirectory: Send + Sync {
+    /// The name of the account that currently has this uid, if any.
+    fn username(&self, uid: u32) -> Option<String>;
+}
+
+pub struct SystemUserDirectory;
+
+impl UserDirectory for SystemUserDirectory {
+    fn username(&self, uid: u32) -> Option<String> {
+        users::get_user_by_uid(uid).map(|user| user.name().to_string_lossy().into_owned())
+    }
+}
+
 /// Whether the host is shutting down, which is the only time a daemon stop counts as clean.
 pub trait HostShutdownSignal: Send + Sync {
     fn host_shutting_down(&self) -> bool;

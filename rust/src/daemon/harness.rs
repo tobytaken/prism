@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use super::migration::LEGACY_STATE_FILE_NAME;
 use super::{
     Clock, CoreDependencies, DaemonBackend, DaemonCore, DaemonSession, HostShutdownSignal,
-    SessionPeer, SessionPolicy,
+    SessionPeer, SessionPolicy, UserDirectory,
 };
 use crate::drivers::DriverService;
 use crate::gpu::{
@@ -316,6 +316,17 @@ impl HostShutdownSignal for FakeHostShutdown {
     }
 }
 
+/// The host's accounts: each uid has the username its latest session opened with, so opening a
+/// session under a new username renames the account.
+#[derive(Default)]
+struct FakeUsers(Mutex<HashMap<u32, String>>);
+
+impl UserDirectory for FakeUsers {
+    fn username(&self, uid: u32) -> Option<String> {
+        self.0.lock().unwrap().get(&uid).cloned()
+    }
+}
+
 pub struct Harness {
     pub gpus: Arc<FakeGpuBackend>,
     pub clock: Arc<FakeClock>,
@@ -323,6 +334,7 @@ pub struct Harness {
     persistent_dir: TempDir,
     boot_dir: TempDir,
     host_root: TempDir,
+    users: Arc<FakeUsers>,
     boot_id: String,
     boots: u32,
     core: Option<Arc<DaemonCore>>,
@@ -356,6 +368,7 @@ impl Harness {
             persistent_dir,
             boot_dir: tempfile::tempdir().unwrap(),
             host_root: tempfile::tempdir().unwrap(),
+            users: Arc::default(),
             boot_id: "boot-1".into(),
             boots: 1,
             core: None,
@@ -411,11 +424,14 @@ impl Harness {
             host_shutting_down: Arc::clone(&self.host_shutting_down) as Arc<dyn HostShutdownSignal>,
             socket_path: PathBuf::from("/tmp/prismd-test.sock"),
             host_root: self.host_root.path().to_path_buf(),
+            users: Arc::clone(&self.users) as Arc<dyn UserDirectory>,
         })));
     }
 
-    /// Opens a session as this user, who is admitted as an administrator.
+    /// Opens a session as this user, who is admitted as an administrator. The uid's account now
+    /// has this username.
     pub fn user(&self, uid: u32, username: &str) -> FakeSession {
+        self.users.0.lock().unwrap().insert(uid, username.into());
         let policy = SessionPolicy {
             admin_group: "admins".into(),
             admin_user: None,

@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use super::backend::DaemonBackend;
+use super::host::UserDirectory;
 use super::profiles::{reading, verified_gpu};
 use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
@@ -128,6 +129,7 @@ fn load(path: &Path, boot_id: &str) -> Result<Activations, String> {
 pub(super) struct Switching {
     store: Arc<TuningStore>,
     recognition: Arc<Mutex<Recognition>>,
+    users: Arc<dyn UserDirectory>,
     state: Arc<SwitchingState>,
 }
 
@@ -137,6 +139,7 @@ impl Switching {
         boot_id: &str,
         store: Arc<TuningStore>,
         recognition: Arc<Mutex<Recognition>>,
+        users: Arc<dyn UserDirectory>,
     ) -> Self {
         let path = boot_dir.join(SWITCHING_STATE_FILE_NAME);
         let activations = load(&path, boot_id).map_err(|error| {
@@ -149,6 +152,7 @@ impl Switching {
         Self {
             store,
             recognition,
+            users,
             state: Arc::new(SwitchingState {
                 path,
                 boot_id: boot_id.into(),
@@ -172,7 +176,7 @@ impl Switching {
         };
         let Ok(wanted) = self
             .store
-            .read(|document| winning_games(document, &running))
+            .read(|document| winning_games(document, &running, self.users.as_ref()))
         else {
             return vec![];
         };
@@ -211,7 +215,7 @@ impl Switching {
             return;
         };
         let activation = activations.remove(gpu_id);
-        let wanted = winning_games(&document, &running).remove(gpu_id);
+        let wanted = winning_games(&document, &running, self.users.as_ref()).remove(gpu_id);
         if wanted.as_ref() == activation.as_ref().and_then(|a| a.driving.as_ref()) {
             return;
         }
@@ -420,18 +424,31 @@ impl Switching {
 }
 
 /// Each GPU's winning game: of the running games linked to it by users who opted in, the most
-/// recently started, by its earliest process's start time, with ties to the lower pid.
+/// recently started, by its earliest process's start time, with ties to the lower pid. A uid's
+/// games belong only to the account that has that uid now, so a renamed account's earlier state
+/// stays orphaned.
 fn winning_games(
     document: &TuningDocument,
     running: &GamesByUser,
+    accounts: &dyn UserDirectory,
 ) -> BTreeMap<String, DrivingGame> {
     let mut wanted: BTreeMap<String, ((u64, Reverse<u32>), DrivingGame)> = BTreeMap::new();
+    let mut usernames = HashMap::new();
     let users = document
         .users
         .iter()
         .filter(|user| user.automatic_switching);
     for user in users {
-        for game in running.get(&user.uid).into_iter().flatten() {
+        let Some(games) = running.get(&user.uid) else {
+            continue;
+        };
+        let username = usernames
+            .entry(user.uid)
+            .or_insert_with(|| accounts.username(user.uid));
+        if username.as_deref() != Some(user.username.as_str()) {
+            continue;
+        }
+        for game in games {
             let Some(association) = user.games.iter().find(|linked| linked.game == game.game)
             else {
                 continue;

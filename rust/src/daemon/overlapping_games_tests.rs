@@ -20,7 +20,7 @@ fn ok(response: Value) -> Value {
 }
 
 /// GPU-A, whose ranges fit the example from #8: power 100–600 W, memory offset ±1000 MHz.
-fn harness() -> Harness {
+fn example_gpu() -> Harness {
     let mut gpu = tunable_gpu_with_id(GPU);
     gpu.power.min_limit_watts = Some(100);
     gpu.clocks.memory.min_offset_mhz = Some(-1000);
@@ -45,10 +45,15 @@ fn opted_in_user(
     for (app_id, _) in games {
         ok(session.send_json(json!({ "type": "add_steam_game", "payload": { "appId": app_id } })));
     }
-    ok(session
-        .send_json(json!({ "type": "set_automatic_switching", "payload": { "enabled": true } })));
-    daemon.settle();
+    set_switching(daemon, &session, true);
     session
+}
+
+fn set_switching(daemon: &Harness, session: &FakeSession, enabled: bool) {
+    ok(session.send_json(
+        json!({ "type": "set_automatic_switching", "payload": { "enabled": enabled } }),
+    ));
+    daemon.settle();
 }
 
 fn profile(id: &str, name: &str, settings: Value) -> Value {
@@ -125,9 +130,9 @@ fn last_applied(daemon: &Harness) -> Value {
 }
 
 #[test]
-fn overlapping_games_keep_the_original_baseline_and_never_write_graphics() {
+fn overlapping_games_keep_the_original_pre_game_values_and_never_write_graphics() {
     // Quiet (200 W, +0 memory) → A (300 W) → B (320 W, +500 memory) → B ends → A ends.
-    let daemon = harness();
+    let daemon = example_gpu();
     let alice = opted_in_user(
         &daemon,
         1000,
@@ -187,7 +192,7 @@ fn overlapping_games_keep_the_original_baseline_and_never_write_graphics() {
 /// Alice with Dota 2 linked to her Gaming profile, and Bob with Counter-Strike linked to his
 /// Competitive profile, both on GPU-A and both opted in. Alice's Daily is current.
 fn shared_gpu() -> (Harness, FakeSession, FakeSession) {
-    let daemon = harness();
+    let daemon = example_gpu();
     let alice = opted_in_user(
         &daemon,
         1000,
@@ -222,11 +227,11 @@ fn shared_gpu() -> (Harness, FakeSession, FakeSession) {
 }
 
 const PRE_GAME: (Option<u32>, Option<i32>, Option<i32>) = (Some(250), Some(120), Some(0));
-const ALICES: (Option<u32>, Option<i32>, Option<i32>) = (Some(350), Some(150), Some(0));
-const BOBS: (Option<u32>, Option<i32>, Option<i32>) = (Some(400), Some(120), Some(100));
+const GAMING: (Option<u32>, Option<i32>, Option<i32>) = (Some(350), Some(150), Some(0));
+const COMPETITIVE: (Option<u32>, Option<i32>, Option<i32>) = (Some(400), Some(120), Some(100));
 
 fn assert_alice_wins(daemon: &Harness, alice: &FakeSession, bob: &FakeSession) {
-    assert_eq!(values(daemon), ALICES);
+    assert_eq!(values(daemon), GAMING);
     assert_eq!(current_profile(alice), "Gaming");
     assert_eq!(
         gpu_status(alice),
@@ -236,7 +241,7 @@ fn assert_alice_wins(daemon: &Harness, alice: &FakeSession, bob: &FakeSession) {
 }
 
 fn assert_bob_wins(daemon: &Harness, alice: &FakeSession, bob: &FakeSession) {
-    assert_eq!(values(daemon), BOBS);
+    assert_eq!(values(daemon), COMPETITIVE);
     assert_eq!(current_profile(bob), "Competitive");
     assert_eq!(
         gpu_status(bob),
@@ -282,6 +287,14 @@ fn on_a_shared_gpu_the_most_recently_started_game_of_either_user_wins() {
     assert_restored(&daemon, &alice, &manual);
 }
 
+/// Restarts the daemon, runs its first scan and reconnects both users.
+fn restart(daemon: &mut Harness) -> (FakeSession, FakeSession) {
+    daemon.restart();
+    daemon.settle();
+    daemon.scan();
+    (daemon.user(1000, "alice"), daemon.user(1001, "bob"))
+}
+
 #[test]
 fn on_a_shared_gpu_the_most_recently_started_game_wins_across_daemon_restarts() {
     let (mut daemon, alice, bob) = shared_gpu();
@@ -293,22 +306,14 @@ fn on_a_shared_gpu_the_most_recently_started_game_wins_across_daemon_restarts() 
 
     // Bob starts his game while the daemon is down.
     daemon.run_steam_game(200, 1001, 2_000, CS);
-    daemon.restart();
-    daemon.settle();
-    daemon.scan();
-    let alice = daemon.user(1000, "alice");
-    let bob = daemon.user(1001, "bob");
+    let (alice, bob) = restart(&mut daemon);
     assert_bob_wins(&daemon, &alice, &bob);
     drop((alice, bob));
 
     // Another restart with both games still running writes nothing.
     let before = writes(&daemon);
-    daemon.restart();
-    daemon.settle();
-    daemon.scan();
+    let (alice, bob) = restart(&mut daemon);
     assert_eq!(writes(&daemon), before);
-    let alice = daemon.user(1000, "alice");
-    let bob = daemon.user(1001, "bob");
     assert_bob_wins(&daemon, &alice, &bob);
 
     daemon.end_process(200);
@@ -322,19 +327,16 @@ fn on_a_shared_gpu_the_most_recently_started_game_wins_across_daemon_restarts() 
 }
 
 #[test]
-fn an_older_game_becoming_eligible_later_doesnt_take_over() {
+fn enabling_switching_while_an_older_game_runs_keeps_the_newer_games_precedence() {
     let (daemon, alice, bob) = shared_gpu();
-    ok(alice
-        .send_json(json!({ "type": "set_automatic_switching", "payload": { "enabled": false } })));
+    set_switching(&daemon, &alice, false);
     daemon.run_steam_game(100, 1000, 1_000, DOTA);
     daemon.run_steam_game(200, 1001, 2_000, CS);
     daemon.scan();
-    assert_eq!(values(&daemon), BOBS);
+    assert_eq!(values(&daemon), COMPETITIVE);
 
     let before = writes(&daemon);
-    ok(alice
-        .send_json(json!({ "type": "set_automatic_switching", "payload": { "enabled": true } })));
-    daemon.settle();
+    set_switching(&daemon, &alice, true);
     daemon.scan();
     assert_eq!(writes(&daemon), before);
     assert_bob_wins(&daemon, &alice, &bob);
@@ -354,4 +356,31 @@ fn equal_start_times_are_broken_by_the_lower_pid() {
             assert_bob_wins(&daemon, &alice, &bob);
         }
     }
+}
+
+#[test]
+fn a_renamed_accounts_orphaned_links_never_drive_its_games() {
+    let (daemon, _alice, _bob) = shared_gpu();
+    // uid 1000 is renamed to alicia, a different user who inherits none of alice's links.
+    let alicia = opted_in_user(
+        &daemon,
+        1000,
+        "alicia",
+        json!([profile(
+            "tuned",
+            "Tuned",
+            json!({ "powerLimitWatts": value(300) })
+        )]),
+        &[(DOTA, "Dota 2")],
+    );
+    let before = writes(&daemon);
+    daemon.run_steam_game(100, 1000, 1_000, DOTA);
+    daemon.scan();
+    assert_eq!(writes(&daemon), before);
+    assert_eq!(values(&daemon), PRE_GAME);
+
+    link(&alicia, DOTA, "tuned");
+    daemon.settle();
+    assert_eq!(values(&daemon), (Some(300), Some(120), Some(0)));
+    assert_eq!(current_profile(&alicia), "Tuned");
 }

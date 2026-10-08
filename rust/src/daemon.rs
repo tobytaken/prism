@@ -63,7 +63,10 @@ use crate::protocol::{DaemonRequest, DaemonResponse, SessionMessage, SessionRequ
 
 pub use backend::{DaemonBackend, RealDaemonBackend};
 pub use daemon_core::{CoreDependencies, DaemonCore};
-pub use host::{read_boot_id, Clock, HostShutdownSignal, SystemClock, SystemdShutdownSignal};
+pub use host::{
+    read_boot_id, Clock, HostShutdownSignal, SystemClock, SystemUserDirectory,
+    SystemdShutdownSignal, UserDirectory,
+};
 pub use session::{DaemonSession, SessionPeer, SessionPolicy};
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/prism/prismd.sock";
@@ -123,6 +126,7 @@ pub fn run() -> Result<(), String> {
         host_shutting_down: Arc::new(SystemdShutdownSignal),
         socket_path: paths.socket_path.clone(),
         host_root: PathBuf::from("/"),
+        users: Arc::new(SystemUserDirectory),
     });
 
     let core = Arc::new(core);
