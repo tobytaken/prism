@@ -518,6 +518,7 @@ impl DaemonCore {
             &dependencies.boot_dir,
             &dependencies.boot_id,
             Arc::clone(&tuning_store),
+            Arc::clone(&cooling),
             Arc::clone(&recognition),
             Arc::clone(&dependencies.users),
         );

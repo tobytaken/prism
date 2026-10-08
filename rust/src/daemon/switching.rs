@@ -13,12 +13,14 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use super::backend::DaemonBackend;
+use super::cooling::CoolingController;
 use super::host::UserDirectory;
-use super::profiles::{reading, verified_gpu};
+use super::profiles::{capture_cooling, reading, verified_gpu};
 use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
 use super::tuning::apply_unreviewed_profile;
 use super::tuning_store::{write_atomically, TuningDocument, TuningStore};
+use crate::cooling::CoolingConfiguration;
 use crate::protocol::{
     ApplyGpuProfileRequest, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
     GpuSwitchingState, GpuSwitchingStatus, ProfileSetting, ProfileSettingKey, ProfileSettings,
@@ -26,7 +28,9 @@ use crate::protocol::{
 };
 
 pub(super) const SWITCHING_STATE_FILE_NAME: &str = "switching-state.json";
-const SCHEMA_VERSION: u64 = 1;
+// Version 1 has numeric baselines only. Preserve and reject older files for this boot rather
+// than discard restoration state on upgrade; a normal reboot clears this boot-scoped file.
+const SCHEMA_VERSION: u64 = 2;
 
 /// The user's running game, with its linked profile, that automatic switching puts into effect
 /// on a GPU.
@@ -48,6 +52,8 @@ struct Activation {
     /// The pre-game tuning values: the actual value of each setting automation wrote, captured
     /// when it first wrote that setting.
     baseline: BTreeMap<ProfileSettingKey, i64>,
+    /// The complete cooling configuration, never a curve's sampled output.
+    cooling_baseline: Option<CoolingConfiguration>,
     /// The current profile before automation, which returns after full restoration.
     previous_profile: Option<String>,
     /// Why the latest automatic application or restoration didn't complete. It isn't retried
@@ -128,6 +134,7 @@ fn load(path: &Path, boot_id: &str) -> Result<Activations, String> {
 #[derive(Clone)]
 pub(super) struct Switching {
     store: Arc<TuningStore>,
+    cooling: Arc<CoolingController>,
     recognition: Arc<Mutex<Recognition>>,
     users: Arc<dyn UserDirectory>,
     state: Arc<SwitchingState>,
@@ -138,6 +145,7 @@ impl Switching {
         boot_dir: &Path,
         boot_id: &str,
         store: Arc<TuningStore>,
+        cooling: Arc<CoolingController>,
         recognition: Arc<Mutex<Recognition>>,
         users: Arc<dyn UserDirectory>,
     ) -> Self {
@@ -151,6 +159,7 @@ impl Switching {
         });
         Self {
             store,
+            cooling,
             recognition,
             users,
             state: Arc::new(SwitchingState {
@@ -246,10 +255,6 @@ impl Switching {
             .settings;
         activation.driving = Some(game.clone());
         activation.failure = None;
-        // Cooling lifecycle wiring belongs to #41–48. Do not silently apply only a subset.
-        if profile.cooling.is_some() {
-            return self.abandon(gpu_id, activation, &[], "Automatic switching of cooling profiles is not available yet.".into());
-        }
         let readings = backend.performance();
         let Ok(gpu) = verified_gpu(&readings, gpu_id) else {
             return self.abandon(gpu_id, activation, &[], UNAVAILABLE_APPLY.into());
@@ -272,7 +277,25 @@ impl Switching {
             activation.baseline.insert(key, current);
             captured.push(key);
         }
+        let captured_cooling = profile.cooling.is_some() && activation.cooling_baseline.is_none();
+        if captured_cooling {
+            let mut gpu = gpu.clone();
+            gpu.cooling.control = Some(self.cooling.control(gpu_id));
+            match capture_cooling(&gpu) {
+                Ok(Some(configuration)) => activation.cooling_baseline = Some(configuration),
+                _ => return self.abandon(
+                    gpu_id,
+                    activation,
+                    &captured,
+                    "Cooling: the pre-game configuration can't be read, so nothing was applied."
+                        .into(),
+                ),
+            }
+        }
         if let Err(error) = self.state.set(gpu_id, Some(activation.clone())) {
+            if captured_cooling {
+                activation.cooling_baseline = None;
+            }
             let failure = format!(
                 "The pre-game values couldn't be recorded, so nothing was applied: {error}"
             );
@@ -281,6 +304,10 @@ impl Switching {
         // Settings an earlier game profile wrote that this one omits return to their pre-game
         // values.
         let mut settings = profile.clone();
+        let returning_cooling = profile.cooling.is_none() && activation.cooling_baseline.is_some();
+        if returning_cooling {
+            settings.cooling = activation.cooling_baseline.clone();
+        }
         let returning: Vec<_> = activation
             .baseline
             .iter()
@@ -290,8 +317,8 @@ impl Switching {
         for (key, value) in &returning {
             settings.set(*key, ProfileSetting::Value { value: *value });
         }
-        let outcomes = write_settings(backend, gpu_id, settings);
-        for (key, outcome) in &outcomes {
+        let outcomes = write_settings(backend, &self.cooling, gpu_id, settings);
+        for (key, outcome) in &outcomes.numeric {
             // A setting that was never attempted keeps no pre-game value, so it isn't restored.
             let unwritten =
                 captured.contains(key) && outcome.status == TuningOutcomeStatus::Unattempted;
@@ -301,13 +328,24 @@ impl Switching {
                 activation.baseline.remove(key);
             }
         }
-        let full = outcomes.iter().all(|(_, outcome)| succeeded(outcome));
+        if captured_cooling
+            && outcomes
+                .cooling
+                .as_ref()
+                .is_some_and(|outcome| outcome.status == TuningOutcomeStatus::Unattempted)
+        {
+            activation.cooling_baseline = None;
+        }
+        if returning_cooling && outcomes.cooling.as_ref().is_some_and(succeeded) {
+            activation.cooling_baseline = None;
+        }
+        let full = outcomes.iter().all(succeeded);
         if !full {
             activation.failure = Some(failure_message(&outcomes));
         }
         // A fully applied game profile becomes current; a partly applied one leaves no
         // current profile. Neither is recorded as last applied tuning values.
-        if outcomes.iter().any(|(_, outcome)| succeeded(outcome)) {
+        if outcomes.iter().any(succeeded) {
             self.set_current_profile(gpu_id, full.then_some(game.profile_id));
         }
         self.record(gpu_id, Some(activation));
@@ -316,24 +354,30 @@ impl Switching {
     fn restore(&self, backend: &dyn DaemonBackend, gpu_id: &str, mut activation: Activation) {
         activation.driving = None;
         activation.failure = None;
-        if !activation.baseline.is_empty() {
+        if !activation.baseline.is_empty() || activation.cooling_baseline.is_some() {
             let readings = backend.performance();
             if verified_gpu(&readings, gpu_id).is_err() {
                 return self.abandon(gpu_id, activation, &[], UNAVAILABLE_RESTORE.into());
             }
-            let mut settings = ProfileSettings::default();
+            let mut settings = ProfileSettings {
+                cooling: activation.cooling_baseline.clone(),
+                ..ProfileSettings::default()
+            };
             for (key, value) in &activation.baseline {
                 settings.set(*key, ProfileSetting::Value { value: *value });
             }
-            let outcomes = write_settings(backend, gpu_id, settings);
-            for (key, outcome) in &outcomes {
+            let outcomes = write_settings(backend, &self.cooling, gpu_id, settings);
+            for (key, outcome) in &outcomes.numeric {
                 if succeeded(outcome) {
                     activation.baseline.remove(key);
                 }
             }
-            if !activation.baseline.is_empty() {
+            if outcomes.cooling.as_ref().is_some_and(succeeded) {
+                activation.cooling_baseline = None;
+            }
+            if !activation.baseline.is_empty() || activation.cooling_baseline.is_some() {
                 // Partly restored, no profile describes the GPU.
-                if outcomes.iter().any(|(_, outcome)| succeeded(outcome)) {
+                if outcomes.iter().any(succeeded) {
                     self.set_current_profile(gpu_id, None);
                 }
                 return self.abandon(gpu_id, activation, &[], failure_message(&outcomes));
@@ -494,35 +538,54 @@ const UNAVAILABLE_RESTORE: &str = "The GPU is unavailable or its identity can't 
 /// each included setting's outcome.
 fn write_settings(
     backend: &dyn DaemonBackend,
+    cooling: &CoolingController,
     gpu_id: &str,
     settings: ProfileSettings,
-) -> Vec<(ProfileSettingKey, TuningOutcome)> {
+) -> SettingOutcomes {
     let application = apply_unreviewed_profile(
         backend,
-        None,
+        Some(cooling),
         ApplyGpuProfileRequest {
             gpu_id: gpu_id.into(),
             settings,
         },
     );
-    [
+    let numeric = [
         (ProfileSettingKey::PowerLimitWatts, application.power),
         (ProfileSettingKey::GraphicsOffsetMhz, application.graphics),
         (ProfileSettingKey::MemoryOffsetMhz, application.memory),
     ]
     .into_iter()
     .filter_map(|(key, outcome)| Some((key, outcome?)))
-    .collect()
+    .collect();
+    SettingOutcomes {
+        numeric,
+        cooling: application.cooling.map(|application| application.outcome),
+    }
+}
+
+struct SettingOutcomes {
+    numeric: Vec<(ProfileSettingKey, TuningOutcome)>,
+    cooling: Option<TuningOutcome>,
+}
+
+impl SettingOutcomes {
+    fn iter(&self) -> impl Iterator<Item = &TuningOutcome> {
+        self.numeric
+            .iter()
+            .map(|(_, outcome)| outcome)
+            .chain(self.cooling.iter())
+    }
 }
 
 fn succeeded(outcome: &TuningOutcome) -> bool {
     outcome.status == TuningOutcomeStatus::Succeeded
 }
 
-fn failure_message(outcomes: &[(ProfileSettingKey, TuningOutcome)]) -> String {
+fn failure_message(outcomes: &SettingOutcomes) -> String {
     outcomes
         .iter()
-        .filter_map(|(_, outcome)| outcome.error.clone())
+        .filter_map(|outcome| outcome.error.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>()

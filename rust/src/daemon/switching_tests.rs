@@ -424,3 +424,254 @@ fn a_partial_restoration_leaves_no_current_profile_and_reports_the_failure() {
     daemon.scan();
     assert_eq!(writes_to(&daemon, LINKED), before);
 }
+
+fn shared_curve() -> Value {
+    json!({ "arrangement": "shared", "setting": { "mode": "curve", "points": [
+        { "temperatureC": 40, "speedPercent": 30 },
+        { "temperatureC": 80, "speedPercent": 100 }
+    ] } })
+}
+
+fn separate_cooling() -> Value {
+    json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 0, "setting": shared_curve()["setting"] },
+        { "fanIndex": 1, "setting": { "mode": "fixed", "speedPercent": 55 } }
+    ] })
+}
+
+fn apply_cooling(session: &FakeSession, configuration: Value) {
+    let result = ok(
+        session.send_json(json!({ "type": "apply_cooling", "payload": {
+        "gpuId": LINKED, "configuration": configuration
+    } })),
+    );
+    assert_eq!(result["outcome"]["status"], "succeeded", "{result}");
+}
+
+fn cooling(session: &FakeSession) -> Value {
+    ok(session.send_json(json!({ "type": "get_performance" })))["gpus"][0]["cooling"]["control"]
+        .clone()
+}
+
+fn cooled_dota() -> (Harness, FakeSession) {
+    let (daemon, alice) = linked_dota();
+    daemon.gpus.update(LINKED, |gpu| {
+        gpu.cooling = super::harness::cooled_gpu().cooling;
+        gpu.telemetry.temperature_c = Some(40);
+    });
+    ok(alice.send_json(
+        json!({ "type": "import_profiles", "payload": { "profiles": [
+        { "id": "fans", "name": "Fans", "gpuId": LINKED,
+          "settings": { "powerLimitWatts": value(330), "cooling": shared_curve() } }
+    ] } }),
+    ));
+    link(&alice, LINKED, Some("fans"));
+    (daemon, alice)
+}
+
+#[test]
+fn a_game_restores_an_unsaved_curve_and_fan_arrangement_at_the_new_temperature() {
+    let (daemon, alice) = cooled_dota();
+    daemon.set_temperature(LINKED, Some(40));
+    apply_cooling(&alice, separate_cooling());
+    let manual = last_applied(&daemon);
+    let remembered = cooling(&alice)["rememberedCurve"].clone();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"], shared_curve());
+    assert_eq!(current_profile(&alice, LINKED)["id"], "fans");
+    assert_eq!(last_applied(&daemon), manual);
+
+    daemon.set_temperature(LINKED, Some(80));
+    daemon.run_curves_for(500);
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[1].current_speed_percent,
+        Some(100)
+    );
+    assert_eq!(last_applied(&daemon), manual);
+    daemon.set_temperature(LINKED, Some(60));
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    let fans = daemon.gpus.gpu(LINKED).cooling.fans;
+    assert_eq!(fans[0].current_speed_percent, Some(65));
+    assert_eq!(fans[1].current_speed_percent, Some(55));
+    assert_eq!(last_applied(&daemon), manual);
+    assert_eq!(cooling(&alice)["rememberedCurve"], remembered);
+    assert_eq!(current_profile(&alice, LINKED)["id"], "daily");
+}
+
+#[test]
+fn relinking_to_a_profile_without_cooling_returns_the_pre_game_configuration_immediately() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"], shared_curve());
+
+    daemon.set_temperature(LINKED, Some(60));
+    link(&alice, LINKED, Some("cool"));
+    daemon.settle();
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+    assert_eq!(current_profile(&alice, LINKED)["id"], "cool");
+    let revision = cooling(&alice)["revision"].clone();
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(
+        cooling(&alice)["revision"],
+        revision,
+        "cooling was already restored"
+    );
+}
+
+#[test]
+fn cooling_is_untouched_when_omitted_and_captured_only_when_automation_first_writes_it() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, shared_curve());
+    link(&alice, LINKED, Some("gaming"));
+    set_switching(&daemon, &alice, true);
+    let before = cooling(&alice);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(cooling(&alice), before);
+    daemon.set_temperature(LINKED, Some(60));
+    daemon.run_curves_for(500);
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["revision"], before["revision"]);
+    assert_eq!(cooling(&alice)["applied"], shared_curve());
+
+    daemon.run_steam_game(124, 1000, 800, DOTA);
+    daemon.scan();
+    // No automatic cooling write yet: this later manual arrangement is the baseline.
+    apply_cooling(&alice, separate_cooling());
+    link(&alice, LINKED, Some("fans"));
+    daemon.settle();
+    assert_eq!(cooling(&alice)["applied"], shared_curve());
+    daemon.end_process(124);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+}
+
+#[test]
+fn version_one_switching_state_is_preserved_and_blocks_automatic_writes() {
+    let (mut daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    drop(alice);
+    daemon.stop_daemon();
+    let path = daemon.boot_path(super::switching::SWITCHING_STATE_FILE_NAME);
+    let old = serde_json::to_vec(&json!({
+        "schemaVersion": 1, "bootId": "boot-1", "activations": {
+            "GPU-A": {
+                "driving": { "uid": 1000, "username": "alice", "game": { "kind": "steam", "appId": DOTA }, "profileId": "gaming" },
+                "baseline": { "powerLimitWatts": 400 },
+                "previousProfile": "daily", "failure": null
+            }
+        }
+    })).unwrap();
+    std::fs::write(&path, &old).unwrap();
+    let before = daemon.gpus.writes();
+    daemon.start_daemon();
+    daemon.settle();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(status(&alice)["condition"]["status"], "blocked");
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(std::fs::read(&path).unwrap(), old);
+
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(std::fs::read(&path).unwrap(), old);
+}
+
+#[test]
+fn invalid_cooling_blocks_the_whole_game_profile_without_clamping_or_later_restoring_it() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    daemon.gpus.update(LINKED, |gpu| {
+        gpu.cooling.max_operating_temperature_c = Some(75);
+    });
+    set_switching(&daemon, &alice, true);
+    let before = daemon.gpus.writes();
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+    assert_eq!(current_profile(&alice, LINKED)["id"], "daily");
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+}
+
+#[test]
+fn cooling_only_profiles_restore_automatic_fixed_and_shared_curve_configurations() {
+    for baseline in [
+        json!({ "arrangement": "shared", "setting": { "mode": "automatic" } }),
+        json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 47 } }),
+        shared_curve(),
+    ] {
+        let (daemon, alice) = cooled_dota();
+        apply_cooling(&alice, baseline.clone());
+        ok(alice.send_json(
+            json!({ "type": "import_profiles", "payload": { "profiles": [
+            { "id": "only-fans", "name": "Only fans", "gpuId": LINKED,
+              "settings": { "cooling": separate_cooling() } }
+        ] } }),
+        ));
+        link(&alice, LINKED, Some("only-fans"));
+        set_switching(&daemon, &alice, true);
+        daemon.run_steam_game(123, 1000, 420, DOTA);
+        daemon.scan();
+        assert_eq!(cooling(&alice)["applied"], separate_cooling());
+        assert_eq!(current_profile(&alice, LINKED)["id"], "only-fans");
+        daemon.end_process(123);
+        daemon.scan();
+        assert_eq!(cooling(&alice)["applied"], baseline);
+        assert_eq!(current_profile(&alice, LINKED)["id"], "daily");
+    }
+}
+
+#[test]
+fn a_cooling_failure_does_not_mark_a_partly_applied_game_profile_as_current() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    let manual = last_applied(&daemon);
+    daemon
+        .gpus
+        .fail(LINKED, Setter::FanSpeed, "Fan command failed.");
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon).0, Some(330));
+    assert_eq!(current_profile(&alice, LINKED), Value::Null);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+    assert_eq!(last_applied(&daemon), manual);
+}
+
+#[test]
+fn unreadable_pre_game_cooling_prevents_any_profile_write() {
+    let (daemon, alice) = cooled_dota();
+    // A manual mode reported without a known configured target is not a restorable baseline.
+    daemon.gpus.update(LINKED, |gpu| {
+        gpu.cooling.fans[0].mode = Some(crate::gpu::FanControlMode::Manual);
+    });
+    set_switching(&daemon, &alice, true);
+    let before = daemon.gpus.writes();
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+}
