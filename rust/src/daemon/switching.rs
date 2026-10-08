@@ -47,6 +47,13 @@ struct DrivingGame {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Activation {
+    /// Observed absence survives a daemon restart, so return reconciles even the same game.
+    #[serde(default)]
+    gpu_absent: bool,
+    /// The successful application, including the controller's full cooling configuration.
+    /// Returning hardware reconciles this snapshot, not edits to the saved profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    applied_settings: Option<ProfileSettings>,
     /// The game automation last put, or tried to put, into effect; none once it restores.
     driving: Option<DrivingGame>,
     /// The pre-game tuning values: the actual value of each setting automation wrote, captured
@@ -221,7 +228,7 @@ impl Switching {
     /// GPUs whose winning game differs from the one automation last put into effect, each claimed
     /// for one queued reconciliation. Nothing changes while recognition is unavailable or the
     /// tuning store is unhealthy.
-    pub fn claim_unsettled(&self) -> Vec<String> {
+    pub fn claim_unsettled(&self, backend: &dyn DaemonBackend) -> Vec<String> {
         let Ok(running) = self.running() else {
             return vec![];
         };
@@ -235,11 +242,14 @@ impl Switching {
             return vec![];
         };
         let mut queued = self.state.queued.lock().unwrap();
+        let readings = backend.performance();
         wanted
             .keys()
             .chain(activations.keys())
             .filter(|gpu_id| {
-                wanted.get(*gpu_id)
+                activations.get(*gpu_id).is_some_and(|activation| {
+                    activation.gpu_absent != verified_gpu(&readings, gpu_id).is_err()
+                }) || wanted.get(*gpu_id)
                     != activations
                         .get(*gpu_id)
                         .and_then(|activation| activation.driving.as_ref())
@@ -259,11 +269,6 @@ impl Switching {
     /// from the latest scan and saved state. Runs on the GPU's queue.
     pub fn reconcile(&self, backend: &dyn DaemonBackend, gpu_id: &str) {
         self.state.queued.lock().unwrap().remove(gpu_id);
-        // Absence is temporary within a boot. Keep the last driving game and its baseline
-        // until this UUID can be reconciled; a device in its old slot owns none of that state.
-        if verified_gpu(&backend.performance(), gpu_id).is_err() {
-            return;
-        }
         let Ok(running) = self.running() else {
             return;
         };
@@ -275,8 +280,28 @@ impl Switching {
         };
         let activation = activations.remove(gpu_id);
         let wanted = winning_games(&document, &running, self.users.as_ref()).remove(gpu_id);
-        if wanted.as_ref() == activation.as_ref().and_then(|a| a.driving.as_ref()) {
+        // Absence is temporary within a boot. Keep the last driving game and its baseline
+        // until this UUID can be reconciled; a device in its old slot owns none of that state.
+        if verified_gpu(&backend.performance(), gpu_id).is_err() {
+            if let Some(mut activation) = activation.filter(|a| !a.gpu_absent) {
+                activation.gpu_absent = true;
+                self.record(gpu_id, Some(activation));
+            }
             return;
+        }
+        let returning = activation.as_ref().is_some_and(|a| a.gpu_absent);
+        let same_game = wanted.as_ref() == activation.as_ref().and_then(|a| a.driving.as_ref());
+        if same_game && !returning {
+            return;
+        }
+        if returning {
+            self.cooling.resume_interrupted(backend, gpu_id);
+            if same_game && activation.as_ref().is_some_and(|a| a.failure.is_some()) {
+                let mut activation = activation.unwrap();
+                activation.gpu_absent = false;
+                self.record(gpu_id, Some(activation));
+                return;
+            }
         }
         match (wanted, activation) {
             (Some(game), activation) => {
@@ -299,16 +324,29 @@ impl Switching {
         game: DrivingGame,
         mut activation: Activation,
     ) {
-        let profile = &document
-            .any_profile(&game.profile_id)
-            .expect("only an existing profile wins")
-            .settings;
-        activation.driving = Some(game.clone());
-        activation.failure = None;
+        let profile = if activation.gpu_absent && activation.driving.as_ref() == Some(&game) {
+            let Some(settings) = activation.applied_settings.clone() else {
+                activation.gpu_absent = false;
+                return self.abandon(gpu_id, activation, &[],
+                    "The previously applied game settings can't be read. The returning GPU was left unchanged.".into());
+            };
+            settings
+        } else {
+            document
+                .any_profile(&game.profile_id)
+                .expect("only an existing profile wins")
+                .settings
+                .clone()
+        };
         let readings = backend.performance();
         let Ok(gpu) = verified_gpu(&readings, gpu_id) else {
-            return self.abandon(gpu_id, activation, &[], UNAVAILABLE_APPLY.into());
+            return;
         };
+        activation.driving = Some(game.clone());
+        activation.failure = None;
+        let returning_gpu = activation.gpu_absent;
+        activation.gpu_absent = false;
+        activation.applied_settings = None;
         // Each setting's pre-game value is captured before automation first writes it, and
         // recorded before any write.
         let mut captured = vec![];
@@ -376,7 +414,8 @@ impl Switching {
             &self.cooling,
             gpu_id,
             settings,
-            returning_cooling.then_some(&activation.cooling_baseline_fans),
+            (returning_cooling || (returning_gpu && profile.cooling.is_some()))
+                .then_some(&activation.cooling_baseline_fans),
         );
         for (key, outcome) in &outcomes.numeric {
             // A setting that was never attempted keeps no pre-game value, so it isn't restored.
@@ -400,6 +439,13 @@ impl Switching {
             activation.cooling_baseline = None;
         }
         let full = outcomes.iter().all(succeeded);
+        if full {
+            let mut applied = profile.clone();
+            if applied.cooling.is_some() {
+                applied.cooling = self.cooling.control(gpu_id).applied;
+            }
+            activation.applied_settings = Some(applied);
+        }
         if !full {
             activation.failure = Some(failure_message(&outcomes));
         }
@@ -412,12 +458,15 @@ impl Switching {
     }
 
     fn restore(&self, backend: &dyn DaemonBackend, gpu_id: &str, mut activation: Activation) {
+        activation.gpu_absent = false;
         activation.driving = None;
         activation.failure = None;
         if !activation.baseline.is_empty() || activation.cooling_baseline.is_some() {
             let readings = backend.performance();
             if verified_gpu(&readings, gpu_id).is_err() {
-                return self.abandon(gpu_id, activation, &[], UNAVAILABLE_RESTORE.into());
+                // It may have disappeared since reconciliation's first reading. The saved
+                // activation still holds its driving game, so its return will be retried.
+                return;
             }
             let mut settings = ProfileSettings {
                 cooling: activation.cooling_baseline.clone(),
@@ -598,11 +647,6 @@ fn winning_games(
         .map(|(gpu_id, (_, winner))| (gpu_id, winner))
         .collect()
 }
-
-const UNAVAILABLE_APPLY: &str =
-    "The GPU is unavailable or its identity can't be verified, so nothing was applied.";
-const UNAVAILABLE_RESTORE: &str = "The GPU is unavailable or its identity can't be verified, so \
-    its pre-game values weren't restored.";
 
 /// Validates every setting and writes them all or none, never clamping, as startup does. Returns
 /// each included setting's outcome.

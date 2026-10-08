@@ -775,8 +775,6 @@ fn a_returning_gpu_resumes_its_game_curve_then_restores_its_complete_cooling_bas
     let mut returning = daemon.gpus.gpu(LINKED);
     daemon.gpus.depart(LINKED);
     daemon.run_curves_for(500);
-    // Wait for the absent GPU's already queued work too.
-    daemon.core().queues.submit(LINKED, || ()).wait();
     returning.bus_id = Some("0000:08:00.0".into());
     returning.telemetry.temperature_c = Some(80);
     daemon.gpus.arrive(returning);
@@ -975,7 +973,6 @@ fn a_shared_cooling_baseline_is_not_restored_onto_changed_fans_when_the_gpu_retu
     daemon.gpus.depart(LINKED);
     daemon.end_process(123);
     daemon.scan();
-    daemon.core().queues.submit(LINKED, || ()).wait();
     returning.cooling.fans.pop();
     returning.cooling.fan_count = 1;
     daemon.gpus.arrive(returning);
@@ -983,4 +980,73 @@ fn a_shared_cooling_baseline_is_not_restored_onto_changed_fans_when_the_gpu_retu
     daemon.scan();
     assert_eq!(daemon.gpus.writes(), before);
     assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+}
+
+#[test]
+fn the_same_running_game_reconciles_reset_controls_when_its_gpu_returns() {
+    let (mut daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    let fixed =
+        json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 55 } });
+    ok(alice.send_json(
+        json!({ "type": "import_profiles", "payload": { "profiles": [
+        { "id": "fixed", "name": "Fixed", "gpuId": LINKED, "settings": {
+            "powerLimitWatts": value(330), "cooling": fixed
+        } }
+    ] } }),
+    ));
+    link(&alice, LINKED, Some("fixed"));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let mut returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    drop(alice);
+    // Observed absence must survive a daemon restart as well.
+    daemon.restart();
+    daemon.settle();
+    returning.power.current_limit_watts = Some(575);
+    returning.cooling = super::harness::cooled_gpu().cooling;
+    returning.bus_id = Some("0000:08:00.0".into());
+    daemon.gpus.arrive(returning);
+    daemon.scan();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(values(&daemon).0, Some(330));
+    assert_eq!(cooling(&alice)["applied"], fixed);
+    assert!(daemon
+        .gpus
+        .gpu(LINKED)
+        .cooling
+        .fans
+        .iter()
+        .all(|fan| fan.current_speed_percent == Some(55)));
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+}
+
+#[test]
+fn returning_mid_game_reconciles_the_applied_settings_instead_of_later_saved_profile_edits() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    ok(alice.send_json(
+        json!({ "type": "set_power_limit", "payload": { "gpuId": LINKED, "limitWatts": 380 } }),
+    ));
+    let revision =
+        ok(alice.send_json(json!({ "type": "get_tuning_states" })))[0]["revision"].clone();
+    ok(alice.send_json(json!({ "type": "save_to_current_profile", "payload": { "gpuId": LINKED, "revision": revision } })));
+    let mut returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    returning.power.current_limit_watts = Some(575);
+    daemon.gpus.arrive(returning);
+    daemon.scan();
+    assert_eq!(values(&daemon), GAMING);
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
 }

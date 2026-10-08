@@ -25,6 +25,15 @@ impl Default for GpuOperationQueues {
 }
 
 impl GpuOperationQueues {
+    /// Waits for already queued work, including work for GPUs that have left the inventory.
+    #[cfg(test)]
+    pub fn settle(&self) {
+        let ids: Vec<_> = lock(&self.workers).keys().cloned().collect();
+        for id in ids {
+            self.submit(&id, || ()).wait();
+        }
+    }
+
     fn with_idle_lifetime(idle_lifetime: Duration) -> Self {
         Self {
             workers: Arc::default(),
