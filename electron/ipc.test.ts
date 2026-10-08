@@ -18,6 +18,7 @@ import correctedProfileApplication from "@/test/contracts/corrected-profile-appl
 import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
 import gpuTuningStates from "@/test/contracts/gpu-tuning-states.json";
 import gamesState from "@/test/contracts/games-state.json";
+import fanCurvePreview from "@/test/contracts/fan-curve-preview.json";
 import { connectedDaemonStatus } from "@/test/gpu-fixtures";
 import { registerIpc } from "./ipc";
 
@@ -1196,6 +1197,62 @@ describe("registerIpc", () => {
 
     dispose();
     expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards a fan curve preview to the backend and returns the daemon's problems", async () => {
+    const child = createBackendChild((method: string, params: unknown) =>
+      method === "gpu.previewFanCurve" ? fanCurvePreview.preview : params,
+    );
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      expect(
+        await callHandler(
+          "prism:gpu:previewFanCurve",
+          trustedEvent(),
+          fanCurvePreview.request,
+        ),
+      ).toEqual(fanCurvePreview.preview);
+      const sent = JSON.parse(child.stdin.write.mock.lastCall![0] as string);
+      expect(sent).toMatchObject({
+        method: "gpu.previewFanCurve",
+        params: fanCurvePreview.request,
+      });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("rejects malformed or untrusted fan curve previews before the backend", async () => {
+    const child = createBackendChild();
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    const point = { temperatureC: 45, speedPercent: 20 };
+    try {
+      for (const payload of [
+        null,
+        { gpuId: "GPU-123" },
+        { gpuId: 123, points: [point] },
+        { gpuId: "GPU-123", points: point },
+        { gpuId: "GPU-123", points: [{ ...point, temperatureC: 45.5 }] },
+        { gpuId: "GPU-123", points: [{ ...point, speedPercent: "20" }] },
+        { gpuId: "GPU-123", points: [{ temperatureC: 45 }] },
+        { gpuId: "GPU-123", points: [{ ...point, mode: "fixed" }] },
+        { gpuId: "GPU-123", points: [point], apply: true },
+      ])
+        await expect(
+          callHandler("prism:gpu:previewFanCurve", trustedEvent(), payload),
+        ).rejects.toThrow("Invalid previewFanCurve payload");
+      await expect(
+        callHandler("prism:gpu:previewFanCurve", untrustedEvent(), {
+          gpuId: "GPU-123",
+          points: [point],
+        }),
+      ).rejects.toThrow("Untrusted IPC sender");
+      expect(child.stdin.write).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
   });
 
   it("passes valid driver payloads to the backend", async () => {

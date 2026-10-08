@@ -33,6 +33,8 @@ import type {
   StartupState,
   MigrationState,
   SetStartupProfileRequest,
+  FanCurvePreview,
+  PreviewFanCurveRequest,
 } from "@/features/gpus/types";
 import type {
   AddSteamGameRequest,
@@ -192,6 +194,11 @@ const prismApi = {
         gpuId,
         fanIndex,
       }) as Promise<GpuCommandResponse>,
+    previewFanCurve: (request: PreviewFanCurveRequest) =>
+      ipcRenderer.invoke(
+        "prism:gpu:previewFanCurve",
+        request,
+      ) as Promise<FanCurvePreview>,
     setClockOffsets: (
       gpuId: string,
       graphicsOffsetMHz: OffsetInstruction,

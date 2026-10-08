@@ -158,6 +158,21 @@ export function createPerformanceGpu(
             mode: "auto",
           },
         ],
+        maxOperatingTemperatureC: 90,
+        maxOperatingTemperatureReason: null,
+        curveSupport: {
+          status: "available",
+          maxOperatingTemperatureC: 90,
+          fullSpeedTemperatureC: 85,
+          minSpeedPercent: 30,
+          maxSpeedPercent: 100,
+          starter: [
+            { temperatureC: 45, speedPercent: 30 },
+            { temperatureC: 65, speedPercent: 65 },
+            { temperatureC: 75, speedPercent: 83 },
+            { temperatureC: 85, speedPercent: 100 },
+          ],
+        },
       },
       clocks: {
         graphics: {

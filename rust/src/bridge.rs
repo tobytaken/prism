@@ -9,6 +9,7 @@ use crate::drivers::{
     collect_driver_status, DriverJob, DriverJobRequest, DriverStatusResponse,
     StartDriverActionRequest,
 };
+use crate::fan_curve::PreviewFanCurveRequest;
 use crate::gpu::{
     collect_inventory, collect_performance, GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus,
     GpuInventoryResponse, GpuPerformanceResponse, GpuTargetRequest, SetGpuFanModeAutoRequest,
@@ -194,6 +195,11 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
             request.params,
             "gpu.setFanModeAuto",
             set_gpu_fan_mode_auto,
+        ),
+        "gpu.previewFanCurve" => parse_and_serialize_result::<PreviewFanCurveRequest, _, _>(
+            request.params,
+            "gpu.previewFanCurve",
+            |request| daemon_client::preview_fan_curve(request).map_err(BridgeError::from),
         ),
         "gpu.setClockOffsets" => parse_and_serialize_result::<LiveClockOffsetsRequest, _, _>(
             request.params,
@@ -518,6 +524,29 @@ mod tests {
             params: None,
         });
         assert_eq!(response.error.expect("error").code, "invalid_request");
+    }
+
+    #[test]
+    fn fan_curve_preview_rejects_malformed_points_before_transport() {
+        for points in [
+            json!(null),
+            json!([{ "temperatureC": 45.5, "speedPercent": 20 }]),
+            json!([{ "temperatureC": 45, "speedPercent": "20" }]),
+            json!([{ "temperatureC": 45 }]),
+            json!([{ "temperatureC": 45, "speedPercent": 20, "mode": "fixed" }]),
+        ] {
+            let response = handle_request(BridgeRequest {
+                id: 15,
+                method: "gpu.previewFanCurve".into(),
+                params: Some(json!({ "gpuId": "GPU-123", "points": points })),
+            });
+            assert!(response.result.is_none());
+            assert_eq!(
+                response.error.expect("error").code,
+                "invalid_request",
+                "{points}"
+            );
+        }
     }
 
     #[test]

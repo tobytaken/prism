@@ -13,6 +13,7 @@ import correctedProfileApplication from "@/test/contracts/corrected-profile-appl
 import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
 import gpuTuningStates from "@/test/contracts/gpu-tuning-states.json";
 import gamesState from "@/test/contracts/games-state.json";
+import fanCurvePreview from "@/test/contracts/fan-curve-preview.json";
 import type { CorrectGpuProfileRequest } from "@/features/gpus/types";
 import type { PrismDesktopApi } from "@/types/global";
 
@@ -171,6 +172,18 @@ describe("preload bridge", () => {
         },
       ],
       ["prism:gpu:resetClockOffsets", { gpuId: "GPU-123" }],
+    ]);
+  });
+
+  it("previews a fan curve through its own channel and returns the daemon's problems", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValueOnce(fanCurvePreview.preview);
+
+    expect(await prism.gpu.previewFanCurve(fanCurvePreview.request)).toEqual(
+      fanCurvePreview.preview,
+    );
+    expect(mocks.invoke.mock.calls).toEqual([
+      ["prism:gpu:previewFanCurve", fanCurvePreview.request],
     ]);
   });
 

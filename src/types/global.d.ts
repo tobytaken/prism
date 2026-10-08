@@ -20,6 +20,8 @@ import type {
   StartupState,
   MigrationState,
   SetStartupProfileRequest,
+  FanCurvePreview,
+  PreviewFanCurveRequest,
 } from "@/features/gpus/types";
 import type {
   AddSteamGameRequest,
@@ -99,6 +101,8 @@ export interface PrismDesktopApi {
       gpuId: string,
       fanIndex: number,
     ): Promise<GpuCommandResponse>;
+    /** Checks a draft shared fan curve against the GPU's current limits; nothing is applied. */
+    previewFanCurve(request: PreviewFanCurveRequest): Promise<FanCurvePreview>;
     setClockOffsets(
       gpuId: string,
       graphicsOffsetMHz: OffsetInstruction,

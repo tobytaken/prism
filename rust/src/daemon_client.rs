@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::daemon::DEFAULT_SOCKET_PATH;
 use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
+use crate::fan_curve::{FanCurvePreview, PreviewFanCurveRequest};
 use crate::gpu::{
     GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus, GpuInventoryResponse,
     GpuPerformanceResponse, GpuTargetRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
@@ -229,6 +230,16 @@ pub fn set_gpu_fan_mode_auto(
     request: SetGpuFanModeAutoRequest,
 ) -> Result<DaemonCommandResponse, GpuCommandError> {
     send_gpu_command(DaemonRequest::SetFanModeAuto(request))
+}
+
+pub fn preview_fan_curve(
+    request: PreviewFanCurveRequest,
+) -> Result<FanCurvePreview, GpuCommandError> {
+    match send_request(DaemonRequest::PreviewFanCurve(request))? {
+        DaemonResponse::FanCurvePreview(preview) => Ok(preview),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("fan curve preview")),
+    }
 }
 
 pub fn set_gpu_clock_offsets(

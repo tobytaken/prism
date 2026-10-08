@@ -170,6 +170,50 @@ export interface CoolingInfo {
   unsupportedReason: string | null;
   fanCount: number;
   fans: FanControlInfo[];
+  /** Known only when the GPU reports a trustworthy absolute temperature. */
+  maxOperatingTemperatureC: number | null;
+  /** Why the maximum operating temperature is unknown. */
+  maxOperatingTemperatureReason: string | null;
+  /** The daemon's judgement of shared fan curves; null when the readings bypassed the daemon. */
+  curveSupport: FanCurveSupport | null;
+}
+
+/** A requested fan speed at a GPU temperature, in whole °C and whole percent. */
+export interface FanCurvePoint {
+  temperatureC: number;
+  speedPercent: number;
+}
+
+/** Whether one shared curve can control every fan on a GPU, and within which limits. */
+export type FanCurveSupport =
+  | {
+      status: "available";
+      /** The highest temperature a point can use. */
+      maxOperatingTemperatureC: number;
+      /** The temperature by which the curve must request the maximum speed. */
+      fullSpeedTemperatureC: number;
+      /** Zero only when every fan supports it. */
+      minSpeedPercent: number;
+      maxSpeedPercent: number;
+      /** The starter fan curve: editable, and not the GPU's own firmware curve. */
+      starter: FanCurvePoint[];
+    }
+  | { status: "unavailable"; reason: string };
+
+export interface PreviewFanCurveRequest {
+  gpuId: string;
+  points: FanCurvePoint[];
+}
+
+/** A reason a curve can't be used; point is the zero-based index of the point at fault. */
+export interface FanCurveProblem {
+  point: number | null;
+  message: string;
+}
+
+/** The daemon's check of a draft curve; nothing is applied. */
+export interface FanCurvePreview {
+  problems: FanCurveProblem[];
 }
 
 export interface FanControlInfo {

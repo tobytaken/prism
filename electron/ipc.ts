@@ -20,6 +20,7 @@ import type {
   CorrectGpuProfileRequest,
   GpuDaemonStatus,
   GpuTuningState,
+  PreviewFanCurveRequest,
 } from "@/features/gpus/types";
 
 import {
@@ -381,6 +382,25 @@ function validateFanModePayload(
 > {
   return (
     isObject(payload) && isString(payload.gpuId) && isNumber(payload.fanIndex)
+  );
+}
+
+// Whole numbers only: a preview checks exactly the curve that would be applied.
+function validateFanCurvePreviewPayload(
+  payload: unknown,
+): payload is PreviewFanCurveRequest {
+  return (
+    isObject(payload) &&
+    hasOnlyKeys(payload, ["gpuId", "points"]) &&
+    isString(payload.gpuId) &&
+    Array.isArray(payload.points) &&
+    payload.points.every(
+      (point) =>
+        isObject(point) &&
+        hasOnlyKeys(point, ["temperatureC", "speedPercent"]) &&
+        Number.isSafeInteger(point.temperatureC) &&
+        Number.isSafeInteger(point.speedPercent),
+    )
   );
 }
 
@@ -859,6 +879,14 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       throw new Error("Invalid setFanModeAuto payload");
     }
     return backend.invoke("gpu.setFanModeAuto", payload);
+  });
+
+  ipcMain.handle("prism:gpu:previewFanCurve", async (event, payload) => {
+    assertTrustedSender(event, getMainWindow);
+    if (!validateFanCurvePreviewPayload(payload)) {
+      throw new Error("Invalid previewFanCurve payload");
+    }
+    return backend.invoke("gpu.previewFanCurve", payload);
   });
 
   ipcMain.handle("prism:gpu:setClockOffsets", async (event, payload) => {

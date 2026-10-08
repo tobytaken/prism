@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
+use crate::fan_curve::{FanCurvePreview, PreviewFanCurveRequest};
 use crate::gpu::{
     GpuCommandError, GpuDaemonStatus, GpuInventoryResponse, GpuPerformanceResponse,
     GpuTargetRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
@@ -519,6 +520,8 @@ pub enum DaemonRequest {
     ResetPowerLimit(GpuTargetRequest),
     SetFanSpeed(SetGpuFanSpeedRequest),
     SetFanModeAuto(SetGpuFanModeAutoRequest),
+    /// Checks a draft shared fan curve without changing any GPU setting.
+    PreviewFanCurve(PreviewFanCurveRequest),
     SetClockOffsets(LiveClockOffsetsRequest),
     ResetClockOffsets(GpuTargetRequest),
     GetMigrationState,
@@ -575,6 +578,7 @@ pub enum DaemonResponse {
     DaemonStatus(GpuDaemonStatus),
     Command(DaemonCommandResponse),
     ClockOffsets(ClockOffsetResponse),
+    FanCurvePreview(FanCurvePreview),
     ProfileApplication(ProfileApplicationResponse),
     MigrationState(MigrationState),
     StartupState(StartupState),

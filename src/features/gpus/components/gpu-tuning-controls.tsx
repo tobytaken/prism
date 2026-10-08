@@ -7,6 +7,7 @@ import { Clock3, Gauge, RotateCcw, Wind, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FanCurvePreviewSection } from "@/features/gpus/components/fan-curve-preview";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
 import {
   useTuningEdits,
@@ -276,6 +277,11 @@ export function GpuTuningControls({
             fanIndex,
           })
         }
+      />
+      <FanCurvePreviewSection
+        gpu={gpu}
+        draft={editStore.curveDraft(gpu.id)}
+        onDraftChange={(points) => editStore.changeCurveDraft(gpu.id, points)}
       />
     </PerformanceSection>
   );
