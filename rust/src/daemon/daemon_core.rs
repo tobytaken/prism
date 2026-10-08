@@ -354,6 +354,12 @@ impl DaemonCore {
         peer: &SessionPeer,
         request: CorrectAndApplyProfileRequest,
     ) -> Result<CorrectedProfileApplication, GpuCommandError> {
+        let target = self
+            .tuning_store
+            .read(|document| document.profile_of(peer, &request.profile_id))??;
+        // Corrections wait on the same queue before applying. Reserve precedence now, while
+        // recording the override only when apply_saved_profile starts the manual write.
+        let _pending = self.switching.manual_requested(&target.gpu_id);
         let peer_owned = peer.clone();
         let corrections = request.corrections;
         let backend = Arc::clone(&self.dependencies.backend);

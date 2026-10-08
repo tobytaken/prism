@@ -62,10 +62,21 @@ struct Activation {
     /// until what drives the GPU changes.
     failure: Option<String>,
     /// An override relinquishes the baseline. Keep an external-change notice after games end.
-    #[serde(default)]
-    manual_override: Option<bool>,
-    #[serde(default)]
-    override_ended: bool,
+    manual_override: Option<ManualOverride>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManualOverride {
+    origin: OverrideOrigin,
+    games_ended: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum OverrideOrigin {
+    Prism,
+    External,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -210,8 +221,12 @@ impl Switching {
             .filter(|gpu_id| !pending.contains_key(*gpu_id))
             .filter(|gpu_id| {
                 if let Some(activation) = activations.get(*gpu_id) {
-                    if activation.manual_override.is_some() {
-                        return linked.contains_key(*gpu_id) == activation.override_ended;
+                    if let Some(overridden) = &activation.manual_override {
+                        return if overridden.games_ended {
+                            linked.contains_key(*gpu_id)
+                        } else {
+                            !linked.contains_key(*gpu_id)
+                        };
                     }
                 }
                 wanted.get(*gpu_id)
@@ -253,14 +268,14 @@ impl Switching {
             return;
         };
         let mut activation = activations.remove(gpu_id);
-        if let Some(overridden) = activation.as_mut().filter(|a| a.manual_override.is_some()) {
+        if let Some(overridden) = activation.as_mut().and_then(|a| a.manual_override.as_mut()) {
             let linked =
                 winning_games(&document, &running, self.users.as_ref(), false).contains_key(gpu_id);
-            if !overridden.override_ended {
+            if !overridden.games_ended {
                 if !linked {
-                    overridden.override_ended = true;
-                    let notice = overridden.manual_override == Some(true);
-                    self.record(gpu_id, notice.then(|| overridden.clone()));
+                    overridden.games_ended = true;
+                    let notice = overridden.origin == OverrideOrigin::External;
+                    self.record(gpu_id, if notice { activation } else { None });
                 }
                 return;
             }
@@ -290,14 +305,16 @@ impl Switching {
                 self.record(
                     gpu_id,
                     Some(Activation {
-                        manual_override: Some(true),
-                        override_ended: !winning_games(
-                            &document,
-                            &running,
-                            self.users.as_ref(),
-                            false,
-                        )
-                        .contains_key(gpu_id),
+                        manual_override: Some(ManualOverride {
+                            origin: OverrideOrigin::External,
+                            games_ended: !winning_games(
+                                &document,
+                                &running,
+                                self.users.as_ref(),
+                                false,
+                            )
+                            .contains_key(gpu_id),
+                        }),
                         ..Activation::default()
                     }),
                 );
@@ -365,12 +382,19 @@ impl Switching {
             .activations()
             .ok()
             .and_then(|mut all| all.remove(gpu_id))
-            .is_some_and(|a| !a.override_ended);
+            .is_some_and(|a| {
+                a.manual_override
+                    .as_ref()
+                    .is_none_or(|overridden| !overridden.games_ended)
+            });
         if linked || active {
             self.record(
                 gpu_id,
                 Some(Activation {
-                    manual_override: Some(false),
+                    manual_override: Some(ManualOverride {
+                        origin: OverrideOrigin::Prism,
+                        games_ended: false,
+                    }),
                     ..Activation::default()
                 }),
             );
@@ -803,9 +827,9 @@ impl Snapshot {
         let gpus: Vec<_> = activations
             .iter()
             .filter_map(|(gpu_id, activation)| {
-                let state = if let Some(changed_outside_prism) = activation.manual_override {
+                let state = if let Some(overridden) = &activation.manual_override {
                     GpuSwitchingState::ManualOverride {
-                        changed_outside_prism,
+                        changed_outside_prism: overridden.origin == OverrideOrigin::External,
                     }
                 } else {
                     match (&activation.failure, &activation.driving) {

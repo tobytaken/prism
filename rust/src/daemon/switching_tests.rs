@@ -942,3 +942,56 @@ fn an_override_waits_for_all_linked_games_even_when_switching_is_disabled() {
     assert_eq!(values(&daemon).0, Some(380));
     assert_eq!(status(&alice)["gpus"], json!([]));
 }
+
+#[test]
+fn adjusting_and_applying_a_profile_reserves_manual_precedence_before_saving_the_correction() {
+    let (daemon, alice) = linked_dota();
+    ok(alice.send_json(
+        json!({ "type": "import_profiles", "payload": { "profiles": [
+        { "id": "loud", "name": "Loud", "gpuId": LINKED,
+          "settings": { "powerLimitWatts": value(650) } }
+    ] } }),
+    ));
+    set_switching(&daemon, &alice, true);
+    let before = writes_to(&daemon, LINKED).len();
+    let applying = daemon.user(1000, "alice");
+    let gate = daemon.gpus.block(LINKED, Setter::PowerLimit);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.core().scan_running_games();
+    gate.wait_until_entered();
+    link(&alice, LINKED, Some("cool"));
+    let (sent, response) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        sent.send(
+            applying.send_json(json!({ "type": "correct_and_apply_profile", "payload": {
+            "profileId": "loud", "corrections": [{ "setting": "powerLimitWatts",
+                "savedValue": 650, "proposedValue": 600, "bound": "maximum" }]
+        } })),
+        )
+        .unwrap();
+    });
+    assert!(matches!(
+        response.recv_timeout(std::time::Duration::from_millis(200)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    gate.release();
+    let result = response
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(
+        result["payload"]["application"]["power"]["status"], "succeeded",
+        "{result}"
+    );
+    daemon.settle();
+    assert_eq!(
+        &writes_to(&daemon, LINKED)[before..],
+        &[
+            Setter::PowerLimit,
+            Setter::GraphicsOffset,
+            Setter::PowerLimit
+        ]
+    );
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), (Some(600), Some(150), Some(0)));
+}
