@@ -18,6 +18,7 @@ import { listGpuProfiles } from "@/features/gpus/api";
 import { useGpuPerformance } from "@/features/gpus/hooks/use-gpu-performance";
 import { PROFILES_QUERY_KEY } from "@/features/gpus/hooks/use-gpu-profiles";
 import type { GpuTuningProfile } from "@/features/gpus/types";
+import { AddProgramDialog } from "./add-program-dialog";
 import { AddSteamGameDialog } from "./add-steam-game-dialog";
 
 type GpuChoice = { uuid: string; label: string };
@@ -33,6 +34,7 @@ export function GamesPage() {
   const performance = useGpuPerformance();
   const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
+  const [addingProgram, setAddingProgram] = useState(false);
   const state = workflow.query.data;
   const gpus = gpuChoices(
     performance.data?.gpus ?? [],
@@ -45,15 +47,18 @@ export function GamesPage() {
       (game) =>
         !term ||
         game.name.toLowerCase().includes(term) ||
-        String(game.game.appId).includes(term),
+        (game.game.kind === "steam"
+          ? String(game.game.appId)
+          : game.game.path.toLowerCase()
+        ).includes(term),
     ) ?? [];
   return (
     <div className="space-y-6">
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Games</h1>
         <p className="text-sm text-muted-foreground">
-          Link your Steam games to your GPU tuning profiles, one profile per
-          GPU. Create profiles on{" "}
+          Link your games to your GPU tuning profiles, one profile per GPU.
+          Create profiles on{" "}
           <Link className="underline" to="/performance">
             Performance
           </Link>
@@ -61,6 +66,11 @@ export function GamesPage() {
         </p>
       </div>
 
+      <p className="text-sm text-muted-foreground">
+        Recognizing a manually added program depends on how it runs. AppImages,
+        scripts, virtual machines, Flatpak-packaged games and emulators may not
+        be recognizable by location.
+      </p>
       <div className="max-w-2xl rounded-lg border p-3">
         <AutomaticSwitchingChoice workflow={workflow} />
       </div>
@@ -74,7 +84,7 @@ export function GamesPage() {
         <Input
           type="search"
           aria-label="Filter games"
-          placeholder="Filter by name or app ID"
+          placeholder="Filter by name, app ID or location"
           className="max-w-xs"
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
@@ -82,6 +92,14 @@ export function GamesPage() {
         <Button type="button" disabled={!state} onClick={() => setAdding(true)}>
           <Plus />
           Add Steam game…
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!state}
+          onClick={() => setAddingProgram(true)}
+        >
+          <Plus /> Add running program…
         </Button>
       </div>
 
@@ -103,7 +121,8 @@ export function GamesPage() {
       )}
       {state && state.games.length === 0 && (
         <p className="text-sm text-muted-foreground">
-          No games yet. Add a Steam game to link it to your profiles.
+          No games yet. Add a Steam game or running program to link it to your
+          profiles.
         </p>
       )}
       {state && state.games.length > 0 && shown.length === 0 && (
@@ -129,6 +148,13 @@ export function GamesPage() {
           />
         ))}
       </div>
+      {addingProgram && state && (
+        <AddProgramDialog
+          added={state.games}
+          workflow={workflow}
+          onOpenChange={setAddingProgram}
+        />
+      )}
       {adding && state && (
         <AddSteamGameDialog
           added={state.games}
@@ -168,15 +194,19 @@ function GameCard({
             {game.name}
           </h2>
           <p className="text-xs text-muted-foreground">
-            Steam app {game.game.appId}
+            {game.game.kind === "steam"
+              ? `Steam app ${game.game.appId}`
+              : game.game.path}
           </p>
           {running && <Badge>Running</Badge>}
           {!game.installed && (
             <Badge
               variant="outline"
-              title="The game isn't in your Steam libraries. Its links are kept until you remove it."
+              title="Its links are kept until you remove it."
             >
-              Not installed
+              {game.game.kind === "steam"
+                ? "Not installed"
+                : "Program not found"}
             </Badge>
           )}
         </div>

@@ -61,7 +61,10 @@ export function GameTuningPanel({
               <li key={gameKey(game)} className="rounded-md bg-muted px-3 py-1">
                 {games.query.data?.games.find(
                   (entry) => gameKey(entry.game) === gameKey(game),
-                )?.name ?? `Steam app ${game.appId}`}
+                )?.name ??
+                  (game.kind === "steam"
+                    ? `Steam app ${game.appId}`
+                    : game.path)}
               </li>
             ))}
           </ul>

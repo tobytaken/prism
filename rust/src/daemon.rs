@@ -8,6 +8,7 @@ mod host;
 mod migration;
 mod possibly_stale;
 mod profiles;
+mod programs;
 mod queue;
 mod recognition;
 mod session;
@@ -35,6 +36,8 @@ mod migration_tests;
 mod overlapping_games_tests;
 #[cfg(test)]
 mod profile_tests;
+#[cfg(test)]
+mod program_tests;
 #[cfg(test)]
 mod recognition_tests;
 #[cfg(test)]

@@ -66,6 +66,24 @@ pub fn delete_gpu_profile(
     }
 }
 
+pub fn list_running_programs() -> Result<Vec<crate::protocol::RunningProgram>, GpuCommandError> {
+    match send_request(DaemonRequest::ListRunningPrograms)? {
+        DaemonResponse::RunningPrograms(programs) => Ok(programs),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("running programs")),
+    }
+}
+
+pub fn add_program(
+    request: crate::protocol::AddProgramRequest,
+) -> Result<GamesState, GpuCommandError> {
+    match send_request(DaemonRequest::AddProgram(request))? {
+        DaemonResponse::Games(state) => Ok(state),
+        DaemonResponse::Error(error) => Err(error),
+        _ => Err(unexpected_response_error("games")),
+    }
+}
+
 pub fn list_steam_apps() -> Result<Vec<SteamApp>, GpuCommandError> {
     match send_request(DaemonRequest::ListSteamApps)? {
         DaemonResponse::SteamApps(apps) => Ok(apps),

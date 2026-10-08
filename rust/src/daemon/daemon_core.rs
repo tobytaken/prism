@@ -232,6 +232,17 @@ impl DaemonCore {
                 .try_update(|document| document.import_profiles(peer, request.profiles))
                 .map(DaemonResponse::ProfileImport),
             DaemonRequest::ListSteamApps => self.steam_apps(peer).map(DaemonResponse::SteamApps),
+            DaemonRequest::ListRunningPrograms => {
+                super::programs::list(&self.dependencies.host_root, peer)
+                    .map(DaemonResponse::RunningPrograms)
+                    .map_err(|error| {
+                        GpuCommandError::new(
+                            GpuCommandErrorCode::Io,
+                            format!("Could not list running programs: {error}"),
+                        )
+                    })
+            }
+            DaemonRequest::AddProgram(request) => self.add_program(peer, request.path),
             DaemonRequest::GetGames => self.games(peer),
             DaemonRequest::GetRunningGames => Ok(DaemonResponse::RunningGames(
                 self.recognition.lock().unwrap().for_uid(peer.uid),
@@ -671,6 +682,8 @@ impl DaemonCore {
                 "GPU tuning profiles need a connection that identifies the caller.",
             )),
             DaemonRequest::ListSteamApps
+            | DaemonRequest::ListRunningPrograms
+            | DaemonRequest::AddProgram(_)
             | DaemonRequest::GetGames
             | DaemonRequest::GetRunningGames
             | DaemonRequest::AddSteamGame(_)

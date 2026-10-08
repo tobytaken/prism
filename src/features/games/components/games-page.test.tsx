@@ -277,3 +277,90 @@ it("shows a rejected change until a later change succeeds", async () => {
   );
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
+
+it("adds a running manual program, shows its location and caveat, and keeps links when the file is missing", async () => {
+  const user = userEvent.setup();
+  const programs = [
+    {
+      pid: 123,
+      name: "Adventure.exe",
+      path: "/games/Adventure.exe",
+      launcher: "Lutris",
+      environment: ["WINEPREFIX=/home/alice/prefix"],
+      helper: false,
+      recognitionWarning: null,
+    },
+  ];
+  const programFiles = ["/games/Adventure.exe"];
+  createFakeDesktop({ profiles: [quiet], programs, programFiles });
+  renderApp();
+  expect(
+    await screen.findByText(
+      /recognizing a manually added program depends on how it runs/i,
+    ),
+  ).toBeInTheDocument();
+  await user.click(
+    await screen.findByRole("button", { name: "Add running program…" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Add running program",
+  });
+  expect(await within(dialog).findByText("Lutris")).toBeInTheDocument();
+  expect(
+    within(dialog).getByText("WINEPREFIX=/home/alice/prefix"),
+  ).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Add Adventure.exe" }),
+  );
+  expect(
+    await screen.findByRole("article", { name: "Adventure.exe" }),
+  ).toHaveTextContent("/games/Adventure.exe");
+  await user.selectOptions(
+    picker("Adventure.exe", "NVIDIA GeForce RTX 5090"),
+    "quiet",
+  );
+  await waitFor(() =>
+    expect(
+      picker("Adventure.exe", "NVIDIA GeForce RTX 5090"),
+    ).toHaveDisplayValue("Quiet"),
+  );
+  programFiles.splice(0);
+  await user.click(screen.getByRole("link", { name: "Overview" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("heading", { name: "Games", level: 1 }),
+    ).not.toBeInTheDocument(),
+  );
+  await user.click(screen.getByRole("link", { name: "Games" }));
+  expect(await screen.findByText("Program not found")).toBeInTheDocument();
+  expect(picker("Adventure.exe", "NVIDIA GeForce RTX 5090")).toHaveDisplayValue(
+    "Quiet",
+  );
+});
+
+it("browses for a program that is not running and leaves the picker open on cancellation", async () => {
+  const user = userEvent.setup();
+  createFakeDesktop({
+    programFiles: ["/games/offline"],
+    selectedProgramFile: "/games/offline",
+  });
+  renderApp();
+  await user.click(
+    await screen.findByRole("button", { name: "Add running program…" }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Browse for file…" }),
+  );
+  expect(
+    await screen.findByRole("article", { name: "offline" }),
+  ).toHaveTextContent("/games/offline");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  vi.spyOn(window.prism.games, "browseProgram").mockResolvedValue(null);
+  await user.click(
+    screen.getByRole("button", { name: "Add running program…" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Browse for file…" }));
+  expect(
+    screen.getByRole("dialog", { name: "Add running program" }),
+  ).toBeInTheDocument();
+});

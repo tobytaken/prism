@@ -8,6 +8,8 @@ import readline from "node:readline";
 import { PROFILE_FILE_NAME, ProfileFileImport } from "./profile-file-import";
 import {
   daemonStatusNotification,
+  isGameId,
+  isProgramPath,
   tuningStateNotification,
   runningGamesNotification,
   switchingStatusNotification,
@@ -27,6 +29,7 @@ import type {
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   shell,
   type IpcMainInvokeEvent,
@@ -333,15 +336,6 @@ function isAppId(value: unknown): value is number {
     Number.isInteger(value) &&
     (value as number) >= 0 &&
     (value as number) <= 0xffff_ffff
-  );
-}
-
-function isGameId(value: unknown) {
-  return (
-    isObject(value) &&
-    hasOnlyKeys(value, ["kind", "appId"]) &&
-    value.kind === "steam" &&
-    isAppId(value.appId)
   );
 }
 
@@ -737,6 +731,41 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     },
   );
 
+  ipcMain.handle(
+    "prism:games:browseProgram",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid browseProgram payload");
+      const window = getMainWindow();
+      if (!window) throw new Error("The Prism window is unavailable.");
+      const result = await dialog.showOpenDialog(window, {
+        title: "Choose program",
+        properties: ["openFile"],
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return backend.invoke("games.addProgramFile", {
+        path: result.filePaths[0],
+      });
+    },
+  );
+  ipcMain.handle(
+    "prism:games:listRunningPrograms",
+    async (event, ...args: unknown[]) => {
+      assertTrustedSender(event, getMainWindow);
+      if (args.length) throw new Error("Invalid listRunningPrograms payload");
+      return backend.invoke("games.listRunningPrograms");
+    },
+  );
+  ipcMain.handle("prism:games:addProgram", async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow);
+    if (
+      !isObject(payload) ||
+      !hasOnlyKeys(payload, ["path"]) ||
+      !isProgramPath(payload.path)
+    )
+      throw new Error("Invalid addProgram payload");
+    return backend.invoke("games.addProgram", payload);
+  });
   ipcMain.handle(
     "prism:games:listSteamApps",
     async (event, ...args: unknown[]) => {

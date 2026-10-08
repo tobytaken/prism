@@ -47,6 +47,7 @@ import type {
   SetAutomaticSwitchingRequest,
   SetGameProfileRequest,
   SteamApp,
+  RunningProgram,
 } from "@/features/games/types";
 
 let daemonSubscribers = 0;
@@ -246,6 +247,19 @@ const prismApi = {
         isAutomaticSwitchingStatus,
         callback,
       ),
+    browseProgram: () =>
+      ipcRenderer.invoke(
+        "prism:games:browseProgram",
+      ) as Promise<GamesState | null>,
+    listRunningPrograms: () =>
+      ipcRenderer.invoke("prism:games:listRunningPrograms") as Promise<
+        RunningProgram[]
+      >,
+    addProgram: (request: { path: string }) =>
+      ipcRenderer.invoke(
+        "prism:games:addProgram",
+        request,
+      ) as Promise<GamesState>,
     listSteamApps: () =>
       ipcRenderer.invoke("prism:games:listSteamApps") as Promise<SteamApp[]>,
     get: () => ipcRenderer.invoke("prism:games:get") as Promise<GamesState>,

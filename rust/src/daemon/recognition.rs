@@ -1,4 +1,5 @@
 //! Complete host process scans. An incomplete scan never means that a game ended.
+use super::programs::{is_wine_loader, mapped_images, FileIdentity};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -59,7 +60,35 @@ impl DaemonCore {
     pub fn scan_running_games(&self) {
         {
             let mut current = self.recognition.lock().unwrap();
-            let next = Recognition(scan(&self.dependencies.host_root).map_err(|_| {
+            let programs = self
+                .tuning_store
+                .read(|document| {
+                    document
+                        .users
+                        .iter()
+                        .filter(|user| {
+                            self.dependencies.users.username(user.uid).as_deref()
+                                == Some(user.username.as_str())
+                        })
+                        .flat_map(|user| {
+                            user.games.iter().filter_map(|entry| {
+                                let GameId::Program { path } = &entry.game else {
+                                    return None;
+                                };
+                                let identity = FileIdentity::at(
+                                    &self
+                                        .dependencies
+                                        .host_root
+                                        .join(path.trim_start_matches('/')),
+                                )
+                                .ok()?;
+                                Some((user.uid, entry.game.clone(), identity))
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let next = Recognition(scan(&self.dependencies.host_root, &programs).map_err(|_| {
                 "A complete host process scan could not be read. Recognition will retry automatically.".into()
             }));
             self.tuning_store.publish_for_users(|peer| {
@@ -73,7 +102,7 @@ impl DaemonCore {
     }
 }
 
-fn scan(root: &Path) -> io::Result<GamesByUser> {
+fn scan(root: &Path, programs: &[(u32, GameId, FileIdentity)]) -> io::Result<GamesByUser> {
     let mut games: BTreeMap<(u32, GameId), RunningGame> = BTreeMap::new();
     for entry in fs::read_dir(root.join("proc"))? {
         let entry = entry?;
@@ -96,9 +125,9 @@ fn scan(root: &Path) -> io::Result<GamesByUser> {
             Some(id) => Some(id),
             None => reaper_app(&fs::read(path.join("cmdline"))?),
         };
-        let Some(app_id) = recognized_app else {
+        if recognized_app.is_none() && programs.is_empty() {
             continue;
-        };
+        }
         let status = fs::read_to_string(path.join("status"))?;
         let uid = status
             .lines()
@@ -108,20 +137,48 @@ fn scan(root: &Path) -> io::Result<GamesByUser> {
                     .and_then(|uid| uid.parse::<u32>().ok())
             })
             .ok_or_else(invalid_process)?;
+        let mut recognized: Vec<GameId> = recognized_app
+            .map(|app_id| GameId::Steam { app_id })
+            .into_iter()
+            .collect();
+        if programs.iter().any(|(owner, _, _)| *owner == uid) {
+            let exe = match FileIdentity::at(&path.join("exe")) {
+                Ok(identity) => Some(identity),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            let wine = fs::read_link(path.join("exe"))
+                .map(|executable| is_wine_loader(&executable))
+                .unwrap_or(false);
+            let images = if wine {
+                mapped_images(&path)?
+            } else {
+                Vec::new()
+            };
+            for (owner, game, identity) in programs {
+                if *owner == uid
+                    && (exe == Some(*identity)
+                        || images.iter().any(|image| image.identity == *identity))
+                {
+                    recognized.push(game.clone());
+                }
+            }
+        }
         let stat = fs::read_to_string(path.join("stat"))?;
         let start_time_ticks = start_time(&stat, pid)?;
         if started != start_time_ticks {
             return Err(invalid_process());
         }
-        let game = GameId::Steam { app_id };
-        let recognized = RunningGame {
-            game: game.clone(),
-            pid,
-            start_time_ticks,
-        };
-        let earliest = games.entry((uid, game)).or_insert(recognized.clone());
-        if (start_time_ticks, pid) < (earliest.start_time_ticks, earliest.pid) {
-            *earliest = recognized;
+        for game in recognized {
+            let recognized = RunningGame {
+                game: game.clone(),
+                pid,
+                start_time_ticks,
+            };
+            let earliest = games.entry((uid, game)).or_insert(recognized.clone());
+            if (start_time_ticks, pid) < (earliest.start_time_ticks, earliest.pid) {
+                *earliest = recognized;
+            }
         }
     }
     let mut users: GamesByUser = BTreeMap::new();
@@ -139,7 +196,7 @@ fn app_id(bytes: &[u8]) -> Option<u32> {
         .filter(|id| *id > 0)
 }
 
-fn start_time(stat: &str, pid: u32) -> io::Result<u64> {
+pub(super) fn start_time(stat: &str, pid: u32) -> io::Result<u64> {
     if stat
         .split_once(" (")
         .and_then(|(id, _)| id.parse::<u32>().ok())

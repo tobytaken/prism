@@ -814,3 +814,61 @@ fn a_replacement_sidecar_sends_the_renderers_existing_holds_on_its_first_connect
         true
     );
 }
+
+#[test]
+fn browsed_program_recovers_document_portal_host_path_before_sending_to_daemon() {
+    use serde_json::json;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let directory = tempfile::tempdir().unwrap();
+    let exported = directory.path().join("Game.exe");
+    std::fs::write(&exported, "portal file").unwrap();
+    let path = CString::new(exported.as_os_str().as_bytes()).unwrap();
+    let attribute = c"user.document-portal.host-path";
+    let host = b"/home/alice/Games/My Game.exe";
+    // Real xattr system calls on a temporary fixture, using the portal's documented contract.
+    // SAFETY: both strings are NUL-terminated and the value buffer is valid for host.len().
+    assert_eq!(
+        unsafe {
+            libc::setxattr(
+                path.as_ptr(),
+                attribute.as_ptr(),
+                host.as_ptr().cast(),
+                host.len(),
+                0,
+            )
+        },
+        0
+    );
+    let socket = directory.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut sidecar = spawn_sidecar(&socket, Stdio::piped());
+    let lines = output_lines(&mut sidecar);
+    let mut session = accept_session(&listener);
+    lines.recv_timeout(Duration::from_secs(2)).unwrap();
+    writeln!(
+        sidecar.0.stdin.as_mut().unwrap(),
+        "{}",
+        json!({"id":90, "method":"games.addProgramFile", "params":{"path":exported}})
+    )
+    .unwrap();
+    let request = read_frame::<SessionRequest>(&mut session).unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(&request.request).unwrap(),
+        json!({"type":"add_program", "payload":{"path":"/home/alice/Games/My Game.exe"}})
+    );
+    let state = json!({"automaticSwitching":false, "games":[{"game":{"kind":"program", "path":"/home/alice/Games/My Game.exe"},"name":"My Game.exe","installed":true,"profiles":{}}]});
+    write_frame(
+        &mut session,
+        &SessionMessage::Response {
+            id: request.id,
+            response: DaemonResponse::Games(serde_json::from_value(state.clone()).unwrap()),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(2)).unwrap(),
+        json!({"id":90,"result":state})
+    );
+}

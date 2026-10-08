@@ -111,6 +111,11 @@ const prismStub: PrismDesktopApi = {
       gpus: [],
     }),
     onSwitchingStatusChanged: () => () => undefined,
+    browseProgram: async () => null,
+    listRunningPrograms: async () => [],
+    addProgram: async () => {
+      throw new Error("Adding programs is not configured in this test");
+    },
     listSteamApps: async () => [],
     get: async () => ({ automaticSwitching: false, games: [] }),
     addSteamGame: async () => {
