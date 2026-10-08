@@ -42,6 +42,8 @@ mod recognition_tests;
 #[cfg(test)]
 mod restore_tests;
 #[cfg(test)]
+mod startup_cooling_tests;
+#[cfg(test)]
 mod startup_tests;
 #[cfg(test)]
 mod switching_tests;

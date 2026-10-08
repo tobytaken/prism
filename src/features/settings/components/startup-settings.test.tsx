@@ -68,6 +68,10 @@ it("warns before restoring last applied values and marks GPUs whose values are p
   expect(restore).toHaveAccessibleDescription(
     /an unstable value could be restored on every boot/i,
   );
+  // Cooling follows the same startup choice; there is no separate curve toggle.
+  expect(restore).toHaveAccessibleDescription(
+    /including cooling configurations and changes not saved to a profile/i,
+  );
   expect(screen.queryByText(/possibly stale/i)).not.toBeInTheDocument();
   await user.click(restore);
   await waitFor(() => expect(fake.startupBehavior).toBe("restoreLastApplied"));

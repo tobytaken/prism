@@ -499,6 +499,7 @@ fn write_settings(
 ) -> Vec<(ProfileSettingKey, TuningOutcome)> {
     let application = apply_unreviewed_profile(
         backend,
+        None,
         ApplyGpuProfileRequest {
             gpu_id: gpu_id.into(),
             settings,

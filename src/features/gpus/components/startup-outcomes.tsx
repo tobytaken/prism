@@ -54,6 +54,13 @@ export function StartupOutcomes({
                     power: application.power ?? undefined,
                     graphics: application.graphics ?? undefined,
                     memory: application.memory ?? undefined,
+                    cooling: application.cooling?.outcome,
+                    ...Object.fromEntries(
+                      (application.cooling?.fans ?? []).map((fan) => [
+                        `fan:${fan.fanIndex}`,
+                        fan.outcome,
+                      ]),
+                    ),
                   }}
                 />
               )}
