@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Minus, Plus, RotateCcw } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -118,6 +118,11 @@ function FanCurveEditor({
   onDraftChange: (points: FanCurveDraftPoint[] | null) => void;
   onApply: (points: FanCurvePoint[]) => void;
 }) {
+  const lastGraphEdit = useRef<{
+    gpuId: string;
+    points: FanCurveDraftPoint[];
+    support: AvailableCurve;
+  } | null>(null);
   const inputProblems = points.flatMap(inputProblemsAt);
   const complete =
     inputProblems.length === 0 ? (points as FanCurvePoint[]) : null;
@@ -135,14 +140,25 @@ function FanCurveEditor({
     ...((complete && preview.data?.problems) || []),
   ];
   const invalidPoints = new Set(problems.map((problem) => problem.point));
-  const change = (index: number, point: Partial<FanCurveDraftPoint>) =>
-    onDraftChange(
-      points.map((current, at) =>
-        at === index ? { ...current, ...point } : current,
-      ),
+  const change = (index: number, point: Partial<FanCurveDraftPoint>) => {
+    const changed = points.map((current, at) =>
+      at === index ? { ...current, ...point } : current,
     );
+    onDraftChange(changed);
+    return changed;
+  };
   const fanCount = gpu.cooling.fans.length;
   const valid = checked && problems.length === 0;
+  // Graph moves preserve a valid curve. Let a gesture continue while preview catches up,
+  // but never use an old preview to authorize graph edits of an unchecked numeric draft.
+  const graphEditable =
+    valid ||
+    (complete != null &&
+      problems.length === 0 &&
+      !preview.isError &&
+      lastGraphEdit.current?.points === points &&
+      lastGraphEdit.current.support === support &&
+      lastGraphEdit.current.gpuId === gpu.id);
   const isStarter = sameCurve(points, support.starter);
   const addedPoints =
     points.length < MAX_POINTS ? withAddedPoint(points) : null;
@@ -175,9 +191,15 @@ function FanCurveEditor({
         points={points}
         support={support}
         temperatureC={gpu.telemetry.temperatureC}
-        editable={complete != null && problems.length === 0}
+        editable={graphEditable}
         protectedEndpointIndex={protectedEndpointIndex}
-        onPointChange={change}
+        onPointChange={(index, point) => {
+          lastGraphEdit.current = {
+            gpuId: gpu.id,
+            points: change(index, point),
+            support,
+          };
+        }}
       />
       <p className="text-xs text-muted-foreground">
         Current GPU temperature{" "}

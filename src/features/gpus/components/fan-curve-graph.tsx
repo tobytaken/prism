@@ -107,7 +107,7 @@ export function FanCurveGraph({
       <p id={instructionsId} className="mb-2 text-xs text-muted-foreground">
         Drag a point, or focus it and use Left/Right for temperature and Up/Down
         for speed.
-        {editable ? "" : " Correct numeric errors to edit points on the graph."}
+        {editable ? "" : " Graph editing is available once the curve is valid."}
       </p>
       <div
         ref={graphRef}

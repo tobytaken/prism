@@ -1,5 +1,5 @@
 import { MemoryRouter } from "react-router-dom";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -185,6 +185,16 @@ describe("Editing a fan curve", () => {
     const graph = within(editor).getByRole("group", {
       name: "Fan curve graph editor",
     });
+    await within(editor).findByText(/^Valid curve/);
+    const validate = fake.previewFanCurve.getMockImplementation()!;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fake.previewFanCurve.mockImplementation(async (request) => {
+      await pending;
+      return validate(request);
+    });
     // jsdom has no layout or pointer capture; supply only these browser boundaries.
     vi.spyOn(graph, "getBoundingClientRect").mockReturnValue(
       new DOMRect(100, 50, 640, 360),
@@ -199,6 +209,12 @@ describe("Editing a fan curve", () => {
       keys: "[MouseLeft>]",
       coords: { clientX: 564, clientY: 188 },
     });
+    await user.pointer({
+      target: handle,
+      coords: { clientX: 583, clientY: 174 },
+    });
+    expect(pointValues(editor)[1]).toEqual([68, 65]);
+    // Keep dragging while the previous position's preview is still pending.
     // On the doubled-size graph, this is 70°C and 70% on the labelled axes.
     await user.pointer({
       target: handle,
@@ -207,6 +223,7 @@ describe("Editing a fan curve", () => {
     await user.pointer({ keys: "[/MouseLeft]" });
     expect(pointValues(editor)[1]).toEqual([70, 70]);
     expect(handle).toHaveAccessibleName("Point 2: 70°C, 70%");
+    await act(async () => release());
     fake.gpu.telemetry.temperatureC = 80;
     await within(editor).findByRole("img", {
       name: /GPU temperature now 80°C/,
@@ -301,6 +318,38 @@ describe("Editing a fan curve", () => {
       [47, 80],
       [48, 100],
     ]);
+    expectNoFanWrites(fake);
+  });
+
+  it("waits for the current numeric draft's validation before allowing graph edits", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const editor = await curveEditor();
+    await within(editor).findByText(/^Valid curve/);
+    const validate = fake.previewFanCurve.getMockImplementation()!;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fake.previewFanCurve.mockImplementation(async (request) => {
+      await pending;
+      return validate(request);
+    });
+    const speed = within(editor).getByRole("spinbutton", {
+      name: "Point 1 speed (%)",
+    });
+    await user.clear(speed);
+    await user.type(speed, "10");
+    within(editor).getByRole("button", { name: "Point 1: 45°C, 10%" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(pointValues(editor)[0]).toEqual([45, 10]);
+    await act(async () => release());
+    expect(
+      await within(editor).findByText(/speed must be between 20% and 100%/),
+    ).toBeInTheDocument();
+    expect(
+      within(editor).getByRole("button", { name: "Apply curve" }),
+    ).toBeDisabled();
     expectNoFanWrites(fake);
   });
 
