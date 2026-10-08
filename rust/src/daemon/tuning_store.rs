@@ -46,8 +46,7 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // Version 9 adds optional complete cooling configurations; old profiles omit cooling.
     Ok,
     // Version 10 adds manually identified programs to game associations; existing Steam links remain valid.
-    Ok,
-    // Version 11 records the boot of automatic failures for the next startup outcome.
+    Ok, // Version 11 records the boot of automatic failures for the next startup outcome.
     Ok,
 ];
 

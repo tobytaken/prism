@@ -12,13 +12,13 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use super::automatic_tuning::apply as apply_automatic_profile;
 use super::backend::DaemonBackend;
 use super::cooling::CoolingController;
 use super::host::{Clock, UserDirectory};
 use super::profiles::{capture_cooling, reading, verified_gpu};
 use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
-use super::tuning::apply_unreviewed_profile;
 use super::tuning_store::{write_atomically, TuningDocument, TuningStore};
 use crate::cooling::{CoolingConfiguration, SuspensionKind};
 use crate::protocol::{
@@ -400,12 +400,6 @@ impl Switching {
         }
         if returning {
             self.cooling.resume_interrupted(backend, gpu_id);
-            if !retry && same_game && activation.as_ref().is_some_and(|a| a.failure.is_some()) {
-                let mut activation = activation.unwrap();
-                activation.gpu_absent = false;
-                self.record(gpu_id, Some(activation));
-                return;
-            }
         }
         let controls_cooling = activation
             .as_ref()
@@ -428,7 +422,7 @@ impl Switching {
                 } else {
                     self.cooling.changed_outside_prism(gpu)
                 };
-            let numeric_changed = !retry && !returning && activation.as_ref().is_some_and(|active| active.expected.iter().any(|(key, expected)| {
+            let numeric_changed = !returning && activation.as_ref().is_some_and(|active| active.expected.iter().any(|(key, expected)| {
                 matches!((expected, reading(gpu, *key).current), (Some(before), Some(now)) if *before != now)
             }));
             if cooling_changed || numeric_changed {
@@ -551,7 +545,10 @@ impl Switching {
         mut activation: Activation,
         retry: bool,
     ) {
-        let profile = if activation.gpu_absent && activation.driving.as_ref() == Some(&game) {
+        let profile = if !retry
+            && activation.gpu_absent
+            && activation.driving.as_ref() == Some(&game)
+        {
             let Some(settings) = activation.applied_settings.clone() else {
                 activation.gpu_absent = false;
                 return self.abandon(gpu_id, activation, &[],
@@ -598,8 +595,13 @@ impl Switching {
         if captured_cooling {
             let mut gpu = gpu.clone();
             gpu.cooling.control = Some(self.cooling.control(gpu_id));
-            match capture_cooling(&gpu) {
-                Ok(Some(configuration)) => {
+            let baseline = if retry {
+                super::automatic_tuning::capture_cooling_baseline(&gpu, gpu.cooling.control.clone())
+            } else {
+                capture_cooling(&gpu).ok().flatten()
+            };
+            match baseline {
+                Some(configuration) => {
                     activation.cooling_baseline = Some(configuration);
                     activation.cooling_baseline_fans =
                         gpu.cooling.fans.iter().map(|fan| fan.index).collect();
@@ -651,8 +653,8 @@ impl Switching {
             // A setting that was never attempted keeps no pre-game value, so it isn't restored.
             let unwritten =
                 captured.contains(&key) && outcome.status != TuningOutcomeStatus::Succeeded;
-            let returned =
-                returning.iter().any(|(returned, _)| *returned == key) && outcomes.full();
+            let returned = returning.iter().any(|(returned, _)| *returned == key)
+                && outcomes.all_settings_succeeded();
             if unwritten || returned {
                 activation.baseline.remove(&key);
             }
@@ -665,10 +667,10 @@ impl Switching {
         {
             activation.cooling_baseline = None;
         }
-        if returning_cooling && outcomes.full() {
+        if returning_cooling && outcomes.all_settings_succeeded() {
             activation.cooling_baseline = None;
         }
-        let full = outcomes.full();
+        let full = outcomes.all_settings_succeeded();
         if full {
             let mut applied = profile.clone();
             if applied.cooling.is_some() {
@@ -774,7 +776,7 @@ impl Switching {
                     .as_ref()
                     .map(|_| &activation.cooling_baseline_fans),
             );
-            if !outcomes.full() {
+            if !outcomes.all_settings_succeeded() {
                 if outcomes
                     .outcomes()
                     .any(|o| o.status != TuningOutcomeStatus::Unattempted)
@@ -1035,15 +1037,14 @@ fn write_settings(
                 "Cooling: the pre-game fan identities are unavailable or the GPU's fans changed. Nothing was restored.");
         }
     }
-    let application = apply_unreviewed_profile(
+    apply_automatic_profile(
         backend,
         Some(cooling),
         ApplyGpuProfileRequest {
             gpu_id: gpu_id.into(),
             settings,
         },
-    );
-    application
+    )
 }
 
 fn failure_message(outcomes: &ProfileApplicationResponse) -> String {

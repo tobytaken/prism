@@ -1972,3 +1972,168 @@ fn successful_automatic_applications_and_restorations_report_each_setting_and_no
     assert_eq!(restored["application"]["graphics"]["status"], "succeeded");
     assert_eq!(restored["application"]["rollback"]["status"], "notNeeded");
 }
+
+#[test]
+fn retry_after_an_absent_failed_gpu_returns_uses_the_current_profile_instead_of_a_success_snapshot()
+{
+    let (daemon, alice) = linked_dota();
+    daemon
+        .gpus
+        .fail(LINKED, Setter::GraphicsOffset, "Graphics rejected");
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    alice.send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } }));
+    daemon.gpus.arrive(returning);
+    daemon.gpus.stop_failing(LINKED, Setter::GraphicsOffset);
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(values(&daemon), GAMING);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+}
+
+#[test]
+fn retry_can_capture_verified_automatic_cooling_after_a_fault_that_predates_game_tuning() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, shared_curve());
+    daemon.set_temperature(LINKED, None);
+    daemon.run_curves_for(500);
+    assert!(!cooling(&alice)["suspension"].is_null());
+    daemon.set_temperature(LINKED, Some(60));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+    assert!(cooling(&alice)["suspension"].is_null());
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"]["setting"]["mode"], "automatic");
+}
+
+#[test]
+fn retry_preserves_known_numeric_changes_made_outside_prism_during_a_failure_pause() {
+    let (daemon, alice) = linked_dota();
+    daemon
+        .gpus
+        .fail(LINKED, Setter::GraphicsOffset, "Graphics rejected");
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    daemon.gpus.stop_failing(LINKED, Setter::GraphicsOffset);
+    daemon
+        .gpus
+        .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(380));
+    let writes = writes_to(&daemon, LINKED);
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(writes_to(&daemon, LINKED), writes);
+    assert_eq!(values(&daemon).0, Some(380));
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"],
+        json!({ "status": "manualOverride", "changedOutsidePrism": true })
+    );
+}
+
+#[test]
+fn retry_captures_a_mixed_automatic_and_fixed_fallback_without_reviving_the_faulted_curve() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    daemon.set_temperature(LINKED, None);
+    daemon.run_curves_for(500);
+    daemon.set_temperature(LINKED, Some(60));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+    ok(alice
+        .send_json(json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } })));
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(
+        cooling(&alice)["applied"],
+        json!({ "arrangement": "perFan", "fans": [
+        { "fanIndex": 0, "setting": { "mode": "automatic" } },
+        { "fanIndex": 1, "setting": { "mode": "fixed", "speedPercent": 55 } }
+    ] })
+    );
+}
+
+#[test]
+fn partial_fixed_fan_failure_attempts_default_automatic_cooling_and_reports_every_fan() {
+    for fallback in ["restored", "failed", "unverified"] {
+        let (daemon, alice) = cooled_dota();
+        let fixed =
+            json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 75 } });
+        ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+            { "id": "fixed-failure", "name": "Fixed failure", "gpuId": LINKED, "settings": { "cooling": fixed } }
+        ] } })));
+        link(&alice, LINKED, Some("fixed-failure"));
+        daemon
+            .gpus
+            .fail_fan(LINKED, Setter::FanSpeed, 1, "Fixed target rejected");
+        if fallback == "failed" {
+            daemon
+                .gpus
+                .fail_fan(LINKED, Setter::FanModeAuto, 0, "Default rejected");
+        }
+        let gate = daemon.gpus.block(LINKED, Setter::FanSpeed);
+        set_switching(&daemon, &alice, true);
+        daemon.run_steam_game(123, 1000, 420, DOTA);
+        daemon.core().scan_running_games();
+        gate.wait_until_entered();
+        if fallback == "unverified" {
+            daemon.gpus.hide_fan_mode(LINKED, 0);
+        }
+        gate.release();
+        daemon.settle();
+        let failed = status(&alice)["gpus"][0].clone();
+        assert_eq!(
+            failed["application"]["cooling"]["fans"][0]["outcome"]["status"],
+            "succeeded"
+        );
+        assert_eq!(
+            failed["application"]["cooling"]["fans"][1]["outcome"]["status"],
+            "failed"
+        );
+        assert_eq!(
+            failed["application"]["rollback"]["coolingRestoration"][0]["status"],
+            fallback
+        );
+        assert_eq!(
+            failed["application"]["rollback"]["coolingRestoration"][1]["status"],
+            "restored"
+        );
+        assert_eq!(
+            failed["state"]["status"],
+            if fallback == "restored" {
+                "failed"
+            } else {
+                "recoveryRequired"
+            }
+        );
+        let writes = writes_to(&daemon, LINKED);
+        daemon.scan();
+        daemon.run_curves_for(500);
+        assert_eq!(writes_to(&daemon, LINKED), writes);
+        if fallback == "restored" {
+            ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+                { "id": "default-fans", "name": "Default fans", "gpuId": LINKED, "settings": { "cooling": { "arrangement": "shared", "setting": { "mode": "automatic" } } } }
+            ] } })));
+            link(&alice, LINKED, Some("default-fans"));
+            ok(alice.send_json(
+                json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } }),
+            ));
+            assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "active");
+        }
+    }
+}

@@ -180,7 +180,9 @@ fn restoring_last_applied_values_restores_the_latest_manual_cooling_configuratio
     daemon.set_temperature("GPU-123", Some(60));
     // This host boot resets fan policy; the rollback baseline must be freshly readable.
     daemon.gpus.update("GPU-123", |gpu| {
-        for fan in &mut gpu.cooling.fans { fan.mode = Some(FanControlMode::Auto); }
+        for fan in &mut gpu.cooling.fans {
+            fan.mode = Some(FanControlMode::Auto);
+        }
     });
     daemon.reboot();
     let outcome = completed_outcome(&daemon);
@@ -312,7 +314,9 @@ fn a_crash_after_restoring_cooling_skips_the_next_restore_once() {
     set_behavior(&alice, "restoreLastApplied");
     drop(alice);
     daemon.gpus.update("GPU-123", |gpu| {
-        for fan in &mut gpu.cooling.fans { fan.mode = Some(FanControlMode::Auto); }
+        for fan in &mut gpu.cooling.fans {
+            fan.mode = Some(FanControlMode::Auto);
+        }
     });
     daemon.reboot();
     assert_eq!(completed_outcome(&daemon)["status"], "applied");
@@ -322,7 +326,9 @@ fn a_crash_after_restoring_cooling_skips_the_next_restore_once() {
     assert!(skipped["reason"].as_str().unwrap().contains("skipped once"));
     assert!(control(&daemon)["applied"].is_null());
     daemon.gpus.update("GPU-123", |gpu| {
-        for fan in &mut gpu.cooling.fans { fan.mode = Some(FanControlMode::Auto); }
+        for fan in &mut gpu.cooling.fans {
+            fan.mode = Some(FanControlMode::Auto);
+        }
     });
     daemon.reboot();
     assert_eq!(completed_outcome(&daemon)["status"], "applied");

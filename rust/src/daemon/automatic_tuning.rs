@@ -27,7 +27,7 @@ impl ProfileApplicationResponse {
             .chain(self.cooling.as_ref().map(|cooling| &cooling.outcome))
     }
 
-    pub(super) fn full(&self) -> bool {
+    pub(super) fn all_settings_succeeded(&self) -> bool {
         self.outcomes().all(succeeded)
     }
 
@@ -57,6 +57,55 @@ fn unattempted(message: &str) -> TuningOutcome {
         status: TuningOutcomeStatus::Unattempted,
         error: Some(message.into()),
     }
+}
+
+/// Capture actual policy, including a fault's verified automatic fallback or a hardware reset.
+/// A suspended curve definition is never itself a rollback target.
+pub(super) fn capture_cooling_baseline(
+    gpu: &crate::gpu::GpuPerformanceDevice,
+    control: Option<crate::cooling::CoolingControl>,
+) -> Option<crate::cooling::CoolingConfiguration> {
+    let mut gpu = gpu.clone();
+    gpu.cooling.control = control;
+    if let Ok(configuration) = capture_cooling(&gpu) {
+        return configuration;
+    }
+    if gpu
+        .cooling
+        .fans
+        .iter()
+        .all(|fan| fan.mode == Some(crate::gpu::FanControlMode::Auto))
+    {
+        gpu.cooling.control = None;
+        return capture_cooling(&gpu).ok().flatten();
+    }
+    // A cooling fault can leave healthy fixed fans manual while curve fans return to Auto.
+    // Preserve those known targets, but never infer a suspended curve from a sampled speed.
+    let applied = gpu.cooling.control.as_ref()?.applied.as_ref()?;
+    let mut fans = Vec::new();
+    for fan in &gpu.cooling.fans {
+        use crate::cooling::{CoolingConfiguration, FanConfiguration, FanSetting};
+        let setting = match fan.mode? {
+            crate::gpu::FanControlMode::Auto => FanSetting::Automatic {},
+            crate::gpu::FanControlMode::Manual => {
+                let setting = match applied {
+                    CoolingConfiguration::Shared { setting } => setting,
+                    CoolingConfiguration::PerFan { fans } => {
+                        &fans.iter().find(|f| f.fan_index == fan.index)?.setting
+                    }
+                };
+                match setting {
+                    FanSetting::Fixed { .. } => setting.clone(),
+                    _ => return None,
+                }
+            }
+        };
+        fans.push(FanConfiguration {
+            fan_index: fan.index,
+            setting,
+        });
+    }
+    (!fans.is_empty()).then_some(crate::cooling::CoolingConfiguration::PerFan { fans })
 }
 
 pub(super) fn apply(
@@ -106,25 +155,14 @@ pub(super) fn apply_with_baseline(
         }
     }
     if request.settings.cooling.is_some() {
-        let mut gpu = gpu.clone();
-        gpu.cooling.control = cooling.map(|c| c.control(&request.gpu_id));
-        // An explicit retry may replace faulted cooling. Capture verified automatic hardware
-        // policy, never the suspended curve retained for review.
-        if capture_cooling(&gpu).is_err() && gpu
-            .cooling
-            .fans
-            .iter()
-            .all(|fan| fan.mode == Some(crate::gpu::FanControlMode::Auto))
-        {
-            gpu.cooling.control = None;
-        }
-        before.cooling = capture_cooling(&gpu).ok().flatten();
+        before.cooling = capture_cooling_baseline(gpu, cooling.map(|c| c.control(&request.gpu_id)));
         if before.cooling.is_none() {
             return blocked(
                 "Cooling: the configuration before this attempt can't be read. Nothing was changed.");
         }
     }
-    let expected_fans: std::collections::BTreeSet<_> = gpu.cooling.fans.iter().map(|fan| fan.index).collect();
+    let expected_fans: std::collections::BTreeSet<_> =
+        gpu.cooling.fans.iter().map(|fan| fan.index).collect();
     let gpu_id = request.gpu_id.clone();
     let mut response = tuning::apply(
         backend,
@@ -134,7 +172,7 @@ pub(super) fn apply_with_baseline(
         CoolingApplicationSource::NonManual,
     );
     let mut rollback = RollbackResult::default();
-    if !response.full() {
+    if !response.all_settings_succeeded() {
         // Numeric settings execute in power/graphics/memory order. Failed and unattempted
         // settings are never rolled back. Each rollback revalidates capabilities and readings.
         for (key, outcome) in response.numeric().collect::<Vec<_>>().into_iter().rev() {
@@ -196,7 +234,12 @@ pub(super) fn apply_with_baseline(
             let unchanged = verified_gpu(&readings, &gpu_id).is_ok_and(|gpu| {
                 let mut gpu = gpu.clone();
                 gpu.cooling.control = Some(controller.control(&gpu_id));
-                gpu.cooling.fans.iter().map(|fan| fan.index).collect::<std::collections::BTreeSet<_>>() == expected_fans
+                gpu.cooling
+                    .fans
+                    .iter()
+                    .map(|fan| fan.index)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    == expected_fans
                     && !controller.changed_outside_prism(&gpu)
                     && capture_cooling(&gpu).ok().flatten().is_some()
             });
@@ -233,12 +276,45 @@ pub(super) fn apply_with_baseline(
                     capture_cooling(&gpu).ok().flatten()
                 });
                 if verified != before.cooling {
-                    result.outcome = TuningOutcome { status: TuningOutcomeStatus::Failed,
-                        error: Some("Cooling rollback was accepted but its result could not be verified.".into()) };
+                    result.outcome = TuningOutcome {
+                        status: TuningOutcomeStatus::Failed,
+                        error: Some(
+                            "Cooling rollback was accepted but its result could not be verified."
+                                .into(),
+                        ),
+                    };
                     for fan in &mut result.fans {
-                        let mode = verified_gpu(&readings, &gpu_id).ok().and_then(|gpu|
-                            gpu.cooling.fans.iter().find(|reported| reported.index == fan.fan_index)).and_then(|fan| fan.mode);
-                        if mode.is_none() { fan.outcome = result.outcome.clone(); }
+                        let mode = verified_gpu(&readings, &gpu_id)
+                            .ok()
+                            .and_then(|gpu| {
+                                gpu.cooling
+                                    .fans
+                                    .iter()
+                                    .find(|reported| reported.index == fan.fan_index)
+                            })
+                            .and_then(|fan| fan.mode);
+                        let setting =
+                            before
+                                .cooling
+                                .as_ref()
+                                .and_then(|configuration| match configuration {
+                                    crate::cooling::CoolingConfiguration::Shared { setting } => {
+                                        Some(setting)
+                                    }
+                                    crate::cooling::CoolingConfiguration::PerFan { fans } => fans
+                                        .iter()
+                                        .find(|f| f.fan_index == fan.fan_index)
+                                        .map(|f| &f.setting),
+                                });
+                        let expected_mode = setting.map(|setting| match setting {
+                            crate::cooling::FanSetting::Automatic {} => {
+                                crate::gpu::FanControlMode::Auto
+                            }
+                            _ => crate::gpu::FanControlMode::Manual,
+                        });
+                        if mode.is_none() || mode != expected_mode {
+                            fan.outcome = result.outcome.clone();
+                        }
                     }
                 }
             }

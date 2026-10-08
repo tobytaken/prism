@@ -101,8 +101,12 @@ fn gpu_status(session: &FakeSession) -> Value {
     let response = session.send_json(json!({ "type": "get_automatic_switching_status" }));
     assert_eq!(response["type"], "automatic_switching_status", "{response}");
     // These scenarios assert winner selection; detailed operation outcomes have their own tests.
-    json!(response["payload"]["gpus"].as_array().unwrap().iter().map(|gpu|
-        json!({ "gpuId": gpu["gpuId"], "state": gpu["state"] })).collect::<Vec<_>>())
+    json!(response["payload"]["gpus"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|gpu| json!({ "gpuId": gpu["gpuId"], "state": gpu["state"] }))
+        .collect::<Vec<_>>())
 }
 
 fn active(app_id: u32, game_name: &str, profile_id: &str, profile_name: &str) -> Value {
@@ -187,7 +191,10 @@ fn overlapping_games_keep_the_original_pre_game_values_and_never_write_graphics(
     daemon.scan();
     assert_eq!(values(&daemon), (Some(200), Some(120), Some(0)));
     assert_eq!(current_profile(&alice), "Quiet");
-    assert_eq!(gpu_status(&alice), json!([{ "gpuId": GPU, "state": { "status": "restored" } }]));
+    assert_eq!(
+        gpu_status(&alice),
+        json!([{ "gpuId": GPU, "state": { "status": "restored" } }])
+    );
 
     assert!(!writes(&daemon).contains(&Setter::GraphicsOffset));
     assert_eq!(last_applied(&daemon), manual);
@@ -257,7 +264,10 @@ fn assert_bob_wins(daemon: &Harness, alice: &FakeSession, bob: &FakeSession) {
 fn assert_restored(daemon: &Harness, alice: &FakeSession, manual: &Value) {
     assert_eq!(values(daemon), PRE_GAME);
     assert_eq!(current_profile(alice), "Daily");
-    assert_eq!(gpu_status(alice), json!([{ "gpuId": GPU, "state": { "status": "restored" } }]));
+    assert_eq!(
+        gpu_status(alice),
+        json!([{ "gpuId": GPU, "state": { "status": "restored" } }])
+    );
     assert_eq!(&last_applied(daemon), manual);
 }
 
@@ -484,6 +494,7 @@ fn overlapping_users_restore_the_original_unsaved_cooling_configuration() {
             daemon.run_steam_game(200, 1001, 2_000, CS);
             if restart_between_games {
                 daemon.start_daemon();
+                daemon.clock.advance(5_000);
             }
             daemon.scan();
             let alice = daemon.user(1000, "alice");
@@ -524,7 +535,10 @@ fn overlapping_users_restore_the_original_unsaved_cooling_configuration() {
                 assert_eq!(fans[1].current_speed_percent, Some(55));
             }
             assert_eq!(current_profile(&alice), "Daily");
-            assert_eq!(gpu_status(&alice), json!([{ "gpuId": GPU, "state": { "status": "restored" } }]));
+            assert_eq!(
+                gpu_status(&alice),
+                json!([{ "gpuId": GPU, "state": { "status": "restored" } }])
+            );
             assert_eq!(last_applied(&daemon), manual);
             assert_eq!(cooling(&alice)["rememberedCurve"], remembered);
             assert!(!writes(&daemon).contains(&Setter::GraphicsOffset));

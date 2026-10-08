@@ -27,17 +27,6 @@ pub(super) fn apply_profile(
     apply(backend, Some(cooling), request, origin, source)
 }
 
-/// Boot results are shared across users. Only manual loads may disclose saved values
-/// and offer the profile owner's range-correction review. Without a cooling controller, a
-/// profile that includes cooling is refused whole.
-pub(super) fn apply_unreviewed_profile(
-    backend: &dyn DaemonBackend,
-    cooling: Option<&CoolingController>,
-    request: ApplyGpuProfileRequest,
-) -> ProfileApplicationResponse {
-    super::automatic_tuning::apply(backend, cooling, request)
-}
-
 pub(super) fn apply(
     backend: &dyn DaemonBackend,
     cooling: Option<&CoolingController>,
