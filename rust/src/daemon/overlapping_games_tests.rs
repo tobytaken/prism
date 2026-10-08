@@ -494,6 +494,7 @@ fn overlapping_users_restore_the_original_unsaved_cooling_configuration() {
             daemon.run_steam_game(200, 1001, 2_000, CS);
             if restart_between_games {
                 daemon.start_daemon();
+                // Let the restarted daemon's edit-hold grace period finish before switching.
                 daemon.clock.advance(5_000);
             }
             daemon.scan();

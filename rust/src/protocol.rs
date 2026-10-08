@@ -548,6 +548,13 @@ pub struct SetAutomaticSwitchingRequest {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetGpuSwitchingPausedRequest {
+    pub gpu_id: String,
+    pub paused: bool,
+}
+
 /// The caller's view of automatic switching: what holds it back overall, and each GPU that
 /// automation drives or failed to drive. Other GPUs are left unchanged. It doesn't establish
 /// which tuning values are in effect.
@@ -585,6 +592,8 @@ pub struct GpuSwitchingStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
 pub enum GpuSwitchingState {
+    /// An explicit host-wide hold on this GPU, retained until Resume.
+    Paused {},
     /// The caller's running game drives the GPU with its linked profile.
     #[serde(rename_all = "camelCase")]
     Active {
@@ -665,6 +674,7 @@ pub enum DaemonRequest {
     SetGameProfile(SetGameProfileRequest),
     RemoveGame(GameRequest),
     SetAutomaticSwitching(SetAutomaticSwitchingRequest),
+    SetGpuSwitchingPaused(SetGpuSwitchingPausedRequest),
     GetAutomaticSwitchingStatus,
     RetryAutomaticSwitching(StartupGpuRequest),
     GetDriverStatus,
@@ -957,6 +967,8 @@ mod session_tests {
             serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123", "profileId": null } }),
             serde_json::json!({ "type": "remove_game", "payload": { "game": { "kind": "steam", "appId": 570 } } }),
             serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": true } }),
+            serde_json::json!({ "type": "set_gpu_switching_paused", "payload": { "gpuId": "GPU-123", "paused": true } }),
+            serde_json::json!({ "type": "set_gpu_switching_paused", "payload": { "gpuId": "GPU-123", "paused": false } }),
         ] {
             let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
             assert_eq!(serde_json::to_value(typed).unwrap(), request);
@@ -970,6 +982,9 @@ mod session_tests {
             serde_json::json!({ "type": "set_game_profile", "payload": { "game": { "kind": "steam", "appId": 570, "uid": 0 }, "gpuId": "GPU-123", "profileId": null } }),
             serde_json::json!({ "type": "remove_game", "payload": { "game": { "kind": "steam" } } }),
             serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": "yes" } }),
+            serde_json::json!({ "type": "set_gpu_switching_paused", "payload": { "gpuId": "GPU-123", "paused": "yes" } }),
+            serde_json::json!({ "type": "set_gpu_switching_paused", "payload": { "gpuId": "GPU-123" } }),
+            serde_json::json!({ "type": "set_gpu_switching_paused", "payload": { "gpuId": "GPU-123", "paused": true, "uid": 0 } }),
             serde_json::json!({ "type": "set_automatic_switching", "payload": { "enabled": true, "uid": 0 } }),
             serde_json::json!({ "type": "get_games", "payload": { "uid": 0 } }),
         ] {

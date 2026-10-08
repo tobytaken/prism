@@ -125,6 +125,12 @@ pub fn retry_automatic_switching(
     }
 }
 
+pub fn set_gpu_switching_paused(
+    request: crate::protocol::SetGpuSwitchingPausedRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::SetGpuSwitchingPaused(request))
+}
+
 pub fn get_games() -> Result<GamesState, GpuCommandError> {
     send_games_request(DaemonRequest::GetGames)
 }
@@ -354,6 +360,7 @@ fn request_timeout(request: &DaemonRequest) -> Duration {
             | DaemonRequest::ApplyProfileById(_)
             | DaemonRequest::CorrectAndApplyProfile(_)
             | DaemonRequest::SetStartupProfile(_)
+            | DaemonRequest::SetGpuSwitchingPaused(_)
     ) {
         Duration::from_secs(35)
     } else if request.is_game_request() {

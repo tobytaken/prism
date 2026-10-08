@@ -16,6 +16,43 @@ beforeEach(() => {
   );
 });
 
+it("pauses and resumes a GPU only from Game tuning and shows the matching row and header status", async () => {
+  const user = userEvent.setup();
+  createFakeDesktop({
+    automaticSwitching: true,
+    switchingStatus: { condition: { status: "ready" }, gpus: [] },
+  });
+  const router = createMemoryRouter(appRoutes, {
+    initialEntries: ["/performance"],
+  });
+  renderWithQueryClient(<RouterProvider router={router} />);
+  const panel = await screen.findByRole("region", { name: "Game tuning" });
+  await findProfileControls();
+  const header = profileSelector().closest("summary")!;
+  const pause = await within(panel).findByRole("button", { name: "Pause" });
+  expect(screen.getAllByRole("button", { name: "Pause" })).toHaveLength(1);
+  await user.click(pause);
+  expect(
+    await within(panel).findByRole("button", { name: "Resume" }),
+  ).toBeEnabled();
+  expect(panel).toHaveTextContent(
+    "Paused. Current tuning is kept; applied fan curves keep running.",
+  );
+  expect(within(header).getByTestId("switching-chip")).toHaveTextContent(
+    "Switching paused",
+  );
+  expect(screen.getAllByRole("button", { name: "Resume" })).toHaveLength(1);
+  await user.click(within(panel).getByRole("button", { name: "Resume" }));
+  expect(
+    await within(panel).findByRole("button", { name: "Pause" }),
+  ).toBeEnabled();
+  expect(panel).toHaveTextContent("Waiting for a linked game to run.");
+  expect(within(header).queryByTestId("switching-chip")).toBeNull();
+  await user.click(within(panel).getByRole("link", { name: "Games" }));
+  expect(await screen.findByRole("heading", { name: "Games" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^(Pause|Resume)$/ })).toBeNull();
+});
+
 it("lists running games from pushed events, keeps the opt-in, and links to Games with live Running badges", async () => {
   const user = userEvent.setup();
   const fake = createFakeDesktop({
@@ -66,6 +103,58 @@ it("lists running games from pushed events, keeps the opt-in, and links to Games
     expect(
       screen.queryByText(/Recognition unavailable/),
     ).not.toBeInTheDocument(),
+  );
+});
+
+it("offers Resume for a manual override, reports a rejected request, and disables actions while disconnected", async () => {
+  const user = userEvent.setup();
+  const fake = createFakeDesktop({
+    switchingStatus: {
+      condition: { status: "ready" },
+      gpus: [
+        {
+          gpuId: "GPU-123",
+          state: { status: "manualOverride", changedOutsidePrism: false },
+        },
+      ],
+    },
+  });
+  fake.setGpuSwitchingPaused.mockRejectedValueOnce(
+    new Error("The pause could not be saved."),
+  );
+  const router = createMemoryRouter(appRoutes, {
+    initialEntries: ["/performance"],
+  });
+  renderWithQueryClient(<RouterProvider router={router} />);
+  const panel = await screen.findByRole("region", { name: "Game tuning" });
+  await user.click(
+    await within(panel).findByRole("button", { name: "Resume" }),
+  );
+  expect(await within(panel).findByRole("alert")).toHaveTextContent(
+    "The pause could not be saved.",
+  );
+  expect(within(panel).getByRole("button", { name: "Resume" })).toBeEnabled();
+  expect(panel).toHaveTextContent("Manual override");
+  // A temporary override can become a persistent pause without first applying game tuning.
+  await user.click(within(panel).getByRole("button", { name: "Pause" }));
+  await waitFor(() =>
+    expect(panel).toHaveTextContent("Paused. Current tuning is kept"),
+  );
+  expect(within(panel).queryByRole("button", { name: "Pause" })).toBeNull();
+  await user.click(within(panel).getByRole("button", { name: "Resume" }));
+  expect(
+    await within(panel).findByRole("button", { name: "Pause" }),
+  ).toBeEnabled();
+  expect(within(panel).queryByRole("alert")).toBeNull();
+  act(() =>
+    fake.pushDaemonStatus({
+      ...connectedDaemonStatus,
+      reachable: false,
+      managedByDaemon: false,
+    }),
+  );
+  await waitFor(() =>
+    expect(within(panel).getByRole("button", { name: "Pause" })).toBeDisabled(),
   );
 });
 

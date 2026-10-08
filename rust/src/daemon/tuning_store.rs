@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 11;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 12;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -46,7 +46,8 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // Version 9 adds optional complete cooling configurations; old profiles omit cooling.
     Ok,
     // Version 10 adds manually identified programs to game associations; existing Steam links remain valid.
-    Ok, // Version 11 records the boot of automatic failures for the next startup outcome.
+    Ok, // Version 11 adds explicit host-wide switching pauses per GPU, initially empty.
+    Ok, // Version 12 records the boot of automatic failures for the next startup outcome.
     Ok,
 ];
 
@@ -56,6 +57,8 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
 pub struct TuningDocument {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub automatic_failures: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub switching_pauses: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ownerless_profiles: Vec<GpuTuningProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -470,6 +473,36 @@ mod tests {
             TuningStore::open(store_path(&dir)).health(),
             TuningStoreHealth::Healthy {}
         );
+    }
+
+    #[test]
+    fn version_eleven_pauses_survive_adding_failure_notes_and_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            br#"{"schemaVersion":11,"switchingPauses":["GPU-paused"]}"#,
+        )
+        .unwrap();
+        let store = TuningStore::open(path.clone());
+        store
+            .update(|document| {
+                document
+                    .automatic_failures
+                    .insert("GPU-failed".into(), "boot-1".into());
+            })
+            .unwrap();
+
+        let reopened = TuningStore::open(path.clone());
+        reopened
+            .read(|document| {
+                assert!(document.switching_pauses.contains("GPU-paused"));
+                assert_eq!(document.automatic_failures["GPU-failed"], "boot-1");
+            })
+            .unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(written["schemaVersion"], TUNING_STORE_SCHEMA_VERSION);
     }
 
     #[test]

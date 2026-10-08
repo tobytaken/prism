@@ -205,6 +205,7 @@ function isGpuSwitchingState(value: unknown) {
       );
     case "restored":
     case "anotherUser":
+    case "paused":
       return hasKeys(value, ["status"]);
     case "failed":
     case "recoveryRequired":

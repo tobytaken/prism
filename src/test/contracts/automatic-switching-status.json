@@ -1,5 +1,9 @@
 [
   {
+    "condition": { "status": "ready" },
+    "gpus": [{ "gpuId": "GPU-123", "state": { "status": "paused" } }]
+  },
+  {
     "condition": {
       "status": "ready"
     },

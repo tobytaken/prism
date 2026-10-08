@@ -31,6 +31,12 @@ export function describeGpuSwitching(
       summary: `Blocked: ${condition.reason}`,
       chip: "Switching blocked",
     };
+  if (state?.status === "paused")
+    return {
+      summary:
+        "Paused. Current tuning is kept; applied fan curves keep running.",
+      chip: "Switching paused",
+    };
   if (state?.status === "manualOverride") {
     const label = state.changedOutsidePrism
       ? "Manual override · changed outside Prism"

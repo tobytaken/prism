@@ -739,6 +739,7 @@ describe("registerIpc", () => {
         await callHandler("prism:games:listSteamApps", trustedEvent()),
       ).toEqual(apps);
       for (const [method, payload] of [
+        ["setGpuSwitchingPaused", { gpuId: "GPU-123", paused: true }],
         ["get", undefined],
         ["addSteamGame", { appId: 570 }],
         ["setProfile", { game: dota, gpuId: "GPU-123", profileId: "quiet" }],
@@ -753,6 +754,10 @@ describe("registerIpc", () => {
       }
       expect(sentRequests(child)).toEqual([
         { method: "games.listSteamApps" },
+        {
+          method: "games.setGpuSwitchingPaused",
+          params: { gpuId: "GPU-123", paused: true },
+        },
         { method: "games.get" },
         { method: "games.addSteamGame", params: { appId: 570 } },
         {
@@ -860,6 +865,7 @@ describe("registerIpc", () => {
     const dota = { kind: "steam", appId: 570 };
     try {
       for (const [method, payload] of [
+        ["setGpuSwitchingPaused", { gpuId: "GPU-123", paused: false }],
         ["listSteamApps", undefined],
         ["get", undefined],
         ["addSteamGame", { appId: 570 }],
@@ -873,6 +879,11 @@ describe("registerIpc", () => {
         ).rejects.toThrow("Untrusted IPC sender");
       }
       const invalid: [string, unknown[]][] = [
+        ["setGpuSwitchingPaused", [undefined]],
+        ["setGpuSwitchingPaused", [{ gpuId: "GPU-123", paused: "yes" }]],
+        ["setGpuSwitchingPaused", [{ gpuId: " ", paused: true }]],
+        ["setGpuSwitchingPaused", [{ gpuId: "GPU-123" }]],
+        ["setGpuSwitchingPaused", [{ gpuId: "GPU-123", paused: true, uid: 0 }]],
         ["listSteamApps", [{}]],
         ["get", [{ uid: 0 }]],
         ["addSteamGame", [undefined]],

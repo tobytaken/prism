@@ -1,6 +1,8 @@
 import { useRetrySwitching } from "@/features/games/hooks/use-switching-status";
 import { AutomaticTuningOutcomes } from "@/features/gpus/components/automatic-tuning-outcomes";
 import { Button } from "@/components/ui/button";
+import { useMutation } from "@tanstack/react-query";
+import type { SetGpuSwitchingPausedRequest } from "@/features/games/types";
 import { Link } from "react-router-dom";
 import { gameKey } from "@/features/games/hooks/use-games";
 import { useRunningGames } from "@/features/games/hooks/use-running-games";
@@ -31,6 +33,15 @@ export function GameTuningPanel({
   const running = useRunningGames();
   const retry = useRetrySwitching();
   const games = workflow.games;
+  const switchingChange = useMutation({
+    mutationFn: async (request: SetGpuSwitchingPausedRequest) => {
+      const result = await window.prism.games.setGpuSwitchingPaused(request);
+      if (!result.success)
+        throw new Error(
+          result.error ?? "Could not change automatic switching.",
+        );
+    },
+  });
   return (
     <section
       aria-label="Game tuning"
@@ -82,37 +93,85 @@ export function GameTuningPanel({
             const entry = workflow.switching?.gpus.find(
               (entry) => entry.gpuId === gpu.stableId,
             );
+            const state = entry?.state;
             const failed =
-              entry?.state.status === "failed" ||
-              entry?.state.status === "recoveryRequired";
+              state?.status === "failed" ||
+              state?.status === "recoveryRequired";
+            const resume =
+              state?.status === "paused" || state?.status === "manualOverride";
+            const actions = [
+              {
+                label: "Pause",
+                paused: true,
+                shown: state?.status !== "paused",
+              },
+              { label: "Resume", paused: false, shown: resume },
+            ].filter((action) => action.shown);
+            const unavailable =
+              !workflow.switching ||
+              ["unknown", "blocked"].includes(
+                workflow.switching.condition.status,
+              );
             return (
-              <li key={gpu.id} className="text-muted-foreground">
-                {`${gpu.name}: ${
-                  gpu.stableId
-                    ? describeGpuSwitching(workflow.switching, gpu.stableId)
-                        .summary
-                    : "Unavailable: this GPU reports no stable identity (UUID)."
-                }`}
-                {entry?.application && (
-                  <AutomaticTuningOutcomes application={entry.application} />
-                )}
-                {failed && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    aria-label={`Retry automatic switching for ${gpu.name}`}
-                    disabled={
-                      retry.isPending ||
-                      busy ||
-                      hasEdits ||
-                      workflow.switching?.condition.status === "blocked"
-                    }
-                    onClick={() => gpu.stableId && retry.mutate(gpu.stableId)}
-                  >
-                    {retry.isPending && retry.variables === gpu.stableId
-                      ? "Retrying…"
-                      : "Retry"}
-                  </Button>
+              <li
+                key={gpu.id}
+                className="flex items-center justify-between gap-4 text-muted-foreground"
+              >
+                <div>
+                  {`${gpu.name}: ${
+                    gpu.stableId
+                      ? describeGpuSwitching(workflow.switching, gpu.stableId)
+                          .summary
+                      : "Unavailable: this GPU reports no stable identity (UUID)."
+                  }`}
+                  {entry?.application && (
+                    <AutomaticTuningOutcomes application={entry.application} />
+                  )}
+                </div>
+                {gpu.stableId && (
+                  <div className="flex gap-2">
+                    {failed && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Retry automatic switching for ${gpu.name}`}
+                        disabled={
+                          retry.isPending ||
+                          switchingChange.isPending ||
+                          busy ||
+                          hasEdits ||
+                          unavailable
+                        }
+                        onClick={() =>
+                          gpu.stableId && retry.mutate(gpu.stableId)
+                        }
+                      >
+                        {retry.isPending && retry.variables === gpu.stableId
+                          ? "Retrying…"
+                          : "Retry"}
+                      </Button>
+                    )}
+                    {actions.map((action) => (
+                      <Button
+                        key={action.label}
+                        size="sm"
+                        variant="outline"
+                        disabled={
+                          unavailable ||
+                          switchingChange.isPending ||
+                          retry.isPending
+                        }
+                        onClick={() =>
+                          switchingChange.mutate({
+                            gpuId: gpu.stableId!,
+                            paused: action.paused,
+                          })
+                        }
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </div>
                 )}
               </li>
             );
@@ -154,6 +213,11 @@ export function GameTuningPanel({
       {retry.error && (
         <p role="alert" className="text-sm text-destructive">
           {retry.error.message}
+        </p>
+      )}
+      {switchingChange.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {switchingChange.error.message}
         </p>
       )}
       <MigrationNotice workflow={workflow} />
