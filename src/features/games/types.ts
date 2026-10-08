@@ -85,6 +85,7 @@ export type GpuSwitchingState =
     }
   | { status: "waitingForEdits"; profile: { id: string; name: string } }
   | { status: "anotherUser" }
+  | { status: "manualOverride"; changedOutsidePrism: boolean }
   | { status: "recoveryRequired"; message: string }
   | { status: "failed"; message: string };
 
