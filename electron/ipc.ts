@@ -864,6 +864,21 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
       return backend.invoke("games.setAutomaticSwitching", payload);
     },
   );
+  ipcMain.handle(
+    "prism:games:setGpuSwitchingPaused",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        !hasOnlyKeys(payload, ["gpuId", "paused"]) ||
+        !isString(payload.gpuId) ||
+        !payload.gpuId.trim() ||
+        typeof payload.paused !== "boolean"
+      )
+        throw new Error("Invalid setGpuSwitchingPaused payload");
+      return backend.invoke("games.setGpuSwitchingPaused", payload);
+    },
+  );
 
   ipcMain.handle("prism:gpu:applyProfile", async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow);

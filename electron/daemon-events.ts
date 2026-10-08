@@ -204,6 +204,7 @@ function isGpuSwitchingState(value: unknown) {
         typeof value.changedOutsidePrism === "boolean"
       );
     case "anotherUser":
+    case "paused":
       return hasKeys(value, ["status"]);
     case "failed":
     case "recoveryRequired":

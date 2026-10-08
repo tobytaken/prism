@@ -32,6 +32,7 @@ import type {
   GamesState,
   RunningGamesState,
   SetAutomaticSwitchingRequest,
+  SetGpuSwitchingPausedRequest,
   SetGameProfileRequest,
   SteamApp,
   RunningProgram,
@@ -138,6 +139,9 @@ export interface PrismDesktopApi {
     setAutomaticSwitching(
       request: SetAutomaticSwitchingRequest,
     ): Promise<GamesState>;
+    setGpuSwitchingPaused(
+      request: SetGpuSwitchingPausedRequest,
+    ): Promise<GpuCommandResponse>;
   };
   drivers: {
     getStatus(): Promise<DriverStatusResponse>;

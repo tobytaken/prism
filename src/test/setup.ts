@@ -106,6 +106,7 @@ const prismStub: PrismDesktopApi = {
     getRunning: async () => ({ status: "available", games: [] }),
     onRunningChanged: () => () => undefined,
     setEditHolds: async () => ({ success: true, error: null }),
+    setGpuSwitchingPaused: async () => ({ success: true, error: null }),
     getSwitchingStatus: async () => ({
       condition: { status: "off" },
       gpus: [],

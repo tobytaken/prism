@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 10;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 11;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -46,6 +46,7 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // Version 9 adds optional complete cooling configurations; old profiles omit cooling.
     Ok,
     // Version 10 adds manually identified programs to game associations; existing Steam links remain valid.
+    Ok, // Version 11 adds explicit host-wide switching pauses per GPU, initially empty.
     Ok,
 ];
 
@@ -53,6 +54,8 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TuningDocument {
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub switching_pauses: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ownerless_profiles: Vec<GpuTuningProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

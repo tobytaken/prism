@@ -55,6 +55,11 @@ export interface SetAutomaticSwitchingRequest {
   enabled: boolean;
 }
 
+export interface SetGpuSwitchingPausedRequest {
+  gpuId: string;
+  paused: boolean;
+}
+
 /** A recognized game, using the earliest recognized process on this host boot. */
 export interface RunningGame {
   game: GameId;
@@ -77,6 +82,7 @@ export type SwitchingCondition =
 
 /** Why automation drives a GPU, or why its latest automatic operation didn't complete. */
 export type GpuSwitchingState =
+  | { status: "paused" }
   | {
       status: "active";
       game: GameId;

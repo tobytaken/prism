@@ -1,4 +1,6 @@
 import { Button } from "@/components/ui/button";
+import { useMutation } from "@tanstack/react-query";
+import type { SetGpuSwitchingPausedRequest } from "@/features/games/types";
 import { Link } from "react-router-dom";
 import { gameKey } from "@/features/games/hooks/use-games";
 import { useRunningGames } from "@/features/games/hooks/use-running-games";
@@ -28,6 +30,15 @@ export function GameTuningPanel({
 }) {
   const running = useRunningGames();
   const games = workflow.games;
+  const switchingChange = useMutation({
+    mutationFn: async (request: SetGpuSwitchingPausedRequest) => {
+      const result = await window.prism.games.setGpuSwitchingPaused(request);
+      if (!result.success)
+        throw new Error(
+          result.error ?? "Could not change automatic switching.",
+        );
+    },
+  });
   return (
     <section
       aria-label="Game tuning"
@@ -75,16 +86,48 @@ export function GameTuningPanel({
           aria-label="Automatic switching status"
           className="space-y-1 text-sm"
         >
-          {gpus.map((gpu) => (
-            <li key={gpu.id} className="text-muted-foreground">
-              {`${gpu.name}: ${
-                gpu.stableId
-                  ? describeGpuSwitching(workflow.switching, gpu.stableId)
-                      .summary
-                  : "Unavailable: this GPU reports no stable identity (UUID)."
-              }`}
-            </li>
-          ))}
+          {gpus.map((gpu) => {
+            const state = workflow.switching?.gpus.find(
+              (entry) => entry.gpuId === gpu.stableId,
+            )?.state;
+            const resume =
+              state?.status === "paused" || state?.status === "manualOverride";
+            const unavailable =
+              !workflow.switching ||
+              ["unknown", "blocked"].includes(
+                workflow.switching.condition.status,
+              );
+            return (
+              <li
+                key={gpu.id}
+                className="flex items-center justify-between gap-4 text-muted-foreground"
+              >
+                <span>
+                  {`${gpu.name}: ${
+                    gpu.stableId
+                      ? describeGpuSwitching(workflow.switching, gpu.stableId)
+                          .summary
+                      : "Unavailable: this GPU reports no stable identity (UUID)."
+                  }`}
+                </span>
+                {gpu.stableId && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={unavailable || switchingChange.isPending}
+                    onClick={() =>
+                      switchingChange.mutate({
+                        gpuId: gpu.stableId!,
+                        paused: !resume,
+                      })
+                    }
+                  >
+                    {resume ? "Resume" : "Pause"}
+                  </Button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
       {workflow.switching?.gpus.some(
@@ -117,6 +160,11 @@ export function GameTuningPanel({
       {(games.query.error || games.changeError) && (
         <p role="alert" className="text-sm text-destructive">
           {(games.query.error ?? games.changeError)?.message}
+        </p>
+      )}
+      {switchingChange.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {switchingChange.error.message}
         </p>
       )}
       <MigrationNotice workflow={workflow} />

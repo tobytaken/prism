@@ -103,6 +103,7 @@ impl DaemonCore {
             DaemonRequest::SetGameProfile(_)
                 | DaemonRequest::RemoveGame(_)
                 | DaemonRequest::SetAutomaticSwitching(_)
+                | DaemonRequest::SetGpuSwitchingPaused(_)
                 | DaemonRequest::DeleteProfile(_)
                 | DaemonRequest::RenameProfile(_)
         );
@@ -256,6 +257,14 @@ impl DaemonCore {
             DaemonRequest::GetAutomaticSwitchingStatus => Ok(
                 DaemonResponse::AutomaticSwitchingStatus(self.switching.status_for(peer)),
             ),
+            DaemonRequest::SetGpuSwitchingPaused(request) => {
+                let switching = self.switching.clone();
+                let gpu_id = request.gpu_id.clone();
+                self.tracked_write(&gpu_id, move |backend| {
+                    switching.set_paused(backend, &request.gpu_id, request.paused)
+                })
+                .map(|()| startup_command())
+            }
             request => Ok(self.handle(request)),
         };
         if reevaluate {
@@ -708,6 +717,7 @@ impl DaemonCore {
             | DaemonRequest::SetGameProfile(_)
             | DaemonRequest::RemoveGame(_)
             | DaemonRequest::SetAutomaticSwitching(_)
+            | DaemonRequest::SetGpuSwitchingPaused(_)
             | DaemonRequest::GetAutomaticSwitchingStatus => {
                 DaemonResponse::Error(GpuCommandError::new(
                     GpuCommandErrorCode::NoPermission,
