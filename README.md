@@ -25,7 +25,7 @@ Run the Electron app:
 bun run dev
 ```
 
-Run renderer tests:
+Run renderer and Electron tests:
 
 ```bash
 bun run test
@@ -36,6 +36,8 @@ Run the Rust tests:
 ```bash
 cargo test --manifest-path rust/Cargo.toml
 ```
+
+CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run the JavaScript checks, Rust tests, and packaging smoke checks. The manual workflow becomes available once this configuration is on the default branch.
 
 ## Sidecar and Daemon
 
