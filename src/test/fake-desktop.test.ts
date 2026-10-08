@@ -70,9 +70,10 @@ describe("fake desktop cooling applications", () => {
       speedPercent,
     ] of coolingApplication.requestedAtTemperature) {
       fake.gpu.telemetry.temperatureC = temperatureC;
-      await window.prism.gpu.applyCooling(
-        coolingApplication.request as ApplyCoolingRequest,
-      );
+      await window.prism.gpu.applyCooling({
+        ...(coolingApplication.request as ApplyCoolingRequest),
+        expectedRevision: fake.gpu.cooling.control?.revision ?? 0,
+      });
       expect(
         fake.gpu.cooling.control?.requested[0].speedPercent,
         `${temperatureC}°C`,

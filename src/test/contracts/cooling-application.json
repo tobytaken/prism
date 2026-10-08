@@ -24,33 +24,16 @@
           }
         ]
       }
-    }
+    },
+    "expectedRevision": 0
   },
   "requestedAtTemperature": [
-    [
-      30,
-      20
-    ],
-    [
-      45,
-      20
-    ],
-    [
-      66,
-      62
-    ],
-    [
-      71,
-      72
-    ],
-    [
-      80,
-      90
-    ],
-    [
-      95,
-      100
-    ]
+    [30, 20],
+    [45, 20],
+    [66, 62],
+    [71, 72],
+    [80, 90],
+    [95, 100]
   ],
   "application": {
     "outcome": {
@@ -72,7 +55,8 @@
           "error": "Unknown error"
         }
       }
-    ]
+    ],
+    "revision": 2
   },
   "controls": [
     {
@@ -103,7 +87,8 @@
         }
       ],
       "curveTemperatureC": 71,
-      "suspension": null
+      "suspension": null,
+      "revision": 1
     },
     {
       "applied": {
@@ -144,14 +129,17 @@
             "status": "failed",
             "detail": "Insufficient permissions"
           }
-        ]
-      }
+        ],
+        "kind": "fault"
+      },
+      "revision": 1
     },
     {
       "applied": null,
       "requested": [],
       "curveTemperatureC": null,
-      "suspension": null
+      "suspension": null,
+      "revision": 0
     }
   ]
 }

@@ -25,6 +25,7 @@ export function CoolingControlStatus({
   if (!control || !gpu.cooling.isSupported || gpu.cooling.fans.length === 0)
     return null;
   const { applied, suspension } = control;
+  const yielded = suspension?.kind === "externalControl";
   const automatic =
     applied?.arrangement === "shared" && applied.setting.mode === "automatic";
 
@@ -36,10 +37,16 @@ export function CoolingControlStatus({
     >
       <p className="font-medium">
         {applied
-          ? `Applied: ${describe(applied)}`
+          ? `Applied: ${describeCooling(applied)}`
           : "Prism hasn't applied cooling to this GPU."}
       </p>
       <RequestedSpeeds control={control} />
+      {control.requested.length > 0 && (
+        <p className="text-muted-foreground">
+          Prism can detect reported fan control mode changes. Other tools'
+          manual speed changes may not be observable.
+        </p>
+      )}
       {suspension && (
         <div className="space-y-1 border-l border-destructive/70 bg-destructive/5 px-3 py-2">
           <p className="text-destructive">
@@ -51,7 +58,9 @@ export function CoolingControlStatus({
             ))}
           </ul>
           <p className="text-muted-foreground">
-            Prism kept the curve but won't follow it again until you retry.
+            {yielded
+              ? "Prism kept the curve. Resume only when you want Prism to control cooling again."
+              : "Prism kept the curve but won't follow it again until you retry."}
           </p>
           {applied && (
             <Button
@@ -59,7 +68,7 @@ export function CoolingControlStatus({
               disabled={busy || !gpu.stableId}
               onClick={() => onApply(applied)}
             >
-              Retry curve
+              {yielded ? "Resume curve" : "Retry curve"}
             </Button>
           )}
         </div>
@@ -96,7 +105,7 @@ function RequestedSpeeds({ control }: { control: CoolingControl }) {
   );
 }
 
-function describe(configuration: CoolingConfiguration) {
+export function describeCooling(configuration: CoolingConfiguration) {
   if (configuration.arrangement === "shared")
     return `${settingText(configuration.setting)} for all fans`;
   return configuration.fans

@@ -17,6 +17,7 @@ use super::tuning_store::write_atomically;
 use crate::cooling::{
     ApplyCoolingRequest, CoolingApplication, CoolingConfiguration, CoolingControl, CurveSuspension,
     FanConfiguration, FanOutcome, FanRequest, FanRestoration, FanSetting, RestorationStatus,
+    SuspensionKind,
 };
 use crate::fan_curve::{self, FanCurvePoint};
 use crate::gpu::{
@@ -54,6 +55,7 @@ pub(super) struct CoolingController {
 /// What Prism applied to one GPU's fans, by fan index.
 #[derive(Debug, Clone)]
 struct GpuCooling {
+    revision: u64,
     shared: bool,
     fans: BTreeMap<u32, FanState>,
     curve_temperature_c: Option<i64>,
@@ -128,6 +130,7 @@ impl CurveOutput {
 impl GpuCooling {
     fn new(shared: bool, now_ms: u64) -> Self {
         Self {
+            revision: 0,
             shared,
             fans: BTreeMap::new(),
             curve_temperature_c: None,
@@ -212,6 +215,7 @@ impl GpuCooling {
             })
             .collect();
         CoolingControl {
+            revision: self.revision,
             applied: self.configuration(),
             curve_temperature_c: (!requested.is_empty())
                 .then_some(self.curve_temperature_c)
@@ -272,7 +276,24 @@ impl CoolingController {
         backend: &dyn DaemonBackend,
         request: ApplyCoolingRequest,
     ) -> CoolingApplication {
+        let uuid = request.gpu_id.clone();
+        let mut application = self.apply_configuration(backend, request);
+        application.revision = self.control(&uuid).revision;
+        application
+    }
+
+    fn apply_configuration(
+        &self,
+        backend: &dyn DaemonBackend,
+        request: ApplyCoolingRequest,
+    ) -> CoolingApplication {
         let _operation = self.operating(&request.gpu_id);
+        if request
+            .expected_revision
+            .is_some_and(|revision| revision != self.control(&request.gpu_id).revision)
+        {
+            return unattempted(&[], "Cooling changed since this draft was opened. Review the current cooling controls before applying again.");
+        }
         let performance = backend.performance();
         let Ok(gpu) = verified_gpu(&performance, &request.gpu_id) else {
             return unattempted(
@@ -389,6 +410,7 @@ impl CoolingController {
         if shared && every_fan {
             cooling.fans.clear();
         }
+        cooling.revision += 1;
         cooling.shared = shared && every_fan;
         cooling.fans.extend(states);
         cooling.curve_temperature_c = temperature;
@@ -402,6 +424,7 @@ impl CoolingController {
         }
         self.save_record();
         CoolingApplication {
+            revision: 0,
             outcome: TuningOutcome {
                 status: if fans
                     .iter()
@@ -438,6 +461,25 @@ impl CoolingController {
                 "The GPU is no longer reported, so Prism stopped following its curve.",
             );
         };
+        // The backend exposes policy, but no independent manual target readback. A speed
+        // observation (including spin-up lag) or unknown policy cannot prove another writer.
+        if cooling.fans.iter().any(|(index, state)| {
+            let expected = match state {
+                FanState::Automatic => FanControlMode::Auto,
+                FanState::Fixed(_)
+                | FanState::Curve {
+                    output: Some(_), ..
+                } => FanControlMode::Manual,
+                FanState::Curve { output: None, .. } => return false,
+            };
+            gpu.cooling
+                .fans
+                .iter()
+                .any(|fan| fan.index == *index && fan.mode.is_some_and(|mode| mode != expected))
+        }) {
+            self.yield_control(uuid);
+            return;
+        }
         let Some(temperature) = gpu.telemetry.temperature_c.map(i64::from) else {
             self.finish_following(uuid, None);
             return self.suspend(
@@ -476,6 +518,28 @@ impl CoolingController {
         if let Some(reason) = failure {
             self.suspend(backend, uuid, &reason);
         }
+    }
+
+    /// Relinquishes the whole GPU without issuing restoration writes. The boot record must no
+    /// longer claim these fans, so shutdown and restart also leave the other controls alone.
+    fn yield_control(&self, uuid: &str) {
+        if let Some(cooling) = self.lock().get_mut(uuid) {
+            for state in cooling.fans.values_mut() {
+                if let FanState::Curve { output, .. } = state {
+                    *output = None;
+                }
+            }
+            cooling.unreleased.clear();
+            cooling.follow_queued = false;
+            cooling.curve_temperature_c = None;
+            cooling.revision += 1;
+            cooling.suspension = Some(CurveSuspension {
+                kind: SuspensionKind::ExternalControl,
+                reason: "The driver reports a fan control mode different from Prism's applied controls. Prism left those controls alone.".into(),
+                restoration: vec![],
+            });
+        }
+        self.save_record();
     }
 
     /// Keeps the speeds an evaluation requested, for fans whose curve still runs: a stop may have
@@ -533,7 +597,9 @@ impl CoolingController {
         }
         let restoration = restore_automatic(backend, uuid, &fans);
         if let Some(cooling) = self.lock().get_mut(uuid) {
+            cooling.revision += 1;
             cooling.suspension = Some(CurveSuspension {
+                kind: SuspensionKind::Fault,
                 reason: reason.into(),
                 restoration,
             });
@@ -621,6 +687,7 @@ impl CoolingController {
                 (
                     uuid.clone(),
                     RecordedGpu {
+                        revision: cooling.revision,
                         configuration: cooling.configuration(),
                         fans: cooling.fans.keys().copied().collect(),
                         curve_fans: cooling.owned_curve_fans(),
@@ -810,6 +877,7 @@ fn fan_outcome(fan_index: u32, status: TuningOutcomeStatus, error: Option<String
 
 fn unattempted(fans: &[u32], message: &str) -> CoolingApplication {
     CoolingApplication {
+        revision: 0,
         outcome: TuningOutcome {
             status: TuningOutcomeStatus::Unattempted,
             error: Some(message.into()),
@@ -840,6 +908,8 @@ struct CoolingRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RecordedGpu {
+    #[serde(default)]
+    revision: u64,
     /// None until a first application has finished.
     configuration: Option<CoolingConfiguration>,
     /// Every fan the configuration covers.
@@ -870,6 +940,7 @@ impl RecordedGpu {
             ),
         };
         GpuCooling {
+            revision: self.revision,
             fans,
             suspension: self.suspension,
             ..GpuCooling::new(shared, 0)
@@ -912,7 +983,9 @@ pub fn recover_abandoned_curves(backend: &dyn DaemonBackend, boot_dir: &Path, bo
         }
         let fans = std::mem::take(&mut gpu.curve_fans);
         let restoration = restore_automatic(backend, uuid, &fans);
+        gpu.revision += 1;
         gpu.suspension = Some(CurveSuspension {
+            kind: SuspensionKind::Fault,
             reason: STOPPED_UNEXPECTEDLY_REASON.into(),
             restoration,
         });

@@ -1315,6 +1315,10 @@ describe("registerIpc", () => {
         shared({ mode: "curve", points: [{ ...point, temperatureC: "45" }] }),
         shared({ mode: "curve", points: [{ ...point, rpm: 900 }] }),
         { ...shared({ mode: "automatic" }), apply: true },
+        ...[-1, 0.5, "1", null].map((expectedRevision) => ({
+          ...shared({ mode: "automatic" }),
+          expectedRevision,
+        })),
         {
           gpuId: "GPU-123",
           configuration: { arrangement: "shared", fans: [] },

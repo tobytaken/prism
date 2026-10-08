@@ -196,6 +196,7 @@ export type CoolingConfiguration =
 
 export interface ApplyCoolingRequest {
   fanIndexes?: number[];
+  expectedRevision?: number;
   /** The GPU's UUID. */
   gpuId: string;
   configuration: CoolingConfiguration;
@@ -203,6 +204,7 @@ export interface ApplyCoolingRequest {
 
 /** Succeeded only when every targeted fan took its setting. */
 export interface CoolingApplication {
+  revision: number;
   outcome: TuningOutcome;
   fans: { fanIndex: number; outcome: TuningOutcome }[];
 }
@@ -212,6 +214,8 @@ export interface CoolingApplication {
  * and any curve suspension, all distinct from the modes and speeds the driver reports.
  */
 export interface CoolingControl {
+  /** Configuration/ownership revision; temperature and driver observations do not change it. */
+  revision: number;
   /** Null when Prism hasn't applied cooling to this GPU. A suspended curve stays applied. */
   applied: CoolingConfiguration | null;
   /** Each fan following a curve, with the speed the curve requests now. */
@@ -223,6 +227,7 @@ export interface CoolingControl {
 }
 
 export interface CurveSuspension {
+  kind: "fault" | "externalControl";
   reason: string;
   /** Each curve fan's attempt to return to the GPU's default automatic cooling. */
   restoration: FanRestoration[];

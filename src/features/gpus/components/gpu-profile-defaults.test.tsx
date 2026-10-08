@@ -338,9 +338,10 @@ it("keeps failed default offset edits for retry through Apply all while failed f
     graphics: { status: "failed", error: "Graphics write denied" },
     memory: null,
   });
-  fake.setFanSpeed.mockResolvedValue({
-    success: false,
-    error: "Fan write denied",
+  fake.applyCooling.mockResolvedValue({
+    revision: 0,
+    outcome: { status: "failed", error: "Fan write denied" },
+    fans: [],
   });
   renderWithQueryClient(
     <MemoryRouter>

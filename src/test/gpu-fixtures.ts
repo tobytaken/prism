@@ -174,6 +174,7 @@ export function createPerformanceGpu(
           ],
         },
         control: {
+          revision: 0,
           applied: null,
           requested: [],
           curveTemperatureC: null,

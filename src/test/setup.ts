@@ -61,10 +61,38 @@ const prismStub: PrismDesktopApi = {
     setFanSpeed: async () => ({ success: true, error: null }),
     setFanModeAuto: async () => ({ success: true, error: null }),
     previewFanCurve: async () => ({ problems: [] }),
-    applyCooling: async () => ({
-      outcome: { status: "succeeded", error: null },
-      fans: [],
-    }),
+    // Older tuning workflow fixtures supply individual fan command fakes. Expose their
+    // behavior through the shared cooling API too, so those workflows test the same boundary.
+    applyCooling: async ({ gpuId, configuration }) => {
+      const fans = [];
+      if (configuration.arrangement === "perFan") {
+        for (const { fanIndex, setting } of configuration.fans) {
+          const result =
+            setting.mode === "fixed"
+              ? await window.prism.gpu.setFanSpeed(
+                  gpuId,
+                  fanIndex,
+                  setting.speedPercent,
+                )
+              : await window.prism.gpu.setFanModeAuto(gpuId, fanIndex);
+          fans.push({
+            fanIndex,
+            outcome: {
+              status: result.success
+                ? ("succeeded" as const)
+                : ("failed" as const),
+              error: result.error,
+            },
+          });
+        }
+      }
+      return {
+        revision: 0,
+        outcome: fans.find((fan) => fan.outcome.status === "failed")
+          ?.outcome ?? { status: "succeeded", error: null },
+        fans,
+      };
+    },
     setClockOffsets: async () => ({
       graphics: { status: "succeeded", error: null },
       memory: null,

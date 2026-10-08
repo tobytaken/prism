@@ -443,12 +443,20 @@ function validateApplyCoolingPayload(
 ): payload is ApplyCoolingRequest {
   if (
     !isObject(payload) ||
-    !hasOnlyKeys(payload, ["gpuId", "configuration", "fanIndexes"]) ||
+    !hasOnlyKeys(payload, [
+      "gpuId",
+      "configuration",
+      "fanIndexes",
+      "expectedRevision",
+    ]) ||
     (payload.fanIndexes !== undefined &&
       (!Array.isArray(payload.fanIndexes) ||
         !payload.fanIndexes.every(
           (index) => Number.isSafeInteger(index) && index >= 0,
         ))) ||
+    (payload.expectedRevision !== undefined &&
+      (!Number.isSafeInteger(payload.expectedRevision) ||
+        (payload.expectedRevision as number) < 0)) ||
     !isString(payload.gpuId) ||
     !isObject(payload.configuration)
   )
