@@ -177,6 +177,45 @@ describe("registerIpc", () => {
     }
   });
 
+  it("reports edit holds only from a trusted renderer with a GPU identity set", async () => {
+    const child = createBackendChild({ success: true, error: null });
+    mocks.spawn.mockReturnValue(child);
+    const dispose = registerIpc(getMainWindow);
+    try {
+      for (const gpuIds of [["GPU-A", "GPU-B"], []]) {
+        await callHandler("prism:games:setEditHolds", trustedEvent(), {
+          gpuIds,
+        });
+      }
+      expect(sentRequests(child)).toEqual([
+        {
+          method: "games.setEditHolds",
+          params: { gpuIds: ["GPU-A", "GPU-B"] },
+        },
+        { method: "games.setEditHolds", params: { gpuIds: [] } },
+      ]);
+      await expect(
+        callHandler("prism:games:setEditHolds", untrustedEvent(), {
+          gpuIds: [],
+        }),
+      ).rejects.toThrow("Untrusted IPC sender");
+      for (const payload of [
+        null,
+        {},
+        { gpuIds: "GPU-A" },
+        { gpuIds: [1] },
+        { gpuIds: [""] },
+        { gpuIds: [], uid: 0 },
+      ]) {
+        await expect(
+          callHandler("prism:games:setEditHolds", trustedEvent(), payload),
+        ).rejects.toThrow("Invalid edit holds payload");
+      }
+    } finally {
+      dispose();
+    }
+  });
+
   it("reads the caller's automatic switching status and rejects extra arguments or an untrusted sender", async () => {
     const child = createBackendChild(switchingStatuses[0]);
     mocks.spawn.mockReturnValue(child);

@@ -38,5 +38,17 @@
       "reason": "Automatic switching is suspended because Prism's tuning store can't be used."
     },
     "gpus": []
+  },
+  {
+    "condition": { "status": "ready" },
+    "gpus": [
+      {
+        "gpuId": "GPU-123",
+        "state": {
+          "status": "waitingForEdits",
+          "profile": { "id": "gaming", "name": "Gaming" }
+        }
+      }
+    ]
   }
 ]

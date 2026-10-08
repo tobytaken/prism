@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use super::backend::DaemonBackend;
 use super::cooling::CoolingController;
-use super::host::UserDirectory;
+use super::host::{Clock, UserDirectory};
 use super::profiles::{capture_cooling, reading, verified_gpu};
 use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
@@ -138,6 +138,8 @@ pub(super) struct Switching {
     recognition: Arc<Mutex<Recognition>>,
     users: Arc<dyn UserDirectory>,
     state: Arc<SwitchingState>,
+    clock: Arc<dyn Clock>,
+    grace_until_ms: u64,
 }
 
 impl Switching {
@@ -148,6 +150,7 @@ impl Switching {
         cooling: Arc<CoolingController>,
         recognition: Arc<Mutex<Recognition>>,
         users: Arc<dyn UserDirectory>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         let path = boot_dir.join(SWITCHING_STATE_FILE_NAME);
         let activations = load(&path, boot_id).map_err(|error| {
@@ -158,6 +161,8 @@ impl Switching {
             error
         });
         Self {
+            grace_until_ms: clock.now_monotonic_ms().saturating_add(5_000),
+            clock,
             store,
             cooling,
             recognition,
@@ -177,6 +182,9 @@ impl Switching {
     /// for one queued reconciliation. Nothing changes while recognition is unavailable or the
     /// tuning store is unhealthy.
     pub fn claim_unsettled(&self) -> Vec<String> {
+        if self.clock.now_monotonic_ms() < self.grace_until_ms {
+            return vec![];
+        }
         let Ok(running) = self.running() else {
             return vec![];
         };
@@ -199,6 +207,7 @@ impl Switching {
                         .get(*gpu_id)
                         .and_then(|activation| activation.driving.as_ref())
             })
+            .filter(|gpu_id| !self.store.held_gpus().contains(*gpu_id))
             .filter(|gpu_id| queued.insert((*gpu_id).clone()))
             .cloned()
             .collect::<BTreeSet<_>>()
@@ -214,6 +223,11 @@ impl Switching {
     /// from the latest scan and saved state. Runs on the GPU's queue.
     pub fn reconcile(&self, backend: &dyn DaemonBackend, gpu_id: &str) {
         self.state.queued.lock().unwrap().remove(gpu_id);
+        if self.clock.now_monotonic_ms() < self.grace_until_ms
+            || self.store.held_gpus().contains(gpu_id)
+        {
+            return;
+        }
         let Ok(running) = self.running() else {
             return;
         };
@@ -450,11 +464,13 @@ impl Switching {
     pub fn publish(&self) {
         let _publishing = self.state.publishing.lock().unwrap();
         let snapshot = self.snapshot();
+        // Compare with the previous push, not with another session visited in this push.
+        let previous = self.state.published.lock().unwrap().clone();
         self.store.publish_for_users(|peer| {
             let status = snapshot.status_for(peer);
             let mut published = self.state.published.lock().unwrap();
             let user = (peer.uid, peer.username.clone());
-            if published.get(&user) == Some(&status) {
+            if previous.get(&user) == Some(&status) {
                 return None;
             }
             published.insert(user, status.clone());
@@ -463,7 +479,18 @@ impl Switching {
     }
 
     fn snapshot(&self) -> Snapshot {
+        let wanted = self
+            .running()
+            .ok()
+            .and_then(|running| {
+                self.store
+                    .read(|document| winning_games(document, &running, self.users.as_ref()))
+                    .ok()
+            })
+            .unwrap_or_default();
         Snapshot {
+            held: self.store.held_gpus(),
+            wanted,
             recognition: self.running().err(),
             activations: self.state.activations(),
             document: self.store.read(Clone::clone).ok(),
@@ -594,6 +621,8 @@ fn failure_message(outcomes: &SettingOutcomes) -> String {
 
 /// What every user's status is computed from, read once so that no lock is held while pushing.
 struct Snapshot {
+    held: BTreeSet<String>,
+    wanted: BTreeMap<String, DrivingGame>,
     /// Why recognition is unavailable, if it is.
     recognition: Option<String>,
     activations: Result<Activations, String>,
@@ -624,7 +653,7 @@ impl Snapshot {
         };
         let user = document.user(peer.uid, &peer.username);
         let own = |game: &DrivingGame| game.uid == peer.uid && game.username == peer.username;
-        let gpus: Vec<_> = activations
+        let mut gpus: Vec<_> = activations
             .iter()
             .filter_map(|(gpu_id, activation)| {
                 let state = match (&activation.failure, &activation.driving) {
@@ -659,6 +688,32 @@ impl Snapshot {
                 })
             })
             .collect();
+        for (gpu_id, driving) in &self.wanted {
+            if !self.held.contains(gpu_id)
+                || activations.get(gpu_id).and_then(|a| a.driving.as_ref()) == Some(driving)
+            {
+                continue;
+            }
+            let state = if own(driving) {
+                let Some(profile) = document.any_profile(&driving.profile_id) else {
+                    continue;
+                };
+                GpuSwitchingState::WaitingForEdits {
+                    profile: CurrentProfile {
+                        id: profile.id.clone(),
+                        name: profile.name.clone(),
+                    },
+                }
+            } else {
+                GpuSwitchingState::AnotherUser {}
+            };
+            gpus.retain(|gpu| &gpu.gpu_id != gpu_id);
+            gpus.push(GpuSwitchingStatus {
+                gpu_id: gpu_id.clone(),
+                state,
+            });
+        }
+        gpus.sort_by(|a, b| a.gpu_id.cmp(&b.gpu_id));
         let opted_in = user.is_some_and(|user| user.automatic_switching);
         let holding = activations
             .values()

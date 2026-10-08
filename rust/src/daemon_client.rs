@@ -82,6 +82,12 @@ pub fn get_running_games() -> Result<crate::protocol::RunningGamesState, GpuComm
     }
 }
 
+pub fn set_edit_holds(
+    request: crate::protocol::SetEditHoldsRequest,
+) -> Result<DaemonCommandResponse, GpuCommandError> {
+    send_gpu_command(DaemonRequest::SetEditHolds(request))
+}
+
 pub fn get_automatic_switching_status(
 ) -> Result<crate::protocol::AutomaticSwitchingStatus, GpuCommandError> {
     match send_request(DaemonRequest::GetAutomaticSwitchingStatus)? {

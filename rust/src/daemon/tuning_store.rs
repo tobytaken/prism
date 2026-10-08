@@ -191,6 +191,10 @@ impl TuningStore {
         self.health_of(&self.state.lock().unwrap())
     }
 
+    pub fn held_gpus(&self) -> std::collections::BTreeSet<String> {
+        self.events.held_gpus()
+    }
+
     pub fn subscribe(&self, peer: SessionPeer) -> DaemonSession {
         let state = self.state.lock().unwrap();
         self.events.subscribe(

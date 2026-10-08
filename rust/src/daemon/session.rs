@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, Weak};
@@ -48,7 +48,7 @@ pub(super) struct SessionEvents(Mutex<Subscribers>);
 #[derive(Default)]
 struct Subscribers {
     next_id: u64,
-    senders: HashMap<u64, (SessionPeer, SyncSender<DaemonEvent>)>,
+    senders: HashMap<u64, (SessionPeer, SyncSender<DaemonEvent>, BTreeSet<String>)>,
 }
 
 impl SessionEvents {
@@ -58,7 +58,9 @@ impl SessionEvents {
         let mut subscribers = self.0.lock().unwrap();
         subscribers.next_id += 1;
         let id = subscribers.next_id;
-        subscribers.senders.insert(id, (peer.clone(), sender));
+        subscribers
+            .senders
+            .insert(id, (peer.clone(), sender, BTreeSet::new()));
         DaemonSession {
             id,
             peer,
@@ -67,10 +69,24 @@ impl SessionEvents {
         }
     }
 
+    pub fn held_gpus(&self) -> BTreeSet<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .senders
+            .values()
+            .flat_map(|(_, _, holds)| holds.iter().cloned())
+            .collect()
+    }
+
     pub fn publish_for_users(&self, event: impl Fn(&SessionPeer) -> Option<DaemonEvent>) {
-        self.0.lock().unwrap().senders.retain(|_, (peer, sender)| {
-            event(peer).is_none_or(|event| sender.try_send(event).is_ok())
-        });
+        self.0
+            .lock()
+            .unwrap()
+            .senders
+            .retain(|_, (peer, sender, _)| {
+                event(peer).is_none_or(|event| sender.try_send(event).is_ok())
+            });
     }
 
     pub fn publish(&self, event: DaemonEvent) {
@@ -79,7 +95,7 @@ impl SessionEvents {
             .lock()
             .unwrap()
             .senders
-            .retain(|_, (_, sender)| sender.try_send(event.clone()).is_ok());
+            .retain(|_, (_, sender, _)| sender.try_send(event.clone()).is_ok());
     }
 }
 
@@ -92,6 +108,14 @@ pub struct DaemonSession {
 }
 
 impl DaemonSession {
+    pub fn set_edit_holds(&self, gpu_ids: Vec<String>) {
+        if let Some(subscribers) = self.subscribers.upgrade() {
+            if let Some((_, _, holds)) = subscribers.0.lock().unwrap().senders.get_mut(&self.id) {
+                *holds = gpu_ids.into_iter().collect();
+            }
+        }
+    }
+
     pub fn peer(&self) -> &SessionPeer {
         &self.peer
     }

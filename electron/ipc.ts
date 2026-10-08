@@ -745,6 +745,23 @@ export function registerIpc(getMainWindow: MainWindowGetter) {
     },
   );
   ipcMain.handle(
+    "prism:games:setEditHolds",
+    async (event, payload: unknown) => {
+      assertTrustedSender(event, getMainWindow);
+      if (
+        !isObject(payload) ||
+        Object.keys(payload).length !== 1 ||
+        !Array.isArray(payload.gpuIds) ||
+        !payload.gpuIds.every(
+          (id: unknown) => typeof id === "string" && id.length > 0,
+        )
+      ) {
+        throw new Error("Invalid edit holds payload");
+      }
+      return backend.invoke("games.setEditHolds", payload);
+    },
+  );
+  ipcMain.handle(
     "prism:games:getSwitchingStatus",
     async (event, ...args: unknown[]) => {
       assertTrustedSender(event, getMainWindow);

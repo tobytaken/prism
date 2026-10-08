@@ -437,6 +437,22 @@ export function useTuningEdits() {
         },
       );
     },
+    discardAll() {
+      setDevices((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([id, device]) => [
+            id,
+            {
+              ...device,
+              edits: {},
+              outcomes: {},
+              coolingRevisions: {},
+              profileOwners: {},
+            },
+          ]),
+        ),
+      );
+    },
     discard(gpuId: string, setting: TuningSetting) {
       update(
         gpuId,

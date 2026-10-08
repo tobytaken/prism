@@ -144,6 +144,13 @@ pub fn handle_request(request: BridgeRequest) -> BridgeResponse {
         "games.getRunning" => daemon_client::get_running_games()
             .map_err(BridgeError::from)
             .and_then(serialize_result),
+        "games.setEditHolds" => {
+            parse_and_serialize_result::<crate::protocol::SetEditHoldsRequest, _, _>(
+                request.params,
+                "games.setEditHolds",
+                |request| daemon_client::set_edit_holds(request).map_err(BridgeError::from),
+            )
+        }
         "games.getSwitchingStatus" => daemon_client::get_automatic_switching_status()
             .map_err(BridgeError::from)
             .and_then(serialize_result),

@@ -26,6 +26,7 @@ fn linked_dota() -> (Harness, FakeSession) {
         tunable_gpu_with_id(LINKED),
         tunable_gpu_with_id(UNLINKED),
     ]));
+    daemon.clock.advance(5_000);
     daemon.install_steam_app("alice", DOTA, "Dota 2");
     let alice = daemon.user(1000, "alice");
     ok(alice.send_json(
@@ -366,6 +367,7 @@ fn a_daemon_restart_mid_game_keeps_the_pre_game_values_for_restoration() {
 
     let before = writes_to(&daemon, LINKED);
     daemon.restart();
+    daemon.clock.advance(5_000);
     daemon.settle();
     daemon.scan();
     assert_eq!(writes_to(&daemon, LINKED), before);
@@ -674,4 +676,114 @@ fn unreadable_pre_game_cooling_prevents_any_profile_write() {
     daemon.end_process(123);
     daemon.scan();
     assert_eq!(daemon.gpus.writes(), before);
+}
+
+#[test]
+fn edit_holds_from_two_sessions_defer_until_the_last_session_closes() {
+    let (daemon, alice) = linked_dota();
+    let other = daemon.user(1000, "alice");
+    for session in [&alice, &other] {
+        ok(session
+            .send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    }
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"],
+        json!({
+            "status": "waitingForEdits", "profile": { "id": "gaming", "name": "Gaming" }
+        })
+    );
+    ok(other.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [] } })));
+    daemon.settle();
+    assert_eq!(values(&daemon), PRE_GAME);
+    drop(other);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    drop(alice);
+    daemon.scan();
+    assert_eq!(values(&daemon), GAMING);
+}
+
+#[test]
+fn restart_grace_allows_a_reconnected_session_to_resend_its_edit_holds() {
+    let (mut daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    drop(alice);
+    daemon.restart();
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.clock.advance(4_999);
+    daemon.scan();
+    assert_eq!(
+        values(&daemon),
+        PRE_GAME,
+        "no automatic write in the grace period"
+    );
+    let alice = daemon.user(1000, "alice");
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    daemon.clock.advance(1);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [] } })));
+    daemon.settle();
+    assert_eq!(values(&daemon), GAMING);
+}
+
+#[test]
+fn a_cooling_edit_hold_defers_profile_replacement_but_the_applied_curve_keeps_running() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    daemon.set_temperature(LINKED, Some(60));
+    daemon.run_curves_for(500);
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[1].current_speed_percent,
+        Some(55)
+    );
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    assert_eq!(
+        status(&alice)["gpus"][0]["state"]["status"],
+        "waitingForEdits"
+    );
+    drop(alice);
+    daemon.scan();
+    let reopened = daemon.user(1000, "alice");
+    assert_eq!(cooling(&reopened)["applied"], shared_curve());
+    assert_eq!(current_profile(&reopened, LINKED)["id"], "fans");
+}
+
+#[test]
+fn every_session_receives_the_waiting_status_and_other_users_do_not_see_private_profile_names() {
+    let (daemon, alice) = linked_dota();
+    let second = daemon.user(1000, "alice");
+    let bob = daemon.user(1001, "bob");
+    ok(second.send_json(json!({ "type": "set_edit_holds", "payload": { "gpuIds": [LINKED] } })));
+    set_switching(&daemon, &alice, true);
+    for session in [&alice, &second, &bob] {
+        session.pushed_events();
+    }
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    for session in [&alice, &second] {
+        assert!(session
+            .pushed_events()
+            .iter()
+            .any(|event| event["type"] == "automaticSwitchingChanged"
+                && event["payload"]["gpus"][0]["state"]["status"] == "waitingForEdits"));
+    }
+    assert_eq!(
+        status(&bob)["gpus"][0]["state"],
+        json!({ "status": "anotherUser" })
+    );
 }

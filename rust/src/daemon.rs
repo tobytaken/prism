@@ -1,13 +1,13 @@
 mod backend;
 mod boot_state;
 mod cooling;
+mod cooling_profiles;
 mod daemon_core;
 mod games;
 mod host;
 mod migration;
 mod possibly_stale;
 mod profiles;
-mod cooling_profiles;
 mod queue;
 mod recognition;
 mod session;
@@ -19,8 +19,6 @@ mod tuning_store;
 
 #[cfg(test)]
 mod cooling_tests;
-#[cfg(test)]
-mod remembered_curve_tests;
 #[cfg(test)]
 mod current_profile_tests;
 #[cfg(test)]
@@ -39,6 +37,8 @@ mod overlapping_games_tests;
 mod profile_tests;
 #[cfg(test)]
 mod recognition_tests;
+#[cfg(test)]
+mod remembered_curve_tests;
 #[cfg(test)]
 mod restore_tests;
 #[cfg(test)]
@@ -365,6 +365,19 @@ fn handle_session_connection(
     let result = loop {
         match read_frame::<SessionRequest>(&mut reader) {
             Ok(Some(request)) => {
+                // Hold updates are ordered on the connection before dispatching later writes.
+                if matches!(request.request, DaemonRequest::SetEditHolds(_)) {
+                    let response = core.handle_session(&session, request.request);
+                    write_frame(
+                        &mut *writer.lock().unwrap(),
+                        &SessionMessage::Response {
+                            id: request.id,
+                            response,
+                        },
+                    )
+                    .map_err(|error| error.to_string())?;
+                    continue;
+                }
                 let core = Arc::clone(core);
                 let writer = Arc::clone(&writer);
                 // The admitted caller remains attached to this connection. Requests can finish
