@@ -52,7 +52,8 @@
           "applied": null,
           "requested": [],
           "curveTemperatureC": null,
-          "suspension": null
+          "suspension": null,
+          "recovery": null
         }
       },
       "telemetry": {

@@ -35,6 +35,7 @@ const sharedCooling: CoolingInfo = {
     requested: [],
     curveTemperatureC: null,
     suspension: null,
+    recovery: null,
   },
 };
 
@@ -502,6 +503,80 @@ describe("Applying a shared fan curve", () => {
     await waitFor(() =>
       expect(within(status).queryByText(/suspended/)).not.toBeInTheDocument(),
     );
+  });
+
+  it("shows a curve the restarted daemon resumed from the current temperature", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    await user.click(
+      await within(await curveEditor()).findByRole("button", {
+        name: "Apply curve",
+      }),
+    );
+    const status = await coolingStatus();
+    await within(status).findByText("The curve requests 72% at 71°C.");
+
+    fake.gpu.telemetry.temperatureC = 80;
+    fake.restartDaemon();
+
+    expect(
+      await within(status).findByText(
+        "After the Prism daemon restarted, it resumed this curve from the current temperature.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(status).getByText("The curve requests 90% at 80°C."),
+    ).toBeInTheDocument();
+    expect(within(status).queryByText(/suspended/)).toBeNull();
+    expect(
+      within(status).queryByRole("button", { name: "Retry curve" }),
+    ).toBeNull();
+    expect(fake.applyCooling).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires an explicit retry when the restarted daemon couldn't resume the curve", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    await user.click(
+      await within(await curveEditor()).findByRole("button", {
+        name: "Apply curve",
+      }),
+    );
+    const status = await coolingStatus();
+    await within(status).findByText("The curve requests 72% at 71°C.");
+
+    fake.fanFailures[1] = "Unknown error";
+    fake.restartDaemon();
+
+    expect(
+      await within(status).findByText(
+        "Curve control suspended: After the Prism daemon restarted, the curve couldn't resume. Fan 2: Unknown error",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(status).getByText(
+        "The restarted daemon didn't resume this curve:",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(status).getByText("Fan 1: set, then stopped with the other fans"),
+    ).toBeInTheDocument();
+    expect(
+      within(status).getByText("Fan 2: not resumed — Unknown error"),
+    ).toBeInTheDocument();
+    expect(
+      within(status).getByText("Fan 2: automatic cooling restored"),
+    ).toBeInTheDocument();
+    expect(within(status).queryByText(/The curve requests/)).toBeNull();
+    expect(fake.applyCooling).toHaveBeenCalledTimes(1);
+
+    delete fake.fanFailures[1];
+    await user.click(
+      within(status).getByRole("button", { name: "Retry curve" }),
+    );
+
+    await within(status).findByText("The curve requests 72% at 71°C.");
+    expect(within(status).queryByText(/restarted/)).toBeNull();
   });
 
   it("returns every fan to automatic cooling through the same owner", async () => {

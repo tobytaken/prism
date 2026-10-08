@@ -81,6 +81,7 @@ fn applying_a_shared_curve_requests_its_speed_at_the_current_temperature() {
             ],
             "curveTemperatureC": 71,
             "suspension": null,
+            "recovery": null,
         })
     );
 }
@@ -173,6 +174,52 @@ fn the_curve_keeps_running_after_the_app_session_closes() {
 }
 
 #[test]
+fn a_resumed_curve_follows_the_temperature_while_switching_waits_and_sessions_reconnect() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    daemon.install_steam_app("alice", 570, "Dota 2");
+    let alice = daemon.user(1000, "alice");
+    for request in [
+        json!({ "type": "import_profiles", "payload": { "profiles": [
+            { "id": "gaming", "name": "Gaming", "gpuId": "GPU-123",
+              "settings": { "powerLimitWatts": { "kind": "value", "value": 350 } } },
+        ] } }),
+        json!({ "type": "add_steam_game", "payload": { "appId": 570 } }),
+        json!({ "type": "set_game_profile", "payload": {
+            "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123", "profileId": "gaming",
+        } }),
+        json!({ "type": "set_automatic_switching", "payload": { "enabled": true } }),
+    ] {
+        assert_ne!(
+            alice.send_json(request.clone())["type"],
+            "error",
+            "{request}"
+        );
+    }
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.run_steam_game(100, 1000, 1_000, 570);
+    daemon.scan();
+    drop(alice);
+
+    daemon.restart();
+
+    // Switching waits for the restarted daemon's first complete scan; the curve doesn't.
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.run_curves_for(500);
+    assert_eq!(speeds(&daemon), vec![Some(90), Some(90)]);
+    // A reconnecting session reads the controller's current state.
+    let alice = daemon.user(1000, "alice");
+    let performance = alice.send_json(json!({ "type": "get_performance" }));
+    let reconnected = &performance["payload"]["gpus"][0]["cooling"]["control"];
+    assert_eq!(reconnected["recovery"], resumed(&[0, 1]));
+    assert_eq!(reconnected["requested"][0]["speedPercent"], 90);
+
+    daemon.scan();
+    daemon.set_temperature("GPU-123", Some(85));
+    daemon.run_curves_for(500);
+    assert_eq!(speeds(&daemon), vec![Some(100), Some(100)]);
+}
+
+#[test]
 fn an_application_validates_fresh_readings_and_the_curve_before_any_write() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     let rejected = |configuration: Value| {
@@ -258,7 +305,7 @@ fn returning_to_automatic_cooling_stops_the_curve() {
     assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
     assert_eq!(
         control(&daemon),
-        json!({ "revision": 2, "applied": automatic, "requested": [], "curveTemperatureC": null, "suspension": null })
+        json!({ "revision": 2, "applied": automatic, "requested": [], "curveTemperatureC": null, "suspension": null, "recovery": null })
     );
 }
 
@@ -361,6 +408,7 @@ fn a_missing_temperature_suspends_the_curve_keeps_it_and_restores_automatic_cool
                 "reason": "The GPU's temperature is unavailable, so Prism stopped following its curve.",
                 "restoration": [restoration(0, "restored", None), restoration(1, "restored", None)],
             },
+            "recovery": null,
         })
     );
 
@@ -493,40 +541,326 @@ fn a_failed_write_without_a_curve_reports_no_suspension() {
 }
 
 #[test]
-fn stopping_the_daemon_returns_curve_fans_to_automatic_cooling_and_keeps_reporting_why() {
+fn stopping_the_daemon_returns_curve_fans_to_automatic_cooling_until_it_starts_again() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     apply(&daemon, shared_curve(&STARTER));
 
-    daemon.restart();
+    daemon.stop_daemon();
 
     assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
     assert_eq!(fans(&daemon)[1].0, Some(FanControlMode::Auto));
-    let writes = daemon.gpus.writes().len();
-    daemon.set_temperature("GPU-123", Some(85));
-    daemon.run_curves_for(1_000);
-    assert_eq!(
-        daemon.gpus.writes().len(),
-        writes,
-        "a stopped curve resumed by itself"
-    );
+}
+
+fn resumed(fan_indexes: &[u32]) -> Value {
+    let succeeded = json!({ "status": "succeeded", "error": null });
+    json!({
+        "status": "resumed",
+        "fans": fan_indexes
+            .iter()
+            .map(|index| json!({ "fanIndex": index, "outcome": succeeded }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+#[test]
+fn a_same_boot_restart_resumes_a_healthy_curve_from_the_fresh_temperature() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    assert_eq!(speeds(&daemon), vec![Some(72), Some(72)]);
+
+    daemon.stop_daemon();
+    // Cooler now: the first output follows 55°C at once, not the previous 72% sample nor its
+    // five-second decrease delay.
+    daemon.set_temperature("GPU-123", Some(55));
+    daemon.start_daemon();
+
+    assert_eq!(fans(&daemon), vec![manual(40), manual(40)]);
     assert_eq!(
         control(&daemon),
         json!({
-            "revision": 2,
+            "revision": 3,
+            "applied": shared_curve(&STARTER),
+            "requested": [
+                { "fanIndex": 0, "speedPercent": 40 },
+                { "fanIndex": 1, "speedPercent": 40 },
+            ],
+            "curveTemperatureC": 55,
+            "suspension": null,
+            "recovery": resumed(&[0, 1]),
+        })
+    );
+
+    // The resumed curve keeps following the temperature.
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.run_curves_for(500);
+    assert_eq!(speeds(&daemon), vec![Some(90), Some(90)]);
+}
+
+fn retry_required(fan_indexes: &[u32], error: &str) -> Value {
+    json!({
+        "status": "retryRequired",
+        "fans": fan_indexes
+            .iter()
+            .map(|index| json!({ "fanIndex": index, "outcome": { "status": "unattempted", "error": error } }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+#[test]
+fn a_restart_that_cant_validate_the_curve_returns_to_automatic_cooling_until_a_retry() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+
+    daemon.stop_daemon();
+    daemon.set_temperature("GPU-123", None);
+    let writes = daemon.gpus.writes().len();
+    daemon.start_daemon();
+
+    let unavailable = "The GPU's temperature is unavailable, so a curve can't be followed. Refresh the GPU readings and try again.";
+    assert!(daemon.gpus.writes()[writes..]
+        .iter()
+        .all(|(_, setter)| *setter == Setter::FanModeAuto));
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+    assert_eq!(fans(&daemon)[1].0, Some(FanControlMode::Auto));
+    assert_eq!(
+        control(&daemon),
+        json!({
+            "revision": 3,
             "applied": shared_curve(&STARTER),
             "requested": [],
             "curveTemperatureC": null,
             "suspension": {
                 "kind": "fault",
-                "reason": "The Prism daemon stopped, so it stopped following this curve.",
+                "reason": format!("After the Prism daemon restarted, the curve couldn't resume. {unavailable}"),
                 "restoration": [restoration(0, "restored", None), restoration(1, "restored", None)],
             },
+            "recovery": retry_required(&[0, 1], unavailable),
         })
+    );
+
+    // A returning temperature doesn't resume it, and neither does another restart.
+    daemon.set_temperature("GPU-123", Some(80));
+    daemon.run_curves_for(1_000);
+    daemon.restart();
+    assert_eq!(control(&daemon)["requested"], json!([]));
+    assert_eq!(control(&daemon)["recovery"]["status"], "retryRequired");
+
+    // An explicit retry does, from the current temperature.
+    let retried = apply(&daemon, control(&daemon)["applied"].clone());
+    assert_eq!(retried["outcome"]["status"], "succeeded");
+    assert_eq!(fans(&daemon), vec![manual(90), manual(90)]);
+    assert_eq!(control(&daemon)["suspension"], Value::Null);
+    assert_eq!(control(&daemon)["recovery"], Value::Null);
+}
+
+#[test]
+fn a_fan_write_failing_on_resumption_reports_each_fan_and_returns_to_automatic_cooling() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+
+    daemon.stop_daemon();
+    daemon
+        .gpus
+        .fail_fan("GPU-123", Setter::FanSpeed, 0, "Unknown error");
+    daemon.gpus.fail_fan(
+        "GPU-123",
+        Setter::FanModeAuto,
+        0,
+        "Insufficient permissions",
+    );
+    daemon.start_daemon();
+
+    let control = control(&daemon);
+    assert_eq!(
+        control["recovery"],
+        json!({
+            "status": "retryRequired",
+            "fans": [
+                { "fanIndex": 0, "outcome": { "status": "failed", "error": "Unknown error" } },
+                { "fanIndex": 1, "outcome": { "status": "unattempted", "error": "An earlier fan failed. Retry the curve." } },
+            ],
+        })
+    );
+    assert_eq!(
+        control["suspension"],
+        json!({
+            "kind": "fault",
+            "reason": "After the Prism daemon restarted, the curve couldn't resume. Fan 1: Unknown error",
+            "restoration": [
+                restoration(0, "failed", Some("Insufficient permissions")),
+                restoration(1, "restored", None),
+            ],
+        })
+    );
+    assert_eq!(control["requested"], json!([]));
+}
+
+#[test]
+fn a_faulted_curve_stays_suspended_across_a_restart() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.set_temperature("GPU-123", None);
+    daemon.run_curves_for(500);
+    let suspension = control(&daemon)["suspension"].clone();
+    daemon.set_temperature("GPU-123", Some(80));
+    let writes = daemon.gpus.writes().len();
+
+    daemon.restart();
+    daemon.run_curves_for(1_000);
+
+    assert_eq!(
+        daemon.gpus.writes().len(),
+        writes,
+        "a faulted curve resumed"
+    );
+    assert_eq!(control(&daemon)["suspension"], suspension);
+    assert_eq!(control(&daemon)["recovery"], Value::Null);
+}
+
+#[test]
+fn a_curve_resumes_only_on_fans_that_were_following_it() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(
+        &daemon,
+        json!({ "arrangement": "perFan", "fans": [
+            { "fanIndex": 0, "setting": { "mode": "curve", "points": points(&STARTER) } },
+            { "fanIndex": 1, "setting": { "mode": "curve", "points": points(&STARTER) } },
+        ] }),
+    );
+    daemon.set_temperature("GPU-123", None);
+    daemon.run_curves_for(500);
+    daemon.set_temperature("GPU-123", Some(80));
+    // Fan 1's curve is applied again; fan 2's stays suspended.
+    apply(
+        &daemon,
+        json!({ "arrangement": "perFan", "fans": [
+            { "fanIndex": 0, "setting": { "mode": "curve", "points": points(&STARTER) } },
+        ] }),
+    );
+    let suspension = control(&daemon)["suspension"].clone();
+    assert!(suspension.is_object());
+
+    daemon.restart();
+
+    assert_eq!(fans(&daemon)[0], manual(90));
+    assert_eq!(fans(&daemon)[1].0, Some(FanControlMode::Auto));
+    assert_eq!(control(&daemon)["recovery"], resumed(&[0]));
+    assert_eq!(control(&daemon)["suspension"], suspension);
+}
+
+#[test]
+fn a_fan_taken_over_while_the_daemon_was_stopped_is_left_alone() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+
+    daemon.stop_daemon();
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.cooling.fans[1].mode = Some(FanControlMode::Manual);
+        gpu.cooling.fans[1].current_speed_percent = Some(65);
+    });
+    let writes = daemon.gpus.writes().len();
+    daemon.start_daemon();
+
+    assert_eq!(daemon.gpus.writes().len(), writes);
+    let reason = "While the Prism daemon was stopped, fan 2 came under manual control from elsewhere. Prism left those controls alone.";
+    assert_eq!(
+        control(&daemon)["suspension"],
+        json!({ "kind": "externalControl", "reason": reason, "restoration": [] })
+    );
+    assert_eq!(
+        control(&daemon)["recovery"],
+        retry_required(&[0, 1], reason)
     );
 }
 
 #[test]
-fn after_an_abnormal_termination_the_next_daemon_restores_abandoned_curve_fans_first() {
+fn a_restart_doesnt_resume_a_curve_on_changed_fans() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+
+    daemon.stop_daemon();
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.cooling.fans.pop();
+        gpu.cooling.fan_count = 1;
+    });
+    daemon.start_daemon();
+
+    let changed = "The GPU's fans changed since the curve was applied.";
+    assert_eq!(
+        control(&daemon)["recovery"],
+        retry_required(&[0, 1], changed)
+    );
+    assert_eq!(control(&daemon)["requested"], json!([]));
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+}
+
+#[test]
+fn a_restart_doesnt_resume_a_curve_the_gpus_limits_no_longer_allow() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+
+    daemon.stop_daemon();
+    daemon.gpus.update("GPU-123", |gpu| {
+        gpu.cooling.max_operating_temperature_c = None
+    });
+    daemon.start_daemon();
+
+    assert_eq!(control(&daemon)["recovery"]["status"], "retryRequired");
+    assert_eq!(control(&daemon)["requested"], json!([]));
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+}
+
+#[test]
+fn a_new_boot_id_never_resumes_the_previous_boots_curve() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.stop_daemon();
+    let writes = daemon.gpus.writes().len();
+
+    daemon.reboot_with_retained_boot_state();
+
+    assert_eq!(daemon.gpus.writes().len(), writes);
+    assert_eq!(control(&daemon)["applied"], Value::Null);
+    assert_eq!(control(&daemon)["recovery"], Value::Null);
+}
+
+#[test]
+fn an_unreadable_record_resumes_nothing() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.stop_daemon();
+    let path = daemon.boot_path("cooling-control.json");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["gpus"]["GPU-123"]["interrupted"]["unexpected"] = json!(true);
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let writes = daemon.gpus.writes().len();
+
+    daemon.start_daemon();
+
+    assert_eq!(daemon.gpus.writes().len(), writes);
+    assert_eq!(control(&daemon)["applied"], Value::Null);
+}
+
+#[test]
+fn a_recorded_fan_without_a_curve_is_not_resumed_as_one() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.stop_daemon();
+    let path = daemon.boot_path("cooling-control.json");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["gpus"]["GPU-123"]["configuration"] =
+        json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 55 } });
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+
+    daemon.start_daemon();
+
+    assert_eq!(control(&daemon)["recovery"]["status"], "retryRequired");
+    assert_eq!(control(&daemon)["requested"], json!([]));
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+}
+
+#[test]
+fn after_an_abnormal_termination_the_next_daemon_restores_abandoned_fans_before_resuming() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     apply(&daemon, shared_curve(&STARTER));
     daemon.gpus.fail_fan(
@@ -535,25 +869,28 @@ fn after_an_abnormal_termination_the_next_daemon_restores_abandoned_curve_fans_f
         1,
         "Insufficient permissions",
     );
+    let writes = daemon.gpus.writes().len();
 
+    daemon.set_temperature("GPU-123", Some(80));
     daemon.crash_daemon();
 
+    let fan_writes: Vec<_> = daemon.gpus.writes()[writes..]
+        .iter()
+        .map(|(_, setter)| *setter)
+        .collect();
     assert_eq!(
-        fans(&daemon),
-        vec![(Some(FanControlMode::Auto), Some(72)), manual(72)]
+        fan_writes,
+        vec![
+            Setter::FanModeAuto,
+            Setter::FanModeAuto,
+            Setter::FanSpeed,
+            Setter::FanSpeed
+        ],
+        "the abandoned fans weren't returned to automatic cooling first"
     );
-    assert_eq!(
-        control(&daemon)["suspension"],
-        json!({
-            "kind": "fault",
-            "reason": "The Prism daemon stopped unexpectedly while following this curve.",
-            "restoration": [
-                restoration(0, "restored", None),
-                restoration(1, "failed", Some("Insufficient permissions")),
-            ],
-        })
-    );
-    assert_eq!(control(&daemon)["applied"], shared_curve(&STARTER));
+    assert_eq!(fans(&daemon), vec![manual(90), manual(90)]);
+    assert_eq!(control(&daemon)["recovery"], resumed(&[0, 1]));
+    assert_eq!(control(&daemon)["suspension"], Value::Null);
 }
 
 #[test]
@@ -564,18 +901,17 @@ fn recovering_abandoned_curves_needs_neither_the_daemon_nor_its_curve_loop() {
     // What the service manager runs once the daemon process has gone.
     super::cooling::recover_abandoned_curves(daemon.gpus.as_ref(), &daemon.boot_path(""), "boot-1");
     assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+    assert_eq!(fans(&daemon)[1].0, Some(FanControlMode::Auto));
     let writes = daemon.gpus.writes().len();
 
     daemon.crash_daemon();
-    assert_eq!(
-        daemon.gpus.writes().len(),
-        writes,
+    assert!(
+        daemon.gpus.writes()[writes..]
+            .iter()
+            .all(|(_, setter)| *setter == Setter::FanSpeed),
         "the fans were restored twice"
     );
-    assert_eq!(
-        control(&daemon)["suspension"]["reason"],
-        "The Prism daemon stopped unexpectedly while following this curve."
-    );
+    assert_eq!(control(&daemon)["recovery"], resumed(&[0, 1]));
 }
 
 #[test]
@@ -716,13 +1052,90 @@ fn a_stop_that_cant_wait_for_a_stuck_curve_write_leaves_its_fans_to_recovery() {
         "the stopped curve came back"
     );
 
-    // Whoever runs next returns the fan the late write took.
+    // Whoever runs next returns the fan the late write took, and doesn't resume a stalled curve.
     daemon.crash_daemon();
     assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
     assert_eq!(
-        control(&daemon)["suspension"]["restoration"][0],
-        restoration(0, "restored", None)
+        control(&daemon)["suspension"],
+        json!({
+            "kind": "fault",
+            "reason": STALLED,
+            "restoration": [restoration(0, "restored", None), restoration(1, "restored", None)],
+        })
     );
+    assert_eq!(control(&daemon)["requested"], json!([]));
+    assert_eq!(control(&daemon)["recovery"], Value::Null);
+}
+
+const STALLED: &str =
+    "Prism's fan curve control stopped responding, so the daemon stopped following this curve.";
+
+#[test]
+fn a_curve_whose_control_stalled_is_not_resumed_after_the_watchdog_stops_the_daemon() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+
+    // The supervisor outside the curve loop saw no progress, then the watchdog killed the daemon.
+    daemon.core().record_cooling_stall(true);
+    daemon.crash_daemon();
+
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+    assert_eq!(control(&daemon)["suspension"]["reason"], STALLED);
+    assert_eq!(control(&daemon)["requested"], json!([]));
+}
+
+#[test]
+fn a_clean_stop_while_curve_control_has_stalled_doesnt_make_the_curve_resumable() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.core().record_cooling_stall(true);
+
+    daemon.restart();
+
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+    assert_eq!(
+        control(&daemon)["suspension"],
+        json!({
+            "kind": "fault",
+            "reason": STALLED,
+            "restoration": [restoration(0, "restored", None), restoration(1, "restored", None)],
+        })
+    );
+    assert_eq!(control(&daemon)["requested"], json!([]));
+}
+
+#[test]
+fn a_stop_waits_for_a_resumption_in_progress_and_leaves_its_fans_on_automatic_cooling() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.stop_daemon();
+    let gate = daemon.gpus.block("GPU-123", Setter::FanSpeed);
+    // Startup isn't waited for, so the resumption stays blocked mid-write.
+    daemon.crash_daemon_without_waiting();
+    gate.wait_until_entered();
+
+    let core = daemon.core();
+    let stopping = std::thread::spawn(move || core.stop());
+    gate.release();
+    stopping.join().unwrap();
+
+    assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
+    assert_eq!(fans(&daemon)[1].0, Some(FanControlMode::Auto));
+    // The next daemon resumes the curve that was still healthy.
+    daemon.crash_daemon();
+    assert_eq!(control(&daemon)["recovery"], resumed(&[0, 1]));
+}
+
+#[test]
+fn a_stall_that_cleared_before_the_daemon_stopped_doesnt_block_resumption() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    apply(&daemon, shared_curve(&STARTER));
+    daemon.core().record_cooling_stall(true);
+    daemon.core().record_cooling_stall(false);
+
+    daemon.crash_daemon();
+
+    assert_eq!(control(&daemon)["recovery"], resumed(&[0, 1]));
 }
 
 #[test]

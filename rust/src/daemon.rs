@@ -185,7 +185,11 @@ fn supervise_cooling(core: &DaemonCore, interval: std::time::Duration) {
     let ping_every = interval / 3;
     let window_ms = (interval / 2).as_millis() as u64;
     loop {
-        if core.cooling_is_live(window_ms) {
+        let live = core.cooling_is_live(window_ms);
+        // A stalled curve is a fault: whoever recovers after the watchdog stops the daemon must
+        // not resume it.
+        core.record_cooling_stall(!live);
+        if live {
             if let Err(error) = host::notify(b"WATCHDOG=1") {
                 eprintln!("failed to notify systemd's watchdog: {error}");
             }

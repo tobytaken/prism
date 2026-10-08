@@ -496,6 +496,7 @@ impl DaemonCore {
             tuning_store,
         };
 
+        core.resume_interrupted_curves();
         if let Err(error) = core.start_startup() {
             eprintln!("Startup is suspended: {}", error.message);
         }
@@ -749,6 +750,24 @@ impl DaemonCore {
         }
     }
 
+    /// Queues the resumption of curves an earlier daemon of this boot was following when it
+    /// stopped, ahead of any other write to their GPUs. Readiness waits for them.
+    fn resume_interrupted_curves(&self) {
+        for uuid in self.cooling.interrupted_gpus() {
+            let cooling = Arc::clone(&self.cooling);
+            let id = uuid.clone();
+            let pending = self.submit_write(&uuid, move |backend| {
+                cooling.resume_interrupted(backend, &id)
+            });
+            self.startup_operations.lock().unwrap().push(pending);
+        }
+    }
+
+    /// Records whether curve control has stalled, for whoever recovers after the daemon stops.
+    pub fn record_cooling_stall(&self, stalled: bool) {
+        self.cooling.record_stall(stalled);
+    }
+
     /// Starts the loop that follows applied curves every 500 ms.
     pub fn start_cooling(self: &Arc<Self>) -> std::io::Result<()> {
         let core = Arc::downgrade(self);
@@ -778,7 +797,7 @@ impl DaemonCore {
         self.cooling.begin_stopping();
         let pending: Vec<_> = self
             .cooling
-            .running_gpus()
+            .gpus_to_stop()
             .into_iter()
             .map(|uuid| {
                 let cooling = Arc::clone(&self.cooling);

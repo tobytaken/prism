@@ -102,6 +102,10 @@ pub struct CoolingControl {
     pub curve_temperature_c: Option<i64>,
     /// Why curve control stopped, until an application brings the curve back.
     pub suspension: Option<CurveSuspension>,
+    /// What the daemon did with the applied curves when it restarted within this host boot,
+    /// until an application or a later suspension replaces it.
+    #[serde(default)]
+    pub recovery: Option<CoolingRecovery>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -121,6 +125,25 @@ pub struct CurveSuspension {
     pub reason: String,
     /// Each curve fan's attempt to return to the GPU's default automatic cooling.
     pub restoration: Vec<FanRestoration>,
+}
+
+/// A restarted daemon's attempt to resume the curves its predecessor in the same host boot was
+/// following when it stopped. A curve that couldn't resume is suspended and waits for a retry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CoolingRecovery {
+    pub status: RecoveryStatus,
+    /// Each interrupted curve fan's resumption.
+    pub fans: Vec<FanOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RecoveryStatus {
+    /// Fresh readings matched the GPU, its fans and the curve, and every fan follows it again.
+    Resumed,
+    /// The curve didn't resume; its fans were returned to automatic cooling where possible.
+    RetryRequired,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
