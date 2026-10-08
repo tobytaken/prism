@@ -97,3 +97,44 @@ it("names a restore of last applied values and explains a restore skipped after 
   expect(rows).toHaveTextContent(/didn't shut down cleanly/);
   expect(rows).not.toHaveTextContent(/apply the profile manually/);
 });
+
+it("reports startup cooling as a whole and for each fan", async () => {
+  createFakeDesktop({
+    startupOutcomes: [
+      {
+        gpuId: "GPU-123",
+        behavior: "restoreLastApplied",
+        profile: null,
+        status: "failed",
+        reason: "Fan 2: Fan rejected the speed.",
+        application: {
+          power: { status: "succeeded", error: null },
+          graphics: null,
+          memory: null,
+          cooling: {
+            revision: 1,
+            outcome: { status: "failed", error: null },
+            fans: [
+              { fanIndex: 0, outcome: { status: "succeeded", error: null } },
+              {
+                fanIndex: 1,
+                outcome: { status: "failed", error: "Fan rejected the speed." },
+              },
+            ],
+          },
+        },
+      },
+    ],
+  });
+  renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
+  const rows = await screen.findByRole("region", { name: "Startup outcomes" });
+  expect(rows).toHaveTextContent("Restore last applied — Failed");
+  expect(rows).toHaveTextContent("Power limit: Applied");
+  expect(rows).toHaveTextContent("Cooling: Failed");
+  expect(rows).toHaveTextContent("Fan 1: Applied");
+  expect(rows).toHaveTextContent("Fan 2: Failed — Fan rejected the speed.");
+});

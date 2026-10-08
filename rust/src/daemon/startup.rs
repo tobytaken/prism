@@ -65,7 +65,8 @@ use std::time::Duration;
 
 use super::backend::DaemonBackend;
 use super::boot_state::STARTUP_IN_PROGRESS;
-use super::daemon_core::DaemonCore;
+use super::cooling::CoolingController;
+use super::daemon_core::{tuning_state, DaemonCore};
 use super::host::Clock;
 use super::profiles::verified_gpu;
 use super::tuning::apply_unreviewed_profile;
@@ -225,6 +226,7 @@ impl DaemonCore {
             };
             let gpu_id = outcome.gpu_id.clone();
             let backend = Arc::clone(&self.dependencies.backend);
+            let cooling = Arc::clone(&self.cooling);
             let store = Arc::clone(&self.tuning_store);
             let boot = Arc::clone(&self.boot_state);
             let clock = Arc::clone(&self.dependencies.clock);
@@ -234,6 +236,7 @@ impl DaemonCore {
             let pending = self.queues.submit(&gpu_id.clone(), move || {
                 let Some(full) = apply_target(
                     backend.as_ref(),
+                    &cooling,
                     &store,
                     clock.as_ref(),
                     &stopping,
@@ -264,12 +267,7 @@ impl DaemonCore {
                     }
                     _ => {}
                 }
-                if let Ok(Some(state)) = store.read(|document| {
-                    let readings = backend.performance();
-                    verified_gpu(&readings, &gpu_id)
-                        .ok()
-                        .map(|gpu| document.tuning_state(gpu))
-                }) {
+                if let Some(state) = tuning_state(backend.as_ref(), &store, &cooling, &gpu_id) {
                     store.publish(DaemonEvent::TuningStateChanged(state));
                 }
                 if let Err(error) = boot.record(outcome) {
@@ -287,6 +285,7 @@ impl DaemonCore {
 #[allow(clippy::too_many_arguments)]
 fn apply_target(
     backend: &dyn DaemonBackend,
+    cooling: &CoolingController,
     store: &TuningStore,
     clock: &dyn Clock,
     stopping: &AtomicBool,
@@ -315,6 +314,7 @@ fn apply_target(
     }
     let application = apply_unreviewed_profile(
         backend,
+        Some(cooling),
         ApplyGpuProfileRequest {
             gpu_id: gpu_id.into(),
             settings,
@@ -343,10 +343,18 @@ fn apply_target(
     } else {
         StartupOutcomeStatus::NotAttempted
     };
+    // A fan's failure is reported with that fan, not in the cooling outcome.
+    let fan_errors = application.cooling.iter().flat_map(|cooling| {
+        cooling.fans.iter().filter_map(|fan| {
+            let error = fan.outcome.error.as_ref()?;
+            Some(format!("Fan {}: {error}", fan.fan_index + 1))
+        })
+    });
     outcome.reason = (!full).then(|| {
         results
             .iter()
             .filter_map(|result| result.error.clone())
+            .chain(fan_errors)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>()

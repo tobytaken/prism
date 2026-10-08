@@ -48,7 +48,7 @@ export function StartupSettingsPanel() {
             [
               "restoreLastApplied",
               "Restore last applied",
-              "Restores each setting's most recent manual value, including changes not saved to a profile. An unstable value could be restored on every boot, so after an unclean shutdown that followed a restore, Prism skips the restore once.",
+              "Restores each setting's most recent manual value, including cooling configurations and changes not saved to a profile. An unstable value could be restored on every boot, so after an unclean shutdown that followed a restore, Prism skips the restore once.",
             ],
           ] as const
         ).map(([value, label, warning]) => (

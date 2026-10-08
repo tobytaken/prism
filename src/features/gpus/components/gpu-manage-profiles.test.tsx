@@ -460,3 +460,98 @@ it("waits for game associations to be known before allowing deletion", async () 
     within(dialog).getByRole("button", { name: "Delete Quiet" }),
   ).toBeDisabled();
 });
+
+const curve = {
+  mode: "curve" as const,
+  points: [
+    { temperatureC: 45, speedPercent: 30 },
+    { temperatureC: 85, speedPercent: 100 },
+  ],
+};
+
+it.each([
+  {
+    case: "a valid curve",
+    cooling: { arrangement: "shared" as const, setting: curve },
+    gpu: {},
+    warning: null,
+  },
+  {
+    case: "a curve without curve support",
+    cooling: { arrangement: "shared" as const, setting: curve },
+    gpu: {
+      cooling: {
+        curveSupport: {
+          status: "unavailable" as const,
+          reason: "The maximum operating temperature is unknown.",
+        },
+      },
+    },
+    warning: "The maximum operating temperature is unknown.",
+  },
+  {
+    case: "a fan the GPU no longer reports",
+    cooling: {
+      arrangement: "perFan" as const,
+      fans: [
+        { fanIndex: 0, setting: { mode: "automatic" as const } },
+        { fanIndex: 1, setting: { mode: "automatic" as const } },
+      ],
+    },
+    gpu: {},
+    warning: "fans don't match",
+  },
+  {
+    case: "a fixed speed below the allowed range",
+    cooling: {
+      arrangement: "shared" as const,
+      setting: { mode: "fixed" as const, speedPercent: 20 },
+    },
+    gpu: {},
+    warning: "out of range",
+  },
+  {
+    case: "unavailable fan control",
+    cooling: {
+      arrangement: "shared" as const,
+      setting: { mode: "automatic" as const },
+    },
+    gpu: { cooling: { isSupported: false } },
+    warning: "fan control is unavailable",
+  },
+])(
+  "warns when boot would skip a startup profile's cooling: $case",
+  async ({ cooling, gpu, warning }) => {
+    const user = userEvent.setup();
+    const fake = createFakeDesktop({
+      response: createPerformanceResponse({
+        gpus: [createPerformanceGpu(gpu)],
+      }),
+      profiles: [
+        {
+          id: "cool",
+          name: "Cool",
+          gpuId: "GPU-123",
+          settings: { cooling },
+        },
+      ],
+    });
+    renderPerformancePage();
+    const dialog = await manageProfiles(user);
+    await user.selectOptions(
+      await within(dialog).findByRole("combobox", { name: "Startup profile" }),
+      "cool",
+    );
+    await waitFor(() =>
+      expect(fake.startupProfiles).toEqual({ "GPU-123": "cool" }),
+    );
+    if (warning)
+      expect(
+        await within(dialog).findByText(/Boot will skip this profile/),
+      ).toHaveTextContent(warning);
+    else
+      expect(
+        within(dialog).queryByText(/Boot will skip this profile/),
+      ).not.toBeInTheDocument();
+  },
+);

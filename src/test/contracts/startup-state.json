@@ -19,6 +19,14 @@
         "memory": {
           "status": "unattempted",
           "error": "An earlier profile setting failed."
+        },
+        "cooling": {
+          "revision": 0,
+          "outcome": {
+            "status": "unattempted",
+            "error": "An earlier profile setting failed. Retry or discard this instruction."
+          },
+          "fans": []
         }
       }
     }
