@@ -54,6 +54,10 @@ struct Activation {
     baseline: BTreeMap<ProfileSettingKey, i64>,
     /// The complete cooling configuration, never a curve's sampled output.
     cooling_baseline: Option<CoolingConfiguration>,
+    /// Fan identity at capture, including for a shared configuration. An older record without
+    /// these identities is retained but cannot safely restore cooling.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    cooling_baseline_fans: BTreeSet<u32>,
     /// The current profile before automation, which returns after full restoration.
     previous_profile: Option<String>,
     /// Why the latest automatic application or restoration didn't complete. It isn't retried
@@ -77,6 +81,8 @@ struct SwitchingState {
     boot_id: String,
     /// Unusable when the boot-scoped file can't be read; automation is then blocked this boot.
     activations: Mutex<Result<Activations, String>>,
+    /// UUIDs identifiable in an unreadable record; never inferred from a slot or replacement.
+    recovery_gpus: BTreeSet<String>,
     /// GPUs with a reconciliation queued that hasn't started yet.
     queued: Mutex<BTreeSet<String>>,
     /// Serializes status pushes, so an older status is never pushed after a newer one.
@@ -118,14 +124,24 @@ fn load(path: &Path, boot_id: &str) -> Result<Activations, String> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Activations::new()),
         Err(error) => return Err(error.to_string()),
     };
-    let document: SwitchingDocument =
+    // Read the lifetime before the payload: old schemas or damaged activations from a
+    // positively identified previous boot must not become this boot's recovery state.
+    let envelope: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    if envelope
+        .get("bootId")
+        .and_then(|id| id.as_str())
+        .is_some_and(|id| !id.is_empty() && id != boot_id)
+    {
+        return Ok(Activations::new());
+    }
+    let document: SwitchingDocument =
+        serde_json::from_value(envelope).map_err(|error| error.to_string())?;
     if document.schema_version != SCHEMA_VERSION {
         return Err("It has an unsupported schema version.".into());
     }
-    // A previous boot's pre-game values are never a restoration target.
     if document.boot_id != boot_id {
-        return Ok(Activations::new());
+        return Err("The boot state's boot id is unavailable.".into());
     }
     Ok(document.activations)
 }
@@ -157,6 +173,34 @@ impl Switching {
             );
             error
         });
+        let recovery_gpus = if activations.is_err() {
+            fs::read(&path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|document| {
+                    document
+                        .get("activations")?
+                        .as_object()
+                        .map(|gpus| gpus.keys().cloned().collect())
+                })
+                .unwrap_or_else(|| {
+                    // If even the keys are unreadable, conservatively mark GPUs known to the
+                    // tuning store. Newly discovered devices inherit no recovery state.
+                    store
+                        .read(|document| {
+                            document
+                                .users
+                                .iter()
+                                .flat_map(|user| user.profiles.iter())
+                                .map(|profile| profile.gpu_id.clone())
+                                .chain(document.current_profiles.keys().cloned())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                })
+        } else {
+            BTreeSet::new()
+        };
         Self {
             store,
             cooling,
@@ -166,6 +210,7 @@ impl Switching {
                 path,
                 boot_id: boot_id.into(),
                 activations: Mutex::new(activations),
+                recovery_gpus,
                 queued: Mutex::default(),
                 publishing: Mutex::default(),
                 published: Mutex::default(),
@@ -214,6 +259,11 @@ impl Switching {
     /// from the latest scan and saved state. Runs on the GPU's queue.
     pub fn reconcile(&self, backend: &dyn DaemonBackend, gpu_id: &str) {
         self.state.queued.lock().unwrap().remove(gpu_id);
+        // Absence is temporary within a boot. Keep the last driving game and its baseline
+        // until this UUID can be reconciled; a device in its old slot owns none of that state.
+        if verified_gpu(&backend.performance(), gpu_id).is_err() {
+            return;
+        }
         let Ok(running) = self.running() else {
             return;
         };
@@ -282,7 +332,11 @@ impl Switching {
             let mut gpu = gpu.clone();
             gpu.cooling.control = Some(self.cooling.control(gpu_id));
             match capture_cooling(&gpu) {
-                Ok(Some(configuration)) => activation.cooling_baseline = Some(configuration),
+                Ok(Some(configuration)) => {
+                    activation.cooling_baseline = Some(configuration);
+                    activation.cooling_baseline_fans =
+                        gpu.cooling.fans.iter().map(|fan| fan.index).collect();
+                }
                 _ => return self.abandon(
                     gpu_id,
                     activation,
@@ -317,7 +371,13 @@ impl Switching {
         for (key, value) in &returning {
             settings.set(*key, ProfileSetting::Value { value: *value });
         }
-        let outcomes = write_settings(backend, &self.cooling, gpu_id, settings);
+        let outcomes = write_settings(
+            backend,
+            &self.cooling,
+            gpu_id,
+            settings,
+            returning_cooling.then_some(&activation.cooling_baseline_fans),
+        );
         for (key, outcome) in &outcomes.numeric {
             // A setting that was never attempted keeps no pre-game value, so it isn't restored.
             let unwritten =
@@ -366,7 +426,16 @@ impl Switching {
             for (key, value) in &activation.baseline {
                 settings.set(*key, ProfileSetting::Value { value: *value });
             }
-            let outcomes = write_settings(backend, &self.cooling, gpu_id, settings);
+            let outcomes = write_settings(
+                backend,
+                &self.cooling,
+                gpu_id,
+                settings,
+                activation
+                    .cooling_baseline
+                    .as_ref()
+                    .map(|_| &activation.cooling_baseline_fans),
+            );
             for (key, outcome) in &outcomes.numeric {
                 if succeeded(outcome) {
                     activation.baseline.remove(key);
@@ -466,6 +535,7 @@ impl Switching {
         Snapshot {
             recognition: self.running().err(),
             activations: self.state.activations(),
+            recovery_gpus: self.state.recovery_gpus.clone(),
             document: self.store.read(Clone::clone).ok(),
         }
     }
@@ -541,7 +611,28 @@ fn write_settings(
     cooling: &CoolingController,
     gpu_id: &str,
     settings: ProfileSettings,
+    expected_fans: Option<&BTreeSet<u32>>,
 ) -> SettingOutcomes {
+    // A restart or game exit is not an explicit cooling retry. In particular, restoring a
+    // healthy pre-game curve must not replace the automatic fallback of a faulted game curve.
+    if settings.cooling.is_some() && cooling.control(gpu_id).suspension.is_some() {
+        return SettingOutcomes::unattempted(&settings,
+            "Cooling is suspended. Review and explicitly retry cooling before automatic switching can replace it.");
+    }
+    if let Some(expected) = expected_fans {
+        let readings = backend.performance();
+        let reported = verified_gpu(&readings, gpu_id).ok().map(|gpu| {
+            gpu.cooling
+                .fans
+                .iter()
+                .map(|fan| fan.index)
+                .collect::<BTreeSet<_>>()
+        });
+        if expected.is_empty() || reported.as_ref() != Some(expected) {
+            return SettingOutcomes::unattempted(&settings,
+                "Cooling: the pre-game fan identities are unavailable or the GPU's fans changed. Nothing was restored.");
+        }
+    }
     let application = apply_unreviewed_profile(
         backend,
         Some(cooling),
@@ -570,6 +661,21 @@ struct SettingOutcomes {
 }
 
 impl SettingOutcomes {
+    fn unattempted(settings: &ProfileSettings, message: &str) -> Self {
+        let outcome = || TuningOutcome {
+            status: TuningOutcomeStatus::Unattempted,
+            error: Some(message.into()),
+        };
+        Self {
+            numeric: ProfileSettingKey::ALL
+                .into_iter()
+                .filter(|key| settings.get(*key).is_some())
+                .map(|key| (key, outcome()))
+                .collect(),
+            cooling: settings.cooling.as_ref().map(|_| outcome()),
+        }
+    }
+
     fn iter(&self) -> impl Iterator<Item = &TuningOutcome> {
         self.numeric
             .iter()
@@ -597,6 +703,7 @@ struct Snapshot {
     /// Why recognition is unavailable, if it is.
     recognition: Option<String>,
     activations: Result<Activations, String>,
+    recovery_gpus: BTreeSet<String>,
     /// None while the tuning store is unhealthy.
     document: Option<TuningDocument>,
 }
@@ -610,10 +717,17 @@ impl Snapshot {
         let activations = match &self.activations {
             Ok(activations) => activations,
             Err(error) => {
-                return blocked(format!(
+                let mut status = blocked(format!(
                     "Automatic switching is suspended because Prism's boot state can't be used: \
                      {error}"
-                ))
+                ));
+                status.gpus = self.recovery_gpus.iter().map(|gpu_id| GpuSwitchingStatus {
+                    gpu_id: gpu_id.clone(),
+                    state: GpuSwitchingState::RecoveryRequired {
+                        message: "The pre-game tuning values can't be read. The GPU has been left unchanged.".into(),
+                    },
+                }).collect();
+                return status;
             }
         };
         let Some(document) = &self.document else {
