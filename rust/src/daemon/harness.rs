@@ -717,12 +717,7 @@ impl Harness {
 
     /// Waits until every GPU's operation queue has run what was queued so far.
     pub fn settle(&self) {
-        let core = self.core();
-        for gpu in self.gpus.gpus() {
-            for id in std::iter::once(gpu.id).chain(gpu.stable_id) {
-                core.queues.submit(&id, || ()).wait();
-            }
-        }
+        self.core().queues.settle();
     }
 }
 

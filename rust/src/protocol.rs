@@ -549,6 +549,10 @@ pub enum GpuSwitchingState {
     Failed {
         message: String,
     },
+    /// Boot-scoped recovery state is unreadable; this GPU is left unchanged.
+    RecoveryRequired {
+        message: String,
+    },
 }
 
 /// Replaces this connection's complete set of GPUs with unapplied profile-scope edits.
