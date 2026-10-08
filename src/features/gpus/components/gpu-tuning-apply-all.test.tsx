@@ -444,7 +444,7 @@ describe("Apply all tuning changes", () => {
     await screen.findByText("Fan 1: Applied");
     expect(screen.getByText("Power limit: Applied")).toBeInTheDocument();
     expect(screen.getByText("Current limit 550 W")).toBeInTheDocument();
-    expect(screen.getByText("Auto mode")).toBeInTheDocument();
+    expect(screen.getByText("Driver reports auto mode")).toBeInTheDocument();
     expect(fake.setPower).not.toHaveBeenCalled();
     expect(fake.setFan).not.toHaveBeenCalled();
     expect(resetPower).toHaveBeenCalledTimes(2);

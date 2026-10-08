@@ -7,7 +7,8 @@ import { Clock3, Gauge, RotateCcw, Wind, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FanCurvePreviewSection } from "@/features/gpus/components/fan-curve-preview";
+import { CoolingControlStatus } from "@/features/gpus/components/cooling-control-status";
+import { FanCurveSection } from "@/features/gpus/components/fan-curve-section";
 import { VendorBadge } from "@/features/gpus/components/vendor-badge";
 import {
   useTuningEdits,
@@ -17,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import type {
   ClockOffsetInfo,
+  CoolingConfiguration,
   CoolingInfo,
   ControlSupport,
   FanControlInfo,
@@ -69,6 +71,13 @@ export type PerformanceMutationAction =
   | {
       kind: "resetClockOffsets";
       gpuId: string;
+    }
+  | {
+      kind: "applyCooling";
+      gpuId: string;
+      /** The GPU's UUID, which the daemon's cooling control is keyed by. */
+      stableId: string;
+      configuration: CoolingConfiguration;
     };
 
 export function GpuTuningControls({
@@ -247,6 +256,15 @@ export function GpuTuningControls({
     </PerformanceSection>
   );
 
+  const applyCooling = (configuration: CoolingConfiguration) =>
+    gpu.stableId &&
+    onMutationAction({
+      kind: "applyCooling",
+      gpuId: gpu.id,
+      stableId: gpu.stableId,
+      configuration,
+    });
+
   const coolingSection = (
     <PerformanceSection title="Cooling" icon={Wind}>
       <CapabilitySummary
@@ -278,10 +296,26 @@ export function GpuTuningControls({
           })
         }
       />
-      <FanCurvePreviewSection
+      <CoolingControlStatus
         gpu={gpu}
-        draft={editStore.curveDraft(gpu.id)}
-        onDraftChange={(points) => editStore.changeCurveDraft(gpu.id, points)}
+        busy={pendingAction != null}
+        onApply={applyCooling}
+      />
+      <FanCurveSection
+        gpu={gpu}
+        draft={edits.cooling?.mode === "curve" ? edits.cooling.points : null}
+        busy={pendingAction != null}
+        onDraftChange={(points) =>
+          points
+            ? editStore.change(gpu.id, "cooling", { mode: "curve", points })
+            : editStore.discard(gpu.id, "cooling")
+        }
+        onApply={(points) =>
+          applyCooling({
+            arrangement: "shared",
+            setting: { mode: "curve", points },
+          })
+        }
       />
     </PerformanceSection>
   );
@@ -715,8 +749,13 @@ function FanEditor({
   onSetManual: () => void;
   onSetAuto: () => void;
 }) {
-  const currentMode =
-    fan.mode === "manual" ? "Manual" : fan.mode === "auto" ? "Auto" : "Unknown";
+  // The driver's mode only: a curve also runs in manual mode without being a fixed speed.
+  const reportedMode =
+    fan.mode === "manual"
+      ? "Driver reports manual mode"
+      : fan.mode === "auto"
+        ? "Driver reports auto mode"
+        : "Driver doesn't report the mode";
 
   return (
     <div className="space-y-3 border-t border-border/70 pt-4">
@@ -725,9 +764,7 @@ function FanEditor({
           <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
             Fan {fan.index + 1}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {currentMode} mode
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{reportedMode}</p>
         </div>
         <p className="text-xs font-medium text-muted-foreground tabular-nums">
           {min}-{max}%

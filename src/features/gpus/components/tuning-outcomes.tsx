@@ -25,5 +25,7 @@ export function tuningSettingLabel(setting: string) {
       ? "Graphics clock offset"
       : setting === "memory"
         ? "Memory clock offset"
-        : `Fan ${Number(setting.slice(4)) + 1}`;
+        : setting === "cooling"
+          ? "Cooling"
+          : `Fan ${Number(setting.slice(4)) + 1}`;
 }

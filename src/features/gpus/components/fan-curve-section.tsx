@@ -18,54 +18,82 @@ const MIN_POINTS = 2;
 const MAX_POINTS = 16;
 
 type AvailableCurve = Extract<FanCurveSupport, { status: "available" }>;
+type CurveState = "unapplied" | "applied" | null;
 
 /**
- * Previews one shared curve for every fan on the GPU. The daemon judges what the GPU supports
- * and checks the curve; nothing here writes to the GPU.
+ * Edits one shared curve for every fan on the GPU. The daemon judges what the GPU supports and
+ * checks the curve; only Apply asks it to follow the curve.
  */
-export function FanCurvePreviewSection({
+export function FanCurveSection({
   gpu,
   draft,
+  busy,
   onDraftChange,
+  onApply,
 }: {
   gpu: GpuPerformanceDevice;
+  /** The edited curve, or null to show the applied curve, else the starter curve. */
   draft: FanCurveDraftPoint[] | null;
+  busy: boolean;
   onDraftChange: (points: FanCurveDraftPoint[] | null) => void;
+  onApply: (points: FanCurvePoint[]) => void;
 }) {
   const support = gpu.cooling.curveSupport;
   if (support?.status !== "available") {
     return (
-      <PreviewShell>
+      <CurveShell state={null}>
         <p className="border-l border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-          {support?.reason ?? "Fan curve previews need the Prism daemon."}{" "}
-          Automatic and fixed fan control stay available.
+          {support?.reason ?? "Fan curves need the Prism daemon."} Automatic and
+          fixed fan control stay available.
         </p>
-      </PreviewShell>
+      </CurveShell>
     );
   }
+  const applied = appliedCurve(gpu);
+  const points = draft ?? applied ?? support.starter;
   return (
     <FanCurveEditor
       gpu={gpu}
       support={support}
-      points={draft ?? support.starter}
-      edited={draft != null}
+      points={points}
+      state={draft != null ? "unapplied" : applied ? "applied" : null}
+      busy={busy}
       onDraftChange={onDraftChange}
+      onApply={onApply}
     />
   );
 }
 
-function PreviewShell({ children }: { children: ReactNode }) {
+/** The curve every fan follows, when Prism applied one shared curve. */
+function appliedCurve(gpu: GpuPerformanceDevice): FanCurvePoint[] | null {
+  const applied = gpu.cooling.control?.applied;
+  return applied?.arrangement === "shared" && applied.setting.mode === "curve"
+    ? applied.setting.points
+    : null;
+}
+
+function CurveShell({
+  state,
+  children,
+}: {
+  state: CurveState;
+  children: ReactNode;
+}) {
   return (
     <div
       role="group"
-      aria-label="Fan curve preview"
+      aria-label="Fan curve"
       className="space-y-3 border-t border-border/70 pt-4"
     >
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
-          Fan curve
+          Fan curve · all fans
         </p>
-        <Badge variant="outline">Preview · not applied</Badge>
+        {state && (
+          <Badge variant="outline">
+            {state === "applied" ? "Applied" : "Unapplied"}
+          </Badge>
+        )}
       </div>
       {children}
     </div>
@@ -76,14 +104,18 @@ function FanCurveEditor({
   gpu,
   support,
   points,
-  edited,
+  state,
+  busy,
   onDraftChange,
+  onApply,
 }: {
   gpu: GpuPerformanceDevice;
   support: AvailableCurve;
   points: FanCurveDraftPoint[];
-  edited: boolean;
+  state: CurveState;
+  busy: boolean;
   onDraftChange: (points: FanCurveDraftPoint[] | null) => void;
+  onApply: (points: FanCurvePoint[]) => void;
 }) {
   const inputProblems = points.flatMap(inputProblemsAt);
   const complete =
@@ -109,9 +141,11 @@ function FanCurveEditor({
       ),
     );
   const fanCount = gpu.cooling.fans.length;
+  const valid = checked && problems.length === 0;
+  const isStarter = sameCurve(points, support.starter);
 
   return (
-    <PreviewShell>
+    <CurveShell state={state}>
       <p className="text-xs text-muted-foreground">
         Reaches {support.maxSpeedPercent}% by {support.fullSpeedTemperatureC}
         °C, {support.maxOperatingTemperatureC - support.fullSpeedTemperatureC}°C
@@ -186,13 +220,21 @@ function FanCurveEditor({
         <Button
           size="sm"
           variant="outline"
-          disabled={!edited}
-          onClick={() => onDraftChange(null)}
+          disabled={isStarter}
+          onClick={() => onDraftChange(support.starter)}
         >
           <RotateCcw className="mr-1 size-3.5" />
           Use starter curve
         </Button>
       </div>
+      <Button
+        size="sm"
+        className="w-full"
+        disabled={!valid || busy || !gpu.stableId}
+        onClick={() => complete && onApply(complete)}
+      >
+        Apply curve
+      </Button>
       <div aria-live="polite" className="space-y-1 text-xs">
         {problems.length > 0 ? (
           <ul className="space-y-1 text-destructive">
@@ -204,16 +246,33 @@ function FanCurveEditor({
           <p className="text-destructive">
             Couldn't check this curve: {preview.error.message}
           </p>
+        ) : !gpu.stableId ? (
+          <p className="text-muted-foreground">
+            Prism can't follow a curve on this GPU because its stable identity
+            (UUID) couldn't be verified.
+          </p>
         ) : checked ? (
           <p className="text-muted-foreground">
-            Valid curve. Preview only: Prism doesn't apply fan curves yet, so
-            your fans keep their current mode.
+            {state === "applied"
+              ? "Valid curve. Prism follows it for every fan, even after you close the app."
+              : "Valid curve. Apply it to have Prism follow it for every fan, even after you close the app."}
           </p>
         ) : (
           <p className="text-muted-foreground">Checking the curve…</p>
         )}
       </div>
-    </PreviewShell>
+    </CurveShell>
+  );
+}
+
+function sameCurve(points: FanCurveDraftPoint[], curve: FanCurvePoint[]) {
+  return (
+    points.length === curve.length &&
+    points.every(
+      (point, index) =>
+        point.temperatureC === curve[index].temperatureC &&
+        point.speedPercent === curve[index].speedPercent,
+    )
   );
 }
 

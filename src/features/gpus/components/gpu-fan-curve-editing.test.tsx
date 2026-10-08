@@ -42,6 +42,12 @@ const sharedCooling: CoolingInfo = {
   maxOperatingTemperatureC: 90,
   maxOperatingTemperatureReason: null,
   curveSupport: twentyToHundred,
+  control: {
+    applied: null,
+    requested: [],
+    curveTemperatureC: null,
+    suspension: null,
+  },
 };
 
 function renderPerformance(cooling: CoolingInfo = sharedCooling) {
@@ -58,8 +64,7 @@ function renderPerformance(cooling: CoolingInfo = sharedCooling) {
   return fake;
 }
 
-const curveEditor = () =>
-  screen.findByRole("group", { name: "Fan curve preview" });
+const curveEditor = () => screen.findByRole("group", { name: "Fan curve" });
 
 /** Each point's temperature and speed inputs, in order. */
 function pointValues(editor: HTMLElement) {
@@ -76,10 +81,11 @@ function pointValues(editor: HTMLElement) {
 function expectNoFanWrites(fake: FakeDesktop) {
   expect(fake.setFanSpeed).not.toHaveBeenCalled();
   expect(fake.setFanModeAuto).not.toHaveBeenCalled();
+  expect(fake.applyCooling).not.toHaveBeenCalled();
   expect(fake.liveWrites()).toBe(0);
 }
 
-describe("Fan curve preview", () => {
+describe("Editing a fan curve", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(window.prism.gpu, "getDaemonStatus").mockResolvedValue(
@@ -87,7 +93,7 @@ describe("Fan curve preview", () => {
     );
   });
 
-  it("shows the starter curve against the live GPU temperature and previews it without writing", async () => {
+  it("shows the starter curve against the live GPU temperature and checks it without writing", async () => {
     const fake = renderPerformance();
     const editor = await curveEditor();
 
@@ -108,7 +114,7 @@ describe("Fan curve preview", () => {
     ).toBeInTheDocument();
     expect(
       await within(editor).findByText(
-        "Valid curve. Preview only: Prism doesn't apply fan curves yet, so your fans keep their current mode.",
+        "Valid curve. Apply it to have Prism follow it for every fan, even after you close the app.",
       ),
     ).toBeInTheDocument();
     expect(fake.previewFanCurve).toHaveBeenLastCalledWith({
@@ -303,7 +309,7 @@ describe("Fan curve preview", () => {
     const editor = await curveEditor();
 
     expect(
-      within(editor).getByText(/Fan curve previews need the Prism daemon./),
+      within(editor).getByText(/Fan curves need the Prism daemon./),
     ).toBeInTheDocument();
     expect(within(editor).queryByRole("spinbutton")).not.toBeInTheDocument();
   });

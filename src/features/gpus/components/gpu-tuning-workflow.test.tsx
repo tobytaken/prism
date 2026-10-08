@@ -221,7 +221,7 @@ describe("GPU tuning observations", () => {
     await user.click(
       screen.getAllByRole("button", { name: "Restore Auto" })[0],
     );
-    await screen.findByText("Auto mode");
+    await screen.findByText("Driver reports auto mode");
     const retry = await screen.findByRole("button", {
       name: "Retry fan 1 change",
     });
@@ -410,7 +410,7 @@ describe("GPU tuning observations", () => {
     expect(fan).toHaveValue(65);
     await user.click(screen.getByRole("button", { name: "Set Manual" }));
     await screen.findByText("Fan 1: Applied");
-    expect(screen.getByText("Manual mode")).toBeInTheDocument();
+    expect(screen.getByText("Driver reports manual mode")).toBeInTheDocument();
     expect(screen.getByText("Current speed 65%")).toBeInTheDocument();
     expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
   });

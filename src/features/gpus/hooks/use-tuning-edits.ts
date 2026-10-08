@@ -6,6 +6,7 @@ import type {
   TuningMutationResult,
 } from "@/features/gpus/lib/tuning-mutation";
 import type {
+  CoolingConfiguration,
   GpuPerformanceDevice,
   GpuProfileSettings,
   ProfileSetting,
@@ -14,17 +15,28 @@ import type {
   TuningOutcome,
 } from "@/features/gpus/types";
 
-export type TuningSetting = "power" | "graphics" | "memory" | `fan:${number}`;
+export type TuningSetting =
+  | "power"
+  | "graphics"
+  | "memory"
+  | "cooling"
+  | `fan:${number}`;
 export type TuningEdits = {
   power?: number | null | "default";
   graphics?: number | null | "default";
   memory?: number | null | "default";
+  /** One cooling configuration shared by every fan. */
+  cooling?: CoolingDraft;
 } & Partial<Record<`fan:${number}`, number | null | "auto">>;
 /** A fan curve point as typed; null is an empty input. */
 export type FanCurveDraftPoint = {
   temperatureC: number | null;
   speedPercent: number | null;
 };
+/** A shared cooling configuration as edited; a curve can hold incomplete points. */
+export type CoolingDraft =
+  | { mode: "automatic" }
+  | { mode: "curve"; points: FanCurveDraftPoint[] };
 type DeviceEdits = {
   edits: TuningEdits;
   outcomes: Partial<Record<TuningSetting, TuningOutcome>>;
@@ -36,11 +48,6 @@ type DeviceEdits = {
 // Observations never acknowledge an intention: only a command outcome or discard does.
 export function useTuningEdits() {
   const [devices, setDevices] = useState<Record<string, DeviceEdits>>({});
-  // Curve drafts are screen-local like other edits, but only previewed: Prism can't apply them
-  // yet, so they aren't unapplied tuning changes.
-  const [curveDrafts, setCurveDrafts] = useState<
-    Record<string, FanCurveDraftPoint[]>
-  >({});
   const [applyAllPending, setApplyAllPending] = useState(false);
   const applyAllRunning = useRef(false);
   function update(gpuId: string, change: (device: DeviceEdits) => DeviceEdits) {
@@ -273,22 +280,44 @@ export function useTuningEdits() {
       });
     },
     apply,
-    /** The GPU's edited fan curve, or null while it shows the starter curve. */
-    curveDraft(gpuId: string): FanCurveDraftPoint[] | null {
-      return curveDrafts[gpuId] ?? null;
-    },
-    /** Null returns the GPU to its starter curve. */
-    changeCurveDraft(gpuId: string, points: FanCurveDraftPoint[] | null) {
-      setCurveDrafts((current) => {
-        const next = { ...current };
-        if (points) next[gpuId] = points;
-        else delete next[gpuId];
-        return next;
-      });
-    },
   };
 }
 export type TuningEditStore = ReturnType<typeof useTuningEdits>;
+
+/** The shared configuration's draft; fixed speeds are still edited per fan. */
+function coolingDraft(
+  configuration: Extract<CoolingConfiguration, { arrangement: "shared" }>,
+): CoolingDraft {
+  const { setting } = configuration;
+  return setting.mode === "curve"
+    ? { mode: "curve", points: setting.points }
+    : { mode: "automatic" };
+}
+
+/** The draft as a shared configuration, once every curve point is a whole number. */
+export function coolingConfiguration(
+  draft: CoolingDraft,
+): CoolingConfiguration | null {
+  if (draft.mode === "automatic")
+    return { arrangement: "shared", setting: { mode: "automatic" } };
+  const complete = draft.points.every(
+    (point) =>
+      Number.isInteger(point.temperatureC) &&
+      Number.isInteger(point.speedPercent),
+  );
+  return complete
+    ? {
+        arrangement: "shared",
+        setting: {
+          mode: "curve",
+          points: draft.points.map((point) => ({
+            temperatureC: point.temperatureC!,
+            speedPercent: point.speedPercent!,
+          })),
+        },
+      }
+    : null;
+}
 
 function profileInstruction(value: unknown): ProfileSetting | null {
   if (value === "default") return { kind: "default" };
@@ -338,6 +367,10 @@ function actionIntentions(
           memory: action.memoryOffsetMHz,
         }),
       };
+    case "applyCooling":
+      return action.configuration.arrangement === "shared"
+        ? { cooling: coolingDraft(action.configuration) }
+        : {};
     case "resetClockOffsets":
       return {
         ...(gpu.clocks.graphics.support !== "unsupported" && {

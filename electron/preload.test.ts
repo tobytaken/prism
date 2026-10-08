@@ -14,6 +14,8 @@ import gpuTuningProfiles from "@/test/contracts/gpu-tuning-profiles.json";
 import gpuTuningStates from "@/test/contracts/gpu-tuning-states.json";
 import gamesState from "@/test/contracts/games-state.json";
 import fanCurvePreview from "@/test/contracts/fan-curve-preview.json";
+import coolingApplication from "@/test/contracts/cooling-application.json";
+import type { ApplyCoolingRequest } from "@/features/gpus/types";
 import type { CorrectGpuProfileRequest } from "@/features/gpus/types";
 import type { PrismDesktopApi } from "@/types/global";
 
@@ -184,6 +186,19 @@ describe("preload bridge", () => {
     );
     expect(mocks.invoke.mock.calls).toEqual([
       ["prism:gpu:previewFanCurve", fanCurvePreview.request],
+    ]);
+  });
+
+  it("applies cooling through its own channel and returns per-fan outcomes", async () => {
+    const prism = await loadPrismApi();
+    mocks.invoke.mockResolvedValueOnce(coolingApplication.application);
+    const request = coolingApplication.request as ApplyCoolingRequest;
+
+    expect(await prism.gpu.applyCooling(request)).toEqual(
+      coolingApplication.application,
+    );
+    expect(mocks.invoke.mock.calls).toEqual([
+      ["prism:gpu:applyCooling", request],
     ]);
   });
 

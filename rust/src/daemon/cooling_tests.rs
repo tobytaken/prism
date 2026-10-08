@@ -633,3 +633,37 @@ fn curve_output_changes_are_not_tuning_changes() {
         .persistent_file("tuning-state.json")
         .is_none_or(|state| !String::from_utf8_lossy(&state).contains("speed")));
 }
+
+/// The same payloads hold the desktop boundary and the fake desktop to the daemon.
+#[test]
+fn cooling_payloads_round_trip_the_shared_contract() {
+    use crate::cooling::{ApplyCoolingRequest, CoolingApplication, CoolingControl};
+    let contract: Value = serde_json::from_str(include_str!(
+        "../../../src/test/contracts/cooling-application.json"
+    ))
+    .unwrap();
+    let request: ApplyCoolingRequest = serde_json::from_value(contract["request"].clone()).unwrap();
+    assert_eq!(serde_json::to_value(request).unwrap(), contract["request"]);
+    let application: CoolingApplication =
+        serde_json::from_value(contract["application"].clone()).unwrap();
+    assert_eq!(serde_json::to_value(application).unwrap(), contract["application"]);
+    for control in contract["controls"].as_array().unwrap() {
+        let typed: CoolingControl = serde_json::from_value(control.clone()).unwrap();
+        assert_eq!(&serde_json::to_value(typed).unwrap(), control);
+    }
+}
+
+/// The fake desktop computes requested speeds from the same contract.
+#[test]
+fn applied_curves_request_the_contracts_speeds() {
+    let contract: Value = serde_json::from_str(include_str!(
+        "../../../src/test/contracts/cooling-application.json"
+    ))
+    .unwrap();
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    for pair in contract["requestedAtTemperature"].as_array().unwrap() {
+        daemon.set_temperature("GPU-123", Some(pair[0].as_u64().unwrap() as u32));
+        apply(&daemon, contract["request"]["configuration"].clone());
+        assert_eq!(control(&daemon)["requested"][0]["speedPercent"], pair[1], "{pair}");
+    }
+}

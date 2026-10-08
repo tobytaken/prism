@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import fanCurvePreview from "@/test/contracts/fan-curve-preview.json";
-import type { FanCurveSupport } from "@/features/gpus/types";
+import coolingApplication from "@/test/contracts/cooling-application.json";
+import type {
+  ApplyCoolingRequest,
+  FanCurveSupport,
+} from "@/features/gpus/types";
 import { createFakeDesktop } from "./fake-desktop";
 import {
   createPerformanceGpu,
@@ -41,4 +45,38 @@ describe("fake desktop fan curve previews", () => {
         ).toEqual({ problems });
     },
   );
+});
+
+describe("fake desktop cooling applications", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("request the daemon's curve speeds from the shared contract", async () => {
+    const fake = createFakeDesktop({
+      response: createPerformanceResponse({
+        gpus: [
+          createPerformanceGpu({
+            cooling: {
+              curveSupport: fanCurvePreview.limits[0]
+                .curveSupport as FanCurveSupport,
+            },
+          }),
+        ],
+      }),
+    });
+    for (const [
+      temperatureC,
+      speedPercent,
+    ] of coolingApplication.requestedAtTemperature) {
+      fake.gpu.telemetry.temperatureC = temperatureC;
+      await window.prism.gpu.applyCooling(
+        coolingApplication.request as ApplyCoolingRequest,
+      );
+      expect(
+        fake.gpu.cooling.control?.requested[0].speedPercent,
+        `${temperatureC}°C`,
+      ).toBe(speedPercent);
+    }
+  });
 });
