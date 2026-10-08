@@ -207,6 +207,28 @@ describe("Applying a shared fan curve", () => {
     expect(fake.gpu.cooling.fans[0].currentSpeedPercent).toBe(60);
   });
 
+  it("applies a shared curve and an individual fan draft without treating its own write as a conflict", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const speed = await within(await curveEditor()).findByRole("spinbutton", {
+      name: "Point 1 speed (%)",
+    });
+    await user.clear(speed);
+    await user.type(speed, "35");
+    const fan = screen.getByRole("spinbutton", { name: "Fan 1 manual target" });
+    await user.clear(fan);
+    await user.type(fan, "55");
+    await user.click(screen.getByRole("button", { name: "Apply all" }));
+    await screen.findByText("Fan 1: Applied");
+    expect(fake.gpu.cooling.fans.map((fan) => fan.currentSpeedPercent)).toEqual(
+      [55, 72],
+    );
+    expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Review cooling change" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("applies multiple fan drafts in one revision without conflicting with its own first fan", async () => {
     const user = userEvent.setup();
     const fake = renderPerformance();

@@ -46,6 +46,19 @@ type DeviceEdits = {
   appliedDefaults?: Partial<Record<ProfileSettingKey, true>>;
 };
 
+function hasStaleCoolingDraft(
+  device: DeviceEdits | undefined,
+  revision: number | undefined,
+) {
+  return (
+    revision != null &&
+    Object.entries(device?.coolingRevisions ?? {}).some(
+      ([setting, expected]) =>
+        setting in (device?.edits ?? {}) && expected !== revision,
+    )
+  );
+}
+
 // Observations never acknowledge an intention: only a command outcome or discard does.
 export function useTuningEdits() {
   const [devices, setDevices] = useState<Record<string, DeviceEdits>>({});
@@ -79,7 +92,10 @@ export function useTuningEdits() {
     action: PerformanceMutationAction,
     gpu: GpuPerformanceDevice,
     handler: TuningMutationHandler,
-    { reviewCorrections = false } = {},
+    {
+      reviewCorrections = false,
+      coolingRevision = gpu.cooling.control?.revision,
+    } = {},
   ): Promise<ProfileRangeCorrection[] | undefined> {
     const intentions = actionIntentions(action, gpu);
     const coolingAction =
@@ -89,23 +105,18 @@ export function useTuningEdits() {
     if (coolingAction && gpu.cooling.control) {
       const revision = gpu.cooling.control.revision;
       const device = devices[gpu.id];
-      if (
-        Object.entries(device?.coolingRevisions ?? {}).some(
-          ([setting, expected]) =>
-            setting in (device?.edits ?? {}) && expected !== revision,
-        )
-      ) {
+      if (hasStaleCoolingDraft(device, revision)) {
         return;
       }
       if (action.kind === "applyCooling")
-        action = { ...action, expectedRevision: revision };
+        action = { ...action, expectedRevision: coolingRevision };
       else if (
         action.kind === "setFanSpeed" ||
         action.kind === "setFanModeAuto"
       )
         action = {
           ...action,
-          expectedRevision: revision,
+          expectedRevision: coolingRevision,
           stableId: gpu.stableId ?? undefined,
         };
     }
@@ -246,14 +257,9 @@ export function useTuningEdits() {
   return {
     devices,
     coolingNeedsReview(gpu: GpuPerformanceDevice) {
-      const device = devices[gpu.id];
-      return (
-        gpu.cooling.control != null &&
-        Object.entries(device?.coolingRevisions ?? {}).some(
-          ([setting, revision]) =>
-            setting in (device?.edits ?? {}) &&
-            revision !== gpu.cooling.control!.revision,
-        )
+      return hasStaleCoolingDraft(
+        devices[gpu.id],
+        gpu.cooling.control?.revision,
       );
     },
     reviewCooling(gpuId: string, revision: number) {
@@ -349,8 +355,23 @@ export function useTuningEdits() {
               stableId: gpu.stableId,
               configuration: { arrangement: "perFan", fans },
             });
-          if (gpu)
-            for (const action of actions) await apply(action, gpu, handler);
+          if (gpu) {
+            // Keep the original draft check, but advance the queue precondition after our own
+            // writes. Another session changing cooling between requests still fails that check.
+            let coolingRevision = gpu.cooling.control?.revision;
+            for (const action of actions) {
+              await apply(
+                action,
+                gpu,
+                async (request) => {
+                  const result = await handler(request);
+                  coolingRevision = result?.coolingRevision ?? coolingRevision;
+                  return result ?? {};
+                },
+                { coolingRevision },
+              );
+            }
+          }
         }
       } finally {
         applyAllRunning.current = false;
