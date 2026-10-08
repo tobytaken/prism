@@ -2,6 +2,7 @@ pub mod bridge;
 pub mod cooling;
 pub mod daemon;
 pub mod daemon_client;
+mod document_portal;
 pub mod drivers;
 pub mod fan_curve;
 pub mod framing;

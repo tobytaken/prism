@@ -34,6 +34,7 @@ import type {
   SetAutomaticSwitchingRequest,
   SetGameProfileRequest,
   SteamApp,
+  RunningProgram,
 } from "@/features/games/types";
 import type {
   DriverAction,
@@ -117,6 +118,9 @@ export interface PrismDesktopApi {
   /** The caller's own game associations, and Steam apps from their own home. */
   games: {
     /** Fully installed Steam apps, without compatibility tools or known non-game apps. */
+    browseProgram(): Promise<GamesState | null>;
+    listRunningPrograms(): Promise<RunningProgram[]>;
+    addProgram(request: { path: string }): Promise<GamesState>;
     listSteamApps(): Promise<SteamApp[]>;
     get(): Promise<GamesState>;
     getRunning(): Promise<RunningGamesState>;

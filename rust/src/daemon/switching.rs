@@ -800,9 +800,9 @@ impl Snapshot {
                                     user.games.iter().find(|linked| linked.game == driving.game)
                                 })
                                 .map(|linked| linked.name.clone())
-                                .unwrap_or_else(|| {
-                                    let GameId::Steam { app_id } = driving.game;
-                                    format!("Steam app {app_id}")
+                                .unwrap_or_else(|| match &driving.game {
+                                    GameId::Steam { app_id } => format!("Steam app {app_id}"),
+                                    GameId::Program { path } => path.clone(),
                                 }),
                             profile: CurrentProfile {
                                 id: profile.id.clone(),

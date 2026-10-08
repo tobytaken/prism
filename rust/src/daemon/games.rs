@@ -1,5 +1,5 @@
 //! Each user's game associations and automatic switching opt-in in the tuning store, with the
-//! installed Steam apps they're linked from. Nothing switches yet.
+//! installed Steam apps and manually identified programs they are linked from.
 
 use std::collections::BTreeMap;
 
@@ -30,10 +30,9 @@ impl DaemonCore {
     /// The caller's associations, with whether each game is installed now.
     pub(super) fn games(&self, peer: &SessionPeer) -> Result<DaemonResponse, GpuCommandError> {
         let installed = self.steam_apps(peer)?;
-        Ok(DaemonResponse::Games(
-            self.tuning_store
-                .read(|document| document.games_state(peer, &installed))?,
-        ))
+        Ok(DaemonResponse::Games(self.tuning_store.read(
+            |document| document.games_state(peer, &installed, &self.dependencies.host_root),
+        )?))
     }
 
     pub(super) fn steam_apps(&self, peer: &SessionPeer) -> Result<Vec<SteamApp>, GpuCommandError> {
@@ -64,6 +63,48 @@ impl DaemonCore {
                 user_games.push(GameAssociation {
                     game: GameId::Steam { app_id },
                     name: app.name,
+                    profiles: BTreeMap::new(),
+                });
+            }
+            Ok(())
+        })
+    }
+
+    pub(super) fn add_program(
+        &self,
+        peer: &SessionPeer,
+        path: String,
+    ) -> Result<DaemonResponse, GpuCommandError> {
+        let location = std::path::Path::new(&path);
+        if !location.is_absolute()
+            || path.contains('\0')
+            || location
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err(GpuCommandError::new(
+                GpuCommandErrorCode::InvalidArgument,
+                "Choose an absolute host program location.",
+            ));
+        }
+        if !self
+            .dependencies
+            .host_root
+            .join(location.strip_prefix("/").unwrap())
+            .is_file()
+        {
+            return Err(GpuCommandError::new(
+                GpuCommandErrorCode::NotFound,
+                "Program not found at this host location.",
+            ));
+        }
+        let name = location.file_name().unwrap().to_string_lossy().into_owned();
+        self.update_games(peer, |games| {
+            let game = GameId::Program { path };
+            if !games.iter().any(|entry| entry.game == game) {
+                games.push(GameAssociation {
+                    game,
+                    name,
                     profiles: BTreeMap::new(),
                 });
             }
@@ -153,19 +194,31 @@ impl DaemonCore {
 impl TuningDocument {
     /// The user's associations by name, each marked installed when it's among the installed
     /// apps, which also give its current name.
-    pub fn games_state(&self, peer: &SessionPeer, installed: &[SteamApp]) -> GamesState {
+    pub fn games_state(
+        &self,
+        peer: &SessionPeer,
+        installed: &[SteamApp],
+        host_root: &std::path::Path,
+    ) -> GamesState {
         let user = self.user(peer.uid, &peer.username);
         let mut games: Vec<_> = user
             .map(|user| user.games.as_slice())
             .unwrap_or_default()
             .iter()
             .map(|association| {
-                let GameId::Steam { app_id } = association.game;
-                let app = installed.iter().find(|app| app.app_id == app_id);
+                let app = match &association.game {
+                    GameId::Steam { app_id } => installed.iter().find(|app| app.app_id == *app_id),
+                    GameId::Program { .. } => None,
+                };
                 GameEntry {
                     game: association.game.clone(),
                     name: app.map_or(association.name.clone(), |app| app.name.clone()),
-                    installed: app.is_some(),
+                    installed: match &association.game {
+                        GameId::Steam { .. } => app.is_some(),
+                        GameId::Program { path } => {
+                            host_root.join(path.trim_start_matches('/')).is_file()
+                        }
+                    },
                     profiles: association.profiles.clone(),
                 }
             })

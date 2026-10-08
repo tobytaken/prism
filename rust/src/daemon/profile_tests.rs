@@ -859,5 +859,8 @@ fn version_eight_remembered_curves_survive_adding_profile_cooling() {
     );
     let stored: Value =
         serde_json::from_slice(&daemon.persistent_file(TUNING_STORE_FILE_NAME).unwrap()).unwrap();
-    assert_eq!(stored["schemaVersion"], 9);
+    assert_eq!(
+        stored["schemaVersion"],
+        super::tuning_store::TUNING_STORE_SCHEMA_VERSION
+    );
 }
