@@ -269,20 +269,8 @@ export function useTuningEdits() {
         const nextOwners = { ...profileOwners };
         delete nextOwners[setting];
         delete nextOutcomes[setting];
-        const nextEdits = { ...edits };
-        if (setting === "cooling") {
-          for (const key of Object.keys(nextEdits) as TuningSetting[]) {
-            if (key.startsWith("fan:")) {
-              delete nextEdits[key];
-              delete nextOutcomes[key];
-            }
-          }
-        } else if (setting.startsWith("fan:")) {
-          delete nextEdits.cooling;
-          delete nextOutcomes.cooling;
-        }
         return {
-          edits: { ...nextEdits, [setting]: value },
+          edits: { ...edits, [setting]: value },
           outcomes: nextOutcomes,
           profileOwners: nextOwners,
           appliedDefaults,

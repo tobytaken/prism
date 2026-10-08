@@ -1,5 +1,5 @@
 import { useQueries } from "@tanstack/react-query";
-import { previewGpuFanCurve } from "@/features/gpus/api";
+import { fanCurvePreviewOptions } from "@/features/gpus/lib/fan-curve-preview";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +18,6 @@ import {
 } from "@/features/gpus/hooks/use-tuning-edits";
 import type {
   CoolingConfiguration,
-  FanCurvePoint,
   GpuPerformanceDevice,
 } from "@/features/gpus/types";
 
@@ -53,34 +52,18 @@ export function CoolingArrangementEditor({
     current.mode === "perFan"
       ? current.fans
       : [{ fanIndex: undefined, setting: current }];
+  const completeFans =
+    complete?.arrangement === "perFan"
+      ? complete.fans
+      : complete
+        ? [{ fanIndex: undefined, setting: complete.setting }]
+        : [];
   const previews = useQueries({
-    queries: configurations
-      .filter((fan) => fan.setting.mode === "curve")
-      .map(({ fanIndex, setting }) => ({
-        queryKey: [
-          "cooling-draft-preview",
-          gpu.id,
-          gpu.stableId,
-          fanIndex,
-          setting,
-          gpu.cooling.fans.map((fan) => [
-            fan.index,
-            fan.minSpeedPercent,
-            fan.maxSpeedPercent,
-          ]),
-          gpu.cooling.maxOperatingTemperatureC,
-        ],
-        queryFn: () =>
-          previewGpuFanCurve({
-            gpuId: gpu.id,
-            ...(fanIndex != null && { fanIndex }),
-            points:
-              setting.mode === "curve"
-                ? (setting.points as FanCurvePoint[])
-                : [],
-          }),
-        enabled: complete != null,
-      })),
+    queries: completeFans.flatMap(({ fanIndex, setting }) =>
+      setting.mode === "curve"
+        ? [fanCurvePreviewOptions(gpu, setting.points, fanIndex)]
+        : [],
+    ),
   });
   const invalidFixed = configurations.some(
     ({ fanIndex, setting }) =>
@@ -100,7 +83,13 @@ export function CoolingArrangementEditor({
     previews.some(
       (preview) => !preview.isSuccess || preview.data.problems.length > 0,
     );
-  const blocked = busy || !gpu.stableId || identityChanged || fansChanged;
+  const blocked =
+    busy ||
+    !gpu.stableId ||
+    !gpu.cooling.isSupported ||
+    indexes.length === 0 ||
+    identityChanged ||
+    fansChanged;
   const change = (next: CoolingDraft) =>
     onChange({
       ...next,
@@ -177,6 +166,7 @@ export function CoolingArrangementEditor({
                 gpu={gpu}
                 fanIndex={fanIndex}
                 setting={entry?.setting ?? { mode: "automatic" }}
+                known={entry != null}
                 busy={blocked}
                 draft={draft != null}
                 canApply={!invalid}
@@ -258,6 +248,7 @@ function SettingEditor({
   setting,
   busy,
   draft = true,
+  known = true,
   canApply = true,
   onChange,
   onApply,
@@ -267,6 +258,7 @@ function SettingEditor({
   setting: FanSettingDraft;
   busy: boolean;
   draft?: boolean;
+  known?: boolean;
   canApply?: boolean;
   onChange: (setting: FanSettingDraft) => void;
   onApply: (setting: FanSettingDraft) => void;
@@ -278,7 +270,7 @@ function SettingEditor({
         Control mode
         <select
           aria-label="Control mode"
-          value={setting.mode}
+          value={known ? setting.mode : ""}
           disabled={busy}
           onChange={(event) => {
             if (event.target.value === "automatic")
@@ -292,6 +284,11 @@ function SettingEditor({
               });
           }}
         >
+          {!known && (
+            <option value="" disabled>
+              Choose mode
+            </option>
+          )}
           <option value="automatic">Automatic</option>
           <option value="fixed">Fixed</option>
           <option value="curve" disabled={support?.status !== "available"}>

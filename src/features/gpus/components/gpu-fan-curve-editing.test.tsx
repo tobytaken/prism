@@ -439,6 +439,13 @@ describe("Applying separate cooling", () => {
     expect(
       fake.gpu.cooling.fans.find((fan) => fan.index === 1)?.currentSpeedPercent,
     ).toBe(40);
+    expect(screen.getByRole("button", { name: "Retry curve" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Use automatic cooling" }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole("spinbutton", { name: "Fan 1 manual target" }),
+    ).not.toBeInTheDocument();
     delete fake.fanFailures[1];
     await user.click(
       screen.getByRole("button", { name: "Retry cooling change" }),
@@ -513,4 +520,94 @@ describe("Applying separate cooling", () => {
       "auto",
     );
   });
+});
+
+it("preserves unfinished individual fan edits before changing arrangements", async () => {
+  vi.restoreAllMocks();
+  vi.spyOn(window.prism.gpu, "getDaemonStatus").mockResolvedValue(
+    connectedDaemonStatus,
+  );
+  const fake = renderPerformance();
+  const user = userEvent.setup();
+  const target = await screen.findByRole("spinbutton", {
+    name: "Fan 1 manual target",
+  });
+  await user.clear(target);
+  await user.type(target, "55");
+  expect(
+    screen.queryByRole("button", { name: "Separate fans" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByText(/Apply or discard individual fan changes/),
+  ).toBeInTheDocument();
+  expect(target).toHaveValue(55);
+  expectNoFanWrites(fake);
+  await user.click(
+    screen.getByRole("button", { name: "Discard fan 1 change" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Separate fans" }));
+  expect(
+    screen.queryByRole("spinbutton", { name: "Fan 1 manual target" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
+  expectNoFanWrites(fake);
+});
+
+it("applies a cooling draft only to its GPU when identical models are reordered", async () => {
+  vi.restoreAllMocks();
+  vi.spyOn(window.prism.gpu, "getDaemonStatus").mockResolvedValue(
+    connectedDaemonStatus,
+  );
+  const first = createPerformanceGpu({
+    cooling: structuredClone(sharedCooling),
+  });
+  const second = createPerformanceGpu({
+    id: "GPU-456",
+    stableId: "GPU-456",
+    busId: "0000:02:00.0",
+    cooling: structuredClone(sharedCooling),
+  });
+  const response = createPerformanceResponse({ gpus: [first, second] });
+  const fake = createFakeDesktop({ response });
+  renderWithQueryClient(
+    <MemoryRouter>
+      <GpuPerformancePage />
+    </MemoryRouter>,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    (await screen.findAllByRole("button", { name: "Separate fans" }))[1],
+  );
+  const fan = screen.getByRole("group", { name: "Fan 2 configuration" });
+  await user.selectOptions(within(fan).getByRole("combobox"), "fixed");
+  await user.type(
+    within(fan).getByRole("spinbutton", { name: "Fixed target (%)" }),
+    "55",
+  );
+  response.gpus.reverse();
+  second.cooling.fans.reverse();
+  second.telemetry.temperatureC = 80;
+  await waitFor(() =>
+    expect(screen.getAllByText(/0000:02:00.0/).length).toBeGreaterThan(0),
+  );
+  await user.click(screen.getByRole("button", { name: "Apply all" }));
+  await screen.findByText("Cooling: Applied");
+  expect(fake.applyCooling).toHaveBeenCalledWith({
+    gpuId: "GPU-456",
+    fanIndexes: [0, 1],
+    configuration: {
+      arrangement: "perFan",
+      fans: [
+        { fanIndex: 0, setting: { mode: "automatic" } },
+        { fanIndex: 1, setting: { mode: "fixed", speedPercent: 55 } },
+      ],
+    },
+  });
+  expect(first.cooling.control?.applied).toBeNull();
+  expect(
+    first.cooling.fans.every((fan) => fan.currentSpeedPercent === 40),
+  ).toBe(true);
+  expect(
+    second.cooling.fans.find((fan) => fan.index === 1)?.currentSpeedPercent,
+  ).toBe(55);
 });

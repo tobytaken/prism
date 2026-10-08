@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { previewGpuFanCurve } from "@/features/gpus/api";
+import { fanCurvePreviewOptions } from "@/features/gpus/lib/fan-curve-preview";
 import type { FanCurveDraftPoint } from "@/features/gpus/hooks/use-tuning-edits";
 import type {
   FanCurvePoint,
@@ -162,14 +163,7 @@ function FanCurveEditor({
     inputProblems.length === 0 ? (points as FanCurvePoint[]) : null;
   // Keyed by the limits too, so a capability change rechecks the curve.
   const preview = useQuery({
-    queryKey: ["fan-curve-preview", gpu.id, fanIndex, complete, support],
-    queryFn: () =>
-      previewGpuFanCurve({
-        gpuId: gpu.id,
-        ...(fanIndex != null && { fanIndex }),
-        points: complete!,
-      }),
-    enabled: complete != null,
+    ...fanCurvePreviewOptions(gpu, complete, fanIndex),
     // While an edit is rechecked, the previous reasons stay rather than flickering away.
     placeholderData: keepPreviousData,
   });

@@ -270,6 +270,7 @@ export function GpuTuningControls({
       fanIndexes,
     });
 
+  const hasFanEdits = Object.keys(edits).some((key) => key.startsWith("fan:"));
   const coolingSection = (
     <PerformanceSection title="Cooling" icon={Wind}>
       <CapabilitySummary
@@ -278,6 +279,10 @@ export function GpuTuningControls({
       />
       <CoolingSectionContent
         cooling={gpu.cooling}
+        readOnly={
+          edits.cooling != null ||
+          (!hasFanEdits && gpu.cooling.control?.applied != null)
+        }
         drafts={fanDrafts}
         edits={edits}
         layout={layout}
@@ -303,17 +308,24 @@ export function GpuTuningControls({
       />
       <CoolingControlStatus
         gpu={gpu}
-        busy={pendingAction != null}
+        busy={pendingAction != null || edits.cooling != null || hasFanEdits}
         onApply={applyCooling}
       />
-      <CoolingArrangementEditor
-        key={gpu.id}
-        gpu={gpu}
-        draft={edits.cooling}
-        busy={pendingAction != null}
-        onChange={(draft) => editStore.change(gpu.id, "cooling", draft)}
-        onApply={applyCooling}
-      />
+      {hasFanEdits ? (
+        <p className="text-xs text-muted-foreground">
+          Apply or discard individual fan changes before changing the cooling
+          arrangement.
+        </p>
+      ) : (
+        <CoolingArrangementEditor
+          key={gpu.id}
+          gpu={gpu}
+          draft={edits.cooling}
+          busy={pendingAction != null}
+          onChange={(draft) => editStore.change(gpu.id, "cooling", draft)}
+          onApply={applyCooling}
+        />
+      )}
     </PerformanceSection>
   );
 
@@ -529,6 +541,7 @@ function PowerSectionContent({
 
 function CoolingSectionContent({
   cooling,
+  readOnly,
   drafts,
   edits,
   layout,
@@ -538,6 +551,7 @@ function CoolingSectionContent({
   onSetAuto,
 }: {
   cooling: CoolingInfo;
+  readOnly: boolean;
   drafts: Record<number, number | null>;
   edits: TuningEdits;
   layout: "stack" | "rail";
@@ -569,6 +583,7 @@ function CoolingSectionContent({
           <FanEditor
             key={fan.index}
             fan={fan}
+            readOnly={readOnly}
             draft={draft}
             unapplied={`fan:${fan.index}` in edits}
             busy={busy}
@@ -725,6 +740,7 @@ function CapabilitySummary({
 
 function FanEditor({
   fan,
+  readOnly,
   current,
   draft,
   unapplied,
@@ -736,6 +752,7 @@ function FanEditor({
   onSetAuto,
 }: {
   fan: FanControlInfo;
+  readOnly: boolean;
   current: number | null;
   draft: number | null;
   unapplied: boolean;
@@ -771,66 +788,76 @@ function FanEditor({
       <p className="text-xs text-muted-foreground">
         Current speed {current == null ? "Unavailable" : `${current}%`}
       </p>
-      <UnappliedNote
-        pending={unapplied}
-        reported={current == null ? "Unavailable" : `${current}%`}
-      />
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">Manual target</span>
-          <span className="text-sm font-semibold tabular-nums">{draft}%</span>
-        </div>
-        <input
-          type="range"
-          className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
-          min={min}
-          max={max}
-          step={1}
-          value={draft ?? ""}
-          onChange={(event) => onDraftChange(event.currentTarget.valueAsNumber)}
-          disabled={busy}
-        />
-        <Input
-          type="number"
-          aria-label={`Fan ${fan.index + 1} manual target`}
-          className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
-          min={min}
-          max={max}
-          step={1}
-          value={draft ?? ""}
-          onChange={(event) => {
-            const nextValue = event.currentTarget.valueAsNumber;
-            if (event.currentTarget.value === "") {
-              onDraftChange(0);
-            } else if (Number.isFinite(nextValue)) {
-              onDraftChange(nextValue);
-            }
-          }}
-          disabled={busy}
-        />
-      </div>
+      {!readOnly && (
+        <>
+          <UnappliedNote
+            pending={unapplied}
+            reported={current == null ? "Unavailable" : `${current}%`}
+          />
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-muted-foreground">
+                Manual target
+              </span>
+              <span className="text-sm font-semibold tabular-nums">
+                {draft}%
+              </span>
+            </div>
+            <input
+              type="range"
+              className="h-2 w-full cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+              min={min}
+              max={max}
+              step={1}
+              value={draft ?? ""}
+              onChange={(event) =>
+                onDraftChange(event.currentTarget.valueAsNumber)
+              }
+              disabled={busy}
+            />
+            <Input
+              type="number"
+              aria-label={`Fan ${fan.index + 1} manual target`}
+              className="rounded-none border-x-0 border-t-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+              min={min}
+              max={max}
+              step={1}
+              value={draft ?? ""}
+              onChange={(event) => {
+                const nextValue = event.currentTarget.valueAsNumber;
+                if (event.currentTarget.value === "") {
+                  onDraftChange(0);
+                } else if (Number.isFinite(nextValue)) {
+                  onDraftChange(nextValue);
+                }
+              }}
+              disabled={busy}
+            />
+          </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <Button
-          size="sm"
-          onClick={onSetManual}
-          disabled={
-            busy ||
-            !inTuningRange(draft, min, max) ||
-            (draft === current && fan.mode === "manual")
-          }
-        >
-          Set Manual
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onSetAuto}
-          disabled={busy || fan.mode === "auto"}
-        >
-          Restore Auto
-        </Button>
-      </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              size="sm"
+              onClick={onSetManual}
+              disabled={
+                busy ||
+                !inTuningRange(draft, min, max) ||
+                (draft === current && fan.mode === "manual")
+              }
+            >
+              Set Manual
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onSetAuto}
+              disabled={busy || fan.mode === "auto"}
+            >
+              Restore Auto
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
