@@ -507,6 +507,11 @@ impl CoolingController {
         let Some(mut cooling) = self.lock().get(uuid).cloned() else {
             return;
         };
+        if cooling.interrupted.is_some() {
+            self.resume_interrupted(backend, uuid);
+            self.finish_following(uuid, None);
+            return;
+        }
         let running = cooling.running_curve_fans();
         if running.is_empty() || self.stopping.load(Ordering::SeqCst) {
             self.finish_following(uuid, None);
@@ -515,11 +520,9 @@ impl CoolingController {
         let performance = backend.performance();
         let Ok(gpu) = verified_gpu(&performance, uuid) else {
             self.finish_following(uuid, None);
-            return self.suspend(
-                backend,
-                uuid,
-                "The GPU is no longer reported, so Prism stopped following its curve.",
-            );
+            // A missing GPU isn't a curve fault. Keep the healthy configuration for the
+            // same UUID's return, when resumption validates fresh fans, limits and temperature.
+            return self.interrupt(backend, uuid);
         };
         // The backend exposes policy, but no independent manual target readback. A speed
         // observation (including spin-up lag) or unknown policy cannot prove another writer.
@@ -712,12 +715,8 @@ impl CoolingController {
         let fans = interrupted.fans();
         let performance = backend.performance();
         let Ok(gpu) = verified_gpu(&performance, uuid) else {
-            return self.not_resumed(
-                backend,
-                uuid,
-                &fans,
-                "The GPU is absent or its stable identity could not be verified.",
-            );
+            // Neither a replacement in its slot nor temporary absence consumes recovery.
+            return;
         };
         let targets = match resumption(gpu, &cooling, &interrupted) {
             Ok(targets) => targets,
@@ -855,7 +854,10 @@ impl CoolingController {
             .store(self.clock.now_monotonic_ms(), Ordering::SeqCst);
         let mut gpus = self.lock();
         gpus.iter_mut()
-            .filter(|(_, cooling)| !cooling.follow_queued && cooling.has_running_curve())
+            .filter(|(_, cooling)| {
+                !cooling.follow_queued
+                    && (cooling.has_running_curve() || cooling.interrupted.is_some())
+            })
             .map(|(uuid, cooling)| {
                 cooling.follow_queued = true;
                 uuid.clone()

@@ -568,6 +568,8 @@ pub enum GpuSwitchingState {
     AnotherUser {},
     /// The latest automatic application or restoration didn't complete.
     Failed { message: String },
+    /// Boot-scoped recovery state is unreadable; this GPU is left unchanged.
+    RecoveryRequired { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -77,5 +77,20 @@
         }
       }
     ]
+  },
+  {
+    "condition": {
+      "status": "blocked",
+      "reason": "Prism's boot state can't be read."
+    },
+    "gpus": [
+      {
+        "gpuId": "GPU-123",
+        "state": {
+          "status": "recoveryRequired",
+          "message": "The pre-game tuning values cannot be read."
+        }
+      }
+    ]
   }
 ]

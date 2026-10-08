@@ -449,7 +449,12 @@ fn apply_cooling(session: &FakeSession, configuration: Value) {
 }
 
 fn cooling(session: &FakeSession) -> Value {
-    ok(session.send_json(json!({ "type": "get_performance" })))["gpus"][0]["cooling"]["control"]
+    ok(session.send_json(json!({ "type": "get_performance" })))["gpus"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|gpu| gpu["id"] == LINKED)
+        .unwrap()["cooling"]["control"]
         .clone()
 }
 
@@ -674,4 +679,397 @@ fn unreadable_pre_game_cooling_prevents_any_profile_write() {
     daemon.end_process(123);
     daemon.scan();
     assert_eq!(daemon.gpus.writes(), before);
+}
+
+#[test]
+fn an_absent_gpu_keeps_its_baseline_until_the_same_uuid_returns_in_another_slot() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let mut returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    daemon.end_process(123);
+    daemon.scan();
+    let before = daemon.gpus.writes();
+    let replacement = tunable_gpu_with_id("GPU-replacement");
+    daemon.gpus.arrive(replacement);
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(current_profile(&alice, "GPU-replacement"), Value::Null);
+
+    returning.bus_id = Some("0000:08:00.0".into());
+    daemon.gpus.arrive(returning);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(current_profile(&alice, LINKED)["id"], "daily");
+    assert!(writes_to(&daemon, "GPU-replacement").is_empty());
+}
+
+#[test]
+fn unreadable_same_boot_state_preserves_the_file_and_marks_its_gpu_as_recovery_required() {
+    let (mut daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    drop(alice);
+    daemon.stop_daemon();
+    let path = daemon.boot_path(super::switching::SWITCHING_STATE_FILE_NAME);
+    let mut document: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    document["activations"][LINKED]["baseline"] = json!("unreadable");
+    let corrupt = serde_json::to_vec(&document).unwrap();
+    std::fs::write(&path, &corrupt).unwrap();
+    let before = daemon.gpus.writes();
+    daemon.gpus.arrive(tunable_gpu_with_id("GPU-replacement"));
+    daemon.start_daemon();
+    daemon.scan();
+    let alice = daemon.user(1000, "alice");
+    let shown = status(&alice);
+    assert_eq!(shown["condition"]["status"], "blocked");
+    assert_eq!(shown["gpus"].as_array().unwrap().len(), 1);
+    assert_eq!(shown["gpus"][0]["gpuId"], LINKED);
+    assert_eq!(shown["gpus"][0]["state"]["status"], "recoveryRequired");
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(std::fs::read(path).unwrap(), corrupt);
+}
+
+#[test]
+fn a_previous_boots_unreadable_activation_does_not_block_new_game_tuning() {
+    let (mut daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    drop(alice);
+    daemon.stop_daemon();
+    let path = daemon.boot_path(super::switching::SWITCHING_STATE_FILE_NAME);
+    std::fs::write(
+        &path,
+        br#"{"schemaVersion":99,"bootId":"boot-1","activations":"old format"}"#,
+    )
+    .unwrap();
+    daemon.end_process(123);
+    daemon.reboot_with_retained_boot_state();
+    daemon.settle();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(status(&alice)["condition"]["status"], "ready");
+    daemon
+        .gpus
+        .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(410));
+    daemon.run_steam_game(124, 1000, 800, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), GAMING);
+    daemon.end_process(124);
+    daemon.scan();
+    assert_eq!(values(&daemon).0, Some(410));
+}
+
+#[test]
+fn a_returning_gpu_resumes_its_game_curve_then_restores_its_complete_cooling_baseline() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    let manual = last_applied(&daemon);
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let mut returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    daemon.run_curves_for(500);
+    returning.bus_id = Some("0000:08:00.0".into());
+    returning.telemetry.temperature_c = Some(80);
+    daemon.gpus.arrive(returning);
+    daemon.run_curves_for(500);
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(100)
+    );
+    assert_eq!(cooling(&alice)["applied"], shared_curve());
+    assert_eq!(cooling(&alice)["suspension"], Value::Null);
+    daemon.set_temperature(LINKED, Some(60));
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    let fans = daemon.gpus.gpu(LINKED).cooling.fans;
+    assert_eq!(fans[0].current_speed_percent, Some(65));
+    assert_eq!(fans[1].current_speed_percent, Some(55));
+    assert_eq!(last_applied(&daemon), manual);
+}
+
+#[test]
+fn a_faulted_game_curve_is_not_resurrected_by_restoration_after_a_daemon_restart() {
+    let (mut daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    daemon.set_temperature(LINKED, None);
+    daemon.run_curves_for(500);
+    assert_eq!(cooling(&alice)["suspension"]["kind"], "fault");
+    drop(alice);
+    daemon.stop_daemon();
+    daemon.end_process(123);
+    daemon.set_temperature(LINKED, Some(60));
+    let before = daemon.gpus.writes();
+    daemon.start_daemon();
+    daemon.scan();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(cooling(&alice)["suspension"]["kind"], "fault");
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+}
+
+#[test]
+fn a_game_ending_while_the_daemon_is_down_restores_only_after_a_complete_scan_without_rerunning_startup(
+) {
+    let (mut daemon, alice) = linked_dota();
+    ok(
+        alice.send_json(json!({ "type": "set_startup_profile", "payload": {
+        "gpuId": LINKED, "profileId": "cool"
+    } })),
+    );
+    ok(
+        alice.send_json(json!({ "type": "set_startup_behavior", "payload": {
+        "behavior": "startupProfiles"
+    } })),
+    );
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    drop(alice);
+    daemon.stop_daemon();
+    daemon.end_process(123);
+    daemon.run_steam_game(300, 1000, 990, 620);
+    std::fs::remove_file(daemon.host_path("/proc/300/stat")).unwrap();
+    let before = daemon.gpus.writes();
+    daemon.start_daemon();
+    daemon.settle();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(
+        status(&alice)["condition"]["status"],
+        "recognitionUnavailable"
+    );
+    daemon.end_process(300);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(current_profile(&alice, LINKED)["id"], "daily");
+    assert_eq!(writes_to(&daemon, LINKED).len(), before.len() + 2);
+}
+
+#[test]
+fn reboot_during_a_game_uses_startup_behavior_and_never_its_old_numeric_or_cooling_baseline() {
+    for behavior in ["startupProfiles", "restoreLastApplied"] {
+        let (mut daemon, alice) = cooled_dota();
+        apply_cooling(&alice, separate_cooling());
+        ok(
+            alice.send_json(json!({ "type": "set_startup_profile", "payload": {
+            "gpuId": LINKED, "profileId": "cool"
+        } })),
+        );
+        ok(
+            alice.send_json(json!({ "type": "set_startup_behavior", "payload": {
+            "behavior": behavior
+        } })),
+        );
+        set_switching(&daemon, &alice, true);
+        let manual = last_applied(&daemon);
+        // An external numeric tweak becomes a baseline, but never a last applied manual value.
+        daemon
+            .gpus
+            .update(LINKED, |gpu| gpu.power.current_limit_watts = Some(420));
+        daemon.run_steam_game(123, 1000, 420, DOTA);
+        daemon.scan();
+        drop(alice);
+        daemon.end_process(123);
+        // Simulate the hardware's reset while retaining old runtime files to exercise boot ids.
+        daemon.gpus.update(LINKED, |gpu| {
+            gpu.power.current_limit_watts = Some(575);
+            gpu.cooling = super::harness::cooled_gpu().cooling;
+        });
+        daemon.reboot_with_retained_boot_state();
+        daemon.core().wait_for_startup();
+        daemon.scan();
+        let alice = daemon.user(1000, "alice");
+        assert_eq!(
+            values(&daemon).0,
+            Some(if behavior == "startupProfiles" {
+                320
+            } else {
+                450
+            })
+        );
+        assert_eq!(last_applied(&daemon), manual);
+        assert_eq!(status(&alice)["gpus"], json!([]));
+        if behavior == "restoreLastApplied" {
+            assert_eq!(cooling(&alice)["applied"], separate_cooling());
+        } else {
+            assert_eq!(cooling(&alice)["applied"], Value::Null);
+        }
+        let before = daemon.gpus.writes();
+        daemon.scan();
+        assert_eq!(daemon.gpus.writes(), before);
+    }
+}
+
+#[test]
+fn restart_preserves_the_game_and_baseline_curves_while_recognition_waits() {
+    let (mut daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let shown = status(&alice);
+    let manual = last_applied(&daemon);
+    drop(alice);
+    daemon.restart();
+    daemon.settle();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(status(&alice), shown);
+    assert_eq!(cooling(&alice)["applied"], shared_curve());
+    assert_eq!(
+        writes_to(&daemon, LINKED)
+            .iter()
+            .filter(|s| **s == Setter::PowerLimit)
+            .count(),
+        3
+    );
+    std::fs::remove_file(daemon.host_path("/proc/123/stat")).unwrap();
+    daemon.scan();
+    daemon.set_temperature(LINKED, Some(80));
+    daemon.run_curves_for(500);
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(100)
+    );
+    assert_eq!(
+        status(&alice)["condition"]["status"],
+        "recognitionUnavailable"
+    );
+    daemon.end_process(123);
+    daemon.set_temperature(LINKED, Some(60));
+    daemon.scan();
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+    assert_eq!(
+        daemon.gpus.gpu(LINKED).cooling.fans[0].current_speed_percent,
+        Some(65)
+    );
+    assert_eq!(last_applied(&daemon), manual);
+}
+
+#[test]
+fn a_shared_cooling_baseline_is_not_restored_onto_changed_fans_when_the_gpu_returns() {
+    let (daemon, alice) = cooled_dota();
+    apply_cooling(&alice, shared_curve());
+    ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+        { "id": "fixed", "name": "Fixed", "gpuId": LINKED, "settings": {
+            "cooling": { "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 55 } }
+        } }
+    ] } })));
+    link(&alice, LINKED, Some("fixed"));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let mut returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    daemon.end_process(123);
+    daemon.scan();
+    returning.cooling.fans.pop();
+    returning.cooling.fan_count = 1;
+    daemon.gpus.arrive(returning);
+    let before = daemon.gpus.writes();
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    assert_eq!(status(&alice)["gpus"][0]["state"]["status"], "failed");
+}
+
+#[test]
+fn the_same_running_game_reconciles_reset_controls_when_its_gpu_returns() {
+    let (mut daemon, alice) = cooled_dota();
+    apply_cooling(&alice, separate_cooling());
+    let fixed =
+        json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 55 } });
+    ok(alice.send_json(
+        json!({ "type": "import_profiles", "payload": { "profiles": [
+        { "id": "fixed", "name": "Fixed", "gpuId": LINKED, "settings": {
+            "powerLimitWatts": value(330), "cooling": fixed
+        } }
+    ] } }),
+    ));
+    link(&alice, LINKED, Some("fixed"));
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let mut returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    drop(alice);
+    // Observed absence must survive a daemon restart as well.
+    daemon.restart();
+    daemon.settle();
+    returning.power.current_limit_watts = Some(575);
+    returning.cooling = super::harness::cooled_gpu().cooling;
+    returning.bus_id = Some("0000:08:00.0".into());
+    daemon.gpus.arrive(returning);
+    daemon.scan();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(values(&daemon).0, Some(330));
+    assert_eq!(cooling(&alice)["applied"], fixed);
+    assert!(daemon
+        .gpus
+        .gpu(LINKED)
+        .cooling
+        .fans
+        .iter()
+        .all(|fan| fan.current_speed_percent == Some(55)));
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+    assert_eq!(cooling(&alice)["applied"], separate_cooling());
+}
+
+#[test]
+fn returning_mid_game_reconciles_the_applied_settings_instead_of_later_saved_profile_edits() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    ok(alice.send_json(
+        json!({ "type": "set_power_limit", "payload": { "gpuId": LINKED, "limitWatts": 380 } }),
+    ));
+    let revision =
+        ok(alice.send_json(json!({ "type": "get_tuning_states" })))[0]["revision"].clone();
+    ok(alice.send_json(json!({ "type": "save_to_current_profile", "payload": { "gpuId": LINKED, "revision": revision } })));
+    let mut returning = daemon.gpus.gpu(LINKED);
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    returning.power.current_limit_watts = Some(575);
+    daemon.gpus.arrive(returning);
+    daemon.scan();
+    assert_eq!(values(&daemon), GAMING);
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
+}
+
+#[test]
+fn absence_is_remembered_while_recognition_is_unavailable_but_return_waits_for_a_complete_scan() {
+    let (daemon, alice) = linked_dota();
+    set_switching(&daemon, &alice, true);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    let mut returning = daemon.gpus.gpu(LINKED);
+    std::fs::remove_file(daemon.host_path("/proc/123/stat")).unwrap();
+    daemon.gpus.depart(LINKED);
+    daemon.scan();
+    returning.power.current_limit_watts = Some(575);
+    daemon.gpus.arrive(returning);
+    let before = daemon.gpus.writes();
+    daemon.scan();
+    assert_eq!(daemon.gpus.writes(), before);
+    daemon.run_steam_game(123, 1000, 420, DOTA);
+    daemon.scan();
+    assert_eq!(values(&daemon), GAMING);
+    daemon.end_process(123);
+    daemon.scan();
+    assert_eq!(values(&daemon), PRE_GAME);
 }

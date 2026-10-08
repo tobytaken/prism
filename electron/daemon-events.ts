@@ -193,6 +193,7 @@ function isGpuSwitchingState(value: unknown) {
     case "anotherUser":
       return hasKeys(value, ["status"]);
     case "failed":
+    case "recoveryRequired":
       return (
         hasKeys(value, ["status", "message"]) &&
         typeof value.message === "string"

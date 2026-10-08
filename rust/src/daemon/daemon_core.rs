@@ -262,7 +262,10 @@ impl DaemonCore {
     /// Queues a reconciliation on each GPU whose automatic switching should change, then pushes
     /// every changed status. Saving a linked profile changes nothing until its next application.
     pub(super) fn evaluate_switching(&self) {
-        for gpu_id in self.switching.claim_unsettled() {
+        for gpu_id in self
+            .switching
+            .claim_unsettled(self.dependencies.backend.as_ref())
+        {
             let switching = self.switching.clone();
             let id = gpu_id.clone();
             drop(self.submit_tracked(&gpu_id, move |backend| {
