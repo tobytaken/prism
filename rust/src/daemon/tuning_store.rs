@@ -14,7 +14,7 @@ use crate::protocol::{DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBeh
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
 
 /// The schema version this daemon reads and writes.
-pub const TUNING_STORE_SCHEMA_VERSION: u64 = 7;
+pub const TUNING_STORE_SCHEMA_VERSION: u64 = 8;
 
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
@@ -40,6 +40,8 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // Version 6 imports legacy configurations with the current inventory during opening.
     Ok,
     // Version 7 adds users' game associations and automatic switching opt-ins, none until set.
+    Ok,
+    // Version 8 adds each user's remembered fan curves per GPU, empty until manually applied.
     Ok,
 ];
 
@@ -84,6 +86,8 @@ pub struct RestoreAttempt {
 pub struct UserState {
     pub uid: u32,
     pub username: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub remembered_curves: BTreeMap<String, crate::cooling::CoolingConfiguration>,
     #[serde(default)]
     pub profiles: Vec<GpuTuningProfile>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -121,6 +125,7 @@ impl TuningDocument {
                 self.users.push(UserState {
                     uid,
                     username: username.into(),
+                    remembered_curves: BTreeMap::new(),
                     profiles: vec![],
                     migration_notice_dismissed: false,
                     games: vec![],
@@ -460,7 +465,7 @@ mod tests {
     fn an_unhealthy_store_refuses_every_write_and_keeps_its_bytes() {
         for preserved in [
             &b"{\"schemaVersion\": 1, \"profi"[..],
-            b"{\"schemaVersion\": 8}",
+            b"{\"schemaVersion\": 99}",
         ] {
             let dir = tempfile::tempdir().unwrap();
             fs::create_dir_all(store_path(&dir).parent().unwrap()).unwrap();

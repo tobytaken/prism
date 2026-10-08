@@ -1042,7 +1042,15 @@ export function createFakeDesktop({
               })),
             };
           }
-          return applyFans(gpu!, configuration, targets);
+          const application = applyFans(gpu!, configuration, targets);
+          if (
+            application.outcome.status === "succeeded" &&
+            targets.some(([, setting]) => setting.mode === "curve")
+          ) {
+            const control = coolingControl(gpu!);
+            control.rememberedCurve = structuredClone(control.applied!);
+          }
+          return application;
         },
       ),
     previewFanCurve: vi

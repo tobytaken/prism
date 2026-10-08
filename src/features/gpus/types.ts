@@ -214,6 +214,8 @@ export interface CoolingApplication {
  * and any curve suspension, all distinct from the modes and speeds the driver reports.
  */
 export interface CoolingControl {
+  /** This caller's last manually applied curve/arrangement; recalling it only creates a draft. */
+  rememberedCurve?: CoolingConfiguration;
   /** Configuration/ownership revision; temperature and driver observations do not change it. */
   revision: number;
   /** Null when Prism hasn't applied cooling to this GPU. A suspended curve stays applied. */

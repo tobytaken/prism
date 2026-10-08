@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use super::backend::DaemonBackend;
 use super::host::Clock;
 use super::profiles::verified_gpu;
-use super::tuning_store::write_atomically;
+use super::tuning_store::{write_atomically, TuningStore};
+use super::SessionPeer;
 use crate::cooling::{
     ApplyCoolingRequest, CoolingApplication, CoolingConfiguration, CoolingControl, CurveSuspension,
     FanConfiguration, FanOutcome, FanRequest, FanRestoration, FanSetting, RestorationStatus,
@@ -39,6 +40,7 @@ pub(super) const STOPPED_UNEXPECTEDLY_REASON: &str =
     "The Prism daemon stopped unexpectedly while following this curve.";
 
 pub(super) struct CoolingController {
+    tuning_store: Arc<TuningStore>,
     gpus: Mutex<HashMap<String, GpuCooling>>,
     record_path: PathBuf,
     boot_id: String,
@@ -50,6 +52,14 @@ pub(super) struct CoolingController {
     /// When each GPU's current fan operation started, so a hung driver call counts as a stall
     /// wherever it happens.
     operations: Mutex<HashMap<String, u64>>,
+}
+
+/// All controller callers declare why they apply a configuration. Only an identified manual
+/// application (live or profile) replaces that user's remembered choice. Automatic applications,
+/// restorations and calls without an identified user never acquire ownership of that choice.
+pub(super) enum CoolingApplicationSource {
+    Manual(SessionPeer),
+    NonManual,
 }
 
 /// What Prism applied to one GPU's fans, by fan index.
@@ -215,6 +225,7 @@ impl GpuCooling {
             })
             .collect();
         CoolingControl {
+            remembered_curve: None,
             revision: self.revision,
             applied: self.configuration(),
             curve_temperature_c: (!requested.is_empty())
@@ -228,13 +239,19 @@ impl GpuCooling {
 
 impl CoolingController {
     /// Opens the controller on the boot-scoped record of curves an earlier daemon followed.
-    pub fn open(boot_dir: &Path, boot_id: &str, clock: Arc<dyn Clock>) -> Self {
+    pub fn open(
+        boot_dir: &Path,
+        boot_id: &str,
+        clock: Arc<dyn Clock>,
+        tuning_store: Arc<TuningStore>,
+    ) -> Self {
         let record_path = boot_dir.join(COOLING_RECORD_FILE_NAME);
         let gpus = read_record(&record_path, boot_id)
             .into_iter()
             .map(|(uuid, recorded)| (uuid, recorded.into_suspended()))
             .collect();
         Self {
+            tuning_store,
             gpus: Mutex::new(gpus),
             record_path,
             boot_id: boot_id.into(),
@@ -275,10 +292,28 @@ impl CoolingController {
         &self,
         backend: &dyn DaemonBackend,
         request: ApplyCoolingRequest,
+        source: CoolingApplicationSource,
     ) -> CoolingApplication {
         let uuid = request.gpu_id.clone();
+        let custom_curve = request.configuration.contains_curve();
         let mut application = self.apply_configuration(backend, request);
-        application.revision = self.control(&uuid).revision;
+        let control = self.control(&uuid);
+        application.revision = control.revision;
+        if custom_curve && application.outcome.status == TuningOutcomeStatus::Succeeded {
+            if let (CoolingApplicationSource::Manual(peer), Some(configuration)) =
+                (source, control.applied)
+            {
+                if let Err(error) = self.tuning_store.update(|document| {
+                    document
+                        .user_mut(peer.uid, &peer.username)
+                        .remembered_curves
+                        .insert(uuid, configuration);
+                }) {
+                    // Hardware success stays success. Store health reports the persistence failure.
+                    eprintln!("Could not remember the manually applied fan curve: {error}");
+                }
+            }
+        }
         application
     }
 

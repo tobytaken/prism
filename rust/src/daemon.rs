@@ -19,6 +19,8 @@ mod tuning_store;
 #[cfg(test)]
 mod cooling_tests;
 #[cfg(test)]
+mod remembered_curve_tests;
+#[cfg(test)]
 mod current_profile_tests;
 #[cfg(test)]
 mod fan_curve_tests;
