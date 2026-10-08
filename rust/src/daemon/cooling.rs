@@ -521,23 +521,7 @@ impl CoolingController {
                 "The GPU is no longer reported, so Prism stopped following its curve.",
             );
         };
-        // The backend exposes policy, but no independent manual target readback. A speed
-        // observation (including spin-up lag) or unknown policy cannot prove another writer.
-        if cooling.fans.iter().any(|(index, state)| {
-            let expected = match state {
-                FanState::Automatic => FanControlMode::Auto,
-                FanState::Fixed(_)
-                | FanState::Curve {
-                    output: Some(_), ..
-                } => FanControlMode::Manual,
-                FanState::Curve { output: None, .. } => return false,
-            };
-            gpu.cooling
-                .fans
-                .iter()
-                .any(|fan| fan.index == *index && fan.mode.is_some_and(|mode| mode != expected))
-        }) {
-            self.yield_control(uuid);
+        if self.changed_outside_prism(gpu) {
             return;
         }
         let Some(temperature) = gpu.telemetry.temperature_c.map(i64::from) else {
@@ -578,6 +562,42 @@ impl CoolingController {
         if let Some(reason) = failure {
             self.suspend(backend, uuid, &reason);
         }
+    }
+
+    /// Checks only observable controls, never physical speed or routine curve outputs.
+    /// Called by automatic switching before writes as well as by the curve loop.
+    pub fn changed_outside_prism(&self, gpu: &GpuPerformanceDevice) -> bool {
+        let uuid = &gpu.id;
+        let Some(cooling) = self.lock().get(uuid).cloned() else {
+            return false;
+        };
+        if cooling
+            .suspension
+            .as_ref()
+            .is_some_and(|s| s.kind == SuspensionKind::ExternalControl)
+        {
+            return true;
+        }
+        // The backend exposes policy, but no independent manual target readback. A speed
+        // observation (including spin-up lag) or unknown policy cannot prove another writer.
+        if cooling.fans.iter().any(|(index, state)| {
+            let expected = match state {
+                FanState::Automatic => FanControlMode::Auto,
+                FanState::Fixed(_)
+                | FanState::Curve {
+                    output: Some(_), ..
+                } => FanControlMode::Manual,
+                FanState::Curve { output: None, .. } => return false,
+            };
+            gpu.cooling
+                .fans
+                .iter()
+                .any(|fan| fan.index == *index && fan.mode.is_some_and(|mode| mode != expected))
+        }) {
+            self.yield_control(uuid);
+            return true;
+        }
+        false
     }
 
     /// Relinquishes the whole GPU without issuing restoration writes. The boot record must no

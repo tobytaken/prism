@@ -22,6 +22,12 @@ export function describeGpuSwitching(
       summary: `Blocked: ${condition.reason}`,
       chip: "Switching blocked",
     };
+  if (state?.status === "manualOverride") {
+    const label = state.changedOutsidePrism
+      ? "Manual override · changed outside Prism"
+      : "Manual override";
+    return { summary: `${label}. Current values are kept.`, chip: label };
+  }
   if (state?.status === "failed")
     return { summary: `Failed: ${state.message}`, chip: "Switching failed" };
   if (condition.status === "recognitionUnavailable")

@@ -4,6 +4,24 @@
     "gpus": [
       {
         "gpuId": "GPU-123",
+        "state": { "status": "manualOverride", "changedOutsidePrism": false }
+      }
+    ]
+  },
+  {
+    "condition": { "status": "ready" },
+    "gpus": [
+      {
+        "gpuId": "GPU-123",
+        "state": { "status": "manualOverride", "changedOutsidePrism": true }
+      }
+    ]
+  },
+  {
+    "condition": { "status": "ready" },
+    "gpus": [
+      {
+        "gpuId": "GPU-123",
         "state": {
           "status": "active",
           "game": { "kind": "steam", "appId": 570 },
