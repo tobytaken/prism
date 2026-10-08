@@ -1,5 +1,5 @@
 //! Complete host process scans. An incomplete scan never means that a game ended.
-use super::programs::{mapped_images, FileIdentity};
+use super::programs::{is_wine_loader, mapped_images, FileIdentity};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -147,7 +147,14 @@ fn scan(root: &Path, programs: &[(u32, GameId, FileIdentity)]) -> io::Result<Gam
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error),
             };
-            let images = mapped_images(&path)?;
+            let wine = fs::read_link(path.join("exe"))
+                .map(|executable| is_wine_loader(&executable))
+                .unwrap_or(false);
+            let images = if wine {
+                mapped_images(&path)?
+            } else {
+                Vec::new()
+            };
             for (owner, game, identity) in programs {
                 if *owner == uid
                     && (exe == Some(*identity)

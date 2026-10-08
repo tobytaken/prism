@@ -130,13 +130,7 @@ pub(super) fn list(root: &Path, peer: &SessionPeer) -> io::Result<Vec<RunningPro
 
 fn read_process(root: &Path, process: &Path, uid: u32, pid: u32) -> io::Result<Option<Process>> {
     let status = fs::read_to_string(process.join("status"))?;
-    let owner = status.lines().find_map(|line| {
-        line.strip_prefix("Uid:")?
-            .split_whitespace()
-            .next()?
-            .parse::<u32>()
-            .ok()
-    });
+    let owner = real_uid(&status);
     if owner != Some(uid) {
         return Ok(None);
     }
@@ -192,7 +186,7 @@ fn read_process(root: &Path, process: &Path, uid: u32, pid: u32) -> io::Result<O
         &executable.to_string_lossy(),
         FileIdentity::at(&process.join("exe"))?,
     );
-    if exe_name.to_lowercase().starts_with("wine") {
+    if is_wine_loader(&executable) {
         let mut images: Vec<_> = mapped_images(process)?
             .into_iter()
             .filter(|image| image.path.to_lowercase().ends_with(".exe"))
@@ -215,7 +209,7 @@ fn read_process(root: &Path, process: &Path, uid: u32, pid: u32) -> io::Result<O
         Some("The host program location could not be recovered; browse for the program file instead.")
     } else { None }.map(str::to_string);
     if super::recognition::start_time(&fs::read_to_string(process.join("stat"))?, pid)? != started
-        || fs::read_to_string(process.join("status"))? != status
+        || real_uid(&fs::read_to_string(process.join("status"))?) != owner
     {
         return Ok(None);
     }
@@ -228,6 +222,23 @@ fn read_process(root: &Path, process: &Path, uid: u32, pid: u32) -> io::Result<O
         helper,
         warning,
     }))
+}
+
+fn real_uid(status: &str) -> Option<u32> {
+    status.lines().find_map(|line| {
+        line.strip_prefix("Uid:")?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    })
+}
+
+pub(super) fn is_wine_loader(executable: &Path) -> bool {
+    matches!(
+        executable.file_name().and_then(|name| name.to_str()),
+        Some("wine" | "wine64" | "wine-preloader" | "wine64-preloader")
+    )
 }
 
 fn basename(path: &str) -> &str {

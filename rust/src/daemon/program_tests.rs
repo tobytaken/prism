@@ -337,3 +337,22 @@ fn a_reused_uid_does_not_recognize_the_previous_accounts_manual_programs() {
         json!([])
     );
 }
+
+#[test]
+fn native_tools_mapping_a_program_file_do_not_count_as_running_that_program() {
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let alice = daemon.user(1000, "alice");
+    daemon.write_host_file("/games/game.exe", "binary");
+    daemon.write_host_file("/usr/bin/inspector", "binary");
+    ok(
+        &alice,
+        json!({"type":"add_program", "payload":{"path":"/games/game.exe"}}),
+    );
+    native(&daemon, 123, 1000, "/usr/bin/inspector");
+    map_image(&daemon, 123, "/games/game.exe", "/games/game.exe");
+    daemon.scan();
+    assert_eq!(
+        ok(&alice, json!({"type":"get_running_games"}))["games"],
+        json!([])
+    );
+}
