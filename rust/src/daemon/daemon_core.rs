@@ -1170,7 +1170,7 @@ fn mark_not_recorded<const N: usize>(outcomes: [&mut Option<TuningOutcome>; N]) 
 
 /// The GPU's tuning state from fresh readings, unless the GPU can't be identified or the
 /// tuning store can't be used.
-fn tuning_state(
+pub(super) fn tuning_state(
     backend: &dyn DaemonBackend,
     store: &TuningStore,
     cooling: &CoolingController,

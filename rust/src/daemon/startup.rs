@@ -66,7 +66,7 @@ use std::time::Duration;
 use super::backend::DaemonBackend;
 use super::boot_state::STARTUP_IN_PROGRESS;
 use super::cooling::CoolingController;
-use super::daemon_core::DaemonCore;
+use super::daemon_core::{tuning_state, DaemonCore};
 use super::host::Clock;
 use super::profiles::verified_gpu;
 use super::tuning::apply_unreviewed_profile;
@@ -267,14 +267,7 @@ impl DaemonCore {
                     }
                     _ => {}
                 }
-                if let Ok(Some(state)) = store.read(|document| {
-                    let readings = backend.performance();
-                    verified_gpu(&readings, &gpu_id).ok().map(|gpu| {
-                        let mut gpu = gpu.clone();
-                        gpu.cooling.control = Some(cooling.control(&gpu_id));
-                        document.tuning_state(&gpu)
-                    })
-                }) {
+                if let Some(state) = tuning_state(backend.as_ref(), &store, &cooling, &gpu_id) {
                     store.publish(DaemonEvent::TuningStateChanged(state));
                 }
                 if let Err(error) = boot.record(outcome) {

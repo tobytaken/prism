@@ -2,6 +2,7 @@
 
 use serde_json::{json, Value};
 
+use super::boot_state::STARTUP_IN_PROGRESS;
 use super::cooling::CoolingApplicationSource;
 use super::harness::{cooled_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
 use crate::gpu::{FanControlMode, GpuPerformanceDevice};
@@ -76,7 +77,7 @@ fn completed_outcome(daemon: &Harness) -> Value {
             .unwrap()
             .iter()
             .find(|outcome| outcome["gpuId"] == "GPU-123")
-            .filter(|outcome| outcome["reason"] != "Startup is in progress.")
+            .filter(|outcome| outcome["reason"] != STARTUP_IN_PROGRESS)
         {
             return outcome.clone();
         }
