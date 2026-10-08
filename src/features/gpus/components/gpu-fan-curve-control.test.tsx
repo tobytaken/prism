@@ -30,6 +30,7 @@ const sharedCooling: CoolingInfo = {
   maxOperatingTemperatureReason: null,
   curveSupport: fanCurvePreview.limits[0].curveSupport as FanCurveSupport,
   control: {
+    revision: 0,
     applied: null,
     requested: [],
     curveTemperatureC: null,
@@ -75,6 +76,183 @@ describe("Applying a shared fan curve", () => {
     );
   });
 
+  it("preserves a draft after another session applies cooling and requires review before replacement", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const editor = await curveEditor();
+    const speed = await within(editor).findByRole("spinbutton", {
+      name: "Point 1 speed (%)",
+    });
+    await user.clear(speed);
+    await user.type(speed, "35");
+    await window.prism.gpu.applyCooling({
+      gpuId: "GPU-123",
+      configuration: {
+        arrangement: "shared",
+        setting: { mode: "fixed", speedPercent: 55 },
+      },
+    });
+    await screen.findByText(/Cooling changed since/);
+    expect(speed).toHaveValue(35);
+    await user.click(
+      within(editor).getByRole("button", { name: "Apply curve" }),
+    );
+    expect(fake.applyCooling).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Apply all" }));
+    expect(fake.applyCooling).toHaveBeenCalledTimes(1);
+    await user.click(
+      screen.getByRole("button", { name: "Review cooling change" }),
+    );
+    const review = screen.getByRole("dialog", {
+      name: "Review cooling change",
+    });
+    expect(within(review).getByText(/fixed 55%/)).toBeInTheDocument();
+    await user.click(
+      within(review).getByRole("button", { name: "Keep draft for applying" }),
+    );
+    expect(fake.applyCooling).toHaveBeenCalledTimes(1);
+    await user.click(
+      within(editor).getByRole("button", { name: "Apply curve" }),
+    );
+    await waitFor(() => expect(fake.applyCooling).toHaveBeenCalledTimes(2));
+    expect(fake.gpu.cooling.control?.applied).toEqual(
+      sharedCurve([
+        { temperatureC: 45, speedPercent: 35 },
+        ...starter.slice(1),
+      ]),
+    );
+  });
+
+  it("explains external control and resumes only on request with fresh validation", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    await user.click(
+      await within(await curveEditor()).findByRole("button", {
+        name: "Apply curve",
+      }),
+    );
+    await screen.findByText("The curve requests 72% at 71°C.");
+    fake.gpu.cooling.fans[0].mode = "auto";
+    fake.followCurves();
+    const resume = await screen.findByRole("button", { name: "Resume curve" });
+    expect(
+      screen.getByText(/Prism left those controls alone/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/automatic cooling restored/),
+    ).not.toBeInTheDocument();
+    expect(fake.applyCooling).toHaveBeenCalledTimes(1);
+    fake.gpu.telemetry.temperatureC = null;
+    await user.click(resume);
+    await screen.findByText(
+      /Cooling: Not attempted.*temperature is unavailable/,
+    );
+    expect(fake.gpu.cooling.control?.suspension?.kind).toBe("externalControl");
+    fake.gpu.telemetry.temperatureC = 80;
+    await user.click(screen.getByRole("button", { name: "Resume curve" }));
+    await screen.findByText("The curve requests 90% at 80°C.");
+    expect(
+      screen.queryByRole("button", { name: "Resume curve" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("rejects an Apply racing another session, preserves the draft, and invalidates an outdated review", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const editor = await curveEditor();
+    const speed = await within(editor).findByRole("spinbutton", {
+      name: "Point 1 speed (%)",
+    });
+    await user.clear(speed);
+    await user.type(speed, "35");
+    const apply = fake.applyCooling.getMockImplementation()!;
+    const competing = {
+      gpuId: "GPU-123",
+      configuration: {
+        arrangement: "shared" as const,
+        setting: { mode: "fixed" as const, speedPercent: 55 },
+      },
+    };
+    fake.applyCooling.mockImplementationOnce(async (request) => {
+      await apply(competing);
+      return apply(request);
+    });
+    await user.click(
+      within(editor).getByRole("button", { name: "Apply curve" }),
+    );
+    await screen.findByText(/Cooling: Not attempted.*Review/);
+    expect(speed).toHaveValue(35);
+    await user.click(
+      screen.getByRole("button", { name: "Review cooling change" }),
+    );
+    await apply({
+      ...competing,
+      configuration: {
+        ...competing.configuration,
+        setting: { mode: "fixed", speedPercent: 60 },
+      },
+    });
+    await screen.findByText(/Cooling changed again/);
+    expect(
+      screen.getByRole("button", { name: "Keep draft for applying" }),
+    ).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(speed).toHaveValue(35);
+    await user.click(
+      screen.getByRole("button", { name: "Discard cooling change" }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Review cooling change" }),
+    ).not.toBeInTheDocument();
+    expect(fake.gpu.cooling.fans[0].currentSpeedPercent).toBe(60);
+  });
+
+  it("applies a shared curve and an individual fan draft without treating its own write as a conflict", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const speed = await within(await curveEditor()).findByRole("spinbutton", {
+      name: "Point 1 speed (%)",
+    });
+    await user.clear(speed);
+    await user.type(speed, "35");
+    const fan = screen.getByRole("spinbutton", { name: "Fan 1 manual target" });
+    await user.clear(fan);
+    await user.type(fan, "55");
+    await user.click(screen.getByRole("button", { name: "Apply all" }));
+    await screen.findByText("Fan 1: Applied");
+    expect(fake.gpu.cooling.fans.map((fan) => fan.currentSpeedPercent)).toEqual(
+      [55, 72],
+    );
+    expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Review cooling change" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("applies multiple fan drafts in one revision without conflicting with its own first fan", async () => {
+    const user = userEvent.setup();
+    const fake = renderPerformance();
+    const first = await screen.findByRole("spinbutton", {
+      name: "Fan 1 manual target",
+    });
+    const second = screen.getByRole("spinbutton", {
+      name: "Fan 2 manual target",
+    });
+    await user.clear(first);
+    await user.type(first, "55");
+    await user.clear(second);
+    await user.type(second, "65");
+    await user.click(screen.getByRole("button", { name: "Apply all" }));
+    await screen.findByText("Fan 2: Applied");
+    expect(fake.gpu.cooling.fans.map((fan) => fan.currentSpeedPercent)).toEqual(
+      [55, 65],
+    );
+    expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Review cooling change" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("applies the curve on request and keeps the applied configuration, requested speed and driver report apart", async () => {
     const user = userEvent.setup();
     const fake = renderPerformance();
@@ -91,6 +269,7 @@ describe("Applying a shared fan curve", () => {
 
     await waitFor(() =>
       expect(fake.applyCooling).toHaveBeenCalledWith({
+        expectedRevision: expect.any(Number),
         gpuId: "GPU-123",
         configuration: sharedCurve(),
       }),
@@ -136,6 +315,7 @@ describe("Applying a shared fan curve", () => {
     ]);
     await waitFor(() =>
       expect(fake.applyCooling).toHaveBeenCalledWith({
+        expectedRevision: expect.any(Number),
         gpuId: "GPU-123",
         configuration: applied,
       }),
@@ -254,6 +434,7 @@ describe("Applying a shared fan curve", () => {
 
     await waitFor(() => expect(fake.applyCooling).toHaveBeenCalledTimes(2));
     expect(fake.applyCooling).toHaveBeenLastCalledWith({
+      expectedRevision: expect.any(Number),
       gpuId: "GPU-123",
       configuration: sharedCurve(),
     });
@@ -279,6 +460,7 @@ describe("Applying a shared fan curve", () => {
 
     await waitFor(() =>
       expect(fake.applyCooling).toHaveBeenLastCalledWith({
+        expectedRevision: expect.any(Number),
         gpuId: "GPU-123",
         configuration: {
           arrangement: "shared",

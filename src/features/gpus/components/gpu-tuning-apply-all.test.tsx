@@ -268,11 +268,13 @@ describe("Apply all tuning changes", () => {
     const first = createPerformanceGpu();
     const second = createPerformanceGpu({
       id: "GPU-456",
+      stableId: "GPU-456",
       busId: "0000:02:00.0",
     });
     second.cooling.fans.push({ ...second.cooling.fans[0], index: 1 });
     const untouched = createPerformanceGpu({
       id: "GPU-789",
+      stableId: "GPU-789",
       busId: "0000:03:00.0",
     });
     const response = createPerformanceResponse({

@@ -440,7 +440,10 @@ function validateApplyCoolingPayload(
 ): payload is ApplyCoolingRequest {
   if (
     !isObject(payload) ||
-    !hasOnlyKeys(payload, ["gpuId", "configuration"]) ||
+    !hasOnlyKeys(payload, ["gpuId", "configuration", "expectedRevision"]) ||
+    (payload.expectedRevision !== undefined &&
+      (!Number.isSafeInteger(payload.expectedRevision) ||
+        (payload.expectedRevision as number) < 0)) ||
     !isString(payload.gpuId) ||
     !isObject(payload.configuration)
   )

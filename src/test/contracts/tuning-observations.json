@@ -48,6 +48,7 @@
           "reason": "Fan curves need controllable fans. No fans"
         },
         "control": {
+          "revision": 0,
           "applied": null,
           "requested": [],
           "curveTemperatureC": null,
