@@ -487,6 +487,7 @@ impl DaemonCore {
             tuning_store,
         };
 
+        core.resume_interrupted_curves();
         if let Err(error) = core.start_startup() {
             eprintln!("Startup is suspended: {}", error.message);
         }
@@ -715,6 +716,24 @@ impl DaemonCore {
             let id = uuid.clone();
             drop(self.submit_write(&uuid, move |backend| cooling.follow(backend, &id)));
         }
+    }
+
+    /// Queues the resumption of curves an earlier daemon of this boot was following when it
+    /// stopped, ahead of any other write to their GPUs. Readiness waits for them.
+    fn resume_interrupted_curves(&self) {
+        for uuid in self.cooling.interrupted_gpus() {
+            let cooling = Arc::clone(&self.cooling);
+            let id = uuid.clone();
+            let pending = self.submit_write(&uuid, move |backend| {
+                cooling.resume_interrupted(backend, &id)
+            });
+            self.startup_operations.lock().unwrap().push(pending);
+        }
+    }
+
+    /// Records whether curve control has stalled, for whoever recovers after the daemon stops.
+    pub fn record_cooling_stall(&self, stalled: bool) {
+        self.cooling.record_stall(stalled);
     }
 
     /// Starts the loop that follows applied curves every 500 ms.

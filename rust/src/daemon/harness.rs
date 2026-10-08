@@ -484,16 +484,27 @@ impl Harness {
     /// Simulates a daemon restart mid-boot: stops the core while the host keeps running and
     /// starts a new one on the same directories.
     pub fn restart(&mut self) {
+        self.stop_daemon();
+        self.start_daemon();
+    }
+
+    /// Stops the core while the host keeps running, leaving no daemon until `start_daemon`.
+    pub fn stop_daemon(&mut self) {
         self.core().stop();
         self.core = None;
+    }
+
+    /// Starts a daemon on the same directories and boot, and waits for its startup to finish.
+    pub fn start_daemon(&mut self) {
         self.start_core();
+        self.core().wait_for_startup();
     }
 
     /// Simulates the daemon dying mid-boot without stopping, as a crash or kill would, and the
     /// service manager starting it again on the same directories.
     pub fn crash_daemon(&mut self) {
         self.core = None;
-        self.start_core();
+        self.start_daemon();
     }
 
     /// Simulates a clean host reboot: the daemon is stopped while the host shuts down, the
