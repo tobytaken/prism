@@ -2,6 +2,8 @@ mod nvidia;
 
 use serde::{Deserialize, Serialize};
 
+use crate::fan_curve::FanCurveSupport;
+
 use nvidia::{
     collect_nvidia_performance, reset_nvidia_clock_offsets, reset_nvidia_power_limit,
     set_nvidia_clock_offsets, set_nvidia_fan_auto, set_nvidia_fan_speed, set_nvidia_power_limit,
@@ -150,6 +152,17 @@ pub struct CoolingInfo {
     pub unsupported_reason: Option<String>,
     pub fan_count: u32,
     pub fans: Vec<FanControlInfo>,
+    /// The GPU's maximum operating temperature in °C, known only when the GPU reports a
+    /// trustworthy absolute temperature.
+    #[serde(default)]
+    pub max_operating_temperature_c: Option<u32>,
+    /// Why the maximum operating temperature is unknown.
+    #[serde(default)]
+    pub max_operating_temperature_reason: Option<String>,
+    /// Whether one shared fan curve can control every fan, as judged by the daemon; unknown
+    /// when the readings didn't come from the daemon.
+    #[serde(default)]
+    pub curve: Option<FanCurveSupport>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -627,6 +640,9 @@ mod tests {
                         max_speed_percent: Some(100),
                         mode: Some(FanControlMode::Auto),
                     }],
+                    max_operating_temperature_c: Some(90),
+                    max_operating_temperature_reason: None,
+                    curve: None,
                 },
                 clocks: ClockOffsetsInfo {
                     graphics: ClockOffsetInfo {
@@ -673,6 +689,7 @@ mod tests {
         assert_eq!(value["gpus"][0]["power"]["currentDrawWatts"], 312);
         assert_eq!(value["gpus"][0]["power"]["currentLimitWatts"], 475);
         assert_eq!(value["gpus"][0]["cooling"]["fans"][0]["mode"], "auto");
+        assert_eq!(value["gpus"][0]["cooling"]["maxOperatingTemperatureC"], 90);
         assert_eq!(value["gpus"][0]["clocks"]["graphics"]["maxOffsetMHz"], 200);
         assert_eq!(value["gpus"][0]["telemetry"]["coreClockMHz"], 2_550);
         assert_eq!(value["gpus"][0]["telemetry"]["performanceState"], "P0");

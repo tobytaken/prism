@@ -1,9 +1,14 @@
 use std::collections::BTreeSet;
 
-use nvml_wrapper::enum_wrappers::device::{Clock, PerformanceState, TemperatureSensor};
-use nvml_wrapper::enums::device::{DeviceArchitecture, FanControlPolicy};
+use std::ops::RangeInclusive;
+
+use nvml_wrapper::enum_wrappers::device::{
+    Clock, PerformanceState, TemperatureSensor, TemperatureThreshold,
+};
+use nvml_wrapper::enums::device::{DeviceArchitecture, FanControlPolicy, SampleValue};
 use nvml_wrapper::error::NvmlError;
 use nvml_wrapper::struct_wrappers::device::MemoryInfo as NvmlMemoryInfo;
+use nvml_wrapper::structs::device::FieldId;
 use nvml_wrapper::{cuda_driver_version_major, cuda_driver_version_minor, Device, Nvml};
 use once_cell::sync::OnceCell;
 use thiserror::Error;
@@ -19,6 +24,12 @@ use super::{
 };
 
 const OFFSET_POWER_STATE: PerformanceState = PerformanceState::Zero;
+/// NVML_FI_DEV_TEMPERATURE_GPU_MAX_TLIMIT: the maximum operating temperature as an offset from
+/// T.Limit, which is a margin rather than a temperature.
+const GPU_MAX_TLIMIT_FIELD: u32 = 196;
+/// Absolute maximum operating temperatures outside this range are not credible GPU readings,
+/// such as a T.Limit offset or an unset value read as degrees Celsius.
+const PLAUSIBLE_MAX_OPERATING_TEMPERATURE_C: RangeInclusive<u32> = 50..=125;
 static NVML: OnceCell<Nvml> = OnceCell::new();
 
 pub struct NvmlNvidiaProvider;
@@ -65,6 +76,14 @@ struct ClockOffsetSnapshot {
     current_mhz: i32,
     min_mhz: i32,
     max_mhz: i32,
+}
+
+/// What NVML reports about a GPU's maximum operating temperature.
+struct ThermalLimitReadings {
+    /// NVML_TEMPERATURE_THRESHOLD_GPU_MAX, an absolute temperature in °C.
+    gpu_max_threshold: Result<u32, NvmlError>,
+    /// An offset from T.Limit, present on GPUs that report thermal limits as margins.
+    gpu_max_tlimit_offset: Option<i64>,
 }
 
 struct TelemetryQueryResults {
@@ -401,6 +420,18 @@ fn query_cooling_controls(
     device_name: &str,
     warnings: &mut Vec<String>,
 ) -> CoolingInfo {
+    let (max_operating_temperature_c, max_operating_temperature_reason) =
+        max_operating_temperature(query_thermal_limits(device), device_name, warnings);
+    let cooling =
+        |is_supported, unsupported_reason: Option<&str>, fans: Vec<FanControlInfo>| CoolingInfo {
+            is_supported,
+            unsupported_reason: unsupported_reason.map(Into::into),
+            fan_count: fans.len() as u32,
+            fans,
+            max_operating_temperature_c,
+            max_operating_temperature_reason: max_operating_temperature_reason.clone(),
+            curve: None,
+        };
     match device.num_fans() {
         Ok(fan_count) if fan_count > 0 => {
             let speed_bounds = match device.min_max_fan_speed() {
@@ -414,40 +445,101 @@ fn query_cooling_controls(
                 }
             };
 
-            CoolingInfo {
-                is_supported: true,
-                unsupported_reason: None,
-                fan_count,
-                fans: (0..fan_count)
+            cooling(
+                true,
+                None,
+                (0..fan_count)
                     .map(|fan_index| {
                         query_fan_control(device, device_name, fan_index, speed_bounds, warnings)
                     })
                     .collect(),
-            }
+            )
         }
-        Ok(_) => CoolingInfo {
-            is_supported: false,
-            unsupported_reason: Some("No programmable fans were detected for this GPU.".into()),
-            fan_count: 0,
-            fans: Vec::new(),
-        },
-        Err(NvmlError::NotSupported) => CoolingInfo {
-            is_supported: false,
-            unsupported_reason: Some("Fan control is not exposed by this GPU or driver.".into()),
-            fan_count: 0,
-            fans: Vec::new(),
-        },
+        Ok(_) => cooling(
+            false,
+            Some("No programmable fans were detected for this GPU."),
+            Vec::new(),
+        ),
+        Err(NvmlError::NotSupported) => cooling(
+            false,
+            Some("Fan control is not exposed by this GPU or driver."),
+            Vec::new(),
+        ),
         Err(error) => {
             warnings.push(format!(
                 "{device_name}: unable to query cooling controls: {error}"
             ));
+            cooling(
+                false,
+                Some("Cooling controls are currently unavailable."),
+                Vec::new(),
+            )
+        }
+    }
+}
 
-            CoolingInfo {
-                is_supported: false,
-                unsupported_reason: Some("Cooling controls are currently unavailable.".into()),
-                fan_count: 0,
-                fans: Vec::new(),
-            }
+fn query_thermal_limits(device: &Device<'_>) -> ThermalLimitReadings {
+    let gpu_max_tlimit_offset = device
+        .field_values_for(&[FieldId(GPU_MAX_TLIMIT_FIELD)])
+        .ok()
+        .and_then(|samples| samples.into_iter().next())
+        .and_then(|sample| sample.ok())
+        .and_then(|sample| sample.value.ok())
+        .and_then(|value| match value {
+            SampleValue::I64(value) => Some(value),
+            SampleValue::U32(value) => Some(i64::from(value)),
+            SampleValue::U64(value) => i64::try_from(value).ok(),
+            SampleValue::F64(_) => None,
+        });
+    ThermalLimitReadings {
+        gpu_max_threshold: device.temperature_threshold(TemperatureThreshold::GpuMax),
+        gpu_max_tlimit_offset,
+    }
+}
+
+/// The trustworthy maximum operating temperature in °C, or why it is unknown. A T.Limit offset
+/// is a margin from an unreported limit, so it never stands in for a temperature.
+fn max_operating_temperature(
+    readings: ThermalLimitReadings,
+    device_name: &str,
+    warnings: &mut Vec<String>,
+) -> (Option<u32>, Option<String>) {
+    match readings.gpu_max_threshold {
+        Ok(celsius) if PLAUSIBLE_MAX_OPERATING_TEMPERATURE_C.contains(&celsius) => {
+            (Some(celsius), None)
+        }
+        Ok(celsius) => {
+            warnings.push(format!(
+                "{device_name}: ignoring an implausible maximum operating temperature of {celsius}°C"
+            ));
+            (
+                None,
+                Some(format!(
+                    "The GPU reported an implausible maximum operating temperature ({celsius}°C)."
+                )),
+            )
+        }
+        Err(_) if readings.gpu_max_tlimit_offset.is_some() => (
+            None,
+            Some(
+                "This GPU reports its thermal limit only as a T.Limit margin, not as a temperature."
+                    .into(),
+            ),
+        ),
+        Err(NvmlError::NotSupported) => (
+            None,
+            Some("This GPU or driver doesn't report a maximum operating temperature.".into()),
+        ),
+        Err(error) => {
+            warnings.push(format!(
+                "{device_name}: unable to query the maximum operating temperature: {error}"
+            ));
+            (
+                None,
+                Some(format!(
+                    "Unable to read the maximum operating temperature: {error}"
+                )),
+            )
         }
     }
 }
@@ -915,8 +1007,8 @@ fn milliwatts_to_watts(milliwatts: u32) -> u32 {
 mod tests {
     use super::{
         build_telemetry_info, bytes_to_mib, format_cuda_driver_version, map_mutation_error,
-        map_snapshot, milliwatts_to_watts, parse_fallback_index, ClockOffsetSnapshot,
-        NvidiaSnapshot, TelemetryQueryResults,
+        map_snapshot, max_operating_temperature, milliwatts_to_watts, parse_fallback_index,
+        ClockOffsetSnapshot, NvidiaSnapshot, TelemetryQueryResults, ThermalLimitReadings,
     };
     use crate::gpu::{
         ComputeApi, ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuVendor,
@@ -1030,6 +1122,9 @@ mod tests {
                     mode: Some(FanControlMode::Auto),
                 },
             ],
+            max_operating_temperature_c: Some(90),
+            max_operating_temperature_reason: None,
+            curve: None,
         };
         let mut warnings = Vec::new();
 
@@ -1065,6 +1160,103 @@ mod tests {
         assert_eq!(telemetry.performance_state.as_deref(), Some("P0"));
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("graphics clock"));
+    }
+
+    #[test]
+    fn reads_an_absolute_maximum_operating_temperature() {
+        let mut warnings = Vec::new();
+        let limit = max_operating_temperature(
+            ThermalLimitReadings {
+                gpu_max_threshold: Ok(90),
+                gpu_max_tlimit_offset: None,
+            },
+            "RTX Test",
+            &mut warnings,
+        );
+
+        assert_eq!(limit, (Some(90), None));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn prefers_the_absolute_temperature_when_a_t_limit_margin_is_also_reported() {
+        let mut warnings = Vec::new();
+        let limit = max_operating_temperature(
+            ThermalLimitReadings {
+                gpu_max_threshold: Ok(88),
+                gpu_max_tlimit_offset: Some(0),
+            },
+            "RTX Test",
+            &mut warnings,
+        );
+
+        assert_eq!(limit.0, Some(88));
+    }
+
+    #[test]
+    fn never_takes_a_t_limit_margin_for_a_temperature() {
+        let mut warnings = Vec::new();
+        let (celsius, reason) = max_operating_temperature(
+            ThermalLimitReadings {
+                gpu_max_threshold: Err(NvmlError::NotSupported),
+                gpu_max_tlimit_offset: Some(-2),
+            },
+            "RTX Test",
+            &mut warnings,
+        );
+
+        assert_eq!(celsius, None);
+        assert!(reason.unwrap().contains("T.Limit"));
+    }
+
+    #[test]
+    fn reports_a_missing_maximum_operating_temperature_as_unknown() {
+        let mut warnings = Vec::new();
+        let (celsius, reason) = max_operating_temperature(
+            ThermalLimitReadings {
+                gpu_max_threshold: Err(NvmlError::NotSupported),
+                gpu_max_tlimit_offset: None,
+            },
+            "RTX Test",
+            &mut warnings,
+        );
+        assert_eq!(celsius, None);
+        assert!(reason
+            .unwrap()
+            .contains("doesn't report a maximum operating temperature"));
+        assert!(warnings.is_empty());
+
+        let (celsius, reason) = max_operating_temperature(
+            ThermalLimitReadings {
+                gpu_max_threshold: Err(NvmlError::Unknown),
+                gpu_max_tlimit_offset: None,
+            },
+            "RTX Test",
+            &mut warnings,
+        );
+        assert_eq!(celsius, None);
+        assert!(reason.unwrap().contains("Unable to read"));
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn rejects_an_implausible_maximum_operating_temperature() {
+        // A zero is what a T.Limit offset would look like if read as a temperature.
+        for implausible in [0, 2, 40, 200, 255] {
+            let mut warnings = Vec::new();
+            let (celsius, reason) = max_operating_temperature(
+                ThermalLimitReadings {
+                    gpu_max_threshold: Ok(implausible),
+                    gpu_max_tlimit_offset: None,
+                },
+                "RTX Test",
+                &mut warnings,
+            );
+
+            assert_eq!(celsius, None, "{implausible}°C");
+            assert!(reason.unwrap().contains("implausible"));
+            assert_eq!(warnings.len(), 1);
+        }
     }
 
     #[test]

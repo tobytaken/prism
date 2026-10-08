@@ -3,8 +3,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::drivers::{request_host_reboot, DriverService};
+use crate::fan_curve::{self, FanCurvePreview};
 use crate::gpu::{
-    GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus, SetGpuClockOffsetsRequest,
+    GpuCommandError, GpuCommandErrorCode, GpuDaemonStatus, GpuPerformanceResponse,
+    SetGpuClockOffsetsRequest,
 };
 use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
@@ -517,9 +519,7 @@ impl DaemonCore {
             DaemonRequest::GetInventory => {
                 DaemonResponse::Inventory(self.dependencies.backend.inventory())
             }
-            DaemonRequest::GetPerformance => {
-                DaemonResponse::Performance(self.dependencies.backend.performance())
-            }
+            DaemonRequest::GetPerformance => DaemonResponse::Performance(self.performance()),
             DaemonRequest::ApplyProfile(request) => {
                 DaemonResponse::ProfileApplication(self.apply_profile_settings(request))
             }
@@ -553,6 +553,19 @@ impl DaemonCore {
                 .live_command(request.gpu_id.clone(), move |backend| {
                     backend.set_fan_mode_auto(request)
                 }),
+            DaemonRequest::PreviewFanCurve(request) => {
+                // A read: it never waits on, or adds to, the GPU's operation queue.
+                let performance = self.dependencies.backend.performance();
+                match performance.gpus.iter().find(|gpu| gpu.id == request.gpu_id) {
+                    Some(gpu) => DaemonResponse::FanCurvePreview(FanCurvePreview {
+                        problems: fan_curve::validate(&gpu.cooling, &request.points),
+                    }),
+                    None => DaemonResponse::Error(GpuCommandError::new(
+                        GpuCommandErrorCode::NotFound,
+                        "The GPU is unavailable. Refresh the GPU readings and try again.",
+                    )),
+                }
+            }
             DaemonRequest::SetClockOffsets(request) => DaemonResponse::ClockOffsets(
                 self.live_write(request.gpu_id.clone(), move |backend| {
                     set_live_offsets(backend, request)
@@ -618,6 +631,15 @@ impl DaemonCore {
                 request_host_reboot().map_err(|error| error.message),
             )),
         }
+    }
+
+    /// The GPUs' readings, with the daemon's judgement of the fan curves each can use.
+    fn performance(&self) -> GpuPerformanceResponse {
+        let mut performance = self.dependencies.backend.performance();
+        for gpu in &mut performance.gpus {
+            gpu.cooling.curve = Some(fan_curve::curve_support(&gpu.cooling));
+        }
+        performance
     }
 
     /// Queues a tuning write on the GPU's operation queue.

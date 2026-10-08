@@ -18,9 +18,9 @@ use super::{
 };
 use crate::drivers::DriverService;
 use crate::gpu::{
-    ControlSupport, FanControlMode, GpuDaemonStatus, GpuInventoryResponse, GpuPerformanceDevice,
-    GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
-    SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+    ControlSupport, FanControlInfo, FanControlMode, GpuDaemonStatus, GpuInventoryResponse,
+    GpuPerformanceDevice, GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest,
+    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 use crate::protocol::{DaemonRequest, DaemonResponse};
 
@@ -48,6 +48,28 @@ pub fn tunable_gpu() -> GpuPerformanceDevice {
     gpu.clocks.graphics.reason = None;
     gpu.clocks.memory = gpu.clocks.graphics.clone();
     gpu.clocks.memory.current_offset_mhz = Some(0);
+    gpu
+}
+
+/// GPU-123 with two fans sharing a 20-100% range, a 90°C maximum operating temperature and a
+/// 71°C reading.
+pub fn cooled_gpu() -> GpuPerformanceDevice {
+    let mut gpu = tunable_gpu();
+    gpu.cooling.is_supported = true;
+    gpu.cooling.unsupported_reason = None;
+    gpu.cooling.fan_count = 2;
+    gpu.cooling.fans = (0..2)
+        .map(|index| FanControlInfo {
+            index,
+            current_speed_percent: Some(40),
+            min_speed_percent: Some(20),
+            max_speed_percent: Some(100),
+            mode: Some(FanControlMode::Auto),
+        })
+        .collect();
+    gpu.cooling.max_operating_temperature_c = Some(90);
+    gpu.cooling.max_operating_temperature_reason = None;
+    gpu.telemetry.temperature_c = Some(71);
     gpu
 }
 

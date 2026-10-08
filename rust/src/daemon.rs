@@ -18,6 +18,8 @@ mod tuning_store;
 #[cfg(test)]
 mod current_profile_tests;
 #[cfg(test)]
+mod fan_curve_tests;
+#[cfg(test)]
 mod games_tests;
 #[cfg(test)]
 mod harness;

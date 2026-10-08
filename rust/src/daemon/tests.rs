@@ -348,8 +348,8 @@ fn profile_application_changes_only_included_values_on_its_owner() {
     owner.clocks.memory.support = ControlSupport::Unknown;
     let gpus = FakeGpuBackend::with_gpus(vec![tunable_gpu_with_id("GPU-other"), owner]);
     let daemon = Harness::start(gpus);
-    let other = daemon.gpus.gpu("GPU-other");
-    let before = daemon.gpus.gpu("GPU-123");
+    let initial = daemon.performance();
+    let (other, before) = (initial.gpus[0].clone(), initial.gpus[1].clone());
 
     let result = daemon.send_json(apply_profile_request(json!({
         "powerLimitWatts": { "kind": "value", "value": 450 },

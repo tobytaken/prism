@@ -40,7 +40,13 @@
         "isSupported": false,
         "unsupportedReason": "No fans",
         "fanCount": 0,
-        "fans": []
+        "fans": [],
+        "maxOperatingTemperatureC": null,
+        "maxOperatingTemperatureReason": "This GPU or driver doesn't report a maximum operating temperature.",
+        "curve": {
+          "status": "unavailable",
+          "reason": "Fan curves need controllable fans. No fans"
+        }
       },
       "telemetry": {
         "powerDrawWatts": 312,
