@@ -317,3 +317,20 @@ fn preview_rejects_fractional_and_unknown_point_fields() {
     assert!(request(json!({ "temperatureC": 45, "speedPercent": "20" })).is_err());
     assert!(request(json!({ "temperatureC": 45, "speedPercent": 20, "rpm": 900 })).is_err());
 }
+
+#[test]
+fn preview_matches_the_shared_contract() {
+    let contract: Value = serde_json::from_str(include_str!(
+        "../../../src/test/contracts/fan-curve-preview.json"
+    ))
+    .unwrap();
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+
+    let response = daemon.send_json(json!({
+        "type": "preview_fan_curve",
+        "payload": contract["request"],
+    }));
+
+    assert_eq!(response["type"], "fan_curve_preview");
+    assert_eq!(response["payload"], contract["preview"]);
+}

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +10,7 @@ import {
   connectedDaemonStatus,
   createPerformanceResponse,
 } from "@/test/gpu-fixtures";
+import { renderWithQueryClient } from "@/test/query-client";
 import { GpuPerformanceScreen } from "./gpu-performance-screen";
 
 vi.mock("@/features/gpus/hooks/use-gpu-metric-history", async () => {
@@ -130,8 +131,9 @@ describe("GpuPerformanceScreen", () => {
   });
 });
 
+// The cooling controls ask the daemon to check fan curve previews.
 function renderScreen(ui: React.ReactNode) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>);
+  return renderWithQueryClient(<MemoryRouter>{ui}</MemoryRouter>);
 }
 
 function buildMetricHistory(

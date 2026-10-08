@@ -10,6 +10,7 @@ import type {
   SaveToCurrentProfileRequest,
   RenameGpuProfileRequest,
   GpuProfileIdRequest,
+  PreviewFanCurveRequest,
 } from "@/features/gpus/types";
 
 export function listGpuProfiles() {
@@ -76,6 +77,10 @@ export function setGpuFanSpeed(
 
 export function setGpuFanModeAuto(gpuId: string, fanIndex: number) {
   return window.prism.gpu.setFanModeAuto(gpuId, fanIndex);
+}
+
+export function previewGpuFanCurve(request: PreviewFanCurveRequest) {
+  return window.prism.gpu.previewFanCurve(request);
 }
 
 export function setGpuClockOffsets(

@@ -1,0 +1,433 @@
+import { useQuery } from "@tanstack/react-query";
+import { Minus, Plus, RotateCcw } from "lucide-react";
+import type { ReactNode } from "react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { previewGpuFanCurve } from "@/features/gpus/api";
+import type { FanCurveDraftPoint } from "@/features/gpus/hooks/use-tuning-edits";
+import type {
+  FanCurvePoint,
+  FanCurveProblem,
+  FanCurveSupport,
+  GpuPerformanceDevice,
+} from "@/features/gpus/types";
+
+const MIN_POINTS = 2;
+const MAX_POINTS = 16;
+
+type AvailableCurve = Extract<FanCurveSupport, { status: "available" }>;
+
+/**
+ * Previews one shared curve for every fan on the GPU. The daemon judges what the GPU supports
+ * and checks the curve; nothing here writes to the GPU.
+ */
+export function FanCurvePreview({
+  gpu,
+  draft,
+  onDraftChange,
+}: {
+  gpu: GpuPerformanceDevice;
+  draft: FanCurveDraftPoint[] | null;
+  onDraftChange: (points: FanCurveDraftPoint[] | null) => void;
+}) {
+  const support = gpu.cooling.curve;
+  if (support?.status !== "available") {
+    return (
+      <PreviewShell>
+        <p className="border-l border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          {support?.reason ?? "Fan curve previews need the Prism daemon."}{" "}
+          Automatic and fixed fan control stay available.
+        </p>
+      </PreviewShell>
+    );
+  }
+  return (
+    <FanCurveEditor
+      gpu={gpu}
+      support={support}
+      points={draft ?? support.starter}
+      edited={draft != null}
+      onDraftChange={onDraftChange}
+    />
+  );
+}
+
+function PreviewShell({ children }: { children: ReactNode }) {
+  return (
+    <div
+      role="group"
+      aria-label="Fan curve preview"
+      className="space-y-3 border-t border-border/70 pt-4"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+          Fan curve
+        </p>
+        <Badge variant="outline">Preview · not applied</Badge>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function FanCurveEditor({
+  gpu,
+  support,
+  points,
+  edited,
+  onDraftChange,
+}: {
+  gpu: GpuPerformanceDevice;
+  support: AvailableCurve;
+  points: FanCurveDraftPoint[];
+  edited: boolean;
+  onDraftChange: (points: FanCurveDraftPoint[] | null) => void;
+}) {
+  const inputProblems = points.flatMap(inputProblemsAt);
+  const complete =
+    inputProblems.length === 0 ? (points as FanCurvePoint[]) : null;
+  // Keyed by the limits too, so a capability change rechecks the curve.
+  const preview = useQuery({
+    queryKey: ["fan-curve-preview", gpu.id, complete, support],
+    queryFn: () => previewGpuFanCurve({ gpuId: gpu.id, points: complete! }),
+    enabled: complete != null,
+  });
+  const problems = [...inputProblems, ...(preview.data?.problems ?? [])];
+  const invalidPoints = new Set(problems.map((problem) => problem.point));
+  const change = (index: number, point: Partial<FanCurveDraftPoint>) =>
+    onDraftChange(
+      points.map((current, at) =>
+        at === index ? { ...current, ...point } : current,
+      ),
+    );
+  const fanCount = gpu.cooling.fans.length;
+
+  return (
+    <PreviewShell>
+      <p className="text-xs text-muted-foreground">
+        Reaches {support.maxSpeedPercent}% by {support.fullSpeedTemperatureC}
+        °C, 5°C below the {support.maxOperatingTemperatureC}°C maximum operating
+        temperature. Speeds {support.minSpeedPercent}-{support.maxSpeedPercent}%
+        for{" "}
+        {fanCount === 1
+          ? "the fan"
+          : fanCount === 2
+            ? "both fans"
+            : `all ${fanCount} fans`}
+        .
+      </p>
+      <FanCurveGraph
+        points={points}
+        support={support}
+        temperatureC={gpu.telemetry.temperatureC}
+      />
+      <p className="text-xs text-muted-foreground">
+        Current GPU temperature{" "}
+        {gpu.telemetry.temperatureC == null
+          ? "unavailable"
+          : `${gpu.telemetry.temperatureC}°C`}
+      </p>
+      <ol className="space-y-2">
+        {points.map((point, index) => (
+          <li
+            key={index}
+            className="grid grid-cols-[auto_1fr_1fr_auto] items-center gap-2"
+          >
+            <span className="w-5 text-xs text-muted-foreground tabular-nums">
+              {index + 1}
+            </span>
+            <PointInput
+              label={`Point ${index + 1} temperature (°C)`}
+              unit="°C"
+              value={point.temperatureC}
+              invalid={invalidPoints.has(index)}
+              onChange={(temperatureC) => change(index, { temperatureC })}
+            />
+            <PointInput
+              label={`Point ${index + 1} speed (%)`}
+              unit="%"
+              value={point.speedPercent}
+              invalid={invalidPoints.has(index)}
+              onChange={(speedPercent) => change(index, { speedPercent })}
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={`Remove point ${index + 1}`}
+              disabled={points.length <= MIN_POINTS}
+              onClick={() =>
+                onDraftChange(points.filter((_, at) => at !== index))
+              }
+            >
+              <Minus className="size-3.5" />
+            </Button>
+          </li>
+        ))}
+      </ol>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={points.length >= MAX_POINTS}
+          onClick={() => onDraftChange(withAddedPoint(points))}
+        >
+          <Plus className="mr-1 size-3.5" />
+          Add point
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!edited}
+          onClick={() => onDraftChange(null)}
+        >
+          <RotateCcw className="mr-1 size-3.5" />
+          Use starter curve
+        </Button>
+      </div>
+      <div aria-live="polite" className="space-y-1 text-xs">
+        {problems.length > 0 ? (
+          <ul className="space-y-1 text-destructive">
+            {problems.map((problem) => (
+              <li key={problem.message}>{problem.message}</li>
+            ))}
+          </ul>
+        ) : preview.isError ? (
+          <p className="text-destructive">
+            Couldn't check this curve: {preview.error.message}
+          </p>
+        ) : preview.isSuccess ? (
+          <p className="text-muted-foreground">
+            Valid curve. Preview only: Prism doesn't apply fan curves yet, so
+            your fans keep their current mode.
+          </p>
+        ) : (
+          <p className="text-muted-foreground">Checking the curve…</p>
+        )}
+      </div>
+    </PreviewShell>
+  );
+}
+
+function PointInput({
+  label,
+  unit,
+  value,
+  invalid,
+  onChange,
+}: {
+  label: string;
+  unit: string;
+  value: number | null;
+  invalid: boolean;
+  onChange: (value: number | null) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1">
+      <Input
+        type="number"
+        aria-label={label}
+        aria-invalid={invalid}
+        className="h-8 rounded-none border-x-0 border-t-0 bg-transparent px-0 tabular-nums shadow-none focus-visible:ring-0"
+        step={1}
+        value={value ?? ""}
+        onChange={(event) => {
+          const next = event.currentTarget.valueAsNumber;
+          if (event.currentTarget.value === "") onChange(null);
+          else if (Number.isFinite(next)) onChange(next);
+        }}
+      />
+      <span className="text-xs text-muted-foreground">{unit}</span>
+    </label>
+  );
+}
+
+/** Problems the daemon can't check: empty inputs and fractions. */
+function inputProblemsAt(
+  point: FanCurveDraftPoint,
+  index: number,
+): FanCurveProblem[] {
+  const problem = (message: string) => ({
+    point: index,
+    message: `Point ${index + 1}: ${message}`,
+  });
+  return [
+    point.temperatureC == null
+      ? problem("enter a temperature.")
+      : !Number.isInteger(point.temperatureC)
+        ? problem("temperature must be a whole number of degrees.")
+        : null,
+    point.speedPercent == null
+      ? problem("enter a speed.")
+      : !Number.isInteger(point.speedPercent)
+        ? problem("speed must be a whole percentage.")
+        : null,
+  ].filter((problem) => problem != null);
+}
+
+/**
+ * Splits the widest temperature gap at its midpoint, which keeps a valid curve valid. Without
+ * room to split, the last point is repeated for the user to edit.
+ */
+function withAddedPoint(points: FanCurveDraftPoint[]): FanCurveDraftPoint[] {
+  let widest = -1;
+  for (let index = 0; index + 1 < points.length; index++) {
+    const [low, high] = [points[index], points[index + 1]];
+    const gap = gapBetween(low, high);
+    if (
+      gap >= 2 &&
+      (widest < 0 || gap > gapBetween(points[widest], points[widest + 1]))
+    )
+      widest = index;
+  }
+  if (widest < 0) return [...points, { ...points[points.length - 1] }];
+  const [low, high] = [points[widest], points[widest + 1]];
+  const midpoint = {
+    temperatureC: Math.floor((low.temperatureC! + high.temperatureC!) / 2),
+    speedPercent: Math.floor((low.speedPercent! + high.speedPercent!) / 2),
+  };
+  return [
+    ...points.slice(0, widest + 1),
+    midpoint,
+    ...points.slice(widest + 1),
+  ];
+}
+
+function gapBetween(low: FanCurveDraftPoint, high: FanCurveDraftPoint) {
+  return [
+    low.temperatureC,
+    high.temperatureC,
+    low.speedPercent,
+    high.speedPercent,
+  ].every((value) => value != null && Number.isInteger(value))
+    ? high.temperatureC! - low.temperatureC!
+    : -1;
+}
+
+const GRAPH = {
+  width: 320,
+  height: 180,
+  left: 30,
+  right: 10,
+  top: 10,
+  bottom: 22,
+};
+
+/** The curve on temperature/speed axes, with the full-speed boundary and the live temperature. */
+function FanCurveGraph({
+  points,
+  support,
+  temperatureC,
+}: {
+  points: FanCurveDraftPoint[];
+  support: AvailableCurve;
+  temperatureC: number | null;
+}) {
+  const drawn = points.filter(
+    (point): point is FanCurvePoint =>
+      point.temperatureC != null && point.speedPercent != null,
+  );
+  const maxTemperature = support.maxOperatingTemperatureC;
+  const plotWidth = GRAPH.width - GRAPH.left - GRAPH.right;
+  const plotHeight = GRAPH.height - GRAPH.top - GRAPH.bottom;
+  const x = (temperature: number) =>
+    GRAPH.left +
+    (Math.min(Math.max(temperature, 0), maxTemperature) / maxTemperature) *
+      plotWidth;
+  const y = (speed: number) =>
+    GRAPH.top + (1 - Math.min(Math.max(speed, 0), 100) / 100) * plotHeight;
+  // Beyond its end points a curve holds the nearest end point's speed.
+  const line = drawn.length
+    ? [
+        [0, drawn[0].speedPercent],
+        ...drawn.map((point) => [point.temperatureC, point.speedPercent]),
+        [maxTemperature, drawn[drawn.length - 1].speedPercent],
+      ]
+        .map(([temperature, speed]) => `${x(temperature)},${y(speed)}`)
+        .join(" ")
+    : "";
+  const label = `Fan curve graph: ${
+    drawn
+      .map((point) => `${point.temperatureC}°C ${point.speedPercent}%`)
+      .join(", ") || "no complete points"
+  }. GPU temperature ${temperatureC == null ? "unavailable" : `now ${temperatureC}°C`}.`;
+
+  return (
+    <svg
+      role="img"
+      aria-label={label}
+      viewBox={`0 0 ${GRAPH.width} ${GRAPH.height}`}
+      className="w-full text-[9px]"
+    >
+      <g aria-hidden="true">
+        {[0, 50, 100].map((speed) => (
+          <g key={speed}>
+            <line
+              x1={GRAPH.left}
+              x2={GRAPH.width - GRAPH.right}
+              y1={y(speed)}
+              y2={y(speed)}
+              className="stroke-border"
+            />
+            <text
+              x={GRAPH.left - 4}
+              y={y(speed) + 3}
+              textAnchor="end"
+              className="fill-muted-foreground"
+            >
+              {speed}%
+            </text>
+          </g>
+        ))}
+        {[0, support.fullSpeedTemperatureC, maxTemperature].map(
+          (temperature) => (
+            <text
+              key={temperature}
+              x={x(temperature)}
+              y={GRAPH.height - 6}
+              textAnchor="middle"
+              className="fill-muted-foreground"
+            >
+              {temperature}°C
+            </text>
+          ),
+        )}
+        <line
+          x1={x(support.fullSpeedTemperatureC)}
+          x2={x(support.fullSpeedTemperatureC)}
+          y1={GRAPH.top}
+          y2={GRAPH.top + plotHeight}
+          strokeDasharray="3 3"
+          className="stroke-amber-500"
+        />
+        {temperatureC != null && (
+          <line
+            x1={x(temperatureC)}
+            x2={x(temperatureC)}
+            y1={GRAPH.top}
+            y2={GRAPH.top + plotHeight}
+            className="stroke-sky-500"
+          />
+        )}
+        {line && (
+          <polyline
+            points={line}
+            fill="none"
+            strokeWidth={2}
+            className="stroke-primary"
+          />
+        )}
+        {drawn.map((point, index) => (
+          <circle
+            key={index}
+            cx={x(point.temperatureC)}
+            cy={y(point.speedPercent)}
+            r={3}
+            className="fill-primary"
+          />
+        ))}
+      </g>
+    </svg>
+  );
+}

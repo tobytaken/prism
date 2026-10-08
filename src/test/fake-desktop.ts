@@ -7,6 +7,9 @@ import {
 import type {
   ClockOffsetResponse,
   ControlSupport,
+  FanCurvePoint,
+  FanCurveProblem,
+  FanCurveSupport,
   GpuPerformanceDevice,
   GpuPerformanceResponse,
   GpuProfileSettings,
@@ -81,6 +84,54 @@ function control(gpu: GpuPerformanceDevice, key: ProfileSettingKey): Control {
 }
 
 const succeeded: TuningOutcome = { status: "succeeded", error: null };
+
+/** The daemon's shared fan curve validation, against the limits it reported for the GPU. */
+function fanCurveProblems(
+  support: FanCurveSupport,
+  points: FanCurvePoint[],
+): FanCurveProblem[] {
+  if (support.status === "unavailable")
+    return [{ point: null, message: support.reason }];
+  const {
+    maxOperatingTemperatureC: maxTemperature,
+    fullSpeedTemperatureC: fullSpeed,
+    minSpeedPercent: min,
+    maxSpeedPercent: max,
+  } = support;
+  const problems: FanCurveProblem[] = [];
+  const problem = (point: number, message: string) =>
+    problems.push({ point, message: `Point ${point + 1}: ${message}` });
+  if (points.length < 2 || points.length > 16)
+    problems.push({ point: null, message: "A curve needs 2 to 16 points." });
+  points.forEach(({ temperatureC, speedPercent }, index) => {
+    if (temperatureC < 0 || temperatureC > maxTemperature)
+      problem(index, `temperature must be between 0 and ${maxTemperature}°C.`);
+    if (speedPercent < min || speedPercent > max)
+      problem(index, `speed must be between ${min}% and ${max}%.`);
+    const previous = points[index - 1];
+    if (previous && temperatureC <= previous.temperatureC)
+      problem(
+        index,
+        `temperature must be higher than point ${index}'s ${previous.temperatureC}°C.`,
+      );
+    if (previous && speedPercent < previous.speedPercent)
+      problem(
+        index,
+        `speed can't be lower than point ${index}'s ${previous.speedPercent}%.`,
+      );
+  });
+  if (
+    points.length &&
+    !points.some(
+      (point) => point.temperatureC <= fullSpeed && point.speedPercent === max,
+    )
+  )
+    problems.push({
+      point: null,
+      message: `The curve must reach ${max}% by ${fullSpeed}°C, 5°C below the GPU's ${maxTemperature}°C maximum operating temperature.`,
+    });
+  return problems;
+}
 
 /**
  * A stateful stand-in for the desktop API backed by the daemon: GPU readings that writes change,
@@ -708,6 +759,16 @@ export function createFakeDesktop({
             mode: "manual",
           });
         return { success: true, error: null };
+      }),
+    previewFanCurve: vi
+      .spyOn(api, "previewFanCurve")
+      .mockImplementation(async ({ gpuId, points }) => {
+        const support = byId(gpuId)?.cooling.curve;
+        if (!support)
+          throw new Error(
+            "The GPU is unavailable. Refresh the GPU readings and try again.",
+          );
+        return { problems: fanCurveProblems(support, points) };
       }),
     setFanModeAuto: vi
       .spyOn(api, "setFanModeAuto")

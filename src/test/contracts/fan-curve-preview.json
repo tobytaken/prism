@@ -1,0 +1,22 @@
+{
+  "request": {
+    "gpuId": "GPU-123",
+    "points": [
+      { "temperatureC": 45, "speedPercent": 20 },
+      { "temperatureC": 40, "speedPercent": 60 },
+      { "temperatureC": 88, "speedPercent": 100 }
+    ]
+  },
+  "preview": {
+    "problems": [
+      {
+        "point": 1,
+        "message": "Point 2: temperature must be higher than point 1's 45°C."
+      },
+      {
+        "point": null,
+        "message": "The curve must reach 100% by 85°C, 5°C below the GPU's 90°C maximum operating temperature."
+      }
+    ]
+  }
+}

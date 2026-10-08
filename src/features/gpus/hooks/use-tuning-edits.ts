@@ -20,6 +20,11 @@ export type TuningEdits = {
   graphics?: number | null | "default";
   memory?: number | null | "default";
 } & Partial<Record<`fan:${number}`, number | null | "auto">>;
+/** A fan curve point as typed; null is an empty input. */
+export type FanCurveDraftPoint = {
+  temperatureC: number | null;
+  speedPercent: number | null;
+};
 type DeviceEdits = {
   edits: TuningEdits;
   outcomes: Partial<Record<TuningSetting, TuningOutcome>>;
@@ -31,6 +36,11 @@ type DeviceEdits = {
 // Observations never acknowledge an intention: only a command outcome or discard does.
 export function useTuningEdits() {
   const [devices, setDevices] = useState<Record<string, DeviceEdits>>({});
+  // Curve drafts are screen-local like other edits, but only previewed: Prism can't apply them
+  // yet, so they aren't unapplied tuning changes.
+  const [curveDrafts, setCurveDrafts] = useState<
+    Record<string, FanCurveDraftPoint[]>
+  >({});
   const [applyAllPending, setApplyAllPending] = useState(false);
   const applyAllRunning = useRef(false);
   function update(gpuId: string, change: (device: DeviceEdits) => DeviceEdits) {
@@ -263,6 +273,19 @@ export function useTuningEdits() {
       });
     },
     apply,
+    /** The GPU's edited fan curve, or null while it shows the starter curve. */
+    curveDraft(gpuId: string): FanCurveDraftPoint[] | null {
+      return curveDrafts[gpuId] ?? null;
+    },
+    /** Null returns the GPU to its starter curve. */
+    changeCurveDraft(gpuId: string, points: FanCurveDraftPoint[] | null) {
+      setCurveDrafts((current) => {
+        const next = { ...current };
+        if (points) next[gpuId] = points;
+        else delete next[gpuId];
+        return next;
+      });
+    },
   };
 }
 export type TuningEditStore = ReturnType<typeof useTuningEdits>;
