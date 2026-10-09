@@ -1,6 +1,6 @@
 # Research: native Rust GUI toolkits other than gpui
 
-Ticket: [#98](https://github.com/tobytaken/prism-electron/issues/98), a child of the map [#96](https://github.com/tobytaken/prism-electron/issues/96). Sibling: [#97](https://github.com/tobytaken/prism-electron/issues/97) (gpui in depth, still open when this was written). Feeds the toolkit spike [#102](https://github.com/tobytaken/prism-electron/issues/102).
+Ticket: [#98](https://github.com/tobytaken/prism-electron/issues/98), a child of the map [#96](https://github.com/tobytaken/prism-electron/issues/96). Sibling: [#97](https://github.com/tobytaken/prism-electron/issues/97) (gpui in depth), resolved as "viable with caveats" ([resolution](https://github.com/tobytaken/prism-electron/issues/97#issuecomment-6084662395), [findings](https://github.com/tobytaken/prism-electron/blob/research/gpui-viability/docs/research/gpui-viability.md)). Feeds the toolkit spike [#102](https://github.com/tobytaken/prism-electron/issues/102).
 
 Question: besides gpui, which **non-webview** native Rust GUI toolkits are serious candidates for Prism, and how do they compare on the map's gates and criteria? This document reports facts, confidence and a ranking. The spike makes the decision.
 
@@ -18,7 +18,7 @@ Researched 2026-10-09. Versions and dates come from the crates.io API and the Gi
 |---|---|---|---|
 | 1 | **Slint** 1.18.1 | Spike it | Only candidate that passes every gate **and** scores well on the weighted criteria: 1.x API with compatibility promises, docs, AccessKit accessibility, built-in tray icon, frameless window + `WindowMoveArea`, OpenGL (EGL) default renderer. Caveats: charts and the fan-curve editor are built from `Path` elements, not a canvas API. The royalty-free licence needs an "uses Slint" attribution, or GPLv3. |
 | 2 | **iced** 0.14.0 | Spike it | Best canvas (`canvas::Program`) and the best match for a toolkit-agnostic core (Elm-style `update(Message)`, `Task`, `Subscription`, `daemon` mode). Caveats: no accessibility upstream, about one breaking release a year, and an **open NVIDIA + GNOME Wayland "UI stops redrawing after being minimised"** report (#3496, Oct 2026) on its wgpu/Vulkan path. |
-| (gpui) | gpui (git) | Decided by #97 | Survey level: closest to the wanted Zed look by definition, richest component kit (`gpui-component` 0.7.1). Biggest risk is dependency hygiene: the crates.io release (0.2.2) is a year old and no longer builds against current dependencies (section 3), so you pin git. |
+| (gpui) | gpui via `gpui-kit` / git | Viable with caveats (#97) | Closest to the wanted Zed look by definition, and the richest component kit (`gpui-component`/`gpui-kit` 0.7.1). All four gates have first-party support (#97). Biggest risks are pre-1.0 churn and how you depend on it: the crates.io release (0.2.2) is a year old and no longer builds against current dependencies (section 3). Also footprint (#97: gpui-kit hello world 30.4 MiB stripped). |
 | 3 | egui 0.36.2 | Fallback | Excellent for charts and editing (`Painter`, `egui_plot`), AccessKit on by default, biggest ecosystem. Immediate-mode look and layout make a polished Zed-like design costly. Breaking releases every 1–3 months. |
 | 4 | libcosmic (git) | Only as "iced with batteries" | System76's iced fork with accessibility and many widgets. Git-only dependency, COSMIC design language, MPL-2.0. |
 | 5 | Freya 0.4.3 | Watch | Skia renderer, AccessKit, tray and plotters integrations. Mostly a single maintainer. Skia makes binaries large (see section 3). 0.5 is in release candidates. |
@@ -29,8 +29,8 @@ Researched 2026-10-09. Versions and dates come from the crates.io API and the Gi
 
 **Recommendation for #102:** the top two from this survey are **Slint**, then **iced**.
 
-- #102 spikes 1–2 toolkits. If gpui passes #97, spike **gpui + Slint**. They cover the space well: gpui is the best fit for the look but the riskiest dependency; Slint is the safest dependency, with OpenGL instead of wgpu on NVIDIA and built-in tray, frameless window and accessibility.
-- If gpui fails #97, spike **Slint + iced**. iced has the strongest canvas and the cleanest Elm-style seam for the toolkit-agnostic UI core, but weaker accessibility and stability.
+- #102 spikes 1–2 toolkits. #97 found gpui viable with caveats, so spike **gpui + Slint**. They cover the space well: gpui is the best fit for the look but the riskiest dependency; Slint is the safest dependency, with OpenGL instead of wgpu on NVIDIA and built-in tray, frameless window and accessibility.
+- If gpui drops out early in the spike, put **iced** in as the second toolkit next to Slint. iced has the strongest canvas and the cleanest Elm-style seam for the toolkit-agnostic UI core, but weaker accessibility and stability.
 
 ## 2. Scoring
 
@@ -146,12 +146,13 @@ Reading the numbers (judgement):
 - Wayland fixes are recent (e.g. #1179 "app exits silently when flush() returns WouldBlock", closed 2026-09-28; #1173 inverted scroll, closed 2026-09-04). Accessibility: "On Accessibility" [#196](https://github.com/makepad/makepad/issues/196) open. High.
 - Dropped: stale crates.io release, no accessibility, and a direction that doesn't match a small Linux utility.
 
-### Where gpui slots in (survey level; #97 has the detail)
+### Where gpui slots in (survey level; [#97](https://github.com/tobytaken/prism-electron/issues/97#issuecomment-6084662395) has the detail)
 
 - crates.io `gpui` is 0.2.2 from 2025-10-22, while Zed's `main` has moved on (crates split into `gpui_platform`, `gpui_linux`, `gpui_wgpu`). Realistically you pin a git revision. High.
 - On `main`, the Linux platform crate depends on `gpui_wgpu` and `accesskit_unix` under its `wayland` feature ([gpui_linux/Cargo.toml](https://github.com/zed-industries/zed/blob/main/crates/gpui_linux/Cargo.toml)). That means the same wgpu/Vulkan NVIDIA questions as iced and egui apply. High for the dependency facts.
 - `gpui-component` 0.7.1 (2026-10-05, 16.7k stars, repo now `longbridge/gpui-kit`) is the richest ready-made component set of any candidate, and the shortest road to a Zed-like look. High.
-- Ranking: gpui sits next to Slint and iced at the top. It is the best on "look" and the worst on dependency hygiene and API stability. #97 decides whether its gates hold.
+- #97's verdict is "viable with caveats". Its Linux renderer moved from `blade` to wgpu in zed#46758 (2026-02-13), explicitly to fix NVIDIA/Wayland frozen windows. AccessKit landed 2026-05-27. There is no tray (use `ksni`). Its probe measured 22.3 MiB stripped (thin LTO, O3) or 13.2 MiB (fat LTO, `opt-level="s"`, `panic=abort`), against 12–17 MB for the toolkits in section 3 (fat LTO, O3).
+- Ranking: gpui sits next to Slint and iced at the top. It is the best on "look" and component kit, and the worst on API stability and dependency hygiene. Slint is the opposite profile, which makes the pair a good spike.
 
 ## 5. Other stacks considered and dropped
 
