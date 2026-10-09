@@ -1,5 +1,6 @@
 //! File identity, shared by manual program recognition and the running-program picker.
-use std::os::unix::fs::MetadataExt;
+use std::ffi::CString;
+use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
 use std::{fs, io, path::Path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,50 +19,82 @@ impl FileIdentity {
     }
 }
 
+/// Device-only metadata can rule out an unrelated executable even when its filesystem
+/// denies inode metadata (for example another app on a user-owned FUSE mount).
+/// Never turn an unreadable possible match into a negative observation.
+pub(super) fn candidate_executable(
+    path: &Path,
+    candidates: impl Iterator<Item = FileIdentity>,
+) -> io::Result<Option<FileIdentity>> {
+    let name = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid executable path"))?;
+    let mut stat = std::mem::MaybeUninit::<libc::statx>::zeroed();
+    // SAFETY: name is NUL-terminated and stat points to an entire writable statx struct.
+    // A zero mask still returns the containing device. FUSE explicitly permits that
+    // query without granting access to its owner-controlled inode attributes.
+    let result = unsafe { libc::statx(libc::AT_FDCWD, name.as_ptr(), 0, 0, stat.as_mut_ptr()) };
+    if result == 0 {
+        // SAFETY: a successful statx initialized the output buffer.
+        let stat = unsafe { stat.assume_init() };
+        let device = libc::makedev(stat.stx_dev_major, stat.stx_dev_minor);
+        if !candidates
+            .into_iter()
+            .any(|identity| identity.device == device)
+        {
+            return Ok(None);
+        }
+    }
+    // Unsupported device-only queries use the full observation; errors remain errors.
+    FileIdentity::at(path).map(Some)
+}
+
 pub(super) struct MappedImage {
     pub identity: FileIdentity,
     pub path: String,
 }
 
-/// /proc maps carries the underlying device/inode even across mount namespaces. Never stat
-/// its displayed path to establish a match: that path belongs to the process's namespace.
+/// Resolve each file-backed mapping through its mapping-specific proc link. The
+/// textual maps device can differ from stat on btrfs; the displayed pathname is
+/// namespace-relative and may now refer to an entirely different file.
 pub(super) fn mapped_images(process: &Path) -> io::Result<Vec<MappedImage>> {
-    fs::read_to_string(process.join("maps"))?
-        .lines()
-        .map(|line| {
-            let mut remainder = line;
-            let mut fields = Vec::new();
-            for _ in 0..5 {
-                remainder = remainder.trim_start();
-                let end = remainder
-                    .find(char::is_whitespace)
-                    .unwrap_or(remainder.len());
-                fields.push(&remainder[..end]);
-                remainder = &remainder[end..];
-            }
-            let device = fields[3].split_once(':').and_then(|(major, minor)| {
-                Some((
-                    u32::from_str_radix(major, 16).ok()?,
-                    u32::from_str_radix(minor, 16).ok()?,
-                ))
-            });
-            let inode = fields[4].parse::<u64>().ok();
-            let path = unescape_proc_path(remainder.trim_start());
-            match (device, inode) {
-                (Some((major, minor)), Some(inode)) => Ok(MappedImage {
-                    identity: FileIdentity {
-                        device: libc::makedev(major, minor),
-                        inode,
-                    },
-                    path,
-                }),
-                _ => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Incomplete mapped image details",
-                )),
-            }
-        })
-        .collect()
+    let mut images = Vec::new();
+    for line in fs::read_to_string(process.join("maps"))?.lines() {
+        let invalid = || {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Incomplete mapped image details",
+            )
+        };
+        let mut remainder = line;
+        let mut fields = Vec::new();
+        for _ in 0..5 {
+            remainder = remainder.trim_start();
+            let end = remainder
+                .find(char::is_whitespace)
+                .unwrap_or(remainder.len());
+            fields.push(&remainder[..end]);
+            remainder = &remainder[end..];
+        }
+        let (start, end) = fields[0].split_once('-').ok_or_else(invalid)?;
+        let start = u64::from_str_radix(start, 16).map_err(|_| invalid())?;
+        let end = u64::from_str_radix(end, 16).map_err(|_| invalid())?;
+        if start >= end {
+            return Err(invalid());
+        }
+        let inode = fields[4].parse::<u64>().map_err(|_| invalid())?;
+        // Anonymous mappings have no file identity and no map_files entry.
+        if inode == 0 {
+            continue;
+        }
+        images.push(MappedImage {
+            // maps pads low addresses with zeroes; map_files names do not.
+            identity: FileIdentity::at(
+                &process.join("map_files").join(format!("{start:x}-{end:x}")),
+            )?,
+            path: unescape_proc_path(remainder.trim_start()),
+        });
+    }
+    Ok(images)
 }
 
 use super::session::SessionPeer;
@@ -180,6 +213,7 @@ fn read_process(root: &Path, process: &Path, uid: u32, pid: u32) -> io::Result<O
         })
         .map(str::to_string);
     let mut name = exe_name.clone();
+    let mut helper = is_helper(&executable.to_string_lossy());
     let mut location = host_location(
         root,
         process,
@@ -194,10 +228,10 @@ fn read_process(root: &Path, process: &Path, uid: u32, pid: u32) -> io::Result<O
         images.sort_by_key(|image| is_helper(&image.path));
         if let Some(image) = images.first() {
             name = basename(&image.path).to_string();
+            helper = is_helper(&image.path);
             location = host_location(root, process, &image.path, image.identity);
         }
     }
-    let helper = is_helper(location.as_deref().unwrap_or(&name));
     let lower = exe_name.to_lowercase();
     let warning = if lower.ends_with(".appimage") || environment.iter().any(|tag| tag.starts_with("APPIMAGE=")) || executable.to_string_lossy().contains("/.mount_") {
         Some("AppImages may run from a temporary mount; recognizing this location is not reliable.")
@@ -267,12 +301,17 @@ fn is_helper(path: &str) -> bool {
             "wine-preloader",
             "wine64-preloader",
             "bwrap",
+            "srt-bwrap",
+            "pv-adverb",
             "reaper",
             "steam.exe",
         ]
         .contains(&name)
         || path.contains("/windows/system32/")
         || path.contains("/windows/syswow64/")
+        // Wine may map the runtime file behind a prefix's system-directory symlink.
+        || path.contains("/wine/x86_64-windows/")
+        || path.contains("/wine/i386-windows/")
 }
 
 /// A displayed path is usable only if it resolves on the host to the observed identity.

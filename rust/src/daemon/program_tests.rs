@@ -90,6 +90,10 @@ fn manual_native_program_switches_by_file_identity_and_re_resolves_updates() {
 
 fn map_image(daemon: &Harness, pid: u32, file: &str, view: &str) {
     let metadata = std::fs::metadata(daemon.host_path(file)).unwrap();
+    let mapping = daemon.host_path(&format!("/proc/{pid}/map_files/400000-500000"));
+    std::fs::create_dir_all(mapping.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_file(&mapping);
+    symlink(daemon.host_path(file), mapping).unwrap();
     daemon.write_host_file(
         &format!("/proc/{pid}/maps"),
         &format!(
@@ -153,6 +157,31 @@ fn wine_mapped_image_switches_without_matching_the_shared_preloader_or_another_u
     assert_eq!(
         ok(&alice, json!({"type":"get_running_games"}))["games"][0]["pid"],
         123
+    );
+    // An inaccessible mapping must not fall back to its displayed path or report game end.
+    // Keep maps text pointing at the real game, so both unsafe shortcuts would be visible.
+    map_image(&daemon, 123, "/games/game.exe", "/games/game.exe");
+    std::fs::remove_file(daemon.host_path("/proc/123/map_files/400000-500000")).unwrap();
+    daemon.scan();
+    assert_eq!(
+        ok(&alice, json!({"type":"get_running_games"}))["status"],
+        "unavailable"
+    );
+    assert_eq!(
+        daemon.gpus.gpu("GPU-A").power.current_limit_watts,
+        Some(350)
+    );
+    map_image(&daemon, 123, "/games/game.exe", "/games/game.exe");
+    // Anonymous memory is not a file-backed mapping and must not invalidate the scan.
+    let maps = std::fs::read_to_string(daemon.host_path("/proc/123/maps")).unwrap();
+    daemon.write_host_file(
+        "/proc/123/maps",
+        &format!("{maps}00600000-00700000 rw-p 00000000 00:00 0 [heap]\n"),
+    );
+    daemon.scan();
+    assert_eq!(
+        ok(&alice, json!({"type":"get_running_games"}))["status"],
+        "available"
     );
     // A failed read must not pretend the running game ended.
     std::fs::remove_file(daemon.host_path("/proc/123/maps")).unwrap();
@@ -360,4 +389,80 @@ fn native_tools_mapping_a_program_file_do_not_count_as_running_that_program() {
         ok(&alice, json!({"type":"get_running_games"}))["games"],
         json!([])
     );
+}
+
+#[test]
+fn btrfs_mapped_identity_recovers_the_host_path_and_recognizes_the_program() {
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let alice = daemon.user(1000, "alice");
+    daemon.write_host_file("/games/Balatro.exe", "binary");
+    daemon.write_host_file("/usr/bin/wine-preloader", "runtime");
+    native(&daemon, 123, 1000, "/usr/bin/wine-preloader");
+    map_image(&daemon, 123, "/games/Balatro.exe", "/games/Balatro.exe");
+    let inode = std::fs::metadata(daemon.host_path("/games/Balatro.exe"))
+        .unwrap()
+        .ino();
+    // btrfs maps can report a different device from stat, even for the same file.
+    daemon.write_host_file(
+        "/proc/123/maps",
+        &format!("00400000-00500000 r--p 00000000 00:1e {inode} /games/Balatro.exe\n"),
+    );
+    ok(
+        &alice,
+        json!({"type":"add_program", "payload":{"path":"/games/Balatro.exe"}}),
+    );
+    let listed = ok(&alice, json!({"type":"list_running_programs"}));
+    assert_eq!(listed[0]["path"], "/games/Balatro.exe");
+    daemon.scan();
+    assert_eq!(
+        ok(&alice, json!({"type":"get_running_games"}))["games"][0]["game"],
+        json!({"kind":"program", "path":"/games/Balatro.exe"})
+    );
+}
+
+#[test]
+fn picker_demotes_wine_system_images_without_host_paths_and_steam_runtime_wrappers() {
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let alice = daemon.user(1000, "alice");
+    daemon.write_host_file("/usr/bin/wine-preloader", "runtime");
+    // Wine can map the real runtime file behind the prefix's system32 symlink.
+    let mut pid = 100;
+    for directory in [
+        "/sandbox/windows/system32",
+        "/sandbox/windows/syswow64",
+        "/run/host/usr/share/proton/files/lib/wine/x86_64-windows",
+        "/run/host/usr/share/proton/files/lib/wine/i386-windows",
+    ] {
+        for name in [
+            "services.exe",
+            "explorer.exe",
+            "winedevice.exe",
+            "rpcss.exe",
+        ] {
+            let file = format!("/prefix/{pid}/{name}");
+            daemon.write_host_file(&file, "binary");
+            native(&daemon, pid, 1000, "/usr/bin/wine-preloader");
+            map_image(&daemon, pid, &file, &format!("{directory}/{name}"));
+            pid += 1;
+        }
+    }
+    for (pid, name) in [(130, "srt-bwrap"), (131, "pv-adverb")] {
+        let file = format!("/usr/bin/{name}");
+        daemon.write_host_file(&file, "binary");
+        native(&daemon, pid, 1000, &file);
+    }
+    // A game with a helper's basename outside the system directories stays an ordinary program.
+    daemon.write_host_file("/games/services.exe", "game");
+    native(&daemon, 140, 1000, "/usr/bin/wine-preloader");
+    map_image(&daemon, 140, "/games/services.exe", "/games/services.exe");
+    let listed = ok(&alice, json!({"type":"list_running_programs"}));
+    assert_eq!(listed[0]["pid"], 140);
+    assert_eq!(listed[0]["helper"], false);
+    for entry in &listed.as_array().unwrap()[1..] {
+        assert_eq!(entry["helper"], true, "{entry}");
+        if entry["pid"].as_u64().unwrap() < 130 {
+            assert!(entry["path"].is_null());
+        }
+    }
+    assert_eq!(listed.as_array().unwrap().len(), 19);
 }

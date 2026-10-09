@@ -1,0 +1,512 @@
+{
+  "baseRevision": "57f4037ccc68815c852003c256ff880c2c79bfe8",
+  "date": "2026-10-09",
+  "lifecycleDaemonSha256": "cd491b2f8f7d9451ed324c7378d9a480c61e76ac00cd131470876154603b7152",
+  "finalDaemonSha256": "945ac86c140b8430dcaf503ba9e83efe1e592ad69dcf992c5164de68fc518e59",
+  "scope": "Recognition only; automatic switching and startup off; no linked GPU profiles",
+  "phases": {
+    "idle": {
+      "samples": 20,
+      "durationSeconds": 9.56,
+      "statuses": {
+        "available": 20
+      },
+      "firstResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": []
+        }
+      },
+      "lastResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": []
+        }
+      }
+    },
+    "native-launch": {
+      "samples": 32,
+      "durationSeconds": 15.6,
+      "statuses": {
+        "available": 32
+      },
+      "firstResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": []
+        }
+      },
+      "lastResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": [
+            {
+              "game": {
+                "kind": "steam",
+                "appId": 457140
+              },
+              "pid": 389669,
+              "startTimeTicks": 524122
+            },
+            {
+              "game": {
+                "kind": "program",
+                "path": "/home/toby/.local/share/Steam/steamapps/common/OxygenNotIncluded/OxygenNotIncluded"
+              },
+              "pid": 389782,
+              "startTimeTicks": 524157
+            }
+          ]
+        }
+      }
+    },
+    "native-running": {
+      "samples": 122,
+      "durationSeconds": 60.92,
+      "statuses": {
+        "available": 122
+      },
+      "firstResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": [
+            {
+              "game": {
+                "kind": "steam",
+                "appId": 457140
+              },
+              "pid": 389669,
+              "startTimeTicks": 524122
+            },
+            {
+              "game": {
+                "kind": "program",
+                "path": "/home/toby/.local/share/Steam/steamapps/common/OxygenNotIncluded/OxygenNotIncluded"
+              },
+              "pid": 389782,
+              "startTimeTicks": 524157
+            }
+          ]
+        }
+      },
+      "lastResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": [
+            {
+              "game": {
+                "kind": "steam",
+                "appId": 457140
+              },
+              "pid": 389669,
+              "startTimeTicks": 524122
+            },
+            {
+              "game": {
+                "kind": "program",
+                "path": "/home/toby/.local/share/Steam/steamapps/common/OxygenNotIncluded/OxygenNotIncluded"
+              },
+              "pid": 389782,
+              "startTimeTicks": 524157
+            }
+          ]
+        }
+      }
+    },
+    "native-exit": {
+      "samples": 23,
+      "durationSeconds": 11.07,
+      "statuses": {
+        "available": 23
+      },
+      "firstResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": [
+            {
+              "game": {
+                "kind": "steam",
+                "appId": 457140
+              },
+              "pid": 389669,
+              "startTimeTicks": 524122
+            },
+            {
+              "game": {
+                "kind": "program",
+                "path": "/home/toby/.local/share/Steam/steamapps/common/OxygenNotIncluded/OxygenNotIncluded"
+              },
+              "pid": 389782,
+              "startTimeTicks": 524157
+            }
+          ]
+        }
+      },
+      "lastResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": []
+        }
+      }
+    },
+    "proton-launch": {
+      "samples": 64,
+      "durationSeconds": 31.71,
+      "statuses": {
+        "available": 64
+      },
+      "firstResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": []
+        }
+      },
+      "lastResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": [
+            {
+              "game": {
+                "kind": "steam",
+                "appId": 2379780
+              },
+              "pid": 396244,
+              "startTimeTicks": 533227
+            },
+            {
+              "game": {
+                "kind": "program",
+                "path": "/home/toby/.local/share/Steam/steamapps/common/Balatro/Balatro.exe"
+              },
+              "pid": 396569,
+              "startTimeTicks": 533421
+            }
+          ]
+        }
+      }
+    },
+    "proton-running": {
+      "samples": 154,
+      "durationSeconds": 77.59,
+      "statuses": {
+        "available": 154
+      },
+      "firstResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": [
+            {
+              "game": {
+                "kind": "steam",
+                "appId": 2379780
+              },
+              "pid": 396244,
+              "startTimeTicks": 533227
+            },
+            {
+              "game": {
+                "kind": "program",
+                "path": "/home/toby/.local/share/Steam/steamapps/common/Balatro/Balatro.exe"
+              },
+              "pid": 396569,
+              "startTimeTicks": 533421
+            }
+          ]
+        }
+      },
+      "lastResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": [
+            {
+              "game": {
+                "kind": "steam",
+                "appId": 2379780
+              },
+              "pid": 396244,
+              "startTimeTicks": 533227
+            },
+            {
+              "game": {
+                "kind": "program",
+                "path": "/home/toby/.local/share/Steam/steamapps/common/Balatro/Balatro.exe"
+              },
+              "pid": 396569,
+              "startTimeTicks": 533421
+            }
+          ]
+        }
+      }
+    },
+    "proton-exit": {
+      "samples": 41,
+      "durationSeconds": 20.17,
+      "statuses": {
+        "available": 41
+      },
+      "firstResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": [
+            {
+              "game": {
+                "kind": "steam",
+                "appId": 2379780
+              },
+              "pid": 396244,
+              "startTimeTicks": 533227
+            },
+            {
+              "game": {
+                "kind": "program",
+                "path": "/home/toby/.local/share/Steam/steamapps/common/Balatro/Balatro.exe"
+              },
+              "pid": 396569,
+              "startTimeTicks": 533421
+            }
+          ]
+        }
+      },
+      "lastResponse": {
+        "type": "running_games",
+        "payload": {
+          "status": "available",
+          "games": []
+        }
+      }
+    }
+  },
+  "nativePicker": [
+    {
+      "pid": 389782,
+      "name": "OxygenNotIncluded",
+      "path": "/home/toby/.local/share/Steam/steamapps/common/OxygenNotIncluded/OxygenNotIncluded",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=457140",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/457140",
+        "SteamAppId=457140"
+      ],
+      "helper": false,
+      "recognitionWarning": null
+    }
+  ],
+  "protonPicker": [
+    {
+      "pid": 396569,
+      "name": "Balatro.exe",
+      "path": "/home/toby/.local/share/Steam/steamapps/common/Balatro/Balatro.exe",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780",
+        "WINEPREFIX=/home/toby/.local/share/Steam/steamapps/compatdata/2379780/pfx/"
+      ],
+      "helper": false,
+      "recognitionWarning": null
+    }
+  ],
+  "before": [
+    {
+      "gpu": "GPU-2482ee3b-c5a3-b680-5fc0-7749d1fe95a7",
+      "powerLimitWatts": 540,
+      "graphicsOffsetMHz": 240,
+      "memoryOffsetMHz": 450,
+      "fanModes": [
+        "auto",
+        "auto"
+      ]
+    }
+  ],
+  "afterLifecycle": [
+    {
+      "gpu": "GPU-2482ee3b-c5a3-b680-5fc0-7749d1fe95a7",
+      "powerLimitWatts": 540,
+      "graphicsOffsetMHz": 240,
+      "memoryOffsetMHz": 450,
+      "fanModes": [
+        "auto",
+        "auto"
+      ]
+    }
+  ],
+  "lifecycleCleanup": {
+    "stopped": 0,
+    "originalStoreUnchanged": true
+  },
+  "checks": {
+    "rendererTests": 244,
+    "electronTests": 65,
+    "rustUnitTests": 342,
+    "sidecarIntegrationTests": 12,
+    "coolingSupervisionChecks": 3
+  },
+  "releaseGate": "Still blocked: required Flatpak forms and actual automatic application/restoration unvalidated",
+  "finalHelperPicker": [
+    {
+      "pid": 426741,
+      "name": "Balatro.exe",
+      "path": "/home/toby/.local/share/Steam/steamapps/common/Balatro/Balatro.exe",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780",
+        "WINEPREFIX=/home/toby/.local/share/Steam/steamapps/compatdata/2379780/pfx/"
+      ],
+      "helper": false,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 426697,
+      "name": "explorer.exe",
+      "path": "/usr/share/steam/compatibilitytools.d/proton-cachyos-slr/files/lib/wine/x86_64-windows/explorer.exe",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780",
+        "WINEPREFIX=/home/toby/.local/share/Steam/steamapps/compatdata/2379780/pfx/"
+      ],
+      "helper": true,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 29247,
+      "name": "pv-adverb",
+      "path": "/home/toby/.local/share/Steam/steamrt64/pv-runtime/steam-runtime-steamrt/var/tmp-2684W3/usr/lib/pressure-vessel/from-host/libexec/steam-runtime-tools-0/pv-adverb",
+      "launcher": "Steam",
+      "environment": [],
+      "helper": true,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 426473,
+      "name": "pv-adverb",
+      "path": "/home/toby/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/var/tmp-9WAOW3/usr/lib/pressure-vessel/from-host/libexec/steam-runtime-tools-0/pv-adverb",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780"
+      ],
+      "helper": true,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 426714,
+      "name": "rpcss.exe",
+      "path": "/usr/share/steam/compatibilitytools.d/proton-cachyos-slr/files/lib/wine/x86_64-windows/rpcss.exe",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780",
+        "WINEPREFIX=/home/toby/.local/share/Steam/steamapps/compatdata/2379780/pfx/"
+      ],
+      "helper": true,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 426573,
+      "name": "services.exe",
+      "path": "/usr/share/steam/compatibilitytools.d/proton-cachyos-slr/files/lib/wine/x86_64-windows/services.exe",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780",
+        "WINEPREFIX=/home/toby/.local/share/Steam/steamapps/compatdata/2379780/pfx/"
+      ],
+      "helper": true,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 29125,
+      "name": "srt-bwrap",
+      "path": "/home/toby/.local/share/Steam/steamrt64/pv-runtime/steam-runtime-steamrt/pressure-vessel/libexec/steam-runtime-tools-0/srt-bwrap",
+      "launcher": "Steam",
+      "environment": [],
+      "helper": true,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 426393,
+      "name": "srt-bwrap",
+      "path": "/home/toby/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/pressure-vessel/libexec/steam-runtime-tools-0/srt-bwrap",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780"
+      ],
+      "helper": true,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 426584,
+      "name": "winedevice.exe",
+      "path": "/usr/share/steam/compatibilitytools.d/proton-cachyos-slr/files/lib/wine/x86_64-windows/winedevice.exe",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780",
+        "WINEPREFIX=/home/toby/.local/share/Steam/steamapps/compatdata/2379780/pfx/"
+      ],
+      "helper": true,
+      "recognitionWarning": null
+    },
+    {
+      "pid": 426632,
+      "name": "winedevice.exe",
+      "path": "/usr/share/steam/compatibilitytools.d/proton-cachyos-slr/files/lib/wine/x86_64-windows/winedevice.exe",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780",
+        "WINEPREFIX=/home/toby/.local/share/Steam/steamapps/compatdata/2379780/pfx/"
+      ],
+      "helper": true,
+      "recognitionWarning": null
+    }
+  ],
+  "after": [
+    {
+      "gpu": "GPU-2482ee3b-c5a3-b680-5fc0-7749d1fe95a7",
+      "powerLimitWatts": 540,
+      "graphicsOffsetMHz": 240,
+      "memoryOffsetMHz": 450,
+      "fanModes": [
+        "auto",
+        "auto"
+      ]
+    }
+  ],
+  "finalIdle": {
+    "type": "running_games",
+    "payload": {
+      "status": "available",
+      "games": []
+    }
+  },
+  "finalCleanup": {
+    "stopped": 0,
+    "originalStoreUnchanged": true
+  }
+}

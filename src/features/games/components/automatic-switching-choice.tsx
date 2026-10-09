@@ -27,7 +27,9 @@ export function AutomaticSwitchingChoice({
         Switch profiles automatically while my games run
       </label>
       <p id={`${id}-switching-note`} className="text-muted-foreground">
-        Off by default, and only for your own games. While a linked game runs,
+        Experimental: required live validation is not complete. Automatic
+        switching is not yet validated for release. Off by default, and only for
+        your own games. While a linked game runs,
         Prism applies its profile to each linked GPU, even with this app closed,
         and restores the values from before the game when it ends.
       </p>

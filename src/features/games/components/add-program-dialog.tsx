@@ -69,7 +69,7 @@ export function AddProgramDialog({
         <DialogHeader>
           <DialogTitle>Add running program</DialogTitle>
           <DialogDescription>
-            Your own running programs. Helpers appear last. Recognizing a
+            Your own running programs. Known helpers appear last. Recognizing a
             program depends on how it runs.
           </DialogDescription>
         </DialogHeader>
