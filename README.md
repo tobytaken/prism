@@ -126,6 +126,21 @@ The daemon stores remembered curves and optional profile cooling configurations 
 
 ## Games
 
+**Automatic switching is experimental and not yet validated for release.** The
+[9 October live validation](docs/validation/2026-10-09-nvidia-game-recognition.md)
+found recognition failures in distribution-package Steam, both native and Proton.
+The [repair replay](docs/validation/2026-10-09-nvidia-game-recognition-repair.md)
+subsequently passed recognition for native Oxygen Not Included and Proton Balatro
+on the tested host, including their manually identified program forms. This does
+not validate automatic GPU tuning. Required native and Proton forms of Flatpak
+Steam remain unvalidated.
+[Issue #49](https://github.com/tobytaken/prism-electron/issues/49) stays open until
+all required forms pass, including actual automatic application and restoration.
+The paths and matching mechanisms below describe the implementation, not verified
+support. Snap Steam, gamescope, plain Wine, umu, Heroic, Lutris and document-portal
+host-path recovery remain unclaimed without their own live evidence. This gate
+does not establish or invalidate profile management or startup behavior.
+
 The **Games** page links your games to your GPU tuning profiles, one profile per GPU; GPUs left at **Leave unchanged** aren't touched, and many games can share a profile. **Add Steam game…** lists fully installed apps from every library folder of your own Steam installs: Valve's package (`~/.local/share/Steam`, or the legacy `~/Steam`), Debian's `~/.steam/debian-installation`, Flatpak (`~/.var/app/com.valvesoftware.Steam`) and Snap (`~/snap/steam/common`). The daemon reads these from the caller's home directory with the caller's own file access, so you only see libraries you can read yourself, and the Flatpak app needs no extra file access. Flatpak Steam's library paths under your home are looked up in its persisted home as well. Compatibility tools (any install folder with a `toolmanifest.vdf`, such as Proton and the Steam Linux Runtime) and known non-game apps such as Steamworks Common Redistributables are left out. A game that is no longer installed keeps its links and is marked **Not installed**.
 
 **Add running program…** lists your own processes for games outside Steam's library, including Heroic, Lutris and non-Steam shortcuts. Entries show the executable (or Wine mapped `.exe`), verified host location, launcher ancestry and relevant environment tags. Known helpers appear last. **Browse for file…** also adds a program that is not running; the Flatpak app recovers the host location from the document portal before sending it to the daemon.

@@ -1,5 +1,5 @@
 //! Complete host process scans. An incomplete scan never means that a game ended.
-use super::programs::{is_wine_loader, mapped_images, FileIdentity};
+use super::programs::{candidate_executable, is_wine_loader, mapped_images, FileIdentity};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -114,69 +114,25 @@ fn scan(root: &Path, programs: &[(u32, GameId, FileIdentity)]) -> io::Result<Gam
             continue;
         };
         let path = entry.path();
-        // A pid may be reused between reads. Never combine an old environment with a
-        // different process's owner and start time.
-        let started = start_time(&fs::read_to_string(path.join("stat"))?, pid)?;
-        let env = fs::read(path.join("environ"))?;
-        let primary = env
-            .split(|byte| *byte == 0)
-            .find_map(|entry| entry.strip_prefix(b"SteamAppId=").and_then(app_id));
-        let recognized_app = match primary {
-            Some(id) => Some(id),
-            None => reaper_app(&fs::read(path.join("cmdline"))?),
-        };
-        if recognized_app.is_none() && programs.is_empty() {
-            continue;
-        }
-        let status = fs::read_to_string(path.join("status"))?;
-        let uid = status
-            .lines()
-            .find_map(|line| {
-                line.strip_prefix("Uid:")
-                    .and_then(|uids| uids.split_whitespace().next())
-                    .and_then(|uid| uid.parse::<u32>().ok())
-            })
-            .ok_or_else(invalid_process)?;
-        let mut recognized: Vec<GameId> = recognized_app
-            .map(|app_id| GameId::Steam { app_id })
-            .into_iter()
-            .collect();
-        if programs.iter().any(|(owner, _, _)| *owner == uid) {
-            let exe = match FileIdentity::at(&path.join("exe")) {
-                Ok(identity) => Some(identity),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error),
-            };
-            let wine = fs::read_link(path.join("exe"))
-                .map(|executable| is_wine_loader(&executable))
-                .unwrap_or(false);
-            let images = if wine {
-                mapped_images(&path)?
-            } else {
-                Vec::new()
-            };
-            for (owner, game, identity) in programs {
-                if *owner == uid
-                    && (exe == Some(*identity)
-                        || images.iter().any(|image| image.identity == *identity))
-                {
-                    recognized.push(game.clone());
-                }
+        let observed = match scan_process(&path, pid, programs) {
+            Ok(observed) => observed,
+            // ENOENT/ESRCH alone do not prove exit: kernel tasks and an unreadable
+            // userspace process can still have a live stat entry. Verify the process
+            // directory itself disappeared before treating a read failure as exit.
+            Err(error)
+                if (error.kind() == io::ErrorKind::NotFound
+                    || error.raw_os_error() == Some(libc::ESRCH))
+                    && matches!(fs::symlink_metadata(&path), Err(missing) if missing.kind() == io::ErrorKind::NotFound) =>
+            {
+                continue;
             }
-        }
-        let stat = fs::read_to_string(path.join("stat"))?;
-        let start_time_ticks = start_time(&stat, pid)?;
-        if started != start_time_ticks {
-            return Err(invalid_process());
-        }
-        for game in recognized {
-            let recognized = RunningGame {
-                game: game.clone(),
-                pid,
-                start_time_ticks,
-            };
-            let earliest = games.entry((uid, game)).or_insert(recognized.clone());
-            if (start_time_ticks, pid) < (earliest.start_time_ticks, earliest.pid) {
+            Err(error) => return Err(error),
+        };
+        for (uid, recognized) in observed {
+            let earliest = games
+                .entry((uid, recognized.game.clone()))
+                .or_insert(recognized.clone());
+            if (recognized.start_time_ticks, pid) < (earliest.start_time_ticks, earliest.pid) {
                 *earliest = recognized;
             }
         }
@@ -186,6 +142,111 @@ fn scan(root: &Path, programs: &[(u32, GameId, FileIdentity)]) -> io::Result<Gam
         users.entry(uid).or_default().push(game);
     }
     Ok(users)
+}
+
+/// A pid may be reused between reads. Never combine one process's environment
+/// with another process's owner or start time. Failed reads remain unknown.
+fn scan_process(
+    path: &Path,
+    pid: u32,
+    programs: &[(u32, GameId, FileIdentity)],
+) -> io::Result<Vec<(u32, RunningGame)>> {
+    let stat = fs::read_to_string(path.join("stat"))?;
+    let started = start_time(&stat, pid)?;
+    if non_userspace_task(&stat)? {
+        return Ok(Vec::new());
+    }
+    let env = fs::read(path.join("environ"))?;
+    let primary = env
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"SteamAppId=").and_then(app_id));
+    let recognized_app = match primary {
+        Some(id) => Some(id),
+        None => reaper_app(&fs::read(path.join("cmdline"))?),
+    };
+    if recognized_app.is_none() && programs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let status = fs::read_to_string(path.join("status"))?;
+    let uid = status
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("Uid:")
+                .and_then(|uids| uids.split_whitespace().next())
+                .and_then(|uid| uid.parse::<u32>().ok())
+        })
+        .ok_or_else(invalid_process)?;
+    let mut recognized: Vec<GameId> = recognized_app
+        .map(|app_id| GameId::Steam { app_id })
+        .into_iter()
+        .collect();
+    if programs.iter().any(|(owner, _, _)| *owner == uid) {
+        let exe = match candidate_executable(
+            &path.join("exe"),
+            programs
+                .iter()
+                .filter(|(owner, _, _)| *owner == uid)
+                .map(|(_, _, identity)| *identity),
+        ) {
+            Ok(identity) => identity,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let wine = fs::read_link(path.join("exe"))
+            .map(|executable| is_wine_loader(&executable))
+            .unwrap_or(false);
+        let images = if wine {
+            mapped_images(path)?
+        } else {
+            Vec::new()
+        };
+        for (owner, game, identity) in programs {
+            if *owner == uid
+                && (exe == Some(*identity)
+                    || images.iter().any(|image| image.identity == *identity))
+            {
+                recognized.push(game.clone());
+            }
+        }
+    }
+    let stat = fs::read_to_string(path.join("stat"))?;
+    let start_time_ticks = start_time(&stat, pid)?;
+    if started != start_time_ticks {
+        return Err(invalid_process());
+    }
+    if non_userspace_task(&stat)? {
+        return Ok(Vec::new());
+    }
+    Ok(recognized
+        .into_iter()
+        .map(|game| {
+            (
+                uid,
+                RunningGame {
+                    game,
+                    pid,
+                    start_time_ticks,
+                },
+            )
+        })
+        .collect())
+}
+
+fn non_userspace_task(stat: &str) -> io::Result<bool> {
+    let fields: Vec<_> = stat
+        .rsplit_once(')')
+        .ok_or_else(invalid_process)?
+        .1
+        .split_whitespace()
+        .collect();
+    // Linux task flags, field 9: PF_KTHREAD identifies a task without a userspace
+    // environment. A zombie/dead task has already exited, even before it is reaped.
+    const PF_KTHREAD: u64 = 0x0020_0000;
+    let flags = fields
+        .get(6)
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(invalid_process)?;
+    Ok(flags & PF_KTHREAD != 0 || matches!(fields.first(), Some(&"Z" | &"X" | &"x")))
 }
 
 fn app_id(bytes: &[u8]) -> Option<u32> {

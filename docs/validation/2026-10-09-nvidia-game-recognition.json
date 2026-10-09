@@ -1,0 +1,168 @@
+{
+  "revision": "57f4037ccc68815c852003c256ff880c2c79bfe8",
+  "date": "2026-10-09",
+  "host": {
+    "os": "CachyOS",
+    "kernel": "7.2.9-2-cachyos",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "driver": "615.78.08",
+    "filesystem": "btrfs",
+    "steamPackage": "1.0.0.87-3"
+  },
+  "recognition": {
+    "balatro": {
+      "samples": 80,
+      "durationSeconds": 39.77,
+      "results": {
+        "unavailable": 80
+      },
+      "response": {
+        "type": "running_games",
+        "payload": {
+          "status": "unavailable",
+          "reason": "A complete host process scan could not be read. Recognition will retry automatically."
+        }
+      }
+    },
+    "oni": {
+      "samples": 80,
+      "durationSeconds": 39.77,
+      "results": {
+        "unavailable": 80
+      },
+      "response": {
+        "type": "running_games",
+        "payload": {
+          "status": "unavailable",
+          "reason": "A complete host process scan could not be read. Recognition will retry automatically."
+        }
+      }
+    }
+  },
+  "kernelThreadReadFailure": {
+    "pid": "2",
+    "file": "/proc/2/environ",
+    "errno": 3,
+    "error": "No such process"
+  },
+  "balatroMappedImage": {
+    "exe": "/run/host/usr/share/steam/compatibilitytools.d/proton-cachyos-slr/files/lib/wine/i386-unix/wine64-preloader",
+    "cmdline": "S:\\steamapps\\common\\Balatro\\Balatro.exe                                                                                                                                                                                                               ",
+    "mappings": [
+      {
+        "mapping": "140000000-140001000 r--p 00000000 00:1e 17251934                         /home/toby/.local/share/Steam/steamapps/common/Balatro/Balatro.exe",
+        "hostIdentity": {
+          "device": "0:35",
+          "inode": 17251934
+        },
+        "mapFile": {
+          "device": "0:35",
+          "inode": 17251934
+        },
+        "processRoot": {
+          "device": "0:35",
+          "inode": 17251934
+        }
+      }
+    ]
+  },
+  "balatroPicker": [
+    {
+      "pid": 257589,
+      "name": "Balatro.exe",
+      "path": null,
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=2379780",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/2379780",
+        "SteamAppId=2379780",
+        "WINEPREFIX=/home/toby/.local/share/Steam/steamapps/compatdata/2379780/pfx/"
+      ],
+      "helper": false,
+      "recognitionWarning": "The host program location could not be recovered; browse for the program file instead."
+    }
+  ],
+  "oniPicker": [
+    {
+      "pid": 269937,
+      "name": "OxygenNotIncluded",
+      "path": "/home/toby/.local/share/Steam/steamapps/common/OxygenNotIncluded/OxygenNotIncluded",
+      "launcher": "Steam",
+      "environment": [
+        "STEAM_COMPAT_APP_ID=457140",
+        "STEAM_COMPAT_DATA_PATH=/home/toby/.local/share/Steam/steamapps/compatdata/457140",
+        "SteamAppId=457140"
+      ],
+      "helper": false,
+      "recognitionWarning": null
+    }
+  ],
+  "overlay": [
+    {
+      "pid": "257631",
+      "ppid": "29050",
+      "exe": "/home/toby/.local/share/Steam/ubuntu12_32/gameoverlayui",
+      "tags": []
+    }
+  ],
+  "fossilize": [
+    {
+      "pid": "209244",
+      "ppid": "29050",
+      "exe": "/home/toby/.local/share/Steam/ubuntu12_64/fossilize_replay",
+      "tags": []
+    },
+    {
+      "pid": "209260",
+      "ppid": "209244",
+      "exe": "/home/toby/.local/share/Steam/ubuntu12_64/fossilize_replay",
+      "tags": []
+    },
+    {
+      "pid": "209261",
+      "ppid": "209244",
+      "exe": "/home/toby/.local/share/Steam/ubuntu12_64/fossilize_replay",
+      "tags": []
+    },
+    {
+      "pid": "209262",
+      "ppid": "209244",
+      "exe": "/home/toby/.local/share/Steam/ubuntu12_64/fossilize_replay",
+      "tags": []
+    },
+    {
+      "pid": "253927",
+      "ppid": "209244",
+      "exe": "/home/toby/.local/share/Steam/ubuntu12_64/fossilize_replay",
+      "tags": []
+    }
+  ],
+  "switchingEnabled": {
+    "type": "automatic_switching_status",
+    "payload": {
+      "condition": {
+        "status": "recognitionUnavailable",
+        "reason": "A complete host process scan could not be read. Recognition will retry automatically."
+      },
+      "gpus": []
+    }
+  },
+  "tuningBefore": {
+    "powerLimitWatts": 540,
+    "graphicsOffsetMHz": 240,
+    "memoryOffsetMHz": 450,
+    "fanModes": [
+      "auto",
+      "auto"
+    ]
+  },
+  "tuningAfter": {
+    "powerLimitWatts": 540,
+    "graphicsOffsetMHz": 240,
+    "memoryOffsetMHz": 450,
+    "fanModes": [
+      "auto",
+      "auto"
+    ]
+  }
+}

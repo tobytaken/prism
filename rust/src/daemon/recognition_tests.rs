@@ -199,3 +199,60 @@ fn malformed_candidate_details_cannot_be_reported_as_a_running_game() {
     daemon.core().scan_running_games();
     assert_eq!(running(&alice)["status"], "unavailable");
 }
+
+#[test]
+fn kernel_threads_and_exited_tasks_without_environments_do_not_abort_recognition() {
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let alice = daemon.user(1000, "alice");
+    process(&daemon, 123, 1000, 420, "SteamAppId=570\0", "dota2\0");
+    for (pid, state, flags) in [(2, "S", 0x0020_0000_u32), (3, "Z", 0), (4, "X", 0)] {
+        process(&daemon, pid, 0, 10, "", "");
+        daemon.write_host_file(
+            &format!("/proc/{pid}/stat"),
+            &format!("{pid} (no userspace) {state} 1 0 0 0 0 {flags} 0 0 0 0 0 0 0 0 0 0 0 10 0\n"),
+        );
+        // As on the live host, these still have a stat entry but no readable environment.
+        std::fs::remove_file(daemon.host_path(&format!("/proc/{pid}/environ"))).unwrap();
+        daemon.core().scan_running_games();
+        assert_eq!(running(&alice)["status"], "available", "pid {pid}");
+        assert_eq!(running(&alice)["games"][0]["pid"], 123);
+    }
+}
+
+#[test]
+fn exit_during_a_scan_is_verified_and_pid_reuse_remains_unknown() {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    for reused in [false, true] {
+        let daemon = Harness::start(FakeGpuBackend::default());
+        let alice = daemon.user(1000, "alice");
+        process(&daemon, 123, 1000, 420, "", "game\0");
+        let environment = daemon.host_path("/proc/123/environ");
+        std::fs::remove_file(&environment).unwrap();
+        let name = std::ffi::CString::new(environment.as_os_str().as_bytes()).unwrap();
+        // SAFETY: name is NUL-terminated and remains valid for the syscall.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        std::thread::scope(|scope| {
+            let scan = scope.spawn(|| daemon.core().scan_running_games());
+            // Opening the FIFO rendezvous with the real scan after its first stat read.
+            let mut writer = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&environment)
+                .unwrap();
+            if reused {
+                let stat = std::fs::read_to_string(daemon.host_path("/proc/123/stat")).unwrap();
+                daemon.write_host_file("/proc/123/stat", &stat.replace("420", "900"));
+                writer.write_all(b"SteamAppId=570\0").unwrap();
+            } else {
+                std::fs::remove_dir_all(daemon.host_path("/proc/123")).unwrap();
+            }
+            drop(writer);
+            scan.join().unwrap();
+        });
+        if reused {
+            assert_eq!(running(&alice)["status"], "unavailable");
+        } else {
+            assert_eq!(running(&alice), json!({"status":"available", "games":[]}));
+        }
+    }
+}
