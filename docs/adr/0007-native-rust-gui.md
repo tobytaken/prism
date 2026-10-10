@@ -4,7 +4,7 @@ As part of the [native rewrite map](https://github.com/tobytaken/prism-electron/
 
 The GUI links the Rust GPU library directly and calls it in-process. The `prism_backend` sidecar and its stdio framing are retired, because they existed only to bridge Electron's Node main process to Rust. `prismd` remains a separate privileged daemon that owns persistent GPU configuration writes and tuning state, as ADR-0005 and ADR-0006 require. Its protocol may change where the new UX needs it, but the daemon/GUI process boundary is fixed by privilege, not by toolkit.
 
-UI logic such as tuning edits, profile state, and telemetry history lives in a toolkit-agnostic Rust crate tested with plain `cargo test`. The view layer is kept thin. This contains the lock-in of whichever toolkit is chosen. At the time of writing, the candidate toolkits (gpui, which is pre-1.0 and changes often, and Slint) are still to be decided by a [spike](https://github.com/tobytaken/prism-electron/issues/102), and that choice will be recorded separately.
+UI logic such as tuning edits, profile state, and telemetry history lives in a toolkit-agnostic Rust crate tested with plain `cargo test`. The view layer is kept thin. This contains the lock-in of whichever toolkit is chosen. At the time of writing, the candidate toolkits (gpui, which is pre-1.0 and changes often, and Slint) are still to be decided by a [spike](https://github.com/tobytaken/prism-electron/issues/102), and that choice will be recorded separately. The spike chose Slint ([ADR-0008](0008-slint-gui-toolkit.md)).
 
 ## Considered Options
 
