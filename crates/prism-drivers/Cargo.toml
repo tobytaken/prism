@@ -1,0 +1,21 @@
+[package]
+name = "prism-drivers"
+description = "Prism's NVIDIA driver status, install plans and driver jobs"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nvml-wrapper.workspace = true
+prism-gpu.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
