@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::fmt::Display;
 use std::ops::RangeInclusive;
 
 use nvml_wrapper::enum_wrappers::device::{
@@ -15,10 +16,11 @@ use thiserror::Error;
 use super::{
     ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo, ComputeApi, ComputeInfo,
     ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuControlInfo, GpuDevice,
-    GpuInventoryProvider, GpuPerformanceDevice, GpuSupportedFeatures, GpuTargetRequest,
-    GpuTelemetryInfo, GpuVendor, MemoryInfo, OffsetControl, PcieInfo, PerformanceProviderOutput,
-    PowerControlInfo, PowerInfo, PowerLimitControl, ProviderOutput, SetGpuClockOffsetsRequest,
-    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+    GpuInventoryProvider, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
+    GpuSupportedFeatures, GpuTargetRequest, GpuTelemetryInfo, GpuTelemetryProvider, GpuVendor,
+    MemoryInfo, OffsetControl, PcieInfo, PowerControlInfo, PowerInfo, PowerLimitControl,
+    SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
+    SetGpuPowerLimitRequest,
 };
 
 const OFFSET_POWER_STATE: PerformanceState = PerformanceState::Zero;
@@ -33,7 +35,7 @@ static NVML: OnceCell<Nvml> = OnceCell::new();
 pub struct NvmlNvidiaProvider;
 
 #[derive(Debug, Error)]
-enum NvidiaProviderError {
+pub(crate) enum NvidiaProviderError {
     #[error("unable to initialize NVML: {0}")]
     NvmlInit(#[source] NvmlError),
     #[error("unable to query NVIDIA device count: {0}")]
@@ -94,22 +96,34 @@ struct TelemetryQueryResults {
 }
 
 impl GpuInventoryProvider for NvmlNvidiaProvider {
-    fn collect(&self) -> ProviderOutput {
-        match collect_nvml_inventory() {
-            Ok(output) => output,
-            Err(error) => ProviderOutput::warning(format!(
-                "NVIDIA inventory is unavailable on this system: {error}"
-            )),
-        }
+    fn inventory(&self) -> GpuInventoryResponse {
+        collect_nvml_inventory().unwrap_or_else(|error| inventory_unavailable(&error))
     }
 }
 
-pub fn collect_nvidia_performance() -> PerformanceProviderOutput {
-    match collect_nvml_performance() {
-        Ok(output) => output,
-        Err(error) => PerformanceProviderOutput::warning(format!(
+impl GpuTelemetryProvider for NvmlNvidiaProvider {
+    fn performance(&self) -> GpuPerformanceResponse {
+        collect_nvml_performance().unwrap_or_else(|error| performance_unavailable(&error))
+    }
+}
+
+/// What the NVML provider reports when it can't read the inventory at all.
+pub(crate) fn inventory_unavailable(error: &dyn Display) -> GpuInventoryResponse {
+    GpuInventoryResponse {
+        gpus: Vec::new(),
+        warnings: vec![format!(
+            "NVIDIA inventory is unavailable on this system: {error}"
+        )],
+    }
+}
+
+/// What the NVML provider reports when it can't read telemetry at all.
+pub(crate) fn performance_unavailable(error: &dyn Display) -> GpuPerformanceResponse {
+    GpuPerformanceResponse {
+        gpus: Vec::new(),
+        warnings: vec![format!(
             "NVIDIA performance controls are unavailable on this system: {error}"
-        )),
+        )],
     }
 }
 
@@ -202,7 +216,7 @@ pub fn reset_nvidia_clock_offsets(request: GpuTargetRequest) -> Result<(), Strin
     })
 }
 
-fn collect_nvml_inventory() -> Result<ProviderOutput, NvidiaProviderError> {
+fn collect_nvml_inventory() -> Result<GpuInventoryResponse, NvidiaProviderError> {
     let nvml = shared_nvml().map_err(NvidiaProviderError::NvmlInit)?;
     let device_count = nvml
         .device_count()
@@ -213,7 +227,7 @@ fn collect_nvml_inventory() -> Result<ProviderOutput, NvidiaProviderError> {
         .ok()
         .map(format_cuda_driver_version);
 
-    let mut output = ProviderOutput::default();
+    let mut output = GpuInventoryResponse::default();
 
     for index in 0..device_count {
         match nvml.device_by_index(index) {
@@ -273,12 +287,12 @@ fn collect_nvml_inventory() -> Result<ProviderOutput, NvidiaProviderError> {
     Ok(output)
 }
 
-fn collect_nvml_performance() -> Result<PerformanceProviderOutput, NvidiaProviderError> {
+fn collect_nvml_performance() -> Result<GpuPerformanceResponse, NvidiaProviderError> {
     let nvml = shared_nvml().map_err(NvidiaProviderError::NvmlInit)?;
     let device_count = nvml
         .device_count()
         .map_err(NvidiaProviderError::DeviceCount)?;
-    let mut output = PerformanceProviderOutput::default();
+    let mut output = GpuPerformanceResponse::default();
 
     for index in 0..device_count {
         match nvml.device_by_index(index) {

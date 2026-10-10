@@ -1,6 +1,10 @@
 pub mod cooling;
 pub mod fan_curve;
 mod nvidia;
+#[cfg(feature = "simulated")]
+pub mod simulated;
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,9 +12,8 @@ use crate::cooling::CoolingControl;
 use crate::fan_curve::FanCurveSupport;
 
 use nvidia::{
-    NvmlNvidiaProvider, collect_nvidia_performance, reset_nvidia_clock_offsets,
-    reset_nvidia_power_limit, set_nvidia_clock_offsets, set_nvidia_fan_auto, set_nvidia_fan_speed,
-    set_nvidia_power_limit,
+    NvmlNvidiaProvider, reset_nvidia_clock_offsets, reset_nvidia_power_limit,
+    set_nvidia_clock_offsets, set_nvidia_fan_auto, set_nvidia_fan_speed, set_nvidia_power_limit,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -69,7 +72,7 @@ pub struct ClockInfo {
     pub memory_max_mhz: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct GpuPerformanceResponse {
     pub gpus: Vec<GpuPerformanceDevice>,
     pub warnings: Vec<String>,
@@ -319,65 +322,85 @@ pub enum ComputeApi {
     Rocm,
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct ProviderOutput {
-    gpus: Vec<GpuDevice>,
-    warnings: Vec<String>,
+/// Reads the GPU inventory from one source of GPUs, such as NVML.
+pub trait GpuInventoryProvider: Send + Sync {
+    fn inventory(&self) -> GpuInventoryResponse;
 }
 
-impl ProviderOutput {
-    fn warning(message: impl Into<String>) -> Self {
+/// Reads each GPU's telemetry, together with its current tuning values and GPU control
+/// capabilities, from one source of GPUs, such as NVML.
+pub trait GpuTelemetryProvider: Send + Sync {
+    fn performance(&self) -> GpuPerformanceResponse;
+}
+
+impl<P: GpuInventoryProvider + ?Sized> GpuInventoryProvider for Arc<P> {
+    fn inventory(&self) -> GpuInventoryResponse {
+        (**self).inventory()
+    }
+}
+
+impl<P: GpuTelemetryProvider + ?Sized> GpuTelemetryProvider for Arc<P> {
+    fn performance(&self) -> GpuPerformanceResponse {
+        (**self).performance()
+    }
+}
+
+/// The providers a caller reads GPUs from, reported together in the order they were added.
+pub struct GpuProviders {
+    inventory: Vec<Box<dyn GpuInventoryProvider>>,
+    telemetry: Vec<Box<dyn GpuTelemetryProvider>>,
+}
+
+impl GpuProviders {
+    /// No providers, so no GPUs and no warnings.
+    pub fn empty() -> Self {
         Self {
-            gpus: Vec::new(),
-            warnings: vec![message.into()],
+            inventory: Vec::new(),
+            telemetry: Vec::new(),
         }
     }
 
-    fn append(&mut self, other: Self) {
-        self.gpus.extend(other.gpus);
-        self.warnings.extend(other.warnings);
+    /// The production providers: NVIDIA GPUs through NVML.
+    pub fn nvml() -> Self {
+        Self::empty()
+            .with_inventory(NvmlNvidiaProvider)
+            .with_telemetry(NvmlNvidiaProvider)
     }
-}
 
-pub(crate) trait GpuInventoryProvider {
-    fn collect(&self) -> ProviderOutput;
-}
+    pub fn with_inventory(mut self, provider: impl GpuInventoryProvider + 'static) -> Self {
+        self.inventory.push(Box::new(provider));
+        self
+    }
 
-#[derive(Debug, Default)]
-pub(crate) struct PerformanceProviderOutput {
-    gpus: Vec<GpuPerformanceDevice>,
-    warnings: Vec<String>,
-}
+    pub fn with_telemetry(mut self, provider: impl GpuTelemetryProvider + 'static) -> Self {
+        self.telemetry.push(Box::new(provider));
+        self
+    }
 
-impl PerformanceProviderOutput {
-    fn warning(message: impl Into<String>) -> Self {
-        Self {
-            gpus: Vec::new(),
-            warnings: vec![message.into()],
+    pub fn inventory(&self) -> GpuInventoryResponse {
+        let mut response = GpuInventoryResponse::default();
+        for provider in &self.inventory {
+            let output = provider.inventory();
+            response.gpus.extend(output.gpus);
+            response.warnings.extend(output.warnings);
         }
+        response
+    }
+
+    pub fn performance(&self) -> GpuPerformanceResponse {
+        let mut response = GpuPerformanceResponse::default();
+        for provider in &self.telemetry {
+            let output = provider.performance();
+            response.gpus.extend(output.gpus);
+            response.warnings.extend(output.warnings);
+        }
+        response
     }
 }
 
-pub fn collect_inventory() -> GpuInventoryResponse {
-    let providers: [Box<dyn GpuInventoryProvider>; 1] = [Box::new(NvmlNvidiaProvider)];
-    let mut output = ProviderOutput::default();
-
-    for provider in providers {
-        output.append(provider.collect());
-    }
-
-    GpuInventoryResponse {
-        gpus: output.gpus,
-        warnings: output.warnings,
-    }
-}
-
-pub fn collect_performance() -> GpuPerformanceResponse {
-    let output = collect_nvidia_performance();
-
-    GpuPerformanceResponse {
-        gpus: output.gpus,
-        warnings: output.warnings,
+impl Default for GpuProviders {
+    fn default() -> Self {
+        Self::nvml()
     }
 }
 
@@ -407,6 +430,8 @@ pub fn reset_gpu_clock_offsets(request: GpuTargetRequest) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{
         ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo, ComputeApi, ComputeInfo,
         ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuControlInfo, GpuDevice,
@@ -414,6 +439,92 @@ mod tests {
         GpuTelemetryInfo, GpuVendor, MemoryInfo, OffsetControl, PcieInfo, PowerControlInfo,
         PowerInfo, PowerLimitControl,
     };
+    use super::{GpuInventoryProvider, GpuProviders, GpuTelemetryProvider};
+
+    /// Reports one GPU, by name only, and a warning naming it.
+    struct NamedProvider(&'static str);
+
+    impl GpuInventoryProvider for NamedProvider {
+        fn inventory(&self) -> GpuInventoryResponse {
+            GpuInventoryResponse {
+                gpus: vec![GpuDevice {
+                    id: self.0.into(),
+                    vendor: GpuVendor::Nvidia,
+                    name: self.0.into(),
+                    architecture: None,
+                    driver_version: None,
+                    firmware_version: None,
+                    bus_id: None,
+                    memory: MemoryInfo { total_mib: None },
+                    compute: ComputeInfo {
+                        api: None,
+                        api_version: None,
+                        capability: None,
+                        core_count: None,
+                    },
+                    pcie: PcieInfo {
+                        gen_max: None,
+                        width_max: None,
+                    },
+                    power: PowerInfo {
+                        enforced_limit_watts: None,
+                        default_limit_watts: None,
+                    },
+                    clocks: ClockInfo {
+                        graphics_current_mhz: None,
+                        graphics_max_mhz: None,
+                        sm_max_mhz: None,
+                        memory_max_mhz: None,
+                    },
+                    control: GpuControlInfo::default(),
+                }],
+                warnings: vec![format!("{} inventory warning", self.0)],
+            }
+        }
+    }
+
+    impl GpuTelemetryProvider for NamedProvider {
+        fn performance(&self) -> GpuPerformanceResponse {
+            GpuPerformanceResponse {
+                gpus: Vec::new(),
+                warnings: vec![format!("{} telemetry warning", self.0)],
+            }
+        }
+    }
+
+    #[test]
+    fn providers_report_nothing_until_one_is_injected() {
+        let providers = GpuProviders::empty();
+
+        assert_eq!(providers.inventory(), GpuInventoryResponse::default());
+        assert_eq!(providers.performance(), GpuPerformanceResponse::default());
+    }
+
+    #[test]
+    fn providers_report_every_injected_provider_in_order() {
+        let shared = Arc::new(NamedProvider("first"));
+        let providers = GpuProviders::empty()
+            .with_inventory(shared.clone())
+            .with_telemetry(shared)
+            .with_inventory(NamedProvider("second"));
+
+        let inventory = providers.inventory();
+        let performance = providers.performance();
+
+        assert_eq!(
+            inventory
+                .gpus
+                .iter()
+                .map(|gpu| gpu.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        assert_eq!(
+            inventory.warnings,
+            ["first inventory warning", "second inventory warning"]
+        );
+        assert_eq!(performance.warnings, ["first telemetry warning"]);
+    }
 
     #[test]
     fn inventory_response_serializes_rust_field_names() {

@@ -123,7 +123,7 @@ struct PeerCredentials {
 }
 
 pub fn run() -> Result<(), String> {
-    run_with(Arc::new(RealDaemonBackend))
+    run_with(Arc::new(RealDaemonBackend::default()))
 }
 
 /// Runs the daemon on these GPUs, configured from the environment like the installed service.
@@ -209,7 +209,7 @@ fn supervise_cooling(core: &DaemonCore, interval: std::time::Duration) {
 /// Returns fans that a stopped daemon left following a curve to the GPU's default automatic
 /// cooling. The service manager runs this after the daemon stops for any reason.
 pub fn restore_cooling() -> Result<(), String> {
-    restore_cooling_with(&RealDaemonBackend)
+    restore_cooling_with(&RealDaemonBackend::default())
 }
 
 pub fn restore_cooling_with(backend: &dyn DaemonBackend) -> Result<(), String> {
