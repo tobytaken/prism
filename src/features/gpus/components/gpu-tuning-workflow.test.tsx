@@ -205,7 +205,7 @@ describe("GPU tuning observations", () => {
         response.gpus[0].cooling.fans.find(
           (item) => item.index === index,
         )!.mode = "auto";
-        if (fail) throw new Error("Fan acknowledgement lost");
+        if (fail) throw new Error("Fan acknowledgment lost");
         return { success: true, error: null };
       });
     renderWithQueryClient(

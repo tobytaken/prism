@@ -29,7 +29,8 @@ pub enum DriverJobStatus {
     Running,
     Succeeded,
     Failed,
-    Cancelled,
+    #[serde(alias = "cancelled")]
+    Canceled,
     RebootRequired,
     ManualStepRequired,
 }
@@ -265,6 +266,17 @@ mod tests {
         assert!(DriverJobStatus::Running.is_active());
         assert!(!DriverJobStatus::Succeeded.is_active());
         assert!(!DriverJobStatus::Failed.is_active());
+    }
+
+    #[test]
+    fn job_files_written_with_the_british_spelling_still_load_as_canceled() {
+        let status: DriverJobStatus = serde_json::from_str("\"cancelled\"").expect("status");
+
+        assert_eq!(status, DriverJobStatus::Canceled);
+        assert_eq!(
+            serde_json::to_string(&status).expect("json"),
+            "\"canceled\""
+        );
     }
 
     #[test]

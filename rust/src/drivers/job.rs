@@ -23,7 +23,7 @@ struct DriverJobFile {
 pub struct DriverJobStore {
     state_path: PathBuf,
     state: Arc<Mutex<DriverJobFile>>,
-    cancelled_jobs: Arc<Mutex<BTreeSet<String>>>,
+    canceled_jobs: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl DriverJobStore {
@@ -36,7 +36,7 @@ impl DriverJobStore {
         Self {
             state_path,
             state: Arc::new(Mutex::new(state)),
-            cancelled_jobs: Arc::new(Mutex::new(BTreeSet::new())),
+            canceled_jobs: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
 
@@ -100,15 +100,15 @@ impl DriverJobStore {
 
     pub fn cancel(&self, job_id: &str) -> Option<DriverJob> {
         {
-            let mut cancelled = self.cancelled_jobs.lock().ok()?;
-            cancelled.insert(job_id.to_string());
+            let mut canceled = self.canceled_jobs.lock().ok()?;
+            canceled.insert(job_id.to_string());
         }
         self.update_job(job_id, |job| {
             if job.status == DriverJobStatus::Queued {
-                job.status = DriverJobStatus::Cancelled;
+                job.status = DriverJobStatus::Canceled;
                 job.finished_at_unix_ms = Some(unix_timestamp_ms());
                 job.current_step = None;
-                job.log_tail.push("Driver job cancelled before it started.".into());
+                job.log_tail.push("Driver job canceled before it started.".into());
             } else {
                 push_log(job, "Cancellation requested. The current package-manager command may need to finish first.");
             }
@@ -134,8 +134,8 @@ impl DriverJobStore {
                 push_log(job, &completion.message);
             }),
             Err(error) => self.update_job(&job_id, |job| {
-                job.status = if self.is_cancelled(&job_id) {
-                    DriverJobStatus::Cancelled
+                job.status = if self.is_canceled(&job_id) {
+                    DriverJobStatus::Canceled
                 } else {
                     DriverJobStatus::Failed
                 };
@@ -166,8 +166,8 @@ impl DriverJobStore {
 
         let steps = build_steps(&status.host, &status.nvidia, plan.action);
         for step in steps {
-            if self.is_cancelled(job_id) {
-                return Err("Driver job was cancelled.".into());
+            if self.is_canceled(job_id) {
+                return Err("Driver job was canceled.".into());
             }
 
             match step {
@@ -248,8 +248,8 @@ impl DriverJobStore {
         }
     }
 
-    fn is_cancelled(&self, job_id: &str) -> bool {
-        self.cancelled_jobs
+    fn is_canceled(&self, job_id: &str) -> bool {
+        self.canceled_jobs
             .lock()
             .map(|jobs| jobs.contains(job_id))
             .unwrap_or(false)
@@ -602,17 +602,17 @@ mod tests {
     }
 
     #[test]
-    fn queued_job_can_be_cancelled() {
+    fn queued_job_can_be_canceled() {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = DriverJobStore::load(dir.path().join("jobs.json"));
         let job = store
             .start(DriverAction::InstallRecommended)
             .expect("start");
-        let cancelled = store.cancel(&job.id).expect("cancelled");
+        let canceled = store.cancel(&job.id).expect("canceled");
 
         assert!(matches!(
-            cancelled.status,
-            DriverJobStatus::Queued | DriverJobStatus::Running | DriverJobStatus::Cancelled
+            canceled.status,
+            DriverJobStatus::Queued | DriverJobStatus::Running | DriverJobStatus::Canceled
         ));
     }
 }

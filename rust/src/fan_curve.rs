@@ -150,7 +150,7 @@ pub fn validate_for(
     }
 }
 
-/// The speed the curve requests at the temperature: a straight line between neighbouring points,
+/// The speed the curve requests at the temperature: a straight line between neighboring points,
 /// rounded up to whole percent, and the nearest end point's speed beyond either end.
 pub fn requested_speed(points: &[FanCurvePoint], temperature_c: i64) -> i64 {
     let (Some(first), Some(last)) = (points.first(), points.last()) else {

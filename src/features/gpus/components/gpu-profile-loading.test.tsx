@@ -342,7 +342,7 @@ it("applies only included instructions even when omitted controls have unknown s
   expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
 });
 
-it("keeps profile instructions and refreshes actual values when transport acknowledgement is lost", async () => {
+it("keeps profile instructions and refreshes actual values when transport acknowledgment is lost", async () => {
   const user = userEvent.setup();
   const fake = createFakeDesktop({ profiles: [quiet()] });
   fake.applyProfileById.mockImplementation(async () => {

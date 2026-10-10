@@ -38,7 +38,7 @@ export function DriversPage() {
         statusQuery.error instanceof Error ? statusQuery.error.message : null
       }
       isStarting={startMutation.isPending}
-      isCancelling={cancelMutation.isPending}
+      isCanceling={cancelMutation.isPending}
       isRebooting={rebootMutation.isPending}
       actionError={formatMutationError(
         startMutation.error ?? cancelMutation.error ?? rebootMutation.error,

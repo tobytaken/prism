@@ -27,7 +27,7 @@ type DriversScreenProps = {
   isLoading: boolean;
   errorMessage: string | null;
   isStarting: boolean;
-  isCancelling: boolean;
+  isCanceling: boolean;
   isRebooting: boolean;
   actionError: string | null;
   onStartAction: (action: DriverAction) => void;
@@ -40,7 +40,7 @@ export function DriversScreen({
   isLoading,
   errorMessage,
   isStarting,
-  isCancelling,
+  isCanceling,
   isRebooting,
   actionError,
   onStartAction,
@@ -110,7 +110,7 @@ export function DriversScreen({
           {activeJob && (
             <DriverJobPanel
               job={activeJob}
-              isCancelling={isCancelling}
+              isCanceling={isCanceling}
               onCancelJob={onCancelJob}
             />
           )}
@@ -264,11 +264,11 @@ function DriverPlanPanel({
 
 function DriverJobPanel({
   job,
-  isCancelling,
+  isCanceling,
   onCancelJob,
 }: {
   job: DriverJob;
-  isCancelling: boolean;
+  isCanceling: boolean;
   onCancelJob: (jobId: string) => void;
 }) {
   const active = job.status === "queued" || job.status === "running";
@@ -297,7 +297,7 @@ function DriverJobPanel({
             <Button
               variant="outline"
               onClick={() => onCancelJob(job.id)}
-              disabled={isCancelling}
+              disabled={isCanceling}
             >
               <X className="size-4" />
               Cancel
