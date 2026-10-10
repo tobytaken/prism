@@ -37,7 +37,7 @@ pub(super) struct SessionTransport {
 impl SessionTransport {
     pub fn request(&self, request: DaemonRequest) -> Reply {
         if let DaemonRequest::SetEditHolds(holds) = &request {
-            // Retain the latest renderer intent even while disconnected.
+            // Retain the caller's latest holds even while disconnected.
             self.connection.lock().unwrap().edit_holds = Some(holds.clone());
         }
         let deadline = Instant::now() + super::request_timeout(&request);
@@ -117,8 +117,8 @@ impl Drop for SessionClient {
         self.transport.stopping.store(true, Ordering::SeqCst);
         self.transport
             .disconnect(unavailable("Prism daemon session closed"));
-        // The notification thread may be blocked on Electron's stdout pipe. Transport shutdown
-        // must not wait for it: returning from sidecar main ends every remaining thread.
+        // The notification thread may be blocked in its callback. Transport shutdown must not
+        // wait for it.
     }
 }
 
@@ -131,21 +131,12 @@ pub enum SessionNotification {
     SwitchingStatus(crate::protocol::AutomaticSwitchingStatus),
 }
 
-/// One session for the sidecar's lifetime. Probes and driver requests remain one-shot.
-pub fn start_session(
-    initial_holds: Option<crate::protocol::SetEditHoldsRequest>,
-    notify: impl Fn(SessionNotification) + Send + 'static,
-) -> SessionClient {
-    let transport = Arc::new(SessionTransport {
-        connection: Mutex::new(Connection {
-            edit_holds: initial_holds,
-            ..Connection::default()
-        }),
-        ..SessionTransport::default()
-    });
+/// One session for the process's lifetime. Probes and driver requests remain one-shot.
+pub fn start_session(notify: impl Fn(SessionNotification) + Send + 'static) -> SessionClient {
+    let transport = Arc::new(SessionTransport::default());
     assert!(
         SESSION.set(Arc::clone(&transport)).is_ok(),
-        "a sidecar has only one daemon session"
+        "a process has only one daemon session"
     );
     let running = Arc::clone(&transport);
     let socket_path = super::socket_path();

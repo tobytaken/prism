@@ -61,7 +61,7 @@ The most recent successfully applied manual value of each setting within the pro
 _Avoid_: Last applied profile, current profile
 
 **Tuning store**:
-The daemon's persistent, versioned record of the tuning state that must outlive a host restart, such as GPU tuning profiles, game associations, startup choices and last applied tuning values; it is distinct from legacy saved GPU configurations.
+The daemon's persistent, versioned record of the tuning state that must outlive a host restart, such as GPU tuning profiles, game associations, startup choices and last applied tuning values.
 _Avoid_: Saved tuning state, state file, saved configuration
 
 **Unhealthy tuning store**:
@@ -237,9 +237,9 @@ The user's choice of System, Light, or Dark; System follows the desktop's light/
 _Avoid_: Theme, accent preference, color scheme
 
 **Accent preference**:
-The user's choice of an AMD, NVIDIA, or Intel color theme, or automatic selection from detected GPU vendors; choosing a vendor theme does not imply hardware support for that vendor.
+The user's choice of an AMD, NVIDIA, or Intel color theme, or automatic selection from detected GPU vendors; choosing a vendor theme does not imply hardware support for that vendor. This describes the later theming feature; the first version of the native GUI has no accent preference.
 _Avoid_: GPU selection, tuning profile
 
 **Effective accent**:
-The color theme currently resolved from the accent preference and available GPU inventory; automatic selection can remain unresolved and use Prism's default appearance.
+The color theme currently resolved from the accent preference and available GPU inventory; automatic selection can remain unresolved and use Prism's default appearance. This describes the later theming feature; the first version always uses Prism's default appearance.
 _Avoid_: Accent preference, detected GPU vendor

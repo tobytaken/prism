@@ -71,9 +71,6 @@ impl DaemonCore {
         policy: &SessionPolicy,
     ) -> Result<DaemonSession, GpuCommandError> {
         policy.authorize(&peer)?;
-        if let Err(error) = self.tuning_store.reserve_migration_adoption(&peer) {
-            eprintln!("Could not reserve migrated profiles: {error}");
-        }
         self.switching.opened(&peer);
         Ok(self.tuning_store.subscribe(peer))
     }
@@ -117,24 +114,6 @@ impl DaemonCore {
             DaemonRequest::ApplyCooling(request) => Ok(DaemonResponse::CoolingApplication(
                 self.apply_cooling(request, CoolingApplicationSource::Manual(peer.clone())),
             )),
-            DaemonRequest::AdoptMigratedProfile(request) => self
-                .tuning_store
-                .try_update(|document| document.adopt_migrated_profile(peer, &request.profile_id))
-                .map(DaemonResponse::Profile),
-            DaemonRequest::DismissMigrationNotice => self
-                .tuning_store
-                .update(|document| {
-                    document
-                        .user_mut(peer.uid, &peer.username)
-                        .migration_notice_dismissed = true
-                })
-                .map_err(GpuCommandError::from)
-                .map(|()| startup_command()),
-            DaemonRequest::GetMigrationState => self
-                .tuning_store
-                .read(|document| document.migration_state(peer))
-                .map_err(GpuCommandError::from)
-                .map(DaemonResponse::MigrationState),
             DaemonRequest::GetStartupState => self
                 .tuning_store
                 .read(|document| {
@@ -228,10 +207,6 @@ impl DaemonCore {
             DaemonRequest::CorrectAndApplyProfile(request) => self
                 .correct_and_apply_profile(peer, request)
                 .map(DaemonResponse::CorrectedProfileApplication),
-            DaemonRequest::ImportProfiles(request) => self
-                .tuning_store
-                .try_update(|document| document.import_profiles(peer, request.profiles))
-                .map(DaemonResponse::ProfileImport),
             DaemonRequest::ListSteamApps => self.steam_apps(peer).map(DaemonResponse::SteamApps),
             DaemonRequest::ListRunningPrograms => {
                 super::programs::list(&self.dependencies.host_root, peer)
@@ -546,9 +521,8 @@ impl DaemonCore {
 
     /// Loads host state and reserves startup operations before serving any manual requests.
     pub fn start(dependencies: CoreDependencies) -> Self {
-        let tuning_store = Arc::new(TuningStore::open_with_inventory(
+        let tuning_store = Arc::new(TuningStore::open(
             dependencies.persistent_dir.join(TUNING_STORE_FILE_NAME),
-            || dependencies.backend.performance(),
         ));
         let boot_state = Arc::new(super::boot_state::BootState::open(
             &dependencies.boot_dir,
@@ -699,10 +673,7 @@ impl DaemonCore {
                     (response, applied)
                 }),
             ),
-            DaemonRequest::GetMigrationState
-            | DaemonRequest::AdoptMigratedProfile(_)
-            | DaemonRequest::DismissMigrationNotice
-            | DaemonRequest::GetStartupState
+            DaemonRequest::GetStartupState
             | DaemonRequest::SetStartupBehavior(_)
             | DaemonRequest::SetStartupProfile(_)
             | DaemonRequest::DismissStartupOutcome(_)
@@ -713,11 +684,12 @@ impl DaemonCore {
             | DaemonRequest::RenameProfile(_)
             | DaemonRequest::DeleteProfile(_)
             | DaemonRequest::ApplyProfileById(_)
-            | DaemonRequest::CorrectAndApplyProfile(_)
-            | DaemonRequest::ImportProfiles(_) => DaemonResponse::Error(GpuCommandError::new(
-                GpuCommandErrorCode::NoPermission,
-                "GPU tuning profiles need a connection that identifies the caller.",
-            )),
+            | DaemonRequest::CorrectAndApplyProfile(_) => {
+                DaemonResponse::Error(GpuCommandError::new(
+                    GpuCommandErrorCode::NoPermission,
+                    "GPU tuning profiles need a connection that identifies the caller.",
+                ))
+            }
             DaemonRequest::ListSteamApps
             | DaemonRequest::ListRunningPrograms
             | DaemonRequest::AddProgram(_)
@@ -1001,6 +973,7 @@ impl DaemonCore {
 }
 
 /// Applies settings and records successful manual instructions and the resulting current profile.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_recorded_profile(
     backend: &dyn DaemonBackend,
     cooling: &CoolingController,

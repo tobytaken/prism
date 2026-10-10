@@ -78,13 +78,6 @@ fn link(session: &FakeSession, app_id: u32, gpu_id: &str, profile_id: Option<&st
     }))
 }
 
-fn import(session: &FakeSession, profiles: Value) {
-    let response = session.send_json(json!({
-        "type": "import_profiles", "payload": { "profiles": profiles }
-    }));
-    assert_eq!(response["type"], "profile_import", "{response}");
-}
-
 fn profile(id: &str, name: &str, gpu_id: &str) -> Value {
     json!({ "id": id, "name": name, "gpuId": gpu_id,
         "settings": { "powerLimitWatts": { "kind": "value", "value": 300 } } })
@@ -212,13 +205,10 @@ fn associations_and_the_switching_opt_in_belong_to_the_caller_and_survive_a_rest
     app(&daemon, VALVE_ROOT, 570, "Dota 2", 4);
     app(&daemon, VALVE_ROOT, 620, "Portal 2", 4);
     let alice = daemon.user(1000, "alice");
-    import(
-        &alice,
-        json!([
-            profile("quiet", "Quiet", "GPU-123"),
-            profile("loud", "Loud", "GPU-456")
-        ]),
-    );
+    alice.seed_profiles(json!([
+        profile("quiet", "Quiet", "GPU-123"),
+        profile("loud", "Loud", "GPU-456")
+    ]));
     assert_eq!(
         games(&alice),
         json!({ "automaticSwitching": false, "games": [] })
@@ -292,13 +282,10 @@ fn links_are_checked_against_the_callers_profiles_games_and_installed_apps() {
     app(&daemon, VALVE_ROOT, 570, "Dota 2", 4);
     compatibility_tool(&daemon, VALVE_ROOT, 1493710, "Proton Experimental");
     let alice = daemon.user(1000, "alice");
-    import(
-        &alice,
-        json!([
-            profile("quiet", "Quiet", "GPU-123"),
-            profile("other", "Other", "GPU-456")
-        ]),
-    );
+    alice.seed_profiles(json!([
+        profile("quiet", "Quiet", "GPU-123"),
+        profile("other", "Other", "GPU-456")
+    ]));
     for (response, code, message) in [
         (
             add_steam_game(&alice, 620),
@@ -357,7 +344,7 @@ fn an_uninstalled_games_association_is_kept_and_reported_not_installed_until_it_
     );
     app(&daemon, "/mnt/games/SteamLibrary", 570, "Dota 2", 4);
     let alice = daemon.user(1000, "alice");
-    import(&alice, json!([profile("quiet", "Quiet", "GPU-123")]));
+    alice.seed_profiles(json!([profile("quiet", "Quiet", "GPU-123")]));
     add_steam_game(&alice, 570);
     link(&alice, 570, "GPU-123", Some("quiet"));
 
@@ -390,13 +377,10 @@ fn deleting_a_profile_removes_its_associations_and_keeps_other_links() {
     app(&daemon, VALVE_ROOT, 570, "Dota 2", 4);
     app(&daemon, VALVE_ROOT, 620, "Portal 2", 4);
     let alice = daemon.user(1000, "alice");
-    import(
-        &alice,
-        json!([
-            profile("quiet", "Quiet", "GPU-123"),
-            profile("loud", "Loud", "GPU-456")
-        ]),
-    );
+    alice.seed_profiles(json!([
+        profile("quiet", "Quiet", "GPU-123"),
+        profile("loud", "Loud", "GPU-456")
+    ]));
     for app_id in [570, 620] {
         add_steam_game(&alice, app_id);
         link(&alice, app_id, "GPU-123", Some("quiet"));

@@ -11,18 +11,18 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-use super::migration::LEGACY_STATE_FILE_NAME;
 use super::{
     Clock, CoreDependencies, DaemonBackend, DaemonCore, DaemonSession, HostShutdownSignal,
     SessionPeer, SessionPolicy, UserDirectory,
 };
 use crate::drivers::DriverService;
 use crate::gpu::{
-    ControlSupport, FanControlInfo, FanControlMode, GpuDaemonStatus, GpuInventoryResponse,
-    GpuPerformanceDevice, GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest,
-    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+    ControlSupport, FanControlInfo, FanControlMode, GpuCommandError, GpuDaemonStatus,
+    GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse, GpuTargetRequest,
+    SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
+    SetGpuPowerLimitRequest,
 };
-use crate::protocol::{DaemonRequest, DaemonResponse};
+use crate::protocol::{DaemonRequest, DaemonResponse, GpuTuningProfile};
 
 /// Longer than any request should take, so a stuck request fails its test instead of hanging.
 const RESPONSE_DEADLINE: Duration = Duration::from_secs(5);
@@ -30,7 +30,7 @@ const RESPONSE_DEADLINE: Duration = Duration::from_secs(5);
 /// The GPU from the shared contract fixture: power reported but unreadable, offsets untunable.
 pub fn observed_gpu() -> GpuPerformanceDevice {
     let performance: GpuPerformanceResponse = serde_json::from_str(include_str!(
-        "../../../src/test/contracts/tuning-observations.json"
+        "../../tests/contracts/tuning-observations.json"
     ))
     .unwrap();
     performance.gpus.into_iter().next().unwrap()
@@ -446,17 +446,7 @@ pub struct Harness {
 
 impl Harness {
     pub fn start(gpus: FakeGpuBackend) -> Self {
-        Self::start_with_saved_state(gpus, None)
-    }
-
-    /// Starts the daemon on a persistent directory that already holds this saved state.
-    pub fn start_with_saved_state(gpus: FakeGpuBackend, saved: Option<&[u8]>) -> Self {
-        match saved {
-            Some(saved) => {
-                Self::start_with_persistent_files(gpus, &[(LEGACY_STATE_FILE_NAME, saved)])
-            }
-            None => Self::start_with_persistent_files(gpus, &[]),
-        }
+        Self::start_with_persistent_files(gpus, &[])
     }
 
     /// Starts the daemon on a persistent directory that already holds these files.
@@ -618,11 +608,6 @@ impl Harness {
         }
     }
 
-    /// The saved state file's bytes, if the daemon has written one.
-    pub fn saved_state_bytes(&self) -> Option<Vec<u8>> {
-        std::fs::read(self.persistent_dir.path().join(LEGACY_STATE_FILE_NAME)).ok()
-    }
-
     /// A file's bytes in the persistent directory, if it exists.
     pub fn persistent_file(&self, name: &str) -> Option<Vec<u8>> {
         std::fs::read(self.persistent_dir.path().join(name)).ok()
@@ -736,6 +721,21 @@ impl FakeSession {
     pub fn send_json(&self, request: serde_json::Value) -> serde_json::Value {
         let request = serde_json::from_value(request).unwrap();
         serde_json::to_value(self.send(request)).unwrap()
+    }
+
+    /// Adds these profiles, given as protocol JSON, to the user's own as if saved earlier. Their
+    /// ids and settings are kept as given, and no GPU is touched.
+    pub fn seed_profiles(&self, profiles: serde_json::Value) {
+        let profiles: Vec<GpuTuningProfile> = serde_json::from_value(profiles).unwrap();
+        let peer = self.session.peer();
+        self.core
+            .tuning_store
+            .try_update(|document| {
+                profiles
+                    .into_iter()
+                    .try_for_each(|profile| document.add_profile(peer, profile).map(drop))
+            })
+            .unwrap_or_else(|error: GpuCommandError| panic!("could not seed profiles: {error:?}"));
     }
 
     /// The events pushed to this session so far, as protocol JSON, oldest first.

@@ -178,11 +178,11 @@ fn a_resumed_curve_follows_the_temperature_while_switching_waits_and_sessions_re
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     daemon.install_steam_app("alice", 570, "Dota 2");
     let alice = daemon.user(1000, "alice");
+    alice.seed_profiles(json!([
+        { "id": "gaming", "name": "Gaming", "gpuId": "GPU-123",
+          "settings": { "powerLimitWatts": { "kind": "value", "value": 350 } } },
+    ]));
     for request in [
-        json!({ "type": "import_profiles", "payload": { "profiles": [
-            { "id": "gaming", "name": "Gaming", "gpuId": "GPU-123",
-              "settings": { "powerLimitWatts": { "kind": "value", "value": 350 } } },
-        ] } }),
         json!({ "type": "add_steam_game", "payload": { "appId": 570 } }),
         json!({ "type": "set_game_profile", "payload": {
             "game": { "kind": "steam", "appId": 570 }, "gpuId": "GPU-123", "profileId": "gaming",
@@ -994,7 +994,7 @@ fn curve_output_changes_are_not_tuning_changes() {
 fn cooling_payloads_round_trip_the_shared_contract() {
     use crate::cooling::{ApplyCoolingRequest, CoolingApplication, CoolingControl};
     let contract: Value = serde_json::from_str(include_str!(
-        "../../../src/test/contracts/cooling-application.json"
+        "../../tests/contracts/cooling-application.json"
     ))
     .unwrap();
     let request: ApplyCoolingRequest = serde_json::from_value(contract["request"].clone()).unwrap();
@@ -1015,7 +1015,7 @@ fn cooling_payloads_round_trip_the_shared_contract() {
 #[test]
 fn applied_curves_request_the_contracts_speeds() {
     let contract: Value = serde_json::from_str(include_str!(
-        "../../../src/test/contracts/cooling-application.json"
+        "../../tests/contracts/cooling-application.json"
     ))
     .unwrap();
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));

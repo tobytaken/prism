@@ -31,10 +31,6 @@ fn apply_by_id(profile_id: &str) -> Value {
     json!({ "type": "apply_profile_by_id", "payload": { "profileId": profile_id } })
 }
 
-fn import(profiles: Value) -> Value {
-    json!({ "type": "import_profiles", "payload": { "profiles": profiles } })
-}
-
 fn error_message(response: &Value) -> String {
     assert_eq!(response["type"], "error", "{response}");
     response["payload"]["message"].as_str().unwrap().to_string()
@@ -237,7 +233,7 @@ fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_wri
     gpu.power.max_limit_watts = Some(280);
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
     let alice = daemon.user(1000, "alice");
-    let imported = alice.send_json(import(json!([{
+    alice.seed_profiles(json!([{
         "id": "quiet",
         "name": "Quiet",
         "gpuId": "GPU-123",
@@ -245,8 +241,7 @@ fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_wri
             "powerLimitWatts": { "kind": "value", "value": 300 },
             "memoryOffsetMHz": { "kind": "value", "value": 40 }
         }
-    }])));
-    assert_eq!(imported["type"], "profile_import", "{imported}");
+    }]));
 
     let review = alice.send_json(apply_by_id("quiet"));
     assert_eq!(review["type"], "profile_application");
@@ -313,10 +308,10 @@ fn a_corrected_profile_stays_saved_when_its_application_fails() {
         .gpus
         .fail("GPU-123", Setter::PowerLimit, "Power write denied");
     let alice = daemon.user(1000, "alice");
-    alice.send_json(import(json!([{
+    alice.seed_profiles(json!([{
         "id": "loud", "name": "Loud", "gpuId": "GPU-123",
         "settings": { "powerLimitWatts": { "kind": "value", "value": 500 } }
-    }])));
+    }]));
 
     let corrected = alice.send_json(json!({
         "type": "correct_and_apply_profile",
@@ -341,10 +336,10 @@ fn applying_a_profile_by_id_writes_only_its_settings_on_its_owning_gpu() {
         tunable_gpu_with_id("GPU-456"),
     ]));
     let alice = daemon.user(1000, "alice");
-    alice.send_json(import(json!([{
+    alice.seed_profiles(json!([{
         "id": "quiet", "name": "Quiet", "gpuId": "GPU-456",
         "settings": { "powerLimitWatts": { "kind": "value", "value": 400 } }
-    }])));
+    }]));
 
     let applied = alice.send_json(apply_by_id("quiet"));
     assert_eq!(applied["payload"]["power"]["status"], "succeeded");
@@ -388,76 +383,6 @@ fn profiles_and_recorded_default_requests_survive_a_daemon_restart_and_a_reboot(
         list(daemon.user(1001, "bob").send_json(LIST())),
         Vec::<Value>::new()
     );
-}
-
-#[test]
-fn importing_keeps_ids_skips_existing_ones_and_suffixes_a_same_gpu_name_clash() {
-    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
-    let alice = daemon.user(1000, "alice");
-    let existing = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
-    let file = json!([
-        { "id": "flatpak-quiet", "name": "quiet", "gpuId": "GPU-123",
-          "settings": { "powerLimitWatts": { "kind": "value", "value": 400 } } },
-        { "id": "other-gpu", "name": "Quiet", "gpuId": "GPU-456",
-          "settings": { "powerLimitWatts": { "kind": "default" } } },
-        { "id": existing["id"], "name": "Duplicate", "gpuId": "GPU-123",
-          "settings": { "powerLimitWatts": { "kind": "value", "value": 300 } } }
-    ]);
-
-    let first = alice.send_json(import(file.clone()));
-    assert_eq!(first["type"], "profile_import", "{first}");
-    let imported: Vec<_> = first["payload"]["imported"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|profile| (profile["id"].clone(), profile["name"].clone()))
-        .collect();
-    assert_eq!(
-        imported,
-        vec![
-            (json!("flatpak-quiet"), json!("quiet (2)")),
-            (json!("other-gpu"), json!("Quiet"))
-        ]
-    );
-    assert_eq!(first["payload"]["skipped"], json!([existing["id"]]));
-    let after_first = list(alice.send_json(LIST()));
-    assert_eq!(after_first.len(), 3);
-
-    let second = alice.send_json(import(file));
-    assert_eq!(second["payload"]["imported"], json!([]));
-    assert_eq!(second["payload"]["skipped"].as_array().unwrap().len(), 3);
-    assert_eq!(list(alice.send_json(LIST())), after_first);
-
-    // Another clash on the same GPU moves on to the next free suffix.
-    alice.send_json(import(json!([{
-        "id": "third", "name": "QUIET", "gpuId": "GPU-123",
-        "settings": { "powerLimitWatts": { "kind": "default" } }
-    }])));
-    assert!(list(alice.send_json(LIST()))
-        .iter()
-        .any(|profile| profile["id"] == "third" && profile["name"] == "QUIET (3)"));
-}
-
-#[test]
-fn an_import_with_an_invalid_profile_imports_nothing() {
-    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
-    let alice = daemon.user(1000, "alice");
-    for invalid in [
-        json!({ "id": " ", "name": "Quiet", "gpuId": "GPU-123",
-                "settings": { "powerLimitWatts": { "kind": "default" } } }),
-        json!({ "id": "a", "name": " ", "gpuId": "GPU-123",
-                "settings": { "powerLimitWatts": { "kind": "default" } } }),
-        json!({ "id": "a", "name": "Quiet", "gpuId": "", "settings": { "powerLimitWatts": { "kind": "default" } } }),
-        json!({ "id": "a", "name": "Quiet", "gpuId": "GPU-123", "settings": {} }),
-    ] {
-        let response = alice.send_json(import(json!([
-            { "id": "valid", "name": "Valid", "gpuId": "GPU-123",
-              "settings": { "powerLimitWatts": { "kind": "default" } } },
-            invalid
-        ])));
-        assert_eq!(response["payload"]["code"], "invalidArgument", "{response}");
-    }
-    assert_eq!(list(alice.send_json(LIST())), Vec::<Value>::new());
 }
 
 #[test]
@@ -567,9 +492,9 @@ fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omiss
         {"fanIndex":0,"setting":{"mode":"curve","points":[{"temperatureC":45,"speedPercent":20},{"temperatureC":85,"speedPercent":100}]}},
         {"fanIndex":1,"setting":{"mode":"fixed","speedPercent":50}}
     ]});
-    alice.send_json(import(
+    alice.seed_profiles(
         json!([{"id":"curve","name":"Curve","gpuId":"GPU-123","settings":{"cooling":cooling}}]),
-    ));
+    );
     daemon.set_temperature("GPU-123", Some(80));
     let result = alice.send_json(apply_by_id("curve"));
     assert_eq!(
@@ -601,9 +526,9 @@ fn cooling_range_corrections_require_review_and_keep_the_corrected_profile_after
     ));
     let alice = daemon.user(1000, "alice");
     let cooling = json!({"arrangement":"shared","setting":{"mode":"fixed","speedPercent":10}});
-    alice.send_json(import(
+    alice.seed_profiles(
         json!([{"id":"fixed","name":"Fixed","gpuId":"GPU-123","settings":{"cooling":cooling}}]),
-    ));
+    );
     let result = alice.send_json(apply_by_id("fixed"));
     assert_eq!(
         result["payload"]["cooling"]["outcome"]["status"],
@@ -675,11 +600,11 @@ fn a_partial_cooling_profile_reports_each_fan_and_does_not_become_current() {
     ));
     let alice = daemon.user(1000, "alice");
     saved(alice.send_json(save_as_new(&alice, "GPU-123", "Before")));
-    alice.send_json(import(
+    alice.seed_profiles(
         json!([{"id":"fixed","name":"Fixed","gpuId":"GPU-123","settings":{
             "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speedPercent":70}}
         }}]),
-    ));
+    );
     daemon
         .gpus
         .fail_fan("GPU-123", Setter::FanSpeed, 1, "Denied");

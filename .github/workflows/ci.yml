@@ -3,44 +3,66 @@ name: CI
 on:
   workflow_dispatch:
 
-jobs:
-  renderer:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: bun install --frozen-lockfile
-      - run: bun run lint
-      - run: bun run typecheck
-      - run: bun run test
+defaults:
+  run:
+    working-directory: rust
 
-  rust:
+jobs:
+  fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --manifest-path rust/Cargo.toml
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - run: cargo test --locked
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2,cargo-about@0.9.2
+      - run: cargo deny --locked check licenses
+      - name: THIRD-PARTY-LICENSES matches Cargo.lock
+        run: |
+          bash ../scripts/generate-third-party-licenses.sh
+          git diff --exit-code -- ../THIRD-PARTY-LICENSES
 
   package-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update
-      - run: sudo apt-get install -y dpkg fakeroot rpm flatpak flatpak-builder elfutils
-      - name: Install daemon packaging tools
-        run: |
-          cargo install --locked cargo-deb --version 3.6.3
-          cargo install --locked cargo-generate-rpm --version 0.20.0
-      - run: flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-      - run: bun install --frozen-lockfile
-      - run: bun run build:sidecar:release
-      - run: bun run package:gui:deb
-      - run: bun run package:gui:rpm
-      - run: bun run package:gui:flatpak
-      - run: bun run package:daemon:deb
-      - run: bun run package:daemon:rpm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb@3.6.3,cargo-generate-rpm@0.20.0
+      - run: bash ../scripts/package-prismd-deb.sh
+      - run: bash ../scripts/package-prismd-rpm.sh

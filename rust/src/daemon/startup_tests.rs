@@ -10,12 +10,9 @@ fn startup_gpu() -> crate::gpu::GpuPerformanceDevice {
     gpu
 }
 
-fn import(session: &FakeSession, id: &str, name: &str, watts: u32) {
-    let response = session.send_json(json!({ "type": "import_profiles", "payload": {
-        "profiles": [{ "id": id, "name": name, "gpuId": "GPU-123",
-            "settings": { "powerLimitWatts": { "kind": "value", "value": watts } } }]
-    } }));
-    assert_eq!(response["type"], "profile_import", "{response}");
+fn seed(session: &FakeSession, id: &str, name: &str, watts: u32) {
+    session.seed_profiles(json!([{ "id": id, "name": name, "gpuId": "GPU-123",
+        "settings": { "powerLimitWatts": { "kind": "value", "value": watts } } }]));
 }
 
 fn startup(session: &FakeSession) -> Value {
@@ -36,8 +33,8 @@ fn startup_choices_are_host_wide_latest_wins_and_other_users_see_the_profile_by_
     let alice = daemon.user(1000, "alice");
     let bob = daemon.user(1001, "bob");
     assert_eq!(startup(&alice)["behavior"], "off");
-    import(&alice, "quiet", "Quiet", 300);
-    import(&bob, "silent", "Silent", 250);
+    seed(&alice, "quiet", "Quiet", 300);
+    seed(&bob, "silent", "Silent", 250);
     assert_eq!(designate(&alice, Some("quiet"))["payload"]["success"], true);
     assert_eq!(designate(&bob, Some("silent"))["payload"]["success"], true);
     assert_eq!(
@@ -92,8 +89,8 @@ fn startup_applies_without_an_app_once_per_boot_id_and_sets_the_current_profile(
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
     let bob = daemon.user(1001, "bob");
-    import(&alice, "quiet", "Quiet", 300);
-    import(&bob, "silent", "Silent", 250);
+    seed(&alice, "quiet", "Quiet", 300);
+    seed(&bob, "silent", "Silent", 250);
     designate(&alice, Some("quiet"));
     designate(&bob, Some("silent"));
     enable(&alice);
@@ -138,15 +135,12 @@ fn startup_validates_every_setting_without_writing_or_clamping_and_reports_why()
     for unsupported in [false, true] {
         let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
         let alice = daemon.user(1000, "alice");
-        let response = alice.send_json(
-            json!({ "type": "import_profiles", "payload": { "profiles": [{
+        alice.seed_profiles(json!([{
             "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
                 "powerLimitWatts": { "kind": "value", "value": 300 },
                 "memoryOffsetMHz": { "kind": "value", "value": 100 }
             }
-        }] } }),
-        );
-        assert_eq!(response["type"], "profile_import");
+        }]));
         designate(&alice, Some("quiet"));
         enable(&alice);
         drop(alice);
@@ -209,15 +203,13 @@ fn a_partial_startup_clears_the_current_profile_and_reports_each_setting() {
     use super::harness::Setter;
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
-    alice.send_json(
-        json!({ "type": "import_profiles", "payload": { "profiles": [{
+    alice.seed_profiles(json!([{
         "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
             "powerLimitWatts": { "kind": "value", "value": 300 },
             "graphicsOffsetMHz": { "kind": "value", "value": 50 },
             "memoryOffsetMHz": { "kind": "value", "value": 100 }
         }
-    }] } }),
-    );
+    }]));
     alice.send_json(json!({ "type": "apply_profile_by_id", "payload": { "profileId": "quiet" } }));
     designate(&alice, Some("quiet"));
     enable(&alice);
@@ -249,7 +241,7 @@ fn a_partial_startup_clears_the_current_profile_and_reports_each_setting() {
 fn a_late_gpu_gets_startup_before_manual_writes_while_reads_and_other_gpus_remain_available() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, "quiet", "Quiet", 300);
+    seed(&alice, "quiet", "Quiet", 300);
     designate(&alice, Some("quiet"));
     enable(&alice);
     drop(alice);
@@ -291,7 +283,7 @@ fn a_late_gpu_gets_startup_before_manual_writes_while_reads_and_other_gpus_remai
 fn a_gpu_arriving_after_the_deadline_is_reported_absent_and_never_applied_later_that_boot() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, "quiet", "Quiet", 300);
+    seed(&alice, "quiet", "Quiet", 300);
     designate(&alice, Some("quiet"));
     enable(&alice);
     drop(alice);
@@ -323,7 +315,7 @@ fn readiness_waits_for_gpu_arrival_and_the_last_startup_write_while_reads_are_se
     use super::harness::Setter;
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, "quiet", "Quiet", 300);
+    seed(&alice, "quiet", "Quiet", 300);
     designate(&alice, Some("quiet"));
     enable(&alice);
     drop(alice);
@@ -358,7 +350,7 @@ fn readiness_waits_for_gpu_arrival_and_the_last_startup_write_while_reads_are_se
 fn an_interrupted_startup_reports_the_interruption_and_never_retries_this_boot() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, "quiet", "Quiet", 300);
+    seed(&alice, "quiet", "Quiet", 300);
     designate(&alice, Some("quiet"));
     enable(&alice);
     drop(alice);
@@ -387,7 +379,7 @@ fn an_interrupted_startup_reports_the_interruption_and_never_retries_this_boot()
 fn saving_renaming_and_deleting_follow_the_startup_link_across_boots() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, "quiet", "Quiet", 300);
+    seed(&alice, "quiet", "Quiet", 300);
     designate(&alice, Some("quiet"));
     enable(&alice);
     drop(alice);
@@ -431,25 +423,12 @@ fn saving_renaming_and_deleting_follow_the_startup_link_across_boots() {
 }
 
 #[test]
-fn an_unhealthy_store_preserves_legacy_settings_and_suspends_startup() {
-    use super::migration::{DesiredGpuConfig, PersistedGpuConfig, PersistedGpuState};
+fn an_unhealthy_store_suspends_startup() {
     use super::tuning_store::TUNING_STORE_FILE_NAME;
-    let mut legacy = PersistedGpuState::default();
-    legacy.gpus.insert(
-        "GPU-123".into(),
-        PersistedGpuConfig {
-            desired: DesiredGpuConfig {
-                power_limit_watts: Some(250),
-                ..Default::default()
-            },
-            last_apply: None,
-        },
-    );
-    let legacy = serde_json::to_vec(&legacy).unwrap();
     let corrupt = b"{\"schemaVersion\":4,\"startupBehavior\":\"startupProfiles\",\"users\":[";
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![startup_gpu()]),
-        &[(TUNING_STORE_FILE_NAME, corrupt), ("state.json", &legacy)],
+        &[(TUNING_STORE_FILE_NAME, corrupt)],
     );
     assert!(daemon.gpus.writes().is_empty());
     assert_eq!(
@@ -512,7 +491,7 @@ fn unreadable_boot_state_is_preserved_and_prevents_startup_writes_while_manual_t
     ] {
         let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
         let alice = daemon.user(1000, "alice");
-        import(&alice, "quiet", "Quiet", 300);
+        seed(&alice, "quiet", "Quiet", 300);
         designate(&alice, Some("quiet"));
         enable(&alice);
         drop(alice);

@@ -1,0 +1,27 @@
+# `cargo deny check licenses` fails the build when a dependency's license isn't compatible with
+# Prism's GPL-3.0-or-later.
+
+[graph]
+# Keep in step with about.toml.
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+
+[licenses]
+# Every license here is GPLv3-compatible. Add one only after checking that it is, and keep
+# `accepted` in about.toml in step.
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    # Slint's GPLv3 option (#108).
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+unused-allowed-license = "allow"

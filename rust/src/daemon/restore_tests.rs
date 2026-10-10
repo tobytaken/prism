@@ -92,15 +92,12 @@ fn restore_puts_each_settings_latest_manual_value_into_effect_and_keeps_the_curr
             "gpuId": "GPU-123", "graphicsOffsetMHz": 30, "memoryOffsetMHz": 40
         } }),
     );
-    send(
-        &alice,
-        json!({ "type": "import_profiles", "payload": { "profiles": [{
-            "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
-                "powerLimitWatts": { "kind": "value", "value": 300 },
-                "memoryOffsetMHz": { "kind": "default" }
-            }
-        }] } }),
-    );
+    alice.seed_profiles(json!([{
+        "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
+            "powerLimitWatts": { "kind": "value", "value": 300 },
+            "memoryOffsetMHz": { "kind": "default" }
+        }
+    }]));
     let application = send(
         &alice,
         json!({ "type": "apply_profile_by_id", "payload": { "profileId": "quiet" } }),
@@ -147,15 +144,12 @@ fn restore_puts_each_settings_latest_manual_value_into_effect_and_keeps_the_curr
 fn a_partial_or_blocked_restore_clears_the_current_profile_and_values_are_never_clamped() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![restore_gpu()]));
     let alice = daemon.user(1000, "alice");
-    send(
-        &alice,
-        json!({ "type": "import_profiles", "payload": { "profiles": [{
-            "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
-                "powerLimitWatts": { "kind": "value", "value": 300 },
-                "graphicsOffsetMHz": { "kind": "value", "value": 150 }
-            }
-        }] } }),
-    );
+    alice.seed_profiles(json!([{
+        "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
+            "powerLimitWatts": { "kind": "value", "value": 300 },
+            "graphicsOffsetMHz": { "kind": "value", "value": 150 }
+        }
+    }]));
     send(
         &alice,
         json!({ "type": "apply_profile_by_id", "payload": { "profileId": "quiet" } }),
@@ -226,13 +220,10 @@ fn startup_profiles_skip_the_unclean_shutdown_guard() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![restore_gpu()]));
     let alice = daemon.user(1000, "alice");
     set_power(&alice, 300);
-    send(
-        &alice,
-        json!({ "type": "import_profiles", "payload": { "profiles": [{
-            "id": "quiet", "name": "Quiet", "gpuId": "GPU-123",
-            "settings": { "powerLimitWatts": { "kind": "value", "value": 250 } }
-        }] } }),
-    );
+    alice.seed_profiles(json!([{
+        "id": "quiet", "name": "Quiet", "gpuId": "GPU-123",
+        "settings": { "powerLimitWatts": { "kind": "value", "value": 250 } }
+    }]));
     send(
         &alice,
         json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": "quiet" } }),
@@ -312,15 +303,12 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
     // A profile application reports each setting that reached the GPU as succeeded, and the
     // marker survives a reboot until the next successful record.
     let alice = daemon.user(1000, "alice");
-    send(
-        &alice,
-        json!({ "type": "import_profiles", "payload": { "profiles": [{
-            "id": "loud", "name": "Loud", "gpuId": "GPU-123", "settings": {
-                "graphicsOffsetMHz": { "kind": "value", "value": 70 },
-                "memoryOffsetMHz": { "kind": "value", "value": 10 }
-            }
-        }] } }),
-    );
+    alice.seed_profiles(json!([{
+        "id": "loud", "name": "Loud", "gpuId": "GPU-123", "settings": {
+            "graphicsOffsetMHz": { "kind": "value", "value": 70 },
+            "memoryOffsetMHz": { "kind": "value", "value": 10 }
+        }
+    }]));
     std::fs::create_dir(&blocker).unwrap();
     daemon
         .gpus

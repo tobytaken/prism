@@ -337,21 +337,6 @@ pub struct CorrectedProfileApplication {
     pub application: ProfileApplicationResponse,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ImportProfilesRequest {
-    pub profiles: Vec<GpuTuningProfile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProfileImportResponse {
-    /// The profiles added, with any name changed to avoid a clash.
-    pub imported: Vec<GpuTuningProfile>,
-    /// Ids of profiles skipped because a profile with that id already exists.
-    pub skipped: Vec<String>,
-}
-
 /// The host-wide choice of what the daemon puts into effect when the host starts.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -649,9 +634,6 @@ pub enum DaemonRequest {
     ApplyCooling(ApplyCoolingRequest),
     SetClockOffsets(LiveClockOffsetsRequest),
     ResetClockOffsets(GpuTargetRequest),
-    GetMigrationState,
-    AdoptMigratedProfile(ProfileIdRequest),
-    DismissMigrationNotice,
     GetStartupState,
     SetStartupBehavior(SetStartupBehaviorRequest),
     SetStartupProfile(SetStartupProfileRequest),
@@ -664,7 +646,6 @@ pub enum DaemonRequest {
     DeleteProfile(ProfileIdRequest),
     ApplyProfileById(ProfileIdRequest),
     CorrectAndApplyProfile(CorrectAndApplyProfileRequest),
-    ImportProfiles(ImportProfilesRequest),
     ListSteamApps,
     AddProgram(AddProgramRequest),
     ListRunningPrograms,
@@ -712,13 +693,11 @@ pub enum DaemonResponse {
     FanCurvePreview(FanCurvePreview),
     CoolingApplication(CoolingApplication),
     ProfileApplication(ProfileApplicationResponse),
-    MigrationState(MigrationState),
     StartupState(StartupState),
     Profiles(Vec<GpuTuningProfile>),
     Profile(GpuTuningProfile),
     TuningStates(Vec<GpuTuningState>),
     CorrectedProfileApplication(CorrectedProfileApplication),
-    ProfileImport(ProfileImportResponse),
     SteamApps(Vec<SteamApp>),
     RunningPrograms(Vec<RunningProgram>),
     Games(GamesState),
@@ -736,6 +715,8 @@ pub struct SessionRequest {
     pub request: DaemonRequest,
 }
 
+// Messages are short-lived frames, so their size doesn't warrant boxing every response.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum SessionMessage {
@@ -768,10 +749,9 @@ mod session_tests {
             id: 42,
             request: DaemonRequest::GetDaemonStatus,
         };
-        let event: SessionMessage = serde_json::from_str(include_str!(
-            "../../src/test/contracts/session-store-health.json"
-        ))
-        .unwrap();
+        let event: SessionMessage =
+            serde_json::from_str(include_str!("../tests/contracts/session-store-health.json"))
+                .unwrap();
         let mut bytes = Vec::new();
         write_frame(&mut bytes, &request).unwrap();
         write_frame(&mut bytes, &event).unwrap();
@@ -796,8 +776,7 @@ mod session_tests {
     #[test]
     fn startup_state_round_trips_the_shared_contract_and_explicit_clearing() {
         let state: serde_json::Value =
-            serde_json::from_str(include_str!("../../src/test/contracts/startup-state.json"))
-                .unwrap();
+            serde_json::from_str(include_str!("../tests/contracts/startup-state.json")).unwrap();
         let typed: StartupState = serde_json::from_value(state.clone()).unwrap();
         assert_eq!(
             serde_json::to_value(DaemonResponse::StartupState(typed)).unwrap(),
@@ -832,14 +811,13 @@ mod session_tests {
 
     #[test]
     fn profile_payloads_round_trip_the_shared_contracts() {
-        let profiles: serde_json::Value = serde_json::from_str(include_str!(
-            "../../src/test/contracts/gpu-tuning-profiles.json"
-        ))
-        .unwrap();
+        let profiles: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/gpu-tuning-profiles.json"))
+                .unwrap();
         let typed: Vec<GpuTuningProfile> = serde_json::from_value(profiles.clone()).unwrap();
         assert_eq!(serde_json::to_value(&typed).unwrap(), profiles);
         let corrected: serde_json::Value = serde_json::from_str(include_str!(
-            "../../src/test/contracts/corrected-profile-application.json"
+            "../tests/contracts/corrected-profile-application.json"
         ))
         .unwrap();
         let typed: CorrectedProfileApplication = serde_json::from_value(corrected.clone()).unwrap();
@@ -848,10 +826,9 @@ mod session_tests {
 
     #[test]
     fn tuning_states_round_trip_the_shared_contract_as_a_response_and_as_pushed_events() {
-        let states: serde_json::Value = serde_json::from_str(include_str!(
-            "../../src/test/contracts/gpu-tuning-states.json"
-        ))
-        .unwrap();
+        let states: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/gpu-tuning-states.json"))
+                .unwrap();
         let typed: Vec<GpuTuningState> = serde_json::from_value(states.clone()).unwrap();
         assert_eq!(
             serde_json::to_value(DaemonResponse::TuningStates(typed.clone())).unwrap(),
@@ -928,8 +905,6 @@ mod session_tests {
             serde_json::json!({"type": "save_profile_as_new", "payload": {"gpuId": "GPU-123", "name": "Quiet", "settings": {}}}),
             serde_json::json!({"type": "apply_profile_by_id", "payload": {"profileId": 7}}),
             serde_json::json!({"type": "correct_and_apply_profile", "payload": {"profileId": "quiet", "corrections": [{"setting": "fanSpeed", "savedValue": 1, "proposedValue": 0, "bound": "maximum"}]}}),
-            serde_json::json!({"type": "import_profiles", "payload": {"profiles": [{"id": "a", "name": "A", "gpuId": "GPU-123", "settings": {"powerLimitWatts": 300}}]}}),
-            serde_json::json!({"type": "import_profiles", "payload": {"profiles": [{"id": "a", "name": "A", "gpuId": "GPU-123", "settings": {}, "uid": 0}]}}),
         ] {
             assert!(
                 serde_json::from_value::<DaemonRequest>(malformed.clone()).is_err(),
@@ -941,8 +916,7 @@ mod session_tests {
     #[test]
     fn game_payloads_round_trip_the_shared_contract_and_reject_client_ownership() {
         let state: serde_json::Value =
-            serde_json::from_str(include_str!("../../src/test/contracts/games-state.json"))
-                .unwrap();
+            serde_json::from_str(include_str!("../tests/contracts/games-state.json")).unwrap();
         let typed: GamesState = serde_json::from_value(state.clone()).unwrap();
         assert_eq!(
             serde_json::to_value(DaemonResponse::Games(typed)).unwrap(),
@@ -998,7 +972,7 @@ mod session_tests {
     #[test]
     fn automatic_switching_status_round_trips_the_shared_contract_and_rejects_extras() {
         let statuses: Vec<serde_json::Value> = serde_json::from_str(include_str!(
-            "../../src/test/contracts/automatic-switching-status.json"
+            "../tests/contracts/automatic-switching-status.json"
         ))
         .unwrap();
         for status in statuses {
@@ -1021,6 +995,24 @@ mod session_tests {
                 serde_json::from_value::<AutomaticSwitchingStatus>(malformed.clone()).is_err(),
                 "{malformed}"
             );
+        }
+    }
+
+    #[test]
+    fn running_games_round_trip_the_shared_contract_as_responses_and_session_events() {
+        let states: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../tests/contracts/running-games.json")).unwrap();
+        for state in states {
+            let typed: RunningGamesState = serde_json::from_value(state.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(DaemonResponse::RunningGames(typed)).unwrap(),
+                serde_json::json!({ "type": "running_games", "payload": state })
+            );
+            let event = serde_json::json!({
+                "type": "event", "event": { "type": "runningGamesChanged", "payload": state }
+            });
+            let typed: SessionMessage = serde_json::from_value(event.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), event);
         }
     }
 
@@ -1078,27 +1070,4 @@ mod session_tests {
         let malformed = serde_json::json!({"type": "event", "event": {"type": "storeHealthChanged", "payload": {"status": "healthy", "problem": "unreadable"}}});
         assert!(serde_json::from_value::<SessionMessage>(malformed).is_err());
     }
-}
-
-/// Ownerless profiles are readable by every authorized caller, separately from their own.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MigrationState {
-    pub profiles: Vec<GpuTuningProfile>,
-    pub can_adopt: bool,
-    pub notice: Option<MigrationNotice>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MigrationNotice {
-    pub dropped: Vec<DroppedLegacyConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DroppedLegacyConfig {
-    pub key: String,
-    pub values: serde_json::Value,
-    pub reason: String,
 }

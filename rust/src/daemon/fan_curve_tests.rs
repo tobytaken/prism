@@ -197,10 +197,8 @@ fn preview_rejects_fractional_and_unknown_point_fields() {
 /// The same contract holds the fake desktop to the daemon's judgment.
 #[test]
 fn support_and_previews_follow_the_shared_contract() {
-    let contract: Value = serde_json::from_str(include_str!(
-        "../../../src/test/contracts/fan-curve-preview.json"
-    ))
-    .unwrap();
+    let contract: Value =
+        serde_json::from_str(include_str!("../../tests/contracts/fan-curve-preview.json")).unwrap();
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
 
     let response = daemon.send_json(json!({
