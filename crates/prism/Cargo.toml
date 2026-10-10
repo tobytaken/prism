@@ -35,3 +35,46 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+# The GUI package is `prism-gpu` on every distro (#120). The packages repackage one release binary
+# built on an old glibc, so they're built with `--no-build` (scripts/package-prism-*.sh).
+[package.metadata.deb]
+name = "prism-gpu"
+maintainer = "Tobias Steinhaeusler"
+license-file = ["../../LICENSE", "0"]
+# Spelled out, since dpkg-shlibdeps on a newer build host asks for its own glibc. Keep in step with
+# the libraries scripts/check-prism-package.sh allows the binary to link.
+depends = "libc6 (>= 2.28), libgcc-s1 | libgcc1, libfontconfig1 (>= 2.12.6)"
+recommends = "prismd"
+section = "utils"
+priority = "optional"
+assets = [
+  ["target/release/prism", "usr/bin/prism", "755"],
+  ["../../contrib/io.github.tobytaken.Prism.desktop", "usr/share/applications/io.github.tobytaken.Prism.desktop", "644"],
+  ["../../assets/io.github.tobytaken.Prism.svg", "usr/share/icons/hicolor/scalable/apps/io.github.tobytaken.Prism.svg", "644"],
+  ["../../README.md", "usr/share/doc/prism-gpu/README.md", "644"],
+  ["../../THIRD-PARTY-LICENSES", "usr/share/doc/prism-gpu/THIRD-PARTY-LICENSES", "644"]
+]
+
+[package.metadata.generate-rpm]
+name = "prism-gpu"
+summary = "Prism, a Linux GPU control center for NVIDIA GPUs"
+# Spelled out, since the builtin discovery lists the build host's indirect libraries. Keep in step
+# with the libraries scripts/check-prism-package.sh allows the binary to link.
+auto-req = "no"
+assets = [
+  { source = "target/release/prism", dest = "/usr/bin/prism", mode = "755" },
+  { source = "../../contrib/io.github.tobytaken.Prism.desktop", dest = "/usr/share/applications/io.github.tobytaken.Prism.desktop", mode = "644" },
+  { source = "../../assets/io.github.tobytaken.Prism.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.tobytaken.Prism.svg", mode = "644" },
+  { source = "../../README.md", dest = "/usr/share/doc/prism-gpu/README.md", mode = "644", doc = true },
+  { source = "../../LICENSE", dest = "/usr/share/licenses/prism-gpu/LICENSE", mode = "644", doc = true },
+  { source = "../../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/prism-gpu/THIRD-PARTY-LICENSES", mode = "644", doc = true }
+]
+
+[package.metadata.generate-rpm.requires]
+"libc.so.6(GLIBC_2.28)(64bit)" = "*"
+"libgcc_s.so.1()(64bit)" = "*"
+"libfontconfig.so.1()(64bit)" = "*"
+
+[package.metadata.generate-rpm.recommends]
+prismd = "*"

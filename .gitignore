@@ -1,3 +1,4 @@
 /target
 artifacts
 *.log
+/contrib/flatpak/cargo-sources.json

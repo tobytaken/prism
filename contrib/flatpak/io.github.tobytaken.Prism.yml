@@ -1,0 +1,37 @@
+# The GUI-only Flatpak (#120). Monitoring works without a host prismd; tuning talks to the host's
+# prismd through /run/prism. scripts/package-prism-flatpak.sh generates cargo-sources.json.
+id: io.github.tobytaken.Prism
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: prism
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --filesystem=/run/prism
+  - --talk-name=org.freedesktop.Notifications
+modules:
+  - name: prism
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/prism/cargo
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --locked -p prism
+      - install -Dm755 target/release/prism -t /app/bin
+      - install -Dm644 contrib/io.github.tobytaken.Prism.desktop -t /app/share/applications
+      - install -Dm644 assets/io.github.tobytaken.Prism.svg -t /app/share/icons/hicolor/scalable/apps
+      - install -Dm644 LICENSE THIRD-PARTY-LICENSES -t /app/share/licenses/io.github.tobytaken.Prism
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - target
+      - cargo-sources.json
