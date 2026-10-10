@@ -14,6 +14,7 @@ use prism_ui::{
 use crate::chart::series_commands;
 use crate::environment::{Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
 use crate::sampler::{Sampler, SamplerReading};
+use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{AppState, Inbox, Intents, KeyPress, MainWindow, Section};
 
@@ -60,9 +61,12 @@ impl App {
             clock,
             sampling,
         } = environment;
+        let window = MainWindow::new()?;
+        // Desktops match the window to Prism's desktop file by this ID.
+        slint::set_xdg_app_id(APP_ID)?;
         let (outbox, inbox) = mpsc::channel();
         let inner = Rc::new(Inner {
-            window: MainWindow::new()?,
+            window,
             core: RefCell::default(),
             clock,
             sampling,

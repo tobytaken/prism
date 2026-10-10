@@ -14,7 +14,7 @@ Prism is licensed under the GNU General Public License, version 3 or later (`GPL
   - [`prism-protocol`](./crates/prism-protocol) holds the `prismd` socket's wire types, framing and client, and the shared contract fixtures.
   - [`prismd`](./crates/prismd) is the daemon, along with its tests and its deb/rpm packaging metadata.
   - [`prism-ui`](./crates/prism-ui) is the GUI's logic as a pure state machine, with no Slint, threads or I/O. It takes inputs (telemetry samples, the GPU inventory, user intents) and returns the effects to perform. It also keeps the telemetry history and formats what the view shows.
-  - [`prism`](./crates/prism) is the GUI binary. It has the Slint view (`ui/`, with every visual token in `ui/theme.slint`), the 1 Hz sampler thread, and the composition root, which takes an `Environment` of GPU providers, settings store and clock so tests and the simulator can swap them.
+  - [`prism`](./crates/prism) is the GUI binary. It has the Slint view (`ui/`, with every visual token in `ui/theme.slint`), the 1 Hz sampler thread, the composition root, which takes an `Environment` of GPU providers, settings store and clock so tests and the simulator can swap them, and the GUI's deb/rpm packaging metadata.
 
 ## Development
 
@@ -29,7 +29,7 @@ cargo deny check licenses
 
 CI runs the screenshot tests in their own job, in a pinned container image (see [GUI](#gui)). The commands above run them on this host, where they usually match too.
 
-CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check and the `prismd` package smoke builds. The smoke builds also check that no release build enables the `simulated` feature.
+CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check and the package smoke builds: the `prismd` deb and rpm, and the GUI's `prism-gpu` deb and rpm, AppImage and Flatpak bundle, which the run keeps as artifacts. The smoke builds also check that no release build enables the `simulated` feature, [`scripts/check-prism-package.sh`](./scripts/check-prism-package.sh) checks what each GUI package installs, and [`scripts/check-prism-install.sh`](./scripts/check-prism-install.sh) installs the deb and rpm on Ubuntu 22.04, Debian 12, AlmaLinux 8 and Fedora and checks every library `prism` links or loads is there.
 
 `cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`deny.toml`](./deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency and embedded font; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
 
@@ -108,6 +108,20 @@ Build the `prismd` packages:
 ```bash
 bash scripts/package-prismd-deb.sh
 bash scripts/package-prismd-rpm.sh
+```
+
+The GUI ships as `prism-gpu` (deb and rpm, both recommending `prismd`), an AppImage and a GUI-only Flatpak, all named after the app ID `io.github.tobytaken.Prism`: the desktop file [`contrib/io.github.tobytaken.Prism.desktop`](./contrib/io.github.tobytaken.Prism.desktop), the icon [`assets/io.github.tobytaken.Prism.svg`](./assets/io.github.tobytaken.Prism.svg) and the Flatpak manifest [`contrib/flatpak/io.github.tobytaken.Prism.yml`](./contrib/flatpak/io.github.tobytaken.Prism.yml). The deb, rpm and AppImage repackage one release binary, which CI builds in an AlmaLinux 8 container so it runs on glibc 2.28 and newer. Build it there, or with `cargo build --locked --release -p prism` for this host only, then package it:
+
+```bash
+bash scripts/package-prism-deb.sh
+bash scripts/package-prism-rpm.sh
+bash scripts/package-prism-appimage.sh
+```
+
+The AppImage bundles no libraries, so GL, Vulkan, the NVIDIA libraries and glibc come from the host. The Flatpak builds from source per its manifest; its script needs `flatpak-builder` and Python with `aiohttp` and `tomlkit`, as in the `ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08` image CI uses:
+
+```bash
+bash scripts/package-prism-flatpak.sh
 ```
 
 ## Daemon behavior

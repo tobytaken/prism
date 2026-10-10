@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Prism
+GenericName=GPU Control Center
+Comment=Watch, tune and manage NVIDIA GPUs
+Exec=prism
+Icon=io.github.tobytaken.Prism
+Terminal=false
+Categories=System;Monitor;
+Keywords=GPU;NVIDIA;graphics;fan;clock;overclock;temperature;driver;
+SingleMainWindow=true
+StartupNotify=true

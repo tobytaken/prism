@@ -35,7 +35,7 @@ jobs:
       - name: Install Slint's build dependencies and dbus-daemon
         run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig-dev dbus-daemon
       # The screenshot tests run only in the pinned image (the screenshots job).
-      - run: cargo test --locked --workspace --all-features -- --skip screenshot::
+      - run: cargo test --locked --workspace --all-features -- --skip "screenshot::"
 
   screenshots:
     runs-on: ubuntu-latest
@@ -86,3 +86,94 @@ jobs:
           fi
       - run: bash scripts/package-prismd-deb.sh
       - run: bash scripts/package-prismd-rpm.sh
+
+  build-prism-release:
+    runs-on: ubuntu-latest
+    # The old-glibc baseline (2.28): the GUI's deb, rpm and AppImage all repackage this one binary.
+    # Keep BASELINE_GLIBC in scripts/check-prism-package.sh in step with this image.
+    container: almalinux:8
+    steps:
+      - name: Install Slint's build dependencies
+        run: dnf install -y gcc git pkgconf-pkg-config fontconfig-devel
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p prism
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prism-release-binary
+          path: target/release/prism
+          if-no-files-found: error
+
+  package-prism:
+    needs: build-prism-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb@3.6.3,cargo-generate-rpm@0.20.0
+      - name: Install the package checks' tools
+        run: sudo apt-get update && sudo apt-get install -y cpio desktop-file-utils rpm
+      - uses: actions/download-artifact@v4
+        with:
+          name: prism-release-binary
+          path: target/release
+      # Artifacts don't keep the executable bit.
+      - run: chmod +x target/release/prism
+      - run: desktop-file-validate contrib/io.github.tobytaken.Prism.desktop
+      - run: bash scripts/package-prism-deb.sh
+      - run: bash scripts/package-prism-rpm.sh
+      - run: bash scripts/package-prism-appimage.sh
+      - run: bash scripts/check-prism-package.sh deb target/debian/prism-gpu_*.deb
+      - run: bash scripts/check-prism-package.sh rpm target/generate-rpm/prism-gpu-*.rpm
+      - run: bash scripts/check-prism-package.sh appimage target/appimage/Prism-x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prism-packages
+          path: |
+            target/debian/prism-gpu_*.deb
+            target/generate-rpm/prism-gpu-*.rpm
+            target/appimage/Prism-x86_64.AppImage
+          if-no-files-found: error
+
+  install-prism-packages:
+    needs: package-prism
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:22.04
+            package: debian/prism-gpu_*.deb
+          - image: debian:12
+            package: debian/prism-gpu_*.deb
+          - image: almalinux:8
+            package: generate-rpm/prism-gpu-*.rpm
+          - image: fedora:latest
+            package: generate-rpm/prism-gpu-*.rpm
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: prism-packages
+          path: packages
+      - run: bash scripts/check-prism-install.sh packages/${{ matrix.package }}
+
+  package-prism-flatpak:
+    runs-on: ubuntu-latest
+    # flatpak-builder with the freedesktop 26.08 runtime preinstalled; the Flatpak builds from source.
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/package-prism-flatpak.sh
+      - run: bash scripts/check-prism-package.sh flatpak target/flatpak/build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prism-flatpak
+          path: target/flatpak/prism.flatpak
+          if-no-files-found: error
