@@ -3,6 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-cd "$ROOT_DIR/rust"
-cargo build --release --bin prismd
-cargo deb --variant prismd --no-build
+cd "$ROOT_DIR"
+cargo build --release -p prismd
+cargo deb -p prismd --no-build

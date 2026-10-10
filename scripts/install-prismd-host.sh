@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "Building prismd..."
-cargo build --release --manifest-path "$ROOT_DIR/rust/Cargo.toml" --bin prismd
+cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" -p prismd
 
 echo "Installing prismd binary..."
 sudo install -Dm0755 \
-  "$ROOT_DIR/rust/target/release/prismd" \
+  "$ROOT_DIR/target/release/prismd" \
   /usr/bin/prismd
 
 echo "Installing systemd unit..."
