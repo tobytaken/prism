@@ -1,0 +1,41 @@
+# Raw output, 2026-10-10, RTX 5090 (driver 615.78.08) + Radeon 610M iGPU, KDE Plasma 6 Wayland, scale 1.25, rustc 1.97.1
+# Release binaries: fat LTO, codegen-units=1, strip, panic=abort. Run from prototypes/toolkit-spike.
+
+[gpui-sim] /home/toby/.t3/worktrees/prism-electron/t3code-fadf4db8/prototypes/toolkit-spike/target/release/spike-gpui --sim   pointer-over-window=False
+  gpu: 102 MiB (568583)   
+    libs: index, libEGL.so.1.1.0, libEGL_mesa.so.0.0.0, libEGL_nvidia.so.615.78.08, libGLX_nvidia.so.615.78.08, libdrm_amdgpu.so.1.134.0, libgallium-26.2.4-arch3.1.so, libnvidia-allocator.so.615.78.08, libnvidia-egl-gbm.so.1.1.3, libnvidia-egl-wayland.so.1.1.24, libnvidia-egl-wayland2.so.1.0.2, libnvidia-egl-xcb.so.1.0.6, libnvidia-egl-xlib.so.1.0.6, libnvidia-eglcore.so.615.78.08, libnvidia-glcore.so.615.78.08, libnvidia-glsi.so.615.78.08, libnvidia-glvkspirv.so.615.78.08, libnvidia-gpucomp.so.615.78.08, libnvidia-rtcore.so.615.78.08, libnvidia-tls.so.615.78.08, libvulkan.so.1.4.363, libvulkan_radeon.so, nvidia0, nvidiactl
+  idle       cpu= 0.37%  frames/10s≈  10.0  RSS= 199.1  PSS= 123.2  USS= 112.1  anonPSS=  55.1  HWM= 212.1 MiB  threads=31
+  dragging   cpu= 5.50%  frames/10s≈ 190.0  RSS= 201.2  PSS= 125.2  USS= 114.2  anonPSS=  56.6  HWM= 214.7 MiB  threads=31
+  minimized  cpu= 0.10%  frames/10s≈   9.3  RSS= 202.2  PSS= 126.3  USS= 115.2  anonPSS=  56.6  HWM= 215.8 MiB  threads=31
+  restored   cpu= 0.45%  frames/10s≈   9.5  RSS= 202.3  PSS= 126.4  USS= 115.3  anonPSS=  56.7  HWM= 215.9 MiB  threads=31
+[slint-sim] /home/toby/.t3/worktrees/prism-electron/t3code-fadf4db8/prototypes/toolkit-spike/target/release/spike-slint --sim   pointer-over-window=False
+  gpu: 35 MiB (580854)   
+    libs: libEGL.so.1.1.0, libEGL_mesa.so.0.0.0, libEGL_nvidia.so.615.78.08, libdrm_amdgpu.so.1.134.0, libgallium-26.2.4-arch3.1.so, libnvidia-allocator.so.615.78.08, libnvidia-egl-gbm.so.1.1.3, libnvidia-egl-wayland.so.1.1.24, libnvidia-egl-wayland2.so.1.0.2, libnvidia-egl-xcb.so.1.0.6, libnvidia-egl-xlib.so.1.0.6, libnvidia-eglcore.so.615.78.08, libnvidia-glsi.so.615.78.08, libnvidia-gpucomp.so.615.78.08, nvidia0, nvidiactl
+  idle       cpu= 0.28%  frames/10s≈  10.0  RSS= 145.8  PSS=  80.5  USS=  72.4  anonPSS=  54.3  HWM= 155.5 MiB  threads=5
+  dragging   cpu= 4.20%  frames/10s≈ 188.5  RSS= 147.8  PSS=  82.6  USS=  74.4  anonPSS=  54.3  HWM= 158.1 MiB  threads=5
+  minimized  cpu= 0.10%  frames/10s≈   9.0  RSS= 147.8  PSS=  82.6  USS=  74.4  anonPSS=  54.3  HWM= 158.1 MiB  threads=5
+  restored   cpu= 0.25%  frames/10s≈   8.5  RSS= 147.8  PSS=  82.6  USS=  74.4  anonPSS=  54.3  HWM= 158.1 MiB  threads=5
+[gpui-nvml] /home/toby/.t3/worktrees/prism-electron/t3code-fadf4db8/prototypes/toolkit-spike/target/release/spike-gpui    pointer-over-window=False
+  gpu: 102 MiB (592868)   
+    libs: index, libEGL.so.1.1.0, libEGL_mesa.so.0.0.0, libEGL_nvidia.so.615.78.08, libGLX_nvidia.so.615.78.08, libdrm_amdgpu.so.1.134.0, libgallium-26.2.4-arch3.1.so, libnvidia-allocator.so.615.78.08, libnvidia-egl-gbm.so.1.1.3, libnvidia-egl-wayland.so.1.1.24, libnvidia-egl-wayland2.so.1.0.2, libnvidia-egl-xcb.so.1.0.6, libnvidia-egl-xlib.so.1.0.6, libnvidia-eglcore.so.615.78.08, libnvidia-glcore.so.615.78.08, libnvidia-glsi.so.615.78.08, libnvidia-glvkspirv.so.615.78.08, libnvidia-gpucomp.so.615.78.08, libnvidia-ml.so.615.78.08, libnvidia-rtcore.so.615.78.08, libnvidia-tls.so.615.78.08, libvulkan.so.1.4.363, libvulkan_radeon.so, nvidia0, nvidiactl
+  idle       cpu= 0.53%  frames/10s≈  11.3  RSS= 223.3  PSS= 144.7  USS= 131.8  anonPSS=  74.1  HWM= 236.9 MiB  threads=33
+  dragging   cpu= 4.90%  frames/10s≈ 190.0  RSS= 224.2  PSS= 145.6  USS= 132.7  anonPSS=  74.9  HWM= 237.8 MiB  threads=33
+[slint-nvml] /home/toby/.t3/worktrees/prism-electron/t3code-fadf4db8/prototypes/toolkit-spike/target/release/spike-slint    pointer-over-window=False
+  gpu: 35 MiB (599503)   
+    libs: libEGL.so.1.1.0, libEGL_mesa.so.0.0.0, libEGL_nvidia.so.615.78.08, libdrm_amdgpu.so.1.134.0, libgallium-26.2.4-arch3.1.so, libnvidia-allocator.so.615.78.08, libnvidia-egl-gbm.so.1.1.3, libnvidia-egl-wayland.so.1.1.24, libnvidia-egl-wayland2.so.1.0.2, libnvidia-egl-xcb.so.1.0.6, libnvidia-egl-xlib.so.1.0.6, libnvidia-eglcore.so.615.78.08, libnvidia-glsi.so.615.78.08, libnvidia-gpucomp.so.615.78.08, libnvidia-ml.so.615.78.08, nvidia0, nvidiactl
+  idle       cpu= 0.37%  frames/10s≈  10.0  RSS= 169.6  PSS= 101.2  USS=  91.1  anonPSS=  72.7  HWM= 179.3 MiB  threads=7
+  dragging   cpu= 3.60%  frames/10s≈ 188.5  RSS= 171.7  PSS= 103.2  USS=  93.1  anonPSS=  72.7  HWM= 181.9 MiB  threads=7
+
+# The 'minimized' rows above came from a run where the KWin minimize did not take effect (both kept ~1 frame/s).
+# Re-checked with KWin reporting minimized=true: both rendered 0 frames while minimized for 31 s and resumed on restore:
+gpui:
+[spike] t=  10s frames=10
+[spike] t=  20s frames=10
+[spike] t=  30s frames=10
+[spike] t=  40s frames=15
+slint:
+[spike] t=  10s frames=8
+[spike] t=  19s frames=8
+[spike] t=  29s frames=8
+[spike] t=  39s frames=10
+[spike] t=  49s frames=20

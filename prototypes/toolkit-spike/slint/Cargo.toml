@@ -1,0 +1,12 @@
+[package]
+name = "spike-slint"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+spike-core = { path = "../core" }
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "accessibility"] }
+
+[build-dependencies]
+slint-build = "=1.18.1"

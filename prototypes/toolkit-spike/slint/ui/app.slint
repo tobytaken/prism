@@ -1,0 +1,817 @@
+// PROTOTYPE, throwaway. Toolkit spike (#102): C · Tracks GPU workspace in Slint 1.18.
+// All state lives in spike-core (Rust); this file only lays out and draws what it is given.
+
+import { Palette } from "std-widgets.slint";
+import "../../fonts/Inter-Regular.ttf";
+import "../../fonts/Inter-SemiBold.ttf";
+import "../../fonts/JetBrainsMono-Regular.ttf";
+import "../../fonts/JetBrainsMono-Bold.ttf";
+
+export struct Tokens {
+    bg: color, panel: color, panel2: color, border: color, hover: color,
+    text: color, muted: color, accent: color, danger: color, ok: color,
+    grid: color, line: color,
+    chrome: color, chrome-text: color, chrome-muted: color, chrome-border: color, chrome-hover: color, chrome-hi: color,
+    on-accent: color,
+}
+
+// Tokens come from spike-core (the one place they're defined); Slint only picks light/dark.
+export global Theme {
+    in property <Tokens> light;
+    in property <Tokens> dark;
+    in-out property <int> pref: 0; // 0 system, 1 light, 2 dark
+    out property <bool> is-dark: pref == 0 ? Palette.color-scheme == ColorScheme.dark : pref == 2;
+    out property <Tokens> t: is-dark ? dark : light;
+}
+
+export struct GpuRow { idx: string, name: string, temp: string, util: string, power: string, fan: string, paused: bool }
+export struct Prof { name: string, startup: bool }
+export struct Stat3 { max: string, avg: string, min: string }
+export struct Pt { x: float, y: float }
+
+// All app state and intents, implemented in Rust (spike-core). Any component can read it.
+export global S {
+    in property <int> rev;
+    in property <[GpuRow]> gpus;
+    in property <int> sel;
+    in property <string> name;
+    in property <string> sub;
+    in property <[Prof]> profiles;
+    in property <int> profile;
+    in property <bool> modified;
+    in property <int> range;
+    in property <int> pending;
+    in property <string> strip-text;
+    in property <string> temp;
+    in property <string> util;
+    in property <string> power;
+    in property <string> gclk;
+    in property <string> fan;
+    in property <string> rpm;
+    in property <string> limit;
+    in property <string> limit-pending;
+    in property <string> limit-label;
+    in property <string> pending-label;
+    in property <string> goff;
+    in property <string> goff-pending;
+    in property <string> moff;
+    in property <string> moff-pending;
+    in property <int> fan-mode;
+    in property <bool> paused;
+    in property <bool> curve-open;
+    in property <[Pt]> curve;
+    in property <bool> curve-pending;
+    in property <Pt> now;
+    in property <string> now-label;
+    in property <float> limit-frac;
+    in property <float> pending-frac: -1;
+    in property <[Stat3]> stats;
+    in property <string> daemon;
+    in property <string> problems;
+    in property <string> theme-label;
+    in property <bool> palette-open;
+    in property <[string]> commands;
+    in-out property <int> palette-sel;
+
+    // views ask Rust for chart geometry (pure: re-run when `rev` or the size changes)
+    pure callback series(int, float, float, int) -> string;
+    pure callback area(int, float, float, int) -> string;
+    pure callback value-at(int, float, int) -> string;
+    pure callback dash-h(float, float) -> string;
+    pure callback dash-v(float, float) -> string;
+    pure callback curve-line(bool, float, float, int) -> string;
+    pure callback curve-fill(float, float, int) -> string;
+    pure callback curve-label(int, int) -> string;
+
+    callback select-gpu(int);
+    callback apply-profile(int);
+    callback set-range(int);
+    callback step(int, int);
+    callback drag-power(float);
+    callback set-fan-mode(int);
+    callback toggle-curve();
+    callback curve-hit(float, float, float) -> int;
+    callback curve-drag(int, float, float);
+    callback apply();
+    callback discard();
+    callback cycle-theme();
+    callback open-palette();
+    callback palette-query(string);
+    callback palette-run(int);
+    callback close-palette();
+    callback win-minimize();
+    callback win-maximize();
+    callback win-close();
+}
+
+global F {
+    out property <string> mono: "JetBrains Mono";
+    out property <string> ui: "Inter";
+}
+
+component Mono inherits Text {
+    font-family: F.mono;
+    font-size: 11px;
+    color: Theme.t.text;
+    vertical-alignment: center;
+}
+
+component Label inherits Mono {
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    color: Theme.t.muted;
+}
+
+component Hit inherits Rectangle {
+    in property <bool> on;
+    in property <string> text;
+    in property <length> font-size: 11px;
+    in property <length> pad: 10px;
+    in property <length> spacing: 0.9px;
+    callback clicked;
+    min-width: txt.preferred-width + 2 * pad;
+    background: on ? Theme.t.text : ta.has-hover ? Theme.t.hover : transparent;
+    txt := Mono {
+        text: root.text;
+        font-size: root.font-size;
+        letter-spacing: root.spacing;
+        color: on ? Theme.t.panel : Theme.t.text;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component Stepper inherits Rectangle {
+    in property <string> value;
+    callback step(int);
+    width: 106px;
+    height: 22px;
+    border-width: 1px;
+    border-color: Theme.t.text;
+    HorizontalLayout {
+        padding: 1px;
+        minus := Rectangle {
+            width: 20px;
+            background: ma.has-hover ? Theme.t.text : transparent;
+            Mono { text: "−"; color: ma.has-hover ? Theme.t.panel : Theme.t.text; }
+            ma := TouchArea { clicked => { root.step(-1); } }
+        }
+        Mono { text: root.value; horizontal-alignment: center; horizontal-stretch: 1; }
+        Rectangle {
+            width: 20px;
+            background: pa.has-hover ? Theme.t.text : transparent;
+            Mono { text: "+"; color: pa.has-hover ? Theme.t.panel : Theme.t.text; }
+            pa := TouchArea { clicked => { root.step(1); } }
+        }
+    }
+}
+
+component Grid inherits Rectangle {
+    in property <int> rows: 3;
+    in property <int> cols: 6;
+    for i in rows: Rectangle { x: 0; y: round(parent.height * (i + 1) / (rows + 1) / 1px) * 1px; width: parent.width; height: 1px; background: Theme.t.grid; }
+    for i in cols - 1: Rectangle { y: 0; x: round(parent.width * (i + 1) / cols / 1px) * 1px; height: parent.height; width: 1px; background: Theme.t.grid; }
+}
+
+component Big inherits HorizontalLayout {
+    in property <string> value;
+    in property <string> unit;
+    alignment: start;
+    spacing: 0;
+    Mono { text: root.value; font-size: 22px; vertical-alignment: bottom; }
+    Mono { text: root.unit; font-size: 12px; color: Theme.t.muted; vertical-alignment: bottom; }
+}
+
+component Chart inherits Rectangle {
+    in property <int> metric;
+    in property <bool> filled;
+    in property <bool> limit;
+    in property <string> caption;
+    property <length> ly: 2px + (self.height - 4px) * S.limit-frac;
+    property <length> py: 2px + (self.height - 4px) * S.pending-frac;
+    property <bool> has-pending: S.pending-frac >= 0;
+    horizontal-stretch: 1;
+    Grid { }
+    if filled: Path {
+        width: 100%; height: 100%;
+        viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+        commands: S.area(metric, self.width / 1px, self.height / 1px, S.rev);
+        fill: @linear-gradient(180deg, Theme.t.line.with-alpha(0.28) 0%, Theme.t.line.with-alpha(0) 100%);
+    }
+    Path {
+        width: 100%; height: 100%;
+        viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+        commands: S.series(metric, self.width / 1px, self.height / 1px, S.rev);
+        stroke: Theme.t.line; stroke-width: 1.4px; stroke-line-join: round;
+    }
+    if limit && !has-pending: Rectangle { y: round(ly / 1px) * 1px - 0.75px; height: 1.5px; background: Theme.t.accent; }
+    if limit && has-pending: Path {
+        width: 100%; height: 100%;
+        viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+        commands: S.dash-h(self.width / 1px, round(ly / 1px));
+        stroke: Theme.t.accent; stroke-width: 1.5px;
+    }
+    if limit && has-pending: Rectangle { y: round(py / 1px) * 1px - 1px; height: 2.5px; background: Theme.t.accent; }
+    if limit: Rectangle { x: parent.width - 10px; y: (has-pending ? py : ly) - 4px; width: 8px; height: 8px; background: Theme.t.accent; }
+    if limit: Mono { x: parent.width - self.width - 4px; y: ly - 15px; text: S.limit-label; font-size: 10px; color: Theme.t.accent; }
+    if limit && has-pending: Mono { x: 6px; y: py - 15px; text: S.pending-label; font-size: 10px; color: Theme.t.accent; }
+    if caption != "": Label { x: 6px; y: 2px; text: caption; font-size: 9px; letter-spacing: 1.1px; }
+    ta := TouchArea {
+        mouse-cursor: limit ? MouseCursor.ns-resize : MouseCursor.default;
+        pointer-event(e) => {
+            if (limit && e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { S.drag-power(self.mouse-y / self.height); }
+        }
+        moved => { if (limit && self.pressed) { S.drag-power(self.mouse-y / self.height); } }
+    }
+    if ta.has-hover && !ta.pressed: Path {
+        width: 100%; height: 100%;
+        viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+        commands: S.dash-v(round(ta.mouse-x / 1px), self.height / 1px);
+        stroke: Theme.t.text.with-alpha(0.45); stroke-width: 1px;
+    }
+    if ta.has-hover && !ta.pressed: Mono {
+        x: min(ta.mouse-x + 6px, parent.width - self.width); y: 2px;
+        text: S.value-at(metric, ta.mouse-x / parent.width, S.rev);
+        font-size: 10px;
+    }
+}
+
+component Stats inherits Rectangle {
+    in property <Stat3> stat;
+    width: 96px;
+    Rectangle { x: 0; width: 1px; background: Theme.t.border; }
+    VerticalLayout {
+        padding: 8px;
+        padding-left: 10px;
+        spacing: 2px;
+        alignment: start;
+        for r[i] in [{l: "max", v: stat.max}, {l: "avg", v: stat.avg}, {l: "min", v: stat.min}]: HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Mono { text: r.l; font-size: 10px; color: Theme.t.muted; }
+            Mono { text: r.v; font-size: 10px; }
+        }
+    }
+}
+
+component Left inherits Rectangle {
+    width: 224px;
+    Rectangle { x: parent.width - 1px; width: 1px; background: Theme.t.border; }
+}
+
+component Track inherits Rectangle {
+    in property <Stat3> stat;
+    in property <int> metric;
+    in property <bool> filled;
+    in property <bool> limit;
+    in property <string> caption;
+    out property <length> chart-x: chart.absolute-position.x;
+    out property <length> chart-y: chart.absolute-position.y;
+    out property <length> chart-w: chart.width;
+    out property <length> chart-h: chart.height;
+    HorizontalLayout {
+        Left {
+            VerticalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                @children
+            }
+        }
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            padding-top: 6px;
+            padding-bottom: 6px;
+            chart := Chart { metric: root.metric; filled: root.filled; limit: root.limit; caption: root.caption; }
+        }
+        Stats { stat: root.stat; }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.t.border; }
+}
+
+// The fans track: left column, then (curve editor + fan chart) as its children.
+component FanTrack inherits Rectangle {
+    in property <Stat3> stat;
+    HorizontalLayout {
+        HorizontalLayout {
+            @children
+        }
+        Stats { stat: root.stat; }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.t.border; }
+}
+
+export component MainWindow inherits Window {
+    title: "Prism (Slint spike)";
+    no-frame: true;
+    resize-border-width: 6px;
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    min-width: 960px;
+    min-height: 600px;
+    background: Theme.t.bg;
+    default-font-family: F.ui;
+    default-font-size: 12px;
+    forward-focus: keys;
+
+    // ---- exposed for the scripted self-test ----
+    out property <length> power-x: power-track.chart-x;
+    out property <length> power-y: power-track.chart-y;
+    out property <length> power-w: power-track.chart-w;
+    out property <length> power-h: power-track.chart-h;
+    in-out property <length> curve-x;
+    in-out property <length> curve-y;
+    in-out property <length> curve-w;
+    in-out property <length> curve-h;
+
+    public function focus-keys() { keys.focus(); }
+
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (e.modifiers.control && (e.text == "k" || e.text == "K")) { S.open-palette(); return accept; }
+            if (e.modifiers.control && e.text == "\n") { S.apply(); return accept; }
+            if (e.text == Key.Escape) { S.discard(); return accept; }
+            reject
+        }
+
+        VerticalLayout {
+            // ---------------- title bar ----------------
+            Rectangle {
+                height: 30px;
+                background: Theme.t.chrome;
+                WindowMoveArea { width: 100%; height: 100%; }
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 4px;
+                    spacing: 0;
+                    HorizontalLayout {
+                        alignment: start;
+                        Mono { text: "PRI"; font-weight: 700; letter-spacing: 2.6px; color: Theme.t.chrome-text; }
+                        Mono { text: "S"; font-weight: 700; letter-spacing: 2.6px; color: Theme.t.accent; }
+                        Mono { text: "M"; font-weight: 700; letter-spacing: 2.6px; color: Theme.t.chrome-text; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    cmdbtn := Rectangle {
+                        width: cmdrow.preferred-width + 16px;
+                        cmdrow := HorizontalLayout {
+                            x: 8px;
+                            spacing: 8px;
+                            alignment: center;
+                            Mono { text: "COMMANDS"; color: cta.has-hover ? Theme.t.chrome-hi : Theme.t.chrome-muted; }
+                            Rectangle {
+                                y: 7px;
+                                height: 16px;
+                                width: kbd.preferred-width + 8px;
+                                border-width: 1px;
+                                border-radius: 3px;
+                                border-color: Theme.t.chrome-border;
+                                kbd := Mono { text: "CTRL K"; font-size: 10px; color: Theme.t.chrome-muted; }
+                            }
+                        }
+                        cta := TouchArea { clicked => { S.open-palette(); } }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Rectangle {
+                        width: th.preferred-width + 16px;
+                        th := Mono { text: S.theme-label; color: tha.has-hover ? Theme.t.chrome-hi : Theme.t.chrome-muted; }
+                        tha := TouchArea { clicked => { S.cycle-theme(); } }
+                    }
+                    Rectangle {
+                        width: cm.preferred-width + 16px;
+                        cm := Mono { text: "COMPACT"; color: Theme.t.chrome-muted; }
+                    }
+                    for b[i] in ["–", "□", "×"]: Rectangle {
+                        width: 30px;
+                        background: wta.has-hover ? Theme.t.chrome-hover : transparent;
+                        Text { text: b; color: wta.has-hover ? Theme.t.chrome-hi : Theme.t.chrome-muted; font-size: 12px; }
+                        wta := TouchArea {
+                            clicked => {
+                                if (i == 0) { S.win-minimize(); }
+                                if (i == 1) { S.win-maximize(); }
+                                if (i == 2) { S.win-close(); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                vertical-stretch: 1;
+                // ---------------- sidebar ----------------
+                Rectangle {
+                    width: 196px;
+                    background: Theme.t.bg;
+                    VerticalLayout {
+                        for g[i] in S.gpus: Rectangle {
+                            height: 106px;
+                            background: i == S.sel ? Theme.t.panel2 : gta.has-hover ? Theme.t.hover : transparent;
+                            gta := TouchArea { clicked => { S.select-gpu(i); } }
+                            VerticalLayout {
+                                padding: 10px;
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 0;
+                                HorizontalLayout {
+                                    Mono { text: g.idx; font-size: 10px; letter-spacing: 1px; color: Theme.t.muted; }
+                                    if g.paused: Mono { text: "■ PAUSED"; font-size: 10px; letter-spacing: 1px; color: Theme.t.danger; horizontal-alignment: right; }
+                                }
+                                Text { text: g.name; font-weight: 600; height: 20px; vertical-alignment: center; color: Theme.t.text; }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Mono { text: g.temp; font-size: 30px; letter-spacing: -0.6px; vertical-alignment: bottom; }
+                                    Mono { text: "°C"; font-size: 14px; color: Theme.t.muted; vertical-alignment: bottom; }
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 10px;
+                                    padding-top: 6px;
+                                    Mono { text: g.util; font-size: 10px; }
+                                    Mono { text: g.power; font-size: 10px; }
+                                    HorizontalLayout {
+                                        Mono { text: "fan "; font-size: 10px; color: Theme.t.muted; }
+                                        Mono { text: g.fan; font-size: 10px; }
+                                    }
+                                }
+                            }
+                            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.t.border; }
+                            if i == S.sel: Rectangle { x: parent.width - 2px; width: 3px; background: Theme.t.accent; }
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        Rectangle { height: 1px; background: Theme.t.border; }
+                        for n in ["GAMES", "DRIVERS", "SETTINGS"]: Rectangle {
+                            height: 34px;
+                            background: nta.has-hover ? Theme.t.hover : transparent;
+                            Mono { x: 12px; text: n; letter-spacing: 1.3px; color: nta.has-hover ? Theme.t.text : Theme.t.muted; }
+                            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.t.border; }
+                            nta := TouchArea { }
+                        }
+                    }
+                    Rectangle { x: parent.width - 1px; width: 1px; background: Theme.t.border; z: -1; }
+                }
+
+                // ---------------- main ----------------
+                Rectangle {
+                    background: Theme.t.panel;
+                    horizontal-stretch: 1;
+                    VerticalLayout {
+                        // header
+                        Rectangle {
+                            height: 58px;
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                spacing: 14px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Text { text: S.name; font-size: 18px; font-weight: 600; letter-spacing: -0.18px; color: Theme.t.text; }
+                                    Mono { text: S.sub; font-size: 10px; color: Theme.t.muted; }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 3px;
+                                    Rectangle {
+                                        height: 26px;
+                                        border-width: 1px;
+                                        border-color: Theme.t.text;
+                                        HorizontalLayout {
+                                            padding: 1px;
+                                            for p[i] in S.profiles: HorizontalLayout {
+                                                if i > 0: Rectangle { width: 1px; background: Theme.t.text; }
+                                                Hit {
+                                                    text: p.name;
+                                                    on: i == S.profile;
+                                                    clicked => { S.apply-profile(i); }
+                                                    if p.startup: Text { x: parent.width - 8px; y: -1px; text: "●"; font-size: 8px; color: Theme.t.accent; }
+                                                }
+                                            }
+                                            Rectangle { width: 1px; background: Theme.t.text; }
+                                            Hit { text: "⋯"; pad: 8px; }
+                                        }
+                                    }
+                                    Mono {
+                                        height: 12px;
+                                        text: S.modified ? "· not saved to profile" : "";
+                                        font-size: 10px;
+                                        color: Theme.t.accent;
+                                        horizontal-alignment: right;
+                                    }
+                                }
+                                HorizontalLayout {
+                                    alignment: center;
+                                    for r[i] in ["1m", "5m", "15m", "1h"]: Rectangle {
+                                        width: rl.preferred-width + 12px;
+                                        height: 22px;
+                                        rl := Mono { text: r; color: i == S.range ? Theme.t.text : Theme.t.muted; }
+                                        if i == S.range: Rectangle { y: parent.height - 2px; height: 2px; background: Theme.t.accent; }
+                                        TouchArea { clicked => { S.set-range(i); } }
+                                    }
+                                }
+                            }
+                            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.t.border; }
+                        }
+
+                        // fixed staged-edit strip: same height in both states
+                        Rectangle {
+                            height: 30px;
+                            background: S.pending > 0 ? Theme.t.accent : transparent;
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 8px;
+                                spacing: 12px;
+                                Mono {
+                                    text: S.strip-text;
+                                    letter-spacing: 0.66px;
+                                    color: S.pending > 0 ? Theme.t.on-accent : Theme.t.muted;
+                                    horizontal-stretch: 1;
+                                }
+                                if S.pending > 0: Rectangle {
+                                    y: 4px;
+                                    width: 78px;
+                                    height: 22px;
+                                    border-width: 1px;
+                                    border-color: Theme.t.on-accent;
+                                    Mono { text: "Discard"; color: Theme.t.on-accent; }
+                                    TouchArea { clicked => { S.discard(); } }
+                                }
+                                if S.pending > 0: Rectangle {
+                                    y: 4px;
+                                    width: 70px;
+                                    height: 22px;
+                                    background: Theme.t.on-accent;
+                                    Mono { text: "Apply"; font-weight: 700; color: Theme.t.accent; }
+                                    TouchArea { clicked => { S.apply(); } }
+                                }
+                            }
+                            Rectangle { y: parent.height - 1px; height: 1px; background: S.pending > 0 ? Theme.t.accent : Theme.t.border; }
+                        }
+
+                        // ---------------- tracks ----------------
+                        // Temperature
+                        Track {
+                            height: 84px;
+                            stat: S.stats[0];
+                            metric: 0;
+                            VerticalLayout { spacing: 4px; alignment: start; Label { text: "TEMPERATURE"; } Big { value: S.temp; unit: "°C"; } }
+                        }
+                        Track {
+                            height: 84px;
+                            stat: S.stats[1];
+                            metric: 1;
+                            filled: true;
+                            VerticalLayout { spacing: 4px; alignment: start; Label { text: "UTILIZATION"; } Big { value: S.util; unit: "%"; } }
+                        }
+                        power-track := Track {
+                            height: 112px;
+                            stat: S.stats[2];
+                            metric: 2;
+                            limit: true;
+                            VerticalLayout {
+                                spacing: 4px;
+                                alignment: start;
+                                Label { text: "POWER"; }
+                                Big { value: S.power; unit: " W"; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    alignment: start;
+                                    Mono { text: "limit"; width: 44px; color: Theme.t.muted; }
+                                    Stepper { value: S.limit; step(d) => { S.step(0, d); } }
+                                    Mono { text: S.limit-pending; color: Theme.t.accent; }
+                                }
+                                Label { text: "OR DRAG THE ORANGE LINE"; font-size: 9px; }
+                            }
+                        }
+                        Track {
+                            height: 112px;
+                            stat: S.stats[3];
+                            metric: 3;
+                            caption: "GRAPHICS";
+                            VerticalLayout {
+                                spacing: 4px;
+                                alignment: start;
+                                Label { text: "CLOCKS"; }
+                                Big { value: S.gclk; unit: " MHz"; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    alignment: start;
+                                    Mono { text: "gfx"; width: 44px; color: Theme.t.muted; }
+                                    Stepper { value: S.goff; step(d) => { S.step(1, d); } }
+                                    Mono { text: S.goff-pending; color: Theme.t.accent; }
+                                }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    alignment: start;
+                                    Mono { text: "mem"; width: 44px; color: Theme.t.muted; }
+                                    Stepper { value: S.moff; step(d) => { S.step(2, d); } }
+                                    Mono { text: S.moff-pending; color: Theme.t.accent; }
+                                }
+                            }
+                        }
+                        FanTrack {
+                            min-height: S.curve-open ? 150px : 96px;
+                            max-height: S.curve-open ? 100000px : 96px;
+                            vertical-stretch: 1;
+                            stat: S.stats[4];
+                            Left { VerticalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+                                spacing: 4px;
+                                alignment: start;
+                                HorizontalLayout {
+                                    Label { text: "FANS"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Rectangle {
+                                        width: cl.preferred-width;
+                                        cl := Label { text: S.curve-open ? "HIDE CURVE" : "EDIT CURVE"; color: Theme.t.accent; }
+                                        TouchArea { clicked => { S.toggle-curve(); } }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Mono { text: S.fan; font-size: 22px; vertical-alignment: bottom; }
+                                    Mono { text: "% · " + S.rpm; font-size: 12px; color: Theme.t.muted; vertical-alignment: bottom; }
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Rectangle {
+                                        border-width: 1px;
+                                        border-color: Theme.t.text;
+                                        height: 22px;
+                                        HorizontalLayout {
+                                            padding: 1px;
+                                            for m[i] in ["AUTO", "FIXED", "CURVE"]: HorizontalLayout {
+                                                if i > 0: Rectangle { width: 1px; background: Theme.t.text; }
+                                                Hit { text: m; font-size: 10px; pad: 6px; spacing: 0.6px; on: i == S.fan-mode; clicked => { S.set-fan-mode(i); } }
+                                            }
+                                        }
+                                    }
+                                }
+                                if S.paused: Mono { text: "Fan curve paused after 3 failed fan writes"; font-size: 10px; color: Theme.t.danger; }
+                            }
+                            }
+                            fan-mid := HorizontalLayout {
+                                spacing: 8px;
+                                padding: 6px;
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                if S.curve-open: Rectangle {
+                                    horizontal-stretch: 1;
+                                    // curve editor
+                                    plot := Rectangle {
+                                        x: 30px;
+                                        y: 8px;
+                                        width: parent.width - 44px;
+                                        height: parent.height - 26px;
+                                        property <int> drag: -1;
+                                        property <int> hover: -1;
+                                        for i in 7: Rectangle { x: round(parent.width * (i + 1) / 8 / 1px) * 1px; width: 1px; background: Theme.t.grid; }
+                                        for i in 4: Rectangle { y: round(parent.height * (i + 1) / 5 / 1px) * 1px; height: 1px; background: Theme.t.grid; }
+                                        if S.curve-pending: Path {
+                                            width: 100%; height: 100%;
+                                            viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+                                            commands: S.curve-line(true, self.width / 1px, self.height / 1px, S.rev);
+                                            stroke: Theme.t.muted; stroke-width: 1.2px;
+                                        }
+                                        Path {
+                                            width: 100%; height: 100%;
+                                            viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+                                            commands: S.curve-fill(self.width / 1px, self.height / 1px, S.rev);
+                                            fill: Theme.t.line.with-alpha(0.1);
+                                        }
+                                        Path {
+                                            width: 100%; height: 100%;
+                                            viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+                                            commands: S.curve-line(false, self.width / 1px, self.height / 1px, S.rev);
+                                            stroke: S.curve-pending ? Theme.t.accent : Theme.t.line; stroke-width: 2px;
+                                            stroke-line-join: round;
+                                        }
+                                        for p[i] in S.curve: Rectangle {
+                                            x: parent.width * p.x - 4px;
+                                            y: parent.height * p.y - 4px;
+                                            width: 8px; height: 8px;
+                                            background: Theme.t.panel;
+                                            border-width: 1.8px;
+                                            border-color: (i == drag || i == hover || S.curve-pending) ? Theme.t.accent : Theme.t.line;
+                                        }
+                                        // live marker
+                                        Path {
+                                            width: 100%; height: 100%;
+                                            viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+                                            commands: S.dash-v(round(parent.width * S.now.x / 1px), self.height / 1px);
+                                            stroke: Theme.t.text.with-alpha(0.8); stroke-width: 1px;
+                                        }
+                                        Rectangle {
+                                            x: parent.width * S.now.x - 4px; y: parent.height * S.now.y - 4px;
+                                            width: 8px; height: 8px; border-radius: 4px;
+                                            background: Theme.t.text; border-width: 1.5px; border-color: Theme.t.bg;
+                                        }
+                                        Mono { x: min(parent.width * S.now.x + 8px, parent.width - self.width); y: 2px; text: S.now-label; font-size: 10px; }
+                                        if hover >= 0 || drag >= 0: Mono {
+                                            property <Pt> q: S.curve[max(drag, hover)];
+                                            x: min(parent.width * q.x + 8px, parent.width - self.width); y: parent.height * q.y - 18px;
+                                            text: S.curve-label(max(drag, hover), S.rev);
+                                            font-size: 10px;
+                                        }
+                                        for tt in 5: Label { x: parent.width * tt / 4 - 8px; y: parent.height + 3px; text: (20 + tt * 20) + "°"; letter-spacing: 0; }
+                                        for f in 3: Label { x: -30px; y: parent.height * (1 - f / 2) - 6px; text: (f * 50) + "%"; letter-spacing: 0; }
+                                        changed width => { root.curve-x = self.absolute-position.x; root.curve-y = self.absolute-position.y; root.curve-w = self.width; root.curve-h = self.height; }
+                                        changed height => { root.curve-x = self.absolute-position.x; root.curve-y = self.absolute-position.y; root.curve-w = self.width; root.curve-h = self.height; }
+                                        cta2 := TouchArea {
+                                            mouse-cursor: (hover >= 0 || drag >= 0) ? pointer : default;
+                                            pointer-event(e) => {
+                                                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                                                    drag = S.curve-hit(self.mouse-x / self.width, self.mouse-y / self.height, self.width / self.height);
+                                                }
+                                                if (e.kind == PointerEventKind.up) { drag = -1; }
+                                            }
+                                            moved => {
+                                                if (drag >= 0) {
+                                                    S.curve-drag(drag, self.mouse-x / self.width, self.mouse-y / self.height);
+                                                } else {
+                                                    hover = S.curve-hit(self.mouse-x / self.width, self.mouse-y / self.height, self.width / self.height);
+                                                }
+                                            }
+                                            changed has-hover => { if (!self.has-hover) { hover = -1; } }
+                                        }
+                                    }
+                                    Label { x: 36px; y: 2px; text: "CURVE · TEMP → FAN"; font-size: 9px; letter-spacing: 1.1px; }
+                                }
+                                Chart { metric: 4; caption: "FAN SPEED"; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------------- status bar ----------------
+            Rectangle {
+                height: 24px;
+                background: Theme.t.chrome;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 16px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        horizontal-stretch: 0;
+                        Rectangle { width: 6px; height: 6px; y: 9px; background: Theme.t.ok; }
+                        Mono { text: S.daemon; font-size: 10px; letter-spacing: 0.6px; color: Theme.t.chrome-muted; }
+                    }
+                    Mono { text: "AUTO: CYBERPUNK 2077 → QUIET"; font-size: 10px; letter-spacing: 0.6px; color: Theme.t.chrome-muted; }
+                    if S.pending > 0: Mono { text: "EDIT HOLD"; font-size: 10px; letter-spacing: 0.6px; color: Theme.t.accent; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Mono { text: S.problems; font-size: 10px; letter-spacing: 0.6px; color: Theme.t.accent; }
+                }
+            }
+        }
+
+        // ---------------- command palette (text input) ----------------
+        if S.palette-open: Rectangle {
+            x: (parent.width - 520px) / 2;
+            y: 60px;
+            width: 520px;
+            height: pcol.preferred-height;
+            Rectangle { x: 6px; y: 6px; background: Theme.t.text.with-alpha(0.9); }
+            Rectangle { background: Theme.t.panel2; border-width: 1px; border-color: Theme.t.text; }
+            TouchArea { }
+            pcol := VerticalLayout {
+                padding: 1px;
+                Rectangle {
+                    height: 34px;
+                    FocusScope {
+                    capture-key-pressed(e) => {
+                        if (e.text == Key.DownArrow) { S.palette-sel = min(S.palette-sel + 1, S.commands.length - 1); return accept; }
+                        if (e.text == Key.UpArrow) { S.palette-sel = max(S.palette-sel - 1, 0); return accept; }
+                        if (e.text == Key.Escape) { S.close-palette(); return accept; }
+                        reject
+                    }
+                    pinput := TextInput {
+                        init => { self.focus(); }
+                        x: 12px;
+                        width: parent.width - 24px;
+                        font-family: F.mono;
+                        font-size: 12px;
+                        color: Theme.t.text;
+                        selection-background-color: Theme.t.accent.with-alpha(0.3);
+                        vertical-alignment: center;
+                        edited => { S.palette-sel = 0; S.palette-query(self.text); }
+                        accepted => { S.palette-run(S.palette-sel); }
+                    }
+                    }
+                    if pinput.text == "": Mono { x: 12px; text: "Type a command…"; color: Theme.t.muted; font-size: 12px; }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.t.border; }
+                }
+                for c[i] in S.commands: Rectangle {
+                    height: 24px;
+                    background: i == S.palette-sel ? Theme.t.text : ita.has-hover ? Theme.t.hover : transparent;
+                    Text { x: 10px; text: c; color: i == S.palette-sel ? Theme.t.panel : Theme.t.text; vertical-alignment: center; height: parent.height; }
+                    ita := TouchArea { clicked => { S.palette-run(i); } }
+                }
+            }
+        }
+    }
+}
+
