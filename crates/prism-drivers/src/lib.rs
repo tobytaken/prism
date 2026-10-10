@@ -16,14 +16,14 @@ use crate::ubuntu::ubuntu_plans;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum DriverAction {
     InstallRecommended,
     UpdateInstalled,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum DriverJobStatus {
     Queued,
     Running,
@@ -42,7 +42,6 @@ impl DriverJobStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct DriverPlan {
     pub id: String,
     pub action: DriverAction,
@@ -55,7 +54,6 @@ pub struct DriverPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct DriverJob {
     pub id: String,
     pub status: DriverJobStatus,
@@ -69,7 +67,6 @@ pub struct DriverJob {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct DriverStatusResponse {
     pub host: DriverHostInfo,
     pub nvidia: NvidiaDriverStatus,
@@ -78,13 +75,11 @@ pub struct DriverStatusResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct StartDriverActionRequest {
     pub action: DriverAction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct DriverJobRequest {
     pub job_id: String,
 }

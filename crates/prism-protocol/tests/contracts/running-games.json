@@ -5,10 +5,10 @@
       {
         "game": {
           "kind": "steam",
-          "appId": 570
+          "app_id": 570
         },
         "pid": 123,
-        "startTimeTicks": 420
+        "start_time_ticks": 420
       }
     ]
   },
@@ -21,7 +21,7 @@
           "path": "/games/game.exe"
         },
         "pid": 456,
-        "startTimeTicks": 500
+        "start_time_ticks": 500
       }
     ]
   },

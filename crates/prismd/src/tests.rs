@@ -241,15 +241,15 @@ fn a_non_admin_socket_peer_is_rejected_identically_for_sessions_and_one_shot_req
 }
 
 fn apply_profile_request(settings: serde_json::Value) -> serde_json::Value {
-    json!({ "type": "apply_profile", "payload": { "gpuId": "GPU-123", "settings": settings } })
+    json!({ "type": "apply_profile", "payload": { "gpu_id": "GPU-123", "settings": settings } })
 }
 
 #[test]
 fn profile_validation_blocks_all_writes_when_an_included_setting_is_unsupported() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![observed_gpu()]));
     let result = daemon.send_json(apply_profile_request(json!({
-        "powerLimitWatts": { "kind": "value", "value": 450 },
-        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+        "power_limit_watts": { "kind": "value", "value": 450 },
+        "memory_offset_mhz": { "kind": "value", "value": 80 }
     })));
     assert_eq!(result["payload"]["power"]["status"], "unattempted");
     assert_eq!(result["payload"]["memory"]["status"], "unattempted");
@@ -298,9 +298,9 @@ fn profiles_validate_fresh_support_ranges_and_stable_ownership_before_any_write(
         }
         let before = daemon.performance();
         let result = daemon.send_json(apply_profile_request(json!({
-            "powerLimitWatts": { "kind": "value", "value": 450 },
-            "graphicsOffsetMHz": { "kind": "value", "value": 150 },
-            "memoryOffsetMHz": { "kind": "value", "value": 80 }
+            "power_limit_watts": { "kind": "value", "value": 450 },
+            "graphics_offset_mhz": { "kind": "value", "value": 150 },
+            "memory_offset_mhz": { "kind": "value", "value": 80 }
         })));
         for setting in ["power", "graphics", "memory"] {
             assert_eq!(
@@ -321,7 +321,7 @@ fn profiles_validate_fresh_support_ranges_and_stable_ownership_before_any_write(
 fn profile_application_is_blocked_while_its_gpu_is_absent_and_works_once_it_returns() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let request =
-        apply_profile_request(json!({ "powerLimitWatts": { "kind": "value", "value": 450 } }));
+        apply_profile_request(json!({ "power_limit_watts": { "kind": "value", "value": 450 } }));
 
     daemon.gpus.depart("GPU-123");
     let result = daemon.send_json(request.clone());
@@ -353,8 +353,8 @@ fn profile_application_changes_only_included_values_on_its_owner() {
     let (other, before) = (initial.gpus[0].clone(), initial.gpus[1].clone());
 
     let result = daemon.send_json(apply_profile_request(json!({
-        "powerLimitWatts": { "kind": "value", "value": 450 },
-        "graphicsOffsetMHz": { "kind": "value", "value": -150 }
+        "power_limit_watts": { "kind": "value", "value": 450 },
+        "graphics_offset_mhz": { "kind": "value", "value": -150 }
     })));
     assert_eq!(result["payload"]["power"]["status"], "succeeded");
     assert_eq!(result["payload"]["graphics"]["status"], "succeeded");
@@ -379,9 +379,9 @@ fn out_of_range_profile_values_propose_every_bound_correction_without_any_write(
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
     let before = daemon.performance();
     let result = daemon.send_json(apply_profile_request(json!({
-        "powerLimitWatts": { "kind": "value", "value": 300 },
-        "graphicsOffsetMHz": { "kind": "value", "value": -150 },
-        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+        "power_limit_watts": { "kind": "value", "value": 300 },
+        "graphics_offset_mhz": { "kind": "value", "value": -150 },
+        "memory_offset_mhz": { "kind": "value", "value": 80 }
     })));
     let contract: serde_json::Value = serde_json::from_str(include_str!(
         "../../prism-protocol/tests/contracts/profile-corrections.json"
@@ -396,9 +396,9 @@ fn out_of_range_profile_values_propose_every_bound_correction_without_any_write(
     assert_eq!(daemon.performance(), before);
 
     let result = daemon.send_json(apply_profile_request(json!({
-        "powerLimitWatts": { "kind": "value", "value": 280 },
-        "graphicsOffsetMHz": { "kind": "value", "value": -100 },
-        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+        "power_limit_watts": { "kind": "value", "value": 280 },
+        "graphics_offset_mhz": { "kind": "value", "value": -100 },
+        "memory_offset_mhz": { "kind": "value", "value": 80 }
     })));
     for setting in ["power", "graphics", "memory"] {
         assert_eq!(result["payload"][setting]["status"], "succeeded");
@@ -429,8 +429,8 @@ fn range_corrections_are_not_offered_when_another_included_setting_blocks_applic
         let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
         let before = daemon.performance();
         let result = daemon.send_json(apply_profile_request(json!({
-            "powerLimitWatts": { "kind": "value", "value": 450 },
-            "memoryOffsetMHz": { "kind": "value", "value": 80 }
+            "power_limit_watts": { "kind": "value", "value": 450 },
+            "memory_offset_mhz": { "kind": "value", "value": 80 }
         })));
         assert!(result["payload"].get("corrections").is_none(), "{blocker}");
         assert_eq!(result["payload"]["power"]["status"], "unattempted");
@@ -446,9 +446,9 @@ fn profile_application_reports_partial_failure_and_validates_retries() {
         .gpus
         .fail("GPU-123", Setter::GraphicsOffset, "Graphics write denied");
     let result = daemon.send_json(apply_profile_request(json!({
-        "powerLimitWatts": { "kind": "value", "value": 450 },
-        "graphicsOffsetMHz": { "kind": "value", "value": 150 },
-        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+        "power_limit_watts": { "kind": "value", "value": 450 },
+        "graphics_offset_mhz": { "kind": "value", "value": 150 },
+        "memory_offset_mhz": { "kind": "value", "value": 80 }
     })));
     assert_eq!(result["payload"]["power"]["status"], "succeeded");
     assert_eq!(result["payload"]["graphics"]["status"], "failed");
@@ -466,8 +466,8 @@ fn profile_application_reports_partial_failure_and_validates_retries() {
         .gpus
         .update("GPU-123", |gpu| gpu.clocks.memory.max_offset_mhz = Some(50));
     let retry = apply_profile_request(json!({
-        "graphicsOffsetMHz": { "kind": "value", "value": 150 },
-        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+        "graphics_offset_mhz": { "kind": "value", "value": 150 },
+        "memory_offset_mhz": { "kind": "value", "value": 80 }
     }));
     let rejected = daemon.send_json(retry.clone());
     assert_eq!(rejected["payload"]["graphics"]["status"], "unattempted");
@@ -500,11 +500,11 @@ fn apply_profile_settings(daemon: &Harness, settings: serde_json::Value) -> serd
 fn explicit_defaults_follow_the_currently_reported_power_default_while_numbers_stay_fixed() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let defaults = json!({
-        "powerLimitWatts": { "kind": "default" },
-        "graphicsOffsetMHz": { "kind": "default" },
-        "memoryOffsetMHz": { "kind": "default" }
+        "power_limit_watts": { "kind": "default" },
+        "graphics_offset_mhz": { "kind": "default" },
+        "memory_offset_mhz": { "kind": "default" }
     });
-    let fixed = json!({ "powerLimitWatts": { "kind": "value", "value": 575 } });
+    let fixed = json!({ "power_limit_watts": { "kind": "value", "value": 575 } });
     let result = apply_profile_settings(&daemon, defaults.clone());
     for setting in ["power", "graphics", "memory"] {
         assert_eq!(result[setting]["status"], "succeeded", "{setting}");
@@ -560,9 +560,9 @@ fn unavailable_or_out_of_range_defaults_block_every_included_instruction_before_
         let result = apply_profile_settings(
             &daemon,
             json!({
-                "powerLimitWatts": { "kind": "default" },
-                "graphicsOffsetMHz": { "kind": "value", "value": 150 },
-                "memoryOffsetMHz": { "kind": "default" }
+                "power_limit_watts": { "kind": "default" },
+                "graphics_offset_mhz": { "kind": "value", "value": 150 },
+                "memory_offset_mhz": { "kind": "default" }
             }),
         );
         // A default has no saved value to correct, so no range review is offered.
@@ -591,16 +591,16 @@ fn range_review_proposes_numeric_corrections_alongside_applicable_defaults() {
     let result = apply_profile_settings(
         &daemon,
         json!({
-            "powerLimitWatts": { "kind": "default" },
-            "graphicsOffsetMHz": { "kind": "value", "value": 150 }
+            "power_limit_watts": { "kind": "default" },
+            "graphics_offset_mhz": { "kind": "value", "value": 150 }
         }),
     );
     assert_eq!(
         result["corrections"],
         json!([{
-            "setting": "graphicsOffsetMHz",
-            "savedValue": 150,
-            "proposedValue": 100,
+            "setting": "graphics_offset_mhz",
+            "saved_value": 150,
+            "proposed_value": 100,
             "bound": "maximum"
         }])
     );
@@ -616,7 +616,7 @@ fn omitted_settings_need_no_default_resolution() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
     let result = apply_profile_settings(
         &daemon,
-        json!({ "graphicsOffsetMHz": { "kind": "default" } }),
+        json!({ "graphics_offset_mhz": { "kind": "default" } }),
     );
     assert_eq!(result["graphics"]["status"], "succeeded");
     assert!(result["power"].is_null());
@@ -629,10 +629,10 @@ fn omitted_settings_need_no_default_resolution() {
 #[test]
 fn profile_settings_round_trip_omitted_numeric_and_default_instructions() {
     let request: ApplyGpuProfileRequest = serde_json::from_value(json!({
-        "gpuId": "GPU-123",
+        "gpu_id": "GPU-123",
         "settings": {
-            "powerLimitWatts": { "kind": "value", "value": 575 },
-            "graphicsOffsetMHz": { "kind": "default" }
+            "power_limit_watts": { "kind": "value", "value": 575 },
+            "graphics_offset_mhz": { "kind": "default" }
         }
     }))
     .unwrap();
@@ -648,8 +648,8 @@ fn profile_settings_round_trip_omitted_numeric_and_default_instructions() {
     assert_eq!(
         serde_json::to_value(&request).unwrap()["settings"],
         json!({
-            "powerLimitWatts": { "kind": "value", "value": 575 },
-            "graphicsOffsetMHz": { "kind": "default" }
+            "power_limit_watts": { "kind": "value", "value": 575 },
+            "graphics_offset_mhz": { "kind": "default" }
         })
     );
 }
@@ -852,7 +852,7 @@ fn a_write_blocked_on_one_gpu_delays_no_other_gpu_and_no_reads() {
     };
     assert!(fast.success);
     let profile = daemon.send_json(json!({ "type": "apply_profile", "payload": {
-        "gpuId": "GPU-fast", "settings": { "graphicsOffsetMHz": { "kind": "value", "value": 90 } }
+        "gpu_id": "GPU-fast", "settings": { "graphics_offset_mhz": { "kind": "value", "value": 90 } }
     }}));
     assert_eq!(profile["payload"]["graphics"]["status"], "succeeded");
     assert!(matches!(
@@ -998,7 +998,7 @@ fn assert_unhealthy(daemon: &Harness, expected: TuningStoreProblem) {
 // tuning works and the problem is reported. Startup is suspended.
 #[test]
 fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_working() {
-    let corrupt: &[u8] = b"{\"schemaVersion\": 1, \"profiles\": [tru";
+    let corrupt: &[u8] = b"{\"schema_version\": 1, \"profiles\": [tru";
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[(TUNING_STORE, corrupt)],
@@ -1021,7 +1021,7 @@ fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_wo
     let offsets = serde_json::to_value(offsets).unwrap();
     assert_eq!(offsets["payload"]["graphics"]["status"], "succeeded");
     let profile = daemon.send_json(apply_profile_request(json!({
-        "memoryOffsetMHz": { "kind": "value", "value": 80 }
+        "memory_offset_mhz": { "kind": "value", "value": 80 }
     })));
     assert_eq!(profile["payload"]["memory"]["status"], "succeeded");
     let gpu = daemon.gpus.gpu("GPU-123");
@@ -1043,7 +1043,7 @@ fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_wo
 
 #[test]
 fn a_tuning_store_from_a_newer_schema_version_is_treated_as_unreadable_and_preserved() {
-    let newer: &[u8] = b"{\"schemaVersion\": 99, \"users\": []}";
+    let newer: &[u8] = b"{\"schema_version\": 99, \"users\": []}";
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[(TUNING_STORE, newer)],
@@ -1066,14 +1066,14 @@ fn a_tuning_store_from_a_newer_schema_version_is_treated_as_unreadable_and_prese
 
 #[test]
 fn a_store_write_interrupted_by_a_crash_leaves_the_previous_document_in_use() {
-    let previous: &[u8] = b"{\"schemaVersion\": 6}";
+    let previous: &[u8] = b"{\"schema_version\": 6}";
     let daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[
             (TUNING_STORE, previous),
             (
                 &format!("{TUNING_STORE}{STAGED_FILE_SUFFIX}"),
-                b"{\"schemaVersion\": 1, \"pro",
+                b"{\"schema_version\": 1, \"pro",
             ),
         ],
     );
@@ -1086,4 +1086,13 @@ fn a_store_write_interrupted_by_a_crash_leaves_the_previous_document_in_use() {
         daemon.persistent_file(TUNING_STORE).as_deref(),
         Some(previous)
     );
+}
+
+#[test]
+fn the_shipped_daemon_config_names_its_admin_group() {
+    let config: super::PrismDaemonConfigFile =
+        toml::from_str(include_str!("../../../contrib/prismd.toml")).unwrap();
+
+    assert_eq!(config.admin_group.as_deref(), Some("wheel"));
+    assert_eq!(config.admin_user, None);
 }

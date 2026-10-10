@@ -2,48 +2,48 @@
   "gpus": [
     {
       "id": "GPU-123",
-      "stableId": "GPU-123",
+      "stable_id": "GPU-123",
       "vendor": "nvidia",
       "name": "RTX Test",
       "architecture": null,
-      "busId": null,
+      "bus_id": null,
       "power": {
         "support": "supported",
         "reason": null,
-        "currentValueError": "Unable to read configured power limit: GPU is lost",
-        "currentDrawWatts": 312,
-        "currentLimitWatts": null,
-        "defaultLimitWatts": 575,
-        "enforcedLimitWatts": 475,
-        "minLimitWatts": 300,
-        "maxLimitWatts": 600
+        "current_value_error": "Unable to read configured power limit: GPU is lost",
+        "current_draw_watts": 312,
+        "current_limit_watts": null,
+        "default_limit_watts": 575,
+        "enforced_limit_watts": 475,
+        "min_limit_watts": 300,
+        "max_limit_watts": 600
       },
       "clocks": {
         "graphics": {
           "support": "unknown",
           "reason": "Unable to query graphics clock offset: insufficient permission",
-          "currentValueError": null,
-          "currentOffsetMHz": null,
-          "minOffsetMHz": null,
-          "maxOffsetMHz": null
+          "current_value_error": null,
+          "current_offset_mhz": null,
+          "min_offset_mhz": null,
+          "max_offset_mhz": null
         },
         "memory": {
           "support": "unsupported",
           "reason": "Memory clock offset is not supported",
-          "currentValueError": null,
-          "currentOffsetMHz": null,
-          "minOffsetMHz": null,
-          "maxOffsetMHz": null
+          "current_value_error": null,
+          "current_offset_mhz": null,
+          "min_offset_mhz": null,
+          "max_offset_mhz": null
         }
       },
       "cooling": {
-        "isSupported": false,
-        "unsupportedReason": "No fans",
-        "fanCount": 0,
+        "is_supported": false,
+        "unsupported_reason": "No fans",
+        "fan_count": 0,
         "fans": [],
-        "maxOperatingTemperatureC": null,
-        "maxOperatingTemperatureReason": "This GPU or driver doesn't report a maximum operating temperature.",
-        "curveSupport": {
+        "max_operating_temperature_c": null,
+        "max_operating_temperature_reason": "This GPU or driver doesn't report a maximum operating temperature.",
+        "curve_support": {
           "status": "unavailable",
           "reason": "Fan curves need controllable fans. No fans"
         },
@@ -51,22 +51,22 @@
           "revision": 0,
           "applied": null,
           "requested": [],
-          "curveTemperatureC": null,
+          "curve_temperature_c": null,
           "suspension": null,
           "recovery": null
         }
       },
       "telemetry": {
-        "powerDrawWatts": 312,
-        "coreClockMHz": null,
-        "memoryClockMHz": null,
-        "fanSpeedPercent": null,
-        "voltageMillivolts": null,
-        "temperatureC": null,
-        "gpuUtilizationPercent": null,
-        "memoryUsedMiB": null,
-        "memoryTotalMiB": null,
-        "performanceState": null
+        "power_draw_watts": 312,
+        "core_clock_mhz": null,
+        "memory_clock_mhz": null,
+        "fan_speed_percent": null,
+        "voltage_millivolts": null,
+        "temperature_c": null,
+        "gpu_utilization_percent": null,
+        "memory_used_mib": null,
+        "memory_total_mib": null,
+        "performance_state": null
       }
     }
   ],

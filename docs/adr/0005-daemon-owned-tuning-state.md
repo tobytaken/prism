@@ -4,6 +4,8 @@ For [Define profile persistence, compatibility, and failure contracts](https://g
 
 _Amended 2026-10-10:_ [#121](https://github.com/tobytaken/prism-electron/issues/121) removed the one-time profile-file import. Prism was never released, so there are no profile files to carry over.
 
+_Amended 2026-10-10:_ [#123](https://github.com/tobytaken/prism-electron/issues/123) changed the tuning store's keys to match the daemon's Rust field names, without a migration. A store written before that change is reported unhealthy and preserved untouched, as for any store the daemon can't read; since Prism was never released, only development stores are affected, and they are deleted by hand.
+
 Daemon state is split by how long it must live:
 
 - **Persistent** (survives reboots): profiles, associations, opt-ins, startup behavior and startup profiles, current-profile references, last applied tuning values, explicit automatic switching pauses, and the record used to detect an unclean shutdown.

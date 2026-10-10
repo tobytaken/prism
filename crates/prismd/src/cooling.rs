@@ -1280,7 +1280,7 @@ fn unattempted(fans: &[u32], message: &str) -> CoolingApplication {
 /// after the daemon stops knows which fans to return to automatic cooling, which curves the next
 /// daemon of this boot may resume, and which suspensions to keep reporting.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct CoolingRecord {
     schema_version: u64,
     boot_id: String,
@@ -1302,7 +1302,7 @@ impl CoolingRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct RecordedGpu {
     #[serde(default)]
     revision: u64,
@@ -1323,7 +1323,7 @@ struct RecordedGpu {
 /// Curve fans that were following their curve, healthy, when the daemon stopped, and how each
 /// returned to automatic cooling meanwhile.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct InterruptedCurves {
     restoration: Vec<FanRestoration>,
 }

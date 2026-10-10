@@ -15,7 +15,7 @@ pub const FULL_SPEED_MARGIN_C: i64 = 5;
 
 /// A requested fan speed at a GPU temperature, in whole degrees Celsius and whole percent.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct FanCurvePoint {
     pub temperature_c: i64,
     pub speed_percent: i64,
@@ -32,9 +32,8 @@ impl FanCurvePoint {
 
 /// Whether one shared curve can control every fan on a GPU, and within which limits.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FanCurveSupport {
-    #[serde(rename_all = "camelCase")]
     Available {
         /// The highest temperature a point can use.
         max_operating_temperature_c: i64,
@@ -53,7 +52,7 @@ pub enum FanCurveSupport {
 
 /// A reason a curve can't be used; `point` is the zero-based index of the point at fault.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct FanCurveProblem {
     pub point: Option<usize>,
     pub message: String,
@@ -77,7 +76,7 @@ impl FanCurveProblem {
 
 /// A request to check a draft shared curve against a GPU's current limits. Nothing is applied.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct PreviewFanCurveRequest {
     pub gpu_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,7 +86,7 @@ pub struct PreviewFanCurveRequest {
 
 /// What keeps a previewed curve from being usable; no problems means it is valid.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct FanCurvePreview {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub support: Option<FanCurveSupport>,

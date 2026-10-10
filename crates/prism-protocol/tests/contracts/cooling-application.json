@@ -1,33 +1,33 @@
 {
   "request": {
-    "gpuId": "GPU-123",
+    "gpu_id": "GPU-123",
     "configuration": {
       "arrangement": "shared",
       "setting": {
         "mode": "curve",
         "points": [
           {
-            "temperatureC": 45,
-            "speedPercent": 20
+            "temperature_c": 45,
+            "speed_percent": 20
           },
           {
-            "temperatureC": 65,
-            "speedPercent": 60
+            "temperature_c": 65,
+            "speed_percent": 60
           },
           {
-            "temperatureC": 75,
-            "speedPercent": 80
+            "temperature_c": 75,
+            "speed_percent": 80
           },
           {
-            "temperatureC": 85,
-            "speedPercent": 100
+            "temperature_c": 85,
+            "speed_percent": 100
           }
         ]
       }
     },
-    "expectedRevision": 0
+    "expected_revision": 0
   },
-  "requestedAtTemperature": [
+  "requested_at_temperature": [
     [30, 20],
     [45, 20],
     [66, 62],
@@ -42,14 +42,14 @@
     },
     "fans": [
       {
-        "fanIndex": 0,
+        "fan_index": 0,
         "outcome": {
           "status": "succeeded",
           "error": null
         }
       },
       {
-        "fanIndex": 1,
+        "fan_index": 1,
         "outcome": {
           "status": "failed",
           "error": "Unknown error"
@@ -66,54 +66,54 @@
           "mode": "curve",
           "points": [
             {
-              "temperatureC": 45,
-              "speedPercent": 20
+              "temperature_c": 45,
+              "speed_percent": 20
             },
             {
-              "temperatureC": 85,
-              "speedPercent": 100
+              "temperature_c": 85,
+              "speed_percent": 100
             }
           ]
         }
       },
       "requested": [
         {
-          "fanIndex": 0,
-          "speedPercent": 72
+          "fan_index": 0,
+          "speed_percent": 72
         },
         {
-          "fanIndex": 1,
-          "speedPercent": 72
+          "fan_index": 1,
+          "speed_percent": 72
         }
       ],
-      "curveTemperatureC": 71,
+      "curve_temperature_c": 71,
       "suspension": null,
       "revision": 1,
       "recovery": null
     },
     {
       "applied": {
-        "arrangement": "perFan",
+        "arrangement": "per_fan",
         "fans": [
           {
-            "fanIndex": 0,
+            "fan_index": 0,
             "setting": {
               "mode": "fixed",
-              "speedPercent": 55
+              "speed_percent": 55
             }
           },
           {
-            "fanIndex": 1,
+            "fan_index": 1,
             "setting": {
               "mode": "curve",
               "points": [
                 {
-                  "temperatureC": 45,
-                  "speedPercent": 20
+                  "temperature_c": 45,
+                  "speed_percent": 20
                 },
                 {
-                  "temperatureC": 85,
-                  "speedPercent": 100
+                  "temperature_c": 85,
+                  "speed_percent": 100
                 }
               ]
             }
@@ -121,12 +121,12 @@
         ]
       },
       "requested": [],
-      "curveTemperatureC": null,
+      "curve_temperature_c": null,
       "suspension": {
         "reason": "Fan 2 couldn't be set to 90%: Unknown error",
         "restoration": [
           {
-            "fanIndex": 1,
+            "fan_index": 1,
             "status": "failed",
             "detail": "Insufficient permissions"
           }
@@ -143,30 +143,30 @@
           "mode": "curve",
           "points": [
             {
-              "temperatureC": 45,
-              "speedPercent": 20
+              "temperature_c": 45,
+              "speed_percent": 20
             },
             {
-              "temperatureC": 85,
-              "speedPercent": 100
+              "temperature_c": 85,
+              "speed_percent": 100
             }
           ]
         }
       },
       "requested": [
         {
-          "fanIndex": 0,
-          "speedPercent": 90
+          "fan_index": 0,
+          "speed_percent": 90
         }
       ],
-      "curveTemperatureC": 80,
+      "curve_temperature_c": 80,
       "suspension": null,
       "revision": 3,
       "recovery": {
         "status": "resumed",
         "fans": [
           {
-            "fanIndex": 0,
+            "fan_index": 0,
             "outcome": {
               "status": "succeeded",
               "error": null
@@ -182,24 +182,24 @@
           "mode": "curve",
           "points": [
             {
-              "temperatureC": 45,
-              "speedPercent": 20
+              "temperature_c": 45,
+              "speed_percent": 20
             },
             {
-              "temperatureC": 85,
-              "speedPercent": 100
+              "temperature_c": 85,
+              "speed_percent": 100
             }
           ]
         }
       },
       "requested": [],
-      "curveTemperatureC": null,
+      "curve_temperature_c": null,
       "suspension": {
         "kind": "fault",
         "reason": "After the Prism daemon restarted, the curve couldn't resume. Fan 1: Unknown error",
         "restoration": [
           {
-            "fanIndex": 0,
+            "fan_index": 0,
             "status": "restored",
             "detail": null
           }
@@ -207,10 +207,10 @@
       },
       "revision": 3,
       "recovery": {
-        "status": "retryRequired",
+        "status": "retry_required",
         "fans": [
           {
-            "fanIndex": 0,
+            "fan_index": 0,
             "outcome": {
               "status": "failed",
               "error": "Unknown error"
@@ -222,7 +222,7 @@
     {
       "applied": null,
       "requested": [],
-      "curveTemperatureC": null,
+      "curve_temperature_c": null,
       "suspension": null,
       "revision": 0,
       "recovery": null

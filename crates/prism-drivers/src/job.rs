@@ -14,7 +14,6 @@ use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 const LOG_TAIL_LIMIT: usize = 80;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
 struct DriverJobFile {
     jobs: Vec<DriverJob>,
 }
@@ -580,13 +579,13 @@ mod tests {
             serde_json::json!({ "jobs": [{
                 "id": "driver-1",
                 "status": "running",
-                "action": "installRecommended",
-                "startedAtUnixMs": 1,
-                "finishedAtUnixMs": null,
-                "currentStep": "Installing",
-                "logTail": [],
+                "action": "install_recommended",
+                "started_at_unix_ms": 1,
+                "finished_at_unix_ms": null,
+                "current_step": "Installing",
+                "log_tail": [],
                 "error": null,
-                "requiresReboot": true
+                "requires_reboot": true
             }] })
             .to_string(),
         )

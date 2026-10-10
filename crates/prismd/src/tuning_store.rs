@@ -21,7 +21,7 @@ pub const TUNING_STORE_SCHEMA_VERSION: u64 = 12;
 /// Appended to the document's file name for the new contents of a write in progress.
 pub const STAGED_FILE_SUFFIX: &str = ".tmp";
 
-const SCHEMA_VERSION_KEY: &str = "schemaVersion";
+const SCHEMA_VERSION_KEY: &str = "schema_version";
 
 /// The document as JSON, before it is read as a typed document.
 type RawDocument = serde_json::Map<String, serde_json::Value>;
@@ -55,7 +55,7 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
 
 /// The tuning store's contents.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct TuningDocument {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub automatic_failures: BTreeMap<String, String>,
@@ -84,13 +84,13 @@ pub struct TuningDocument {
 
 /// The unclean-shutdown guard's record: a boot attempted to restore last applied tuning values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct RestoreAttempt {
     pub boot_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct UserState {
     pub uid: u32,
     pub username: String,
@@ -285,7 +285,10 @@ pub(super) fn serialize(document: &TuningDocument) -> Vec<u8> {
     let serde_json::Value::Object(mut contents) = serde_json::to_value(document).unwrap() else {
         unreachable!("the tuning document is a JSON object");
     };
-    contents.insert("schemaVersion".into(), TUNING_STORE_SCHEMA_VERSION.into());
+    contents.insert(
+        SCHEMA_VERSION_KEY.into(),
+        TUNING_STORE_SCHEMA_VERSION.into(),
+    );
     serde_json::to_vec_pretty(&contents).unwrap()
 }
 
@@ -438,7 +441,7 @@ mod tests {
             serde_json::from_slice(&fs::read(store_path(&dir)).unwrap()).unwrap();
         assert_eq!(
             written,
-            serde_json::json!({ "schemaVersion": TUNING_STORE_SCHEMA_VERSION })
+            serde_json::json!({ "schema_version": TUNING_STORE_SCHEMA_VERSION })
         );
         assert_eq!(
             TuningStore::open(store_path(&dir)).health(),
@@ -453,7 +456,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
             &path,
-            br#"{"schemaVersion":11,"switchingPauses":["GPU-paused"]}"#,
+            br#"{"schema_version":11,"switching_pauses":["GPU-paused"]}"#,
         )
         .unwrap();
         let store = TuningStore::open(path.clone());
@@ -473,20 +476,48 @@ mod tests {
             })
             .unwrap();
         let written: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(written["schemaVersion"], TUNING_STORE_SCHEMA_VERSION);
+        assert_eq!(written["schema_version"], TUNING_STORE_SCHEMA_VERSION);
     }
 
     #[test]
     fn an_unhealthy_store_refuses_every_write_and_keeps_its_bytes() {
         for preserved in [
-            &b"{\"schemaVersion\": 1, \"profi"[..],
-            b"{\"schemaVersion\": 99}",
+            &b"{\"schema_version\": 1, \"profi"[..],
+            b"{\"schema_version\": 99}",
         ] {
             let dir = tempfile::tempdir().unwrap();
             fs::create_dir_all(store_path(&dir).parent().unwrap()).unwrap();
             fs::write(store_path(&dir), preserved).unwrap();
             let store = TuningStore::open(store_path(&dir));
 
+            assert!(matches!(
+                store.update(|_| {}),
+                Err(TuningStoreWriteError::Unhealthy)
+            ));
+            assert_eq!(fs::read(store_path(&dir)).unwrap(), preserved);
+        }
+    }
+
+    #[test]
+    fn a_store_written_with_camel_case_keys_is_unhealthy_and_preserved() {
+        // Stores from before the keys matched Rust field names aren't migrated.
+        for preserved in [
+            &br#"{"schemaVersion": 12, "startupBehavior": "restoreLastApplied"}"#[..],
+            // Even under the current schema version key, camelCase fields are unknown.
+            br#"{"schema_version": 12, "startupBehavior": "restoreLastApplied"}"#,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::create_dir_all(store_path(&dir).parent().unwrap()).unwrap();
+            fs::write(store_path(&dir), preserved).unwrap();
+            let store = TuningStore::open(store_path(&dir));
+
+            assert!(matches!(
+                store.health(),
+                TuningStoreHealth::Unhealthy {
+                    problem: TuningStoreProblem::Unreadable,
+                    ..
+                }
+            ));
             assert!(matches!(
                 store.update(|_| {}),
                 Err(TuningStoreWriteError::Unhealthy)
@@ -503,7 +534,7 @@ mod tests {
         let previous = fs::read(store_path(&dir)).unwrap();
 
         let path = store_path(&dir);
-        let interrupted = StagedFile::write(&path, b"{\"schemaVersion\": 1, \"half").unwrap();
+        let interrupted = StagedFile::write(&path, b"{\"schema_version\": 1, \"half").unwrap();
         drop(interrupted);
 
         assert_eq!(fs::read(store_path(&dir)).unwrap(), previous);

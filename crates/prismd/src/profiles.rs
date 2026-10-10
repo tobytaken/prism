@@ -211,8 +211,8 @@ impl TuningDocument {
         let state = serde_json::json!({
             "reported": reported,
             "cooling": capture_cooling(gpu).ok(),
-            "lastApplied": self.last_applied.get(&uuid),
-            "currentProfile": current_profile,
+            "last_applied": self.last_applied.get(&uuid),
+            "current_profile": current_profile,
         });
         GpuTuningState {
             revision: format!("{:016x}", digest(state.to_string().as_bytes())),

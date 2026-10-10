@@ -33,12 +33,12 @@ fn manual_native_program_switches_by_file_identity_and_re_resolves_updates() {
         json!({"type":"add_program", "payload":{"path":"/games/game"}}),
     );
     alice.seed_profiles(json!([{
-        "id":"gaming", "name":"Gaming", "gpuId":"GPU-A",
-        "settings":{"powerLimitWatts":{"kind":"value", "value":350}}
+        "id":"gaming", "name":"Gaming", "gpu_id":"GPU-A",
+        "settings":{"power_limit_watts":{"kind":"value", "value":350}}
     }]));
     ok(
         &alice,
-        json!({"type":"set_game_profile", "payload":{"game":game, "gpuId":"GPU-A", "profileId":"gaming"}}),
+        json!({"type":"set_game_profile", "payload":{"game":game, "gpu_id":"GPU-A", "profile_id":"gaming"}}),
     );
     ok(
         &alice,
@@ -121,12 +121,12 @@ fn wine_mapped_image_switches_without_matching_the_shared_preloader_or_another_u
         json!({"type":"add_program", "payload":{"path":"/games/game.exe"}}),
     );
     alice.seed_profiles(json!([{
-        "id":"gaming", "name":"Gaming", "gpuId":"GPU-A",
-        "settings":{"powerLimitWatts":{"kind":"value", "value":350}}
+        "id":"gaming", "name":"Gaming", "gpu_id":"GPU-A",
+        "settings":{"power_limit_watts":{"kind":"value", "value":350}}
     }]));
     ok(
         &alice,
-        json!({"type":"set_game_profile", "payload":{"game":{"kind":"program","path":"/games/game.exe"}, "gpuId":"GPU-A", "profileId":"gaming"}}),
+        json!({"type":"set_game_profile", "payload":{"game":{"kind":"program","path":"/games/game.exe"}, "gpu_id":"GPU-A", "profile_id":"gaming"}}),
     );
     ok(
         &alice,
@@ -248,7 +248,7 @@ fn running_program_picker_scopes_ownership_labels_wine_and_ancestry_and_demotes_
     }
     for pid in [14, 15, 16, 17, 18] {
         assert!(
-            entries.iter().find(|entry| entry["pid"] == pid).unwrap()["recognitionWarning"]
+            entries.iter().find(|entry| entry["pid"] == pid).unwrap()["recognition_warning"]
                 .is_string(),
             "pid {pid}"
         );
@@ -309,7 +309,7 @@ fn picker_recovers_bind_mounted_host_locations_and_finds_a_python_launcher_in_th
 #[test]
 fn manual_associations_survive_restart_and_upgrade_the_versioned_store_without_losing_steam_links()
 {
-    let saved = json!({"schemaVersion":9, "users":[{"uid":1000,"username":"alice", "profiles":[], "games":[{"game":{"kind":"steam","appId":570},"name":"Dota 2","profiles":{}}]}]});
+    let saved = json!({"schema_version":9, "users":[{"uid":1000,"username":"alice", "profiles":[], "games":[{"game":{"kind":"steam","app_id":570},"name":"Dota 2","profiles":{}}]}]});
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::default(),
         &[(
@@ -330,7 +330,7 @@ fn manual_associations_survive_restart_and_upgrade_the_versioned_store_without_l
     )
     .unwrap();
     assert_eq!(
-        document["schemaVersion"],
+        document["schema_version"],
         super::tuning_store::TUNING_STORE_SCHEMA_VERSION
     );
     drop(alice);

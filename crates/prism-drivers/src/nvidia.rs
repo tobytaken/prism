@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::DriverPlan;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct NvidiaDriverStatus {
     pub detected: bool,
     pub driver_version: Option<String>,
@@ -23,7 +22,6 @@ pub struct NvidiaDriverStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct NvidiaGpuInfo {
     pub id: String,
     pub name: String,

@@ -1,10 +1,10 @@
 {
   "request": {
-    "gpuId": "GPU-123",
+    "gpu_id": "GPU-123",
     "points": [
-      { "temperatureC": 45, "speedPercent": 20 },
-      { "temperatureC": 40, "speedPercent": 60 },
-      { "temperatureC": 88, "speedPercent": 100 }
+      { "temperature_c": 45, "speed_percent": 20 },
+      { "temperature_c": 40, "speed_percent": 60 },
+      { "temperature_c": 88, "speed_percent": 100 }
     ]
   },
   "preview": {
@@ -22,22 +22,22 @@
   "limits": [
     {
       "name": "two fans at 20-100% under a 90°C maximum operating temperature",
-      "maxOperatingTemperatureC": 90,
-      "fanSpeedRanges": [
+      "max_operating_temperature_c": 90,
+      "fan_speed_ranges": [
         [20, 100],
         [20, 100]
       ],
-      "curveSupport": {
+      "curve_support": {
         "status": "available",
-        "maxOperatingTemperatureC": 90,
-        "fullSpeedTemperatureC": 85,
-        "minSpeedPercent": 20,
-        "maxSpeedPercent": 100,
+        "max_operating_temperature_c": 90,
+        "full_speed_temperature_c": 85,
+        "min_speed_percent": 20,
+        "max_speed_percent": 100,
         "starter": [
-          { "temperatureC": 45, "speedPercent": 20 },
-          { "temperatureC": 65, "speedPercent": 60 },
-          { "temperatureC": 75, "speedPercent": 80 },
-          { "temperatureC": 85, "speedPercent": 100 }
+          { "temperature_c": 45, "speed_percent": 20 },
+          { "temperature_c": 65, "speed_percent": 60 },
+          { "temperature_c": 75, "speed_percent": 80 },
+          { "temperature_c": 85, "speed_percent": 100 }
         ]
       },
       "cases": [
@@ -195,22 +195,22 @@
     },
     {
       "name": "two fans that both allow 0%",
-      "maxOperatingTemperatureC": 90,
-      "fanSpeedRanges": [
+      "max_operating_temperature_c": 90,
+      "fan_speed_ranges": [
         [0, 100],
         [0, 100]
       ],
-      "curveSupport": {
+      "curve_support": {
         "status": "available",
-        "maxOperatingTemperatureC": 90,
-        "fullSpeedTemperatureC": 85,
-        "minSpeedPercent": 0,
-        "maxSpeedPercent": 100,
+        "max_operating_temperature_c": 90,
+        "full_speed_temperature_c": 85,
+        "min_speed_percent": 0,
+        "max_speed_percent": 100,
         "starter": [
-          { "temperatureC": 45, "speedPercent": 0 },
-          { "temperatureC": 65, "speedPercent": 50 },
-          { "temperatureC": 75, "speedPercent": 75 },
-          { "temperatureC": 85, "speedPercent": 100 }
+          { "temperature_c": 45, "speed_percent": 0 },
+          { "temperature_c": 65, "speed_percent": 50 },
+          { "temperature_c": 75, "speed_percent": 75 },
+          { "temperature_c": 85, "speed_percent": 100 }
         ]
       },
       "cases": [
@@ -227,22 +227,22 @@
     },
     {
       "name": "one fan allowing 0% and one starting at 35%",
-      "maxOperatingTemperatureC": 90,
-      "fanSpeedRanges": [
+      "max_operating_temperature_c": 90,
+      "fan_speed_ranges": [
         [0, 100],
         [35, 100]
       ],
-      "curveSupport": {
+      "curve_support": {
         "status": "available",
-        "maxOperatingTemperatureC": 90,
-        "fullSpeedTemperatureC": 85,
-        "minSpeedPercent": 35,
-        "maxSpeedPercent": 100,
+        "max_operating_temperature_c": 90,
+        "full_speed_temperature_c": 85,
+        "min_speed_percent": 35,
+        "max_speed_percent": 100,
         "starter": [
-          { "temperatureC": 45, "speedPercent": 35 },
-          { "temperatureC": 65, "speedPercent": 68 },
-          { "temperatureC": 75, "speedPercent": 84 },
-          { "temperatureC": 85, "speedPercent": 100 }
+          { "temperature_c": 45, "speed_percent": 35 },
+          { "temperature_c": 65, "speed_percent": 68 },
+          { "temperature_c": 75, "speed_percent": 84 },
+          { "temperature_c": 85, "speed_percent": 100 }
         ]
       },
       "cases": [
@@ -263,12 +263,12 @@
     },
     {
       "name": "fans with different maximum speeds",
-      "maxOperatingTemperatureC": 90,
-      "fanSpeedRanges": [
+      "max_operating_temperature_c": 90,
+      "fan_speed_ranges": [
         [20, 100],
         [20, 90]
       ],
-      "curveSupport": {
+      "curve_support": {
         "status": "unavailable",
         "reason": "This GPU's fans report different maximum speeds, so one shared curve can't reach each fan's maximum."
       },

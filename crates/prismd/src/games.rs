@@ -16,7 +16,7 @@ use prism_protocol::{
 
 /// A user's link from a game to at most one of their profiles per GPU.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct GameAssociation {
     pub game: GameId,
     /// The name when the game was added, shown while it isn't installed.

@@ -37,7 +37,7 @@ const SCHEMA_VERSION: u64 = 3;
 /// The user's running game, with its linked profile, that automatic switching puts into effect
 /// on a GPU.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct DrivingGame {
     uid: u32,
     username: String,
@@ -47,7 +47,7 @@ struct DrivingGame {
 
 /// Automation's hold on one GPU, from its first automatic write until full restoration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct Activation {
     /// Observed absence survives a daemon restart, so return reconciles even the same game.
     #[serde(default)]
@@ -89,21 +89,21 @@ impl Activation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct ManualOverride {
     origin: OverrideOrigin,
     games_ended: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 enum OverrideOrigin {
     Prism,
     External,
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct SwitchingDocument {
     schema_version: u64,
     boot_id: String,
@@ -167,7 +167,7 @@ fn load(path: &Path, boot_id: &str) -> Result<Activations, String> {
     let envelope: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
     if envelope
-        .get("bootId")
+        .get("boot_id")
         .and_then(|id| id.as_str())
         .is_some_and(|id| !id.is_empty() && id != boot_id)
     {
