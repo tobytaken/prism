@@ -9,22 +9,17 @@ use crate::fan_curve::FanCurvePoint;
 /// One fan's control mode: the GPU's default automatic cooling, a fixed requested speed, or a
 /// fan curve that Prism follows as the GPU's temperature changes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FanSetting {
     // Struct variants, so deny_unknown_fields also rejects extra fields.
     Automatic {},
-    #[serde(rename_all = "camelCase")]
-    Fixed {
-        speed_percent: i64,
-    },
-    Curve {
-        points: Vec<FanCurvePoint>,
-    },
+    Fixed { speed_percent: i64 },
+    Curve { points: Vec<FanCurvePoint> },
 }
 
 /// A fan's own setting in a per-fan configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct FanConfiguration {
     pub fan_index: u32,
     pub setting: FanSetting,
@@ -33,7 +28,7 @@ pub struct FanConfiguration {
 /// A GPU's cooling configuration: one setting shared by every fan, or a setting per fan. Fans a
 /// per-fan configuration omits are left as they are.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "arrangement", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(tag = "arrangement", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CoolingConfiguration {
     Shared { setting: FanSetting },
     PerFan { fans: Vec<FanConfiguration> },
@@ -51,7 +46,7 @@ impl CoolingConfiguration {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct ApplyCoolingRequest {
     /// The fan inventory reviewed by the caller; a changed inventory requires a new review.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -66,7 +61,6 @@ pub struct ApplyCoolingRequest {
 
 /// What an application did: succeeded only when every targeted fan took its setting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct CoolingApplication {
     /// Revision after this attempt, captured before releasing the GPU queue.
     pub revision: u64,
@@ -75,7 +69,6 @@ pub struct CoolingApplication {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct FanOutcome {
     pub fan_index: u32,
     pub outcome: TuningOutcome,
@@ -85,7 +78,7 @@ pub struct FanOutcome {
 /// and the driver's reported fan modes and speeds are separate things: a curve runs through the
 /// driver's manual mode without being a fixed speed.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct CoolingControl {
     /// The caller's last successful manual curve configuration, independent of applied mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -109,7 +102,7 @@ pub struct CoolingControl {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct FanRequest {
     pub fan_index: u32,
     pub speed_percent: i64,
@@ -118,7 +111,7 @@ pub struct FanRequest {
 /// Curve control stopped after a fault or an observable competing control change. The curve is kept, and only an explicit application
 /// resumes it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct CurveSuspension {
     #[serde(default)]
     pub kind: SuspensionKind,
@@ -130,7 +123,7 @@ pub struct CurveSuspension {
 /// Restarted curve control's attempt to resume the curves it was following when it stopped in
 /// the same host boot. A curve that couldn't resume is suspended and waits for a retry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct CoolingRecovery {
     pub status: RecoveryStatus,
     /// Each interrupted curve fan's resumption.
@@ -138,7 +131,7 @@ pub struct CoolingRecovery {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum RecoveryStatus {
     /// Fresh readings matched the GPU, its fans and the curve, and every fan follows it again.
     Resumed,
@@ -147,7 +140,7 @@ pub enum RecoveryStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct FanRestoration {
     pub fan_index: u32,
     pub status: RestorationStatus,
@@ -155,7 +148,7 @@ pub struct FanRestoration {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum RestorationStatus {
     /// The driver accepted the request and reports automatic control.
     Restored,
@@ -167,7 +160,7 @@ pub enum RestorationStatus {
 
 /// Provenance for consumers such as automatic switching: yielding is not fault recovery.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum SuspensionKind {
     #[default]
     Fault,

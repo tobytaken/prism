@@ -13,15 +13,15 @@
   },
   "corrections": [
     {
-      "setting": "powerLimitWatts",
-      "savedValue": 300,
-      "proposedValue": 280,
+      "setting": "power_limit_watts",
+      "saved_value": 300,
+      "proposed_value": 280,
       "bound": "maximum"
     },
     {
-      "setting": "graphicsOffsetMHz",
-      "savedValue": -150,
-      "proposedValue": -100,
+      "setting": "graphics_offset_mhz",
+      "saved_value": -150,
+      "proposed_value": -100,
       "bound": "minimum"
     }
   ]

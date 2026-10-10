@@ -64,28 +64,28 @@ fn games(session: &FakeSession) -> Value {
 }
 
 fn add_steam_game(session: &FakeSession, app_id: u32) -> Value {
-    session.send_json(json!({ "type": "add_steam_game", "payload": { "appId": app_id } }))
+    session.send_json(json!({ "type": "add_steam_game", "payload": { "app_id": app_id } }))
 }
 
 fn link(session: &FakeSession, app_id: u32, gpu_id: &str, profile_id: Option<&str>) -> Value {
     session.send_json(json!({
         "type": "set_game_profile",
         "payload": {
-            "game": { "kind": "steam", "appId": app_id },
-            "gpuId": gpu_id,
-            "profileId": profile_id
+            "game": { "kind": "steam", "app_id": app_id },
+            "gpu_id": gpu_id,
+            "profile_id": profile_id
         }
     }))
 }
 
 fn profile(id: &str, name: &str, gpu_id: &str) -> Value {
-    json!({ "id": id, "name": name, "gpuId": gpu_id,
-        "settings": { "powerLimitWatts": { "kind": "value", "value": 300 } } })
+    json!({ "id": id, "name": name, "gpu_id": gpu_id,
+        "settings": { "power_limit_watts": { "kind": "value", "value": 300 } } })
 }
 
 fn steam_game(app_id: u32, name: &str, installed: bool, profiles: Value) -> Value {
     json!({
-        "game": { "kind": "steam", "appId": app_id },
+        "game": { "kind": "steam", "app_id": app_id },
         "name": name,
         "installed": installed,
         "profiles": profiles
@@ -179,19 +179,19 @@ fn installed_steam_apps_are_listed_from_every_library_of_the_callers_package_fla
     assert_eq!(
         steam_apps(&daemon.user(1000, "alice")),
         json!([
-            { "appId": 1086940, "name": "Baldur's Gate 3" },
-            { "appId": 570, "name": "Dota 2" },
-            { "appId": 1145360, "name": "Hades" },
-            { "appId": 367520, "name": "Hollow Knight" },
-            { "appId": 620, "name": "Portal 2" },
-            { "appId": 413150, "name": "Stardew Valley" },
-            { "appId": 440, "name": "Team Fortress 2" },
-            { "appId": 292030, "name": "The Witcher 3" }
+            { "app_id": 1086940, "name": "Baldur's Gate 3" },
+            { "app_id": 570, "name": "Dota 2" },
+            { "app_id": 1145360, "name": "Hades" },
+            { "app_id": 367520, "name": "Hollow Knight" },
+            { "app_id": 620, "name": "Portal 2" },
+            { "app_id": 413150, "name": "Stardew Valley" },
+            { "app_id": 440, "name": "Team Fortress 2" },
+            { "app_id": 292030, "name": "The Witcher 3" }
         ])
     );
     assert_eq!(
         steam_apps(&daemon.user(1001, "bob")),
-        json!([{ "appId": 105600, "name": "Terraria" }])
+        json!([{ "app_id": 105600, "name": "Terraria" }])
     );
     assert_eq!(steam_apps(&daemon.user(1002, "carol")), json!([]));
 }
@@ -211,7 +211,7 @@ fn associations_and_the_switching_opt_in_belong_to_the_caller_and_survive_a_rest
     ]));
     assert_eq!(
         games(&alice),
-        json!({ "automaticSwitching": false, "games": [] })
+        json!({ "automatic_switching": false, "games": [] })
     );
 
     let added = add_steam_game(&alice, 570);
@@ -232,7 +232,7 @@ fn associations_and_the_switching_opt_in_belong_to_the_caller_and_survive_a_rest
     assert_eq!(
         left["payload"],
         json!({
-            "automaticSwitching": false,
+            "automatic_switching": false,
             "games": [
                 steam_game(570, "Dota 2", true, json!({ "GPU-123": "quiet", "GPU-456": "loud" })),
                 steam_game(620, "Portal 2", true, json!({ "GPU-123": "quiet" }))
@@ -242,27 +242,27 @@ fn associations_and_the_switching_opt_in_belong_to_the_caller_and_survive_a_rest
     let enabled = alice.send_json(json!({
         "type": "set_automatic_switching", "payload": { "enabled": true }
     }));
-    assert_eq!(enabled["payload"]["automaticSwitching"], true, "{enabled}");
+    assert_eq!(enabled["payload"]["automatic_switching"], true, "{enabled}");
     let removed = alice.send_json(json!({
-        "type": "remove_game", "payload": { "game": { "kind": "steam", "appId": 570 } }
+        "type": "remove_game", "payload": { "game": { "kind": "steam", "app_id": 570 } }
     }));
     assert_eq!(
         removed["payload"],
         json!({
-            "automaticSwitching": true,
+            "automatic_switching": true,
             "games": [steam_game(620, "Portal 2", true, json!({ "GPU-123": "quiet" }))]
         })
     );
 
     // Another user, and a reused uid under another username, see none of it.
-    let empty = json!({ "automaticSwitching": false, "games": [] });
+    let empty = json!({ "automatic_switching": false, "games": [] });
     assert_eq!(games(&daemon.user(1001, "bob")), empty);
     assert_eq!(games(&daemon.user(1000, "carol")), empty);
     let theirs = daemon.user(1001, "bob");
     app(&daemon, "/home/bob/.local/share/Steam", 620, "Portal 2", 4);
     add_steam_game(&theirs, 620);
     let foreign = link(&theirs, 620, "GPU-123", Some("quiet"));
-    assert_eq!(foreign["payload"]["code"], "notFound", "{foreign}");
+    assert_eq!(foreign["payload"]["code"], "not_found", "{foreign}");
 
     daemon.restart();
     let alice = daemon.user(1000, "alice");
@@ -270,7 +270,7 @@ fn associations_and_the_switching_opt_in_belong_to_the_caller_and_survive_a_rest
     assert_eq!(
         games(&daemon.user(1001, "bob")),
         json!({
-            "automaticSwitching": false,
+            "automatic_switching": false,
             "games": [steam_game(620, "Portal 2", true, json!({}))]
         })
     );
@@ -289,17 +289,17 @@ fn links_are_checked_against_the_callers_profiles_games_and_installed_apps() {
     for (response, code, message) in [
         (
             add_steam_game(&alice, 620),
-            "notFound",
+            "not_found",
             "Steam app 620 isn't installed in your Steam libraries.",
         ),
         (
             add_steam_game(&alice, 1493710),
-            "notFound",
+            "not_found",
             "Steam app 1493710 isn't installed in your Steam libraries.",
         ),
         (
             link(&alice, 570, "GPU-123", Some("quiet")),
-            "notFound",
+            "not_found",
             "This game is no longer on your Games page.",
         ),
     ] {
@@ -309,7 +309,7 @@ fn links_are_checked_against_the_callers_profiles_games_and_installed_apps() {
     add_steam_game(&alice, 570);
     let wrong_gpu = link(&alice, 570, "GPU-123", Some("other"));
     assert_eq!(
-        wrong_gpu["payload"]["code"], "invalidArgument",
+        wrong_gpu["payload"]["code"], "invalid_argument",
         "{wrong_gpu}"
     );
     assert_eq!(
@@ -351,7 +351,7 @@ fn an_uninstalled_games_association_is_kept_and_reported_not_installed_until_it_
     std::fs::remove_file(daemon.host_path("/mnt/games/SteamLibrary/steamapps/appmanifest_570.acf"))
         .unwrap();
     let uninstalled = json!({
-        "automaticSwitching": false,
+        "automatic_switching": false,
         "games": [steam_game(570, "Dota 2", false, json!({ "GPU-123": "quiet" }))]
     });
     assert_eq!(games(&alice), uninstalled);
@@ -388,7 +388,7 @@ fn deleting_a_profile_removes_its_associations_and_keeps_other_links() {
     link(&alice, 570, "GPU-456", Some("loud"));
 
     let deleted =
-        alice.send_json(json!({ "type": "delete_profile", "payload": { "profileId": "quiet" } }));
+        alice.send_json(json!({ "type": "delete_profile", "payload": { "profile_id": "quiet" } }));
     assert_eq!(deleted["payload"]["success"], true, "{deleted}");
     assert_eq!(
         games(&alice)["games"],

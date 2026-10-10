@@ -163,7 +163,7 @@ impl Host {
         std::fs::write(
             dir.path().join("prismd.toml"),
             format!(
-                "adminGroup = \"{}\"\nadminUser = \"{}\"\n",
+                "admin_group = \"{}\"\nadmin_user = \"{}\"\n",
                 users::get_current_groupname().unwrap().to_string_lossy(),
                 users::get_current_username().unwrap().to_string_lossy(),
             ),
@@ -260,14 +260,14 @@ impl Host {
         let response = self.send(json!({
             "type": "apply_cooling",
             "payload": {
-                "gpuId": "GPU-123",
+                "gpu_id": "GPU-123",
                 "configuration": {
                     "arrangement": "shared",
                     "setting": { "mode": "curve", "points": [
-                        { "temperatureC": 45, "speedPercent": 20 },
-                        { "temperatureC": 65, "speedPercent": 60 },
-                        { "temperatureC": 75, "speedPercent": 80 },
-                        { "temperatureC": 85, "speedPercent": 100 },
+                        { "temperature_c": 45, "speed_percent": 20 },
+                        { "temperature_c": 65, "speed_percent": 60 },
+                        { "temperature_c": 75, "speed_percent": 80 },
+                        { "temperature_c": 85, "speed_percent": 100 },
                     ] },
                 },
             },
@@ -389,7 +389,7 @@ fn a_graceful_stop_restores_automatic_cooling_and_the_next_daemon_resumes_the_cu
     assert_eq!(host.fan_modes(), vec![Some(FanControlMode::Manual); 2]);
     let control = host.control();
     assert_eq!(control["recovery"]["status"], "resumed");
-    assert_eq!(control["requested"][1]["speedPercent"], 90);
+    assert_eq!(control["requested"][1]["speed_percent"], 90);
 }
 
 fn after_an_abnormal_termination_the_stop_command_restores_automatic_cooling() {
@@ -489,6 +489,6 @@ fn a_failed_restore_is_recorded_rather_than_reported_as_recovered() {
     std::fs::write(host.path("gpus/temperature"), "unavailable").unwrap();
     let _daemon = host.start_daemon(None);
     let control = host.control();
-    assert_eq!(control["recovery"]["status"], "retryRequired");
+    assert_eq!(control["recovery"]["status"], "retry_required");
     assert_eq!(control["suspension"]["restoration"][1]["status"], "failed");
 }

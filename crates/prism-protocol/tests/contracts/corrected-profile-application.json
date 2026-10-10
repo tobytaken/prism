@@ -2,10 +2,10 @@
   "profile": {
     "id": "quiet",
     "name": "Quiet",
-    "gpuId": "GPU-123",
+    "gpu_id": "GPU-123",
     "settings": {
-      "powerLimitWatts": { "kind": "value", "value": 280 },
-      "memoryOffsetMHz": { "kind": "value", "value": 40 }
+      "power_limit_watts": { "kind": "value", "value": 280 },
+      "memory_offset_mhz": { "kind": "value", "value": 40 }
     }
   },
   "application": {

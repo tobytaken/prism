@@ -24,7 +24,7 @@ fn send(session: &FakeSession, request: Value) -> Value {
 fn set_power(session: &FakeSession, watts: u32) -> Value {
     send(
         session,
-        json!({ "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": watts } }),
+        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": watts } }),
     )
 }
 
@@ -35,7 +35,7 @@ fn startup(session: &FakeSession) -> Value {
 fn restore_on_boot(session: &FakeSession) {
     let response = send(
         session,
-        json!({ "type": "set_startup_behavior", "payload": { "behavior": "restoreLastApplied" } }),
+        json!({ "type": "set_startup_behavior", "payload": { "behavior": "restore_last_applied" } }),
     );
     assert_eq!(response["success"], true, "{response}");
 }
@@ -50,7 +50,7 @@ fn completed_outcome(daemon: &Harness) -> Value {
             .as_array()
             .unwrap()
             .iter()
-            .find(|outcome| outcome["gpuId"] == "GPU-123")
+            .find(|outcome| outcome["gpu_id"] == "GPU-123")
             .filter(|outcome| outcome["reason"] != "Startup is in progress.")
         {
             return outcome.clone();
@@ -89,35 +89,35 @@ fn restore_puts_each_settings_latest_manual_value_into_effect_and_keeps_the_curr
     send(
         &alice,
         json!({ "type": "set_clock_offsets", "payload": {
-            "gpuId": "GPU-123", "graphicsOffsetMHz": 30, "memoryOffsetMHz": 40
+            "gpu_id": "GPU-123", "graphics_offset_mhz": 30, "memory_offset_mhz": 40
         } }),
     );
     alice.seed_profiles(json!([{
-        "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
-            "powerLimitWatts": { "kind": "value", "value": 300 },
-            "memoryOffsetMHz": { "kind": "default" }
+        "id": "quiet", "name": "Quiet", "gpu_id": "GPU-123", "settings": {
+            "power_limit_watts": { "kind": "value", "value": 300 },
+            "memory_offset_mhz": { "kind": "default" }
         }
     }]));
     let application = send(
         &alice,
-        json!({ "type": "apply_profile_by_id", "payload": { "profileId": "quiet" } }),
+        json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" } }),
     );
     assert_eq!(application["power"]["status"], "succeeded", "{application}");
     send(
         &alice,
         json!({ "type": "set_clock_offsets", "payload": {
-            "gpuId": "GPU-123", "graphicsOffsetMHz": "default", "memoryOffsetMHz": null
+            "gpu_id": "GPU-123", "graphics_offset_mhz": "default", "memory_offset_mhz": null
         } }),
     );
     // A setting whose latest manual value is a default must be restored as the default.
     send(
         &alice,
         json!({ "type": "set_clock_offsets", "payload": {
-            "gpuId": "GPU-123", "graphicsOffsetMHz": null, "memoryOffsetMHz": null
+            "gpu_id": "GPU-123", "graphics_offset_mhz": null, "memory_offset_mhz": null
         } }),
     );
     restore_on_boot(&alice);
-    assert_eq!(startup(&alice)["behavior"], "restoreLastApplied");
+    assert_eq!(startup(&alice)["behavior"], "restore_last_applied");
     drop(alice);
 
     daemon.gpus.update("GPU-123", |gpu| {
@@ -129,13 +129,13 @@ fn restore_puts_each_settings_latest_manual_value_into_effect_and_keeps_the_curr
 
     let outcome = completed_outcome(&daemon);
     assert_eq!(outcome["status"], "applied", "{outcome}");
-    assert_eq!(outcome["behavior"], "restoreLastApplied", "{outcome}");
+    assert_eq!(outcome["behavior"], "restore_last_applied", "{outcome}");
     assert_eq!(outcome["profile"], Value::Null);
     assert_eq!(values(&daemon), (Some(300), Some(0), Some(0)));
     let alice = daemon.user(1000, "alice");
     let states = send(&alice, json!({ "type": "get_tuning_states" }));
     assert_eq!(
-        states[0]["currentProfile"],
+        states[0]["current_profile"],
         json!({ "id": "quiet", "name": "Quiet" })
     );
 }
@@ -145,14 +145,14 @@ fn a_partial_or_blocked_restore_clears_the_current_profile_and_values_are_never_
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![restore_gpu()]));
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(json!([{
-        "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
-            "powerLimitWatts": { "kind": "value", "value": 300 },
-            "graphicsOffsetMHz": { "kind": "value", "value": 150 }
+        "id": "quiet", "name": "Quiet", "gpu_id": "GPU-123", "settings": {
+            "power_limit_watts": { "kind": "value", "value": 300 },
+            "graphics_offset_mhz": { "kind": "value", "value": 150 }
         }
     }]));
     send(
         &alice,
-        json!({ "type": "apply_profile_by_id", "payload": { "profileId": "quiet" } }),
+        json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" } }),
     );
     restore_on_boot(&alice);
     drop(alice);
@@ -164,12 +164,12 @@ fn a_partial_or_blocked_restore_clears_the_current_profile_and_values_are_never_
     let writes = daemon.gpus.writes().len();
     daemon.reboot();
     let outcome = completed_outcome(&daemon);
-    assert_eq!(outcome["status"], "notAttempted", "{outcome}");
+    assert_eq!(outcome["status"], "not_attempted", "{outcome}");
     assert_eq!(daemon.gpus.writes().len(), writes);
     assert_eq!(values(&daemon), (Some(575), Some(0), Some(0)));
     let alice = daemon.user(1000, "alice");
     assert_eq!(
-        send(&alice, json!({ "type": "get_tuning_states" }))[0]["currentProfile"],
+        send(&alice, json!({ "type": "get_tuning_states" }))[0]["current_profile"],
         Value::Null
     );
 }
@@ -198,7 +198,7 @@ fn a_crash_after_a_restore_skips_the_next_restore_once_but_a_daemon_restart_does
     let writes = daemon.gpus.writes().len();
     daemon.crash_and_reboot();
     let outcome = completed_outcome(&daemon);
-    assert_eq!(outcome["status"], "notAttempted", "{outcome}");
+    assert_eq!(outcome["status"], "not_attempted", "{outcome}");
     assert!(
         outcome["reason"]
             .as_str()
@@ -221,12 +221,12 @@ fn startup_profiles_skip_the_unclean_shutdown_guard() {
     let alice = daemon.user(1000, "alice");
     set_power(&alice, 300);
     alice.seed_profiles(json!([{
-        "id": "quiet", "name": "Quiet", "gpuId": "GPU-123",
-        "settings": { "powerLimitWatts": { "kind": "value", "value": 250 } }
+        "id": "quiet", "name": "Quiet", "gpu_id": "GPU-123",
+        "settings": { "power_limit_watts": { "kind": "value", "value": 250 } }
     }]));
     send(
         &alice,
-        json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": "quiet" } }),
+        json!({ "type": "set_startup_profile", "payload": { "gpu_id": "GPU-123", "profile_id": "quiet" } }),
     );
     restore_on_boot(&alice);
     drop(alice);
@@ -239,7 +239,7 @@ fn startup_profiles_skip_the_unclean_shutdown_guard() {
     let alice = daemon.user(1000, "alice");
     send(
         &alice,
-        json!({ "type": "set_startup_behavior", "payload": { "behavior": "startupProfiles" } }),
+        json!({ "type": "set_startup_behavior", "payload": { "behavior": "startup_profiles" } }),
     );
     drop(alice);
     for _ in 0..2 {
@@ -256,7 +256,7 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
     let alice = daemon.user(1000, "alice");
     set_power(&alice, 300);
     restore_on_boot(&alice);
-    assert_eq!(startup(&alice)["possiblyStale"], json!([]));
+    assert_eq!(startup(&alice)["possibly_stale"], json!([]));
 
     // Recording fails while the store's staged file can't be created.
     let blocker = daemon.persistent_path(&format!("{TUNING_STORE_FILE_NAME}.tmp"));
@@ -268,7 +268,7 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
     let offsets = send(
         &alice,
         json!({ "type": "set_clock_offsets", "payload": {
-            "gpuId": "GPU-123", "graphicsOffsetMHz": 50, "memoryOffsetMHz": null
+            "gpu_id": "GPU-123", "graphics_offset_mhz": 50, "memory_offset_mhz": null
         } }),
     );
     assert_eq!(
@@ -283,30 +283,30 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
     std::fs::remove_dir(&blocker).unwrap();
     daemon.restart();
     let alice = daemon.user(1000, "alice");
-    assert_eq!(startup(&alice)["possiblyStale"], json!(["GPU-123"]));
+    assert_eq!(startup(&alice)["possibly_stale"], json!(["GPU-123"]));
     assert_eq!(
         set_power(&alice, 330),
         json!({ "success": true, "error": null })
     );
     // The graphics offset still hasn't been recorded since its write.
-    assert_eq!(startup(&alice)["possiblyStale"], json!(["GPU-123"]));
+    assert_eq!(startup(&alice)["possibly_stale"], json!(["GPU-123"]));
     let offsets = send(
         &alice,
         json!({ "type": "set_clock_offsets", "payload": {
-            "gpuId": "GPU-123", "graphicsOffsetMHz": 60, "memoryOffsetMHz": null
+            "gpu_id": "GPU-123", "graphics_offset_mhz": 60, "memory_offset_mhz": null
         } }),
     );
     assert_eq!(offsets["graphics"]["error"], Value::Null);
-    assert_eq!(startup(&alice)["possiblyStale"], json!([]));
+    assert_eq!(startup(&alice)["possibly_stale"], json!([]));
     drop(alice);
 
     // A profile application reports each setting that reached the GPU as succeeded, and the
     // marker survives a reboot until the next successful record.
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(json!([{
-        "id": "loud", "name": "Loud", "gpuId": "GPU-123", "settings": {
-            "graphicsOffsetMHz": { "kind": "value", "value": 70 },
-            "memoryOffsetMHz": { "kind": "value", "value": 10 }
+        "id": "loud", "name": "Loud", "gpu_id": "GPU-123", "settings": {
+            "graphics_offset_mhz": { "kind": "value", "value": 70 },
+            "memory_offset_mhz": { "kind": "value", "value": 10 }
         }
     }]));
     std::fs::create_dir(&blocker).unwrap();
@@ -315,7 +315,7 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
         .fail("GPU-123", Setter::MemoryOffset, "rejected");
     let application = send(
         &alice,
-        json!({ "type": "apply_profile_by_id", "payload": { "profileId": "loud" } }),
+        json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "loud" } }),
     );
     assert_eq!(
         application["graphics"],
@@ -327,7 +327,7 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
     std::fs::remove_dir(&blocker).unwrap();
     daemon.reboot();
     let alice = daemon.user(1000, "alice");
-    assert_eq!(startup(&alice)["possiblyStale"], json!(["GPU-123"]));
+    assert_eq!(startup(&alice)["possibly_stale"], json!(["GPU-123"]));
 }
 
 #[test]
@@ -347,7 +347,7 @@ fn a_skipped_restore_is_reported_for_each_gpu_with_last_applied_values_even_when
     set_power(&alice, 300);
     send(
         &alice,
-        json!({ "type": "set_power_limit", "payload": { "gpuId": "GPU-456", "limitWatts": 300 } }),
+        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-456", "limit_watts": 300 } }),
     );
     restore_on_boot(&alice);
     drop(alice);
@@ -363,7 +363,7 @@ fn a_skipped_restore_is_reported_for_each_gpu_with_last_applied_values_even_when
             .as_array()
             .unwrap()
             .iter()
-            .find(|outcome| outcome["gpuId"] == gpu_id)
+            .find(|outcome| outcome["gpu_id"] == gpu_id)
             .unwrap_or_else(|| panic!("no outcome for {gpu_id}: {outcomes}"))["reason"]
             .as_str()
             .unwrap()
@@ -381,12 +381,12 @@ fn an_unreadable_possibly_stale_marker_is_preserved_and_marks_every_recorded_gpu
         &[(POSSIBLY_STALE_FILE_NAME, b"{\"GPU-123\": [")],
     );
     let alice = daemon.user(1000, "alice");
-    assert_eq!(startup(&alice)["possiblyStale"], json!([]));
+    assert_eq!(startup(&alice)["possibly_stale"], json!([]));
     assert_eq!(
         set_power(&alice, 300),
         json!({ "success": true, "error": null })
     );
-    assert_eq!(startup(&alice)["possiblyStale"], json!(["GPU-123"]));
+    assert_eq!(startup(&alice)["possibly_stale"], json!(["GPU-123"]));
     assert_eq!(
         daemon.persistent_file(POSSIBLY_STALE_FILE_NAME).unwrap(),
         b"{\"GPU-123\": ["

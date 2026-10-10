@@ -44,7 +44,7 @@ fn opted_in_user(
     let session = daemon.user(uid, username);
     session.seed_profiles(profiles);
     for (app_id, _) in games {
-        ok(session.send_json(json!({ "type": "add_steam_game", "payload": { "appId": app_id } })));
+        ok(session.send_json(json!({ "type": "add_steam_game", "payload": { "app_id": app_id } })));
     }
     set_switching(daemon, &session, true);
     session
@@ -58,20 +58,20 @@ fn set_switching(daemon: &Harness, session: &FakeSession, enabled: bool) {
 }
 
 fn profile(id: &str, name: &str, settings: Value) -> Value {
-    json!({ "id": id, "name": name, "gpuId": GPU, "settings": settings })
+    json!({ "id": id, "name": name, "gpu_id": GPU, "settings": settings })
 }
 
 fn link(session: &FakeSession, app_id: u32, profile_id: &str) {
     ok(
         session.send_json(json!({ "type": "set_game_profile", "payload": {
-        "game": { "kind": "steam", "appId": app_id }, "gpuId": GPU, "profileId": profile_id
+        "game": { "kind": "steam", "app_id": app_id }, "gpu_id": GPU, "profile_id": profile_id
     } })),
     );
 }
 
 fn apply(daemon: &Harness, session: &FakeSession, profile_id: &str) {
     ok(session.send_json(
-        json!({ "type": "apply_profile_by_id", "payload": { "profileId": profile_id } }),
+        json!({ "type": "apply_profile_by_id", "payload": { "profile_id": profile_id } }),
     ));
     daemon.settle();
 }
@@ -91,8 +91,8 @@ fn current_profile(session: &FakeSession) -> Value {
         .as_array()
         .unwrap()
         .iter()
-        .find(|state| state["gpuId"] == GPU)
-        .expect("the GPU has a tuning state")["currentProfile"]["name"]
+        .find(|state| state["gpu_id"] == GPU)
+        .expect("the GPU has a tuning state")["current_profile"]["name"]
         .clone()
 }
 
@@ -105,22 +105,22 @@ fn gpu_status(session: &FakeSession) -> Value {
             .as_array()
             .unwrap()
             .iter()
-            .map(|gpu| json!({ "gpuId": gpu["gpuId"], "state": gpu["state"] }))
+            .map(|gpu| json!({ "gpu_id": gpu["gpu_id"], "state": gpu["state"] }))
             .collect::<Vec<_>>()
     )
 }
 
 fn active(app_id: u32, game_name: &str, profile_id: &str, profile_name: &str) -> Value {
-    json!([{ "gpuId": GPU, "state": {
+    json!([{ "gpu_id": GPU, "state": {
         "status": "active",
-        "game": { "kind": "steam", "appId": app_id },
-        "gameName": game_name,
+        "game": { "kind": "steam", "app_id": app_id },
+        "game_name": game_name,
         "profile": { "id": profile_id, "name": profile_name }
     } }])
 }
 
 fn another_user() -> Value {
-    json!([{ "gpuId": GPU, "state": { "status": "anotherUser" } }])
+    json!([{ "gpu_id": GPU, "state": { "status": "another_user" } }])
 }
 
 fn writes(daemon: &Harness) -> Vec<Setter> {
@@ -135,7 +135,7 @@ fn writes(daemon: &Harness) -> Vec<Setter> {
 fn last_applied(daemon: &Harness) -> Value {
     let document: Value =
         serde_json::from_slice(&daemon.persistent_file(TUNING_STORE_FILE_NAME).unwrap()).unwrap();
-    document["lastApplied"].clone()
+    document["last_applied"].clone()
 }
 
 #[test]
@@ -150,15 +150,15 @@ fn overlapping_games_keep_the_original_pre_game_values_and_never_write_graphics(
             profile(
                 "quiet",
                 "Quiet",
-                json!({ "powerLimitWatts": value(200),
-                "memoryOffsetMHz": value(0) })
+                json!({ "power_limit_watts": value(200),
+                "memory_offset_mhz": value(0) })
             ),
-            profile("a", "A", json!({ "powerLimitWatts": value(300) })),
+            profile("a", "A", json!({ "power_limit_watts": value(300) })),
             profile(
                 "b",
                 "B",
-                json!({ "powerLimitWatts": value(320),
-                "memoryOffsetMHz": value(500) })
+                json!({ "power_limit_watts": value(320),
+                "memory_offset_mhz": value(500) })
             ),
         ]),
         &[(DOTA, "Dota 2"), (CS, "Counter-Strike")],
@@ -194,7 +194,7 @@ fn overlapping_games_keep_the_original_pre_game_values_and_never_write_graphics(
     assert_eq!(current_profile(&alice), "Quiet");
     assert_eq!(
         gpu_status(&alice),
-        json!([{ "gpuId": GPU, "state": { "status": "restored" } }])
+        json!([{ "gpu_id": GPU, "state": { "status": "restored" } }])
     );
 
     assert!(!writes(&daemon).contains(&Setter::GraphicsOffset));
@@ -210,12 +210,12 @@ fn shared_gpu() -> (Harness, FakeSession, FakeSession) {
         1000,
         "alice",
         json!([
-            profile("daily", "Daily", json!({ "powerLimitWatts": value(250) })),
+            profile("daily", "Daily", json!({ "power_limit_watts": value(250) })),
             profile(
                 "gaming",
                 "Gaming",
-                json!({ "powerLimitWatts": value(350),
-                "graphicsOffsetMHz": value(150) })
+                json!({ "power_limit_watts": value(350),
+                "graphics_offset_mhz": value(150) })
             ),
         ]),
         &[(DOTA, "Dota 2")],
@@ -227,8 +227,8 @@ fn shared_gpu() -> (Harness, FakeSession, FakeSession) {
         json!([profile(
             "competitive",
             "Competitive",
-            json!({ "powerLimitWatts": value(400),
-            "memoryOffsetMHz": value(100) })
+            json!({ "power_limit_watts": value(400),
+            "memory_offset_mhz": value(100) })
         )]),
         &[(CS, "Counter-Strike")],
     );
@@ -267,7 +267,7 @@ fn assert_restored(daemon: &Harness, alice: &FakeSession, manual: &Value) {
     assert_eq!(current_profile(alice), "Daily");
     assert_eq!(
         gpu_status(alice),
-        json!([{ "gpuId": GPU, "state": { "status": "restored" } }])
+        json!([{ "gpu_id": GPU, "state": { "status": "restored" } }])
     );
     assert_eq!(&last_applied(daemon), manual);
 }
@@ -400,7 +400,7 @@ fn a_renamed_accounts_orphaned_links_never_drive_its_games() {
         json!([profile(
             "tuned",
             "Tuned",
-            json!({ "powerLimitWatts": value(300) })
+            json!({ "power_limit_watts": value(300) })
         )]),
         &[(DOTA, "Dota 2")],
     );
@@ -418,22 +418,22 @@ fn a_renamed_accounts_orphaned_links_never_drive_its_games() {
 
 fn shared_curve() -> Value {
     json!({ "arrangement": "shared", "setting": { "mode": "curve", "points": [
-        { "temperatureC": 40, "speedPercent": 30 },
-        { "temperatureC": 80, "speedPercent": 100 }
+        { "temperature_c": 40, "speed_percent": 30 },
+        { "temperature_c": 80, "speed_percent": 100 }
     ] } })
 }
 
 fn separate_cooling(second_fan: Value) -> Value {
-    json!({ "arrangement": "perFan", "fans": [
-        { "fanIndex": 0, "setting": shared_curve()["setting"] },
-        { "fanIndex": 1, "setting": second_fan }
+    json!({ "arrangement": "per_fan", "fans": [
+        { "fan_index": 0, "setting": shared_curve()["setting"] },
+        { "fan_index": 1, "setting": second_fan }
     ] })
 }
 
 fn apply_cooling(session: &FakeSession, configuration: &Value) {
     let result = ok(
         session.send_json(json!({ "type": "apply_cooling", "payload": {
-        "gpuId": GPU, "configuration": configuration
+        "gpu_id": GPU, "configuration": configuration
     } })),
     );
     assert_eq!(result["outcome"]["status"], "succeeded", "{result}");
@@ -469,15 +469,15 @@ fn overlapping_users_restore_the_original_unsaved_cooling_configuration() {
     for baseline in [
         shared_curve(),
         separate_cooling(json!({ "mode": "automatic" })),
-        separate_cooling(json!({ "mode": "fixed", "speedPercent": 55 })),
+        separate_cooling(json!({ "mode": "fixed", "speed_percent": 55 })),
     ] {
         for restart_between_games in [false, true] {
             let (mut daemon, alice, bob) = shared_cooled_gpu();
             apply_cooling(&alice, &baseline);
             let manual = last_applied(&daemon);
-            let remembered = cooling(&alice)["rememberedCurve"].clone();
+            let remembered = cooling(&alice)["remembered_curve"].clone();
             let alice_cooling = json!({ "arrangement": "shared", "setting": {
-                "mode": "fixed", "speedPercent": 75
+                "mode": "fixed", "speed_percent": 75
             } });
             let bob_cooling = separate_cooling(json!({ "mode": "automatic" }));
             link_cooling(&alice, DOTA, "alice-fans", alice_cooling.clone());
@@ -512,7 +512,7 @@ fn overlapping_users_restore_the_original_unsaved_cooling_configuration() {
                 Some(100)
             );
             assert_eq!(last_applied(&daemon), manual);
-            assert_eq!(cooling(&alice)["rememberedCurve"], remembered);
+            assert_eq!(cooling(&alice)["remembered_curve"], remembered);
 
             daemon.end_process(200);
             daemon.scan();
@@ -539,10 +539,10 @@ fn overlapping_users_restore_the_original_unsaved_cooling_configuration() {
             assert_eq!(current_profile(&alice), "Daily");
             assert_eq!(
                 gpu_status(&alice),
-                json!([{ "gpuId": GPU, "state": { "status": "restored" } }])
+                json!([{ "gpu_id": GPU, "state": { "status": "restored" } }])
             );
             assert_eq!(last_applied(&daemon), manual);
-            assert_eq!(cooling(&alice)["rememberedCurve"], remembered);
+            assert_eq!(cooling(&alice)["remembered_curve"], remembered);
             assert!(!writes(&daemon).contains(&Setter::GraphicsOffset));
             assert!(!writes(&daemon).contains(&Setter::MemoryOffset));
         }
@@ -552,7 +552,7 @@ fn overlapping_users_restore_the_original_unsaved_cooling_configuration() {
 #[test]
 fn overlapping_games_capture_cooling_only_when_first_written_and_restore_it_when_omitted() {
     let (daemon, alice, bob) = shared_cooled_gpu();
-    let baseline = separate_cooling(json!({ "mode": "fixed", "speedPercent": 55 }));
+    let baseline = separate_cooling(json!({ "mode": "fixed", "speed_percent": 55 }));
     apply_cooling(&alice, &baseline);
     let manual = last_applied(&daemon);
     let bob_cooling = json!({ "arrangement": "shared", "setting": { "mode": "automatic" } });

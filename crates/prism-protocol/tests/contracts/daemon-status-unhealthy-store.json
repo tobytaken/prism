@@ -1,11 +1,11 @@
 {
   "reachable": true,
-  "managedByDaemon": true,
-  "socketPath": "/run/prism/prismd.sock",
+  "managed_by_daemon": true,
+  "socket_path": "/run/prism/prismd.sock",
   "message": null,
-  "tuningStore": {
+  "tuning_store": {
     "status": "unhealthy",
-    "problem": "newerVersion",
+    "problem": "newer_version",
     "path": "/var/lib/prism/tuning-state.json",
     "detail": "it was written by schema version 2, and this daemon understands up to version 1"
   }

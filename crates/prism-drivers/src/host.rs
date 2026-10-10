@@ -23,7 +23,6 @@ pub enum SecureBootState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct DriverHostInfo {
     pub distro_id: String,
     pub distro_version: String,

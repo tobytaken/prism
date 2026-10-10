@@ -11,8 +11,8 @@ fn startup_gpu() -> prism_gpu::GpuPerformanceDevice {
 }
 
 fn seed(session: &FakeSession, id: &str, name: &str, watts: u32) {
-    session.seed_profiles(json!([{ "id": id, "name": name, "gpuId": "GPU-123",
-        "settings": { "powerLimitWatts": { "kind": "value", "value": watts } } }]));
+    session.seed_profiles(json!([{ "id": id, "name": name, "gpu_id": "GPU-123",
+        "settings": { "power_limit_watts": { "kind": "value", "value": watts } } }]));
 }
 
 fn startup(session: &FakeSession) -> Value {
@@ -23,7 +23,7 @@ fn startup(session: &FakeSession) -> Value {
 
 fn designate(session: &FakeSession, id: Option<&str>) -> Value {
     session.send_json(json!({ "type": "set_startup_profile", "payload": {
-        "gpuId": "GPU-123", "profileId": id
+        "gpu_id": "GPU-123", "profile_id": id
     } }))
 }
 
@@ -40,7 +40,7 @@ fn startup_choices_are_host_wide_latest_wins_and_other_users_see_the_profile_by_
     assert_eq!(
         startup(&alice)["profiles"],
         json!([{
-            "gpuId": "GPU-123", "profile": { "id": "silent", "name": "Silent" }
+            "gpu_id": "GPU-123", "profile": { "id": "silent", "name": "Silent" }
         }])
     );
     assert_eq!(
@@ -58,7 +58,7 @@ fn startup_choices_are_host_wide_latest_wins_and_other_users_see_the_profile_by_
 
 fn enable(session: &FakeSession) {
     let response = session.send_json(json!({ "type": "set_startup_behavior", "payload": {
-        "behavior": "startupProfiles"
+        "behavior": "startup_profiles"
     } }));
     assert_eq!(response["payload"]["success"], true, "{response}");
 }
@@ -106,7 +106,7 @@ fn startup_applies_without_an_app_once_per_boot_id_and_sets_the_current_profile(
     );
     let alice = daemon.user(1000, "alice");
     assert_eq!(
-        alice.send_json(json!({ "type": "get_tuning_states" }))["payload"][0]["currentProfile"],
+        alice.send_json(json!({ "type": "get_tuning_states" }))["payload"][0]["current_profile"],
         json!({ "id": "silent", "name": "Silent" })
     );
     drop(alice);
@@ -136,9 +136,9 @@ fn startup_validates_every_setting_without_writing_or_clamping_and_reports_why()
         let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
         let alice = daemon.user(1000, "alice");
         alice.seed_profiles(json!([{
-            "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
-                "powerLimitWatts": { "kind": "value", "value": 300 },
-                "memoryOffsetMHz": { "kind": "value", "value": 100 }
+            "id": "quiet", "name": "Quiet", "gpu_id": "GPU-123", "settings": {
+                "power_limit_watts": { "kind": "value", "value": 300 },
+                "memory_offset_mhz": { "kind": "value", "value": 100 }
             }
         }]));
         designate(&alice, Some("quiet"));
@@ -155,7 +155,7 @@ fn startup_validates_every_setting_without_writing_or_clamping_and_reports_why()
         daemon.reboot();
         let state = completed_startup(&daemon);
         let outcome = &state["outcomes"][0];
-        assert_eq!(outcome["status"], "notAttempted");
+        assert_eq!(outcome["status"], "not_attempted");
         assert!(
             outcome["reason"]
                 .as_str()
@@ -182,7 +182,7 @@ fn startup_validates_every_setting_without_writing_or_clamping_and_reports_why()
         if !unsupported {
             let alice = daemon.user(1000, "alice");
             let corrected = alice.send_json(json!({ "type": "correct_and_apply_profile", "payload": {
-                "profileId": "quiet", "corrections": [{ "setting": "memoryOffsetMHz", "savedValue": 100, "proposedValue": 80, "bound": "maximum" }]
+                "profile_id": "quiet", "corrections": [{ "setting": "memory_offset_mhz", "saved_value": 100, "proposed_value": 80, "bound": "maximum" }]
             } }));
             assert_eq!(
                 corrected["payload"]["application"]["memory"]["status"],
@@ -208,13 +208,13 @@ fn a_partial_startup_clears_the_current_profile_and_reports_each_setting() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(json!([{
-        "id": "quiet", "name": "Quiet", "gpuId": "GPU-123", "settings": {
-            "powerLimitWatts": { "kind": "value", "value": 300 },
-            "graphicsOffsetMHz": { "kind": "value", "value": 50 },
-            "memoryOffsetMHz": { "kind": "value", "value": 100 }
+        "id": "quiet", "name": "Quiet", "gpu_id": "GPU-123", "settings": {
+            "power_limit_watts": { "kind": "value", "value": 300 },
+            "graphics_offset_mhz": { "kind": "value", "value": 50 },
+            "memory_offset_mhz": { "kind": "value", "value": 100 }
         }
     }]));
-    alice.send_json(json!({ "type": "apply_profile_by_id", "payload": { "profileId": "quiet" } }));
+    alice.send_json(json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" } }));
     designate(&alice, Some("quiet"));
     enable(&alice);
     drop(alice);
@@ -236,7 +236,7 @@ fn a_partial_startup_clears_the_current_profile_and_reports_each_setting() {
     assert_eq!(application["memory"]["status"], "unattempted");
     let alice = daemon.user(1000, "alice");
     assert_eq!(
-        alice.send_json(json!({ "type": "get_tuning_states" }))["payload"][0]["currentProfile"],
+        alice.send_json(json!({ "type": "get_tuning_states" }))["payload"][0]["current_profile"],
         Value::Null
     );
 }
@@ -254,7 +254,7 @@ fn a_late_gpu_gets_startup_before_manual_writes_while_reads_and_other_gpus_remai
     assert!(daemon.performance().gpus.is_empty());
     let mut manual = daemon.send_in_background(
         serde_json::from_value(json!({
-            "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 400 }
+            "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 400 }
         }))
         .unwrap(),
     );
@@ -263,7 +263,7 @@ fn a_late_gpu_gets_startup_before_manual_writes_while_reads_and_other_gpus_remai
         .gpus
         .arrive(super::harness::tunable_gpu_with_id("GPU-456"));
     let other = daemon.send_json(
-        json!({ "type": "set_power_limit", "payload": { "gpuId": "GPU-456", "limitWatts": 400 } }),
+        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-456", "limit_watts": 400 } }),
     );
     assert_eq!(other["payload"]["success"], true);
     daemon.clock.set(29_000);
@@ -300,7 +300,7 @@ fn a_gpu_arriving_after_the_deadline_is_reported_absent_and_never_applied_later_
     daemon.gpus.arrive(startup_gpu());
     reading.release();
     let state = completed_startup(&daemon);
-    assert_eq!(state["outcomes"][0]["status"], "notAttempted");
+    assert_eq!(state["outcomes"][0]["status"], "not_attempted");
     assert!(
         state["outcomes"][0]["reason"]
             .as_str()
@@ -372,7 +372,7 @@ fn an_interrupted_startup_reports_the_interruption_and_never_retries_this_boot()
     drop(alice);
     daemon.restart();
     let state = completed_startup(&daemon);
-    assert_eq!(state["outcomes"][0]["status"], "notAttempted");
+    assert_eq!(state["outcomes"][0]["status"], "not_attempted");
     assert!(
         state["outcomes"][0]["reason"]
             .as_str()
@@ -397,14 +397,14 @@ fn saving_renaming_and_deleting_follow_the_startup_link_across_boots() {
     completed_startup(&daemon);
     let alice = daemon.user(1000, "alice");
     alice.send_json(
-        json!({ "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 350 } }),
+        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 350 } }),
     );
     let revision =
         alice.send_json(json!({ "type": "get_tuning_states" }))["payload"][0]["revision"].clone();
-    let saved = alice.send_json(json!({ "type": "save_to_current_profile", "payload": { "gpuId": "GPU-123", "revision": revision } }));
+    let saved = alice.send_json(json!({ "type": "save_to_current_profile", "payload": { "gpu_id": "GPU-123", "revision": revision } }));
     assert_eq!(saved["type"], "profile");
     alice.send_json(
-        json!({ "type": "rename_profile", "payload": { "profileId": "quiet", "name": "Silent" } }),
+        json!({ "type": "rename_profile", "payload": { "profile_id": "quiet", "name": "Silent" } }),
     );
     assert_eq!(startup(&alice)["profiles"][0]["profile"]["name"], "Silent");
     drop(alice);
@@ -420,7 +420,7 @@ fn saving_renaming_and_deleting_follow_the_startup_link_across_boots() {
     );
     let alice = daemon.user(1000, "alice");
     let writes = daemon.gpus.writes();
-    alice.send_json(json!({ "type": "delete_profile", "payload": { "profileId": "quiet" } }));
+    alice.send_json(json!({ "type": "delete_profile", "payload": { "profile_id": "quiet" } }));
     assert_eq!(startup(&alice)["profiles"], json!([]));
     assert_eq!(daemon.gpus.writes(), writes);
     drop(alice);
@@ -435,7 +435,7 @@ fn saving_renaming_and_deleting_follow_the_startup_link_across_boots() {
 #[test]
 fn an_unhealthy_store_suspends_startup() {
     use super::tuning_store::TUNING_STORE_FILE_NAME;
-    let corrupt = b"{\"schemaVersion\":4,\"startupBehavior\":\"startupProfiles\",\"users\":[";
+    let corrupt = b"{\"schema_version\":4,\"startup_behavior\":\"startup_profiles\",\"users\":[";
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![startup_gpu()]),
         &[(TUNING_STORE_FILE_NAME, corrupt)],
@@ -464,7 +464,7 @@ fn startup_outcome_dismissals_belong_to_the_user_survive_restart_and_reset_at_re
     );
     assert_eq!(
         alice.send_json(
-            json!({ "type": "dismiss_startup_outcome", "payload": { "gpuId": "GPU-123" } })
+            json!({ "type": "dismiss_startup_outcome", "payload": { "gpu_id": "GPU-123" } })
         )["payload"]["success"],
         true
     );
@@ -497,7 +497,7 @@ fn startup_outcome_dismissals_belong_to_the_user_survive_restart_and_reset_at_re
 fn unreadable_boot_state_is_preserved_and_prevents_startup_writes_while_manual_tuning_works() {
     for bytes in [
         b"{incomplete".as_slice(),
-        b"{\"schemaVersion\":99}".as_slice(),
+        b"{\"schema_version\":99}".as_slice(),
     ] {
         let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
         let alice = daemon.user(1000, "alice");
@@ -521,7 +521,7 @@ fn unreadable_boot_state_is_preserved_and_prevents_startup_writes_while_manual_t
             std::fs::read(daemon.boot_path("startup-state.json")).unwrap(),
             bytes
         );
-        assert_eq!(alice.send_json(json!({ "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 350 } }))["payload"]["success"], true);
+        assert_eq!(alice.send_json(json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 350 } }))["payload"]["success"], true);
         assert_eq!(
             daemon.gpus.gpu("GPU-123").power.current_limit_watts,
             Some(350)

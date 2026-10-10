@@ -6,21 +6,21 @@ use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, cooled_gpu};
 
 fn curve() -> Value {
     json!({"arrangement": "shared", "setting": {"mode": "curve", "points": [
-        {"temperatureC": 40, "speedPercent": 30},
-        {"temperatureC": 80, "speedPercent": 100}
+        {"temperature_c": 40, "speed_percent": 30},
+        {"temperature_c": 80, "speed_percent": 100}
     ]}})
 }
 
 fn apply(session: &FakeSession, configuration: Value) -> Value {
     session.send_json(json!({"type": "apply_cooling", "payload": {
-        "gpuId": "GPU-123", "configuration": configuration
+        "gpu_id": "GPU-123", "configuration": configuration
     }}))["payload"]
         .clone()
 }
 
 fn remembered(session: &FakeSession) -> Value {
     session.send_json(json!({"type": "get_performance"}))["payload"]["gpus"][0]["cooling"]
-        ["control"]["rememberedCurve"]
+        ["control"]["remembered_curve"]
         .clone()
 }
 
@@ -32,7 +32,7 @@ fn remembered_curve_survives_modes_sessions_daemon_restart_and_reboot() {
     assert_eq!(remembered(&alice), curve());
     for setting in [
         json!({"mode": "automatic"}),
-        json!({"mode": "fixed", "speedPercent": 55}),
+        json!({"mode": "fixed", "speed_percent": 55}),
     ] {
         assert_eq!(
             apply(&alice, json!({"arrangement": "shared", "setting": setting}))["outcome"]["status"],
@@ -58,7 +58,7 @@ fn remembered_curves_belong_to_the_account_and_individual_gpu() {
     assert!(remembered(&daemon.user(1002, "alice")).is_null());
     assert!(
         daemon.send_json(json!({"type": "get_performance"}))["payload"]["gpus"][0]["cooling"]
-            ["control"]["rememberedCurve"]
+            ["control"]["remembered_curve"]
             .is_null()
     );
     // Same model, same display index, different hardware identity.
@@ -77,9 +77,9 @@ fn a_successful_mixed_arrangement_is_remembered_in_full_and_replaces_the_old_cho
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     let alice = daemon.user(1000, "alice");
     apply(&alice, curve());
-    let mixed = json!({"arrangement": "perFan", "fans": [
-        {"fanIndex": 0, "setting": curve()["setting"]},
-        {"fanIndex": 1, "setting": {"mode": "fixed", "speedPercent": 55}}
+    let mixed = json!({"arrangement": "per_fan", "fans": [
+        {"fan_index": 0, "setting": curve()["setting"]},
+        {"fan_index": 1, "setting": {"mode": "fixed", "speed_percent": 55}}
     ]});
     assert_eq!(
         apply(&alice, mixed.clone())["outcome"]["status"],
@@ -97,7 +97,7 @@ fn failed_applications_and_current_capability_validation_preserve_the_manual_cho
     let alice = daemon.user(1000, "alice");
     apply(&alice, curve());
     let mut edited = curve();
-    edited["setting"]["points"][0]["speedPercent"] = json!(40);
+    edited["setting"]["points"][0]["speed_percent"] = json!(40);
     daemon
         .gpus
         .fail_fan("GPU-123", Setter::FanSpeed, 1, "fan rejected change");
@@ -124,13 +124,13 @@ fn automatic_applications_restorations_and_curve_ticks_never_replace_manual_hist
     assert_eq!(remembered(&alice), curve());
     assert_eq!(daemon.persistent_file("tuning-state.json"), saved);
     let mut temporary = curve();
-    temporary["setting"]["points"][0]["speedPercent"] = json!(50);
+    temporary["setting"]["points"][0]["speed_percent"] = json!(50);
     // The common controller application boundary consumed by game applications and restorations.
     // Neither identifies a manual owner, even if its configuration includes a custom curve.
     for configuration in [temporary, curve()] {
         let application = daemon.core().apply_cooling(
             serde_json::from_value(json!({
-                "gpuId": "GPU-123", "configuration": configuration
+                "gpu_id": "GPU-123", "configuration": configuration
             }))
             .unwrap(),
             CoolingApplicationSource::NonManual,
@@ -146,7 +146,7 @@ fn automatic_applications_restorations_and_curve_ticks_never_replace_manual_hist
 
 #[test]
 fn a_version_seven_store_migrates_without_inventing_a_remembered_curve() {
-    let saved = br#"{"schemaVersion":7,"users":[{"uid":1000,"username":"alice","automaticSwitching":true}]}"#;
+    let saved = br#"{"schema_version":7,"users":[{"uid":1000,"username":"alice","automatic_switching":true}]}"#;
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![cooled_gpu()]),
         &[("tuning-state.json", saved)],
@@ -161,7 +161,7 @@ fn a_version_seven_store_migrates_without_inventing_a_remembered_curve() {
 
 #[test]
 fn an_unhealthy_store_does_not_block_manual_cooling_or_invent_persisted_history() {
-    let saved = br#"{"schemaVersion":99}"#;
+    let saved = br#"{"schema_version":99}"#;
     let daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![cooled_gpu()]),
         &[("tuning-state.json", saved)],

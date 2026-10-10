@@ -14,14 +14,12 @@ use nvidia::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuInventoryResponse {
     pub gpus: Vec<GpuDevice>,
     pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuDevice {
     pub id: String,
     pub vendor: GpuVendor,
@@ -39,13 +37,11 @@ pub struct GpuDevice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct MemoryInfo {
-    pub total_mi_b: Option<u64>,
+    pub total_mib: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ComputeInfo {
     pub api: Option<ComputeApi>,
     pub api_version: Option<String>,
@@ -54,41 +50,32 @@ pub struct ComputeInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct PcieInfo {
     pub gen_max: Option<u32>,
     pub width_max: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct PowerInfo {
     pub enforced_limit_watts: Option<u32>,
     pub default_limit_watts: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ClockInfo {
-    #[serde(rename = "graphicsCurrentMHz")]
     pub graphics_current_mhz: Option<u32>,
-    #[serde(rename = "graphicsMaxMHz")]
     pub graphics_max_mhz: Option<u32>,
-    #[serde(rename = "smMaxMHz")]
     pub sm_max_mhz: Option<u32>,
-    #[serde(rename = "memoryMaxMHz")]
     pub memory_max_mhz: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuPerformanceResponse {
     pub gpus: Vec<GpuPerformanceDevice>,
     pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuPerformanceDevice {
     pub id: String,
     #[serde(default)]
@@ -104,24 +91,21 @@ pub struct GpuPerformanceDevice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuTelemetryInfo {
     pub power_draw_watts: Option<u32>,
-    #[serde(rename = "coreClockMHz")]
     pub core_clock_mhz: Option<u32>,
-    #[serde(rename = "memoryClockMHz")]
     pub memory_clock_mhz: Option<u32>,
     pub fan_speed_percent: Option<u32>,
     pub voltage_millivolts: Option<u32>,
     pub temperature_c: Option<u32>,
     pub gpu_utilization_percent: Option<u32>,
-    pub memory_used_mi_b: Option<u64>,
-    pub memory_total_mi_b: Option<u64>,
+    pub memory_used_mib: Option<u64>,
+    pub memory_total_mib: Option<u64>,
     pub performance_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum ControlSupport {
     Supported,
     Unsupported,
@@ -130,7 +114,6 @@ pub enum ControlSupport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct PowerControlInfo {
     #[serde(default)]
     pub support: ControlSupport,
@@ -145,7 +128,6 @@ pub struct PowerControlInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct CoolingInfo {
     pub is_supported: bool,
     pub unsupported_reason: Option<String>,
@@ -169,7 +151,6 @@ pub struct CoolingInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct FanControlInfo {
     pub index: u32,
     pub current_speed_percent: Option<u32>,
@@ -186,42 +167,34 @@ pub enum FanControlMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ClockOffsetsInfo {
     pub graphics: ClockOffsetInfo,
     pub memory: ClockOffsetInfo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ClockOffsetInfo {
     #[serde(default)]
     pub support: ControlSupport,
     pub reason: Option<String>,
     pub current_value_error: Option<String>,
-    #[serde(rename = "currentOffsetMHz")]
     pub current_offset_mhz: Option<i32>,
-    #[serde(rename = "minOffsetMHz")]
     pub min_offset_mhz: Option<i32>,
-    #[serde(rename = "maxOffsetMHz")]
     pub max_offset_mhz: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct SetGpuPowerLimitRequest {
     pub gpu_id: String,
     pub limit_watts: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuTargetRequest {
     pub gpu_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct SetGpuFanSpeedRequest {
     pub gpu_id: String,
     pub fan_index: u32,
@@ -229,14 +202,12 @@ pub struct SetGpuFanSpeedRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct SetGpuFanModeAutoRequest {
     pub gpu_id: String,
     pub fan_index: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct SetGpuClockOffsetsRequest {
     pub gpu_id: String,
     pub graphics_offset_mhz: Option<i32>,
@@ -244,7 +215,6 @@ pub struct SetGpuClockOffsetsRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuControlInfo {
     pub supported_features: GpuSupportedFeatures,
     pub power_limit: PowerLimitControl,
@@ -255,7 +225,6 @@ pub struct GpuControlInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuSupportedFeatures {
     pub power_limit: bool,
     pub gpu_clock_lock: bool,
@@ -266,7 +235,6 @@ pub struct GpuSupportedFeatures {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct PowerLimitControl {
     pub current_watts: Option<u32>,
     pub default_watts: Option<u32>,
@@ -275,7 +243,6 @@ pub struct PowerLimitControl {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct ClockLockControl {
     pub current_min_mhz: Option<u32>,
     pub current_max_mhz: Option<u32>,
@@ -285,24 +252,17 @@ pub struct ClockLockControl {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct OffsetControl {
-    #[serde(rename = "graphicsMHz")]
     pub graphics_mhz: Option<i32>,
-    #[serde(rename = "memoryMHz")]
     pub memory_mhz: Option<i32>,
-    #[serde(rename = "minGraphicsMHz")]
     pub min_graphics_mhz: Option<i32>,
-    #[serde(rename = "maxGraphicsMHz")]
     pub max_graphics_mhz: Option<i32>,
-    #[serde(rename = "minMemoryMHz")]
     pub min_memory_mhz: Option<i32>,
-    #[serde(rename = "maxMemoryMHz")]
     pub max_memory_mhz: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum TuningOutcomeStatus {
     Succeeded,
     Failed,
@@ -310,14 +270,12 @@ pub enum TuningOutcomeStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct TuningOutcome {
     pub status: TuningOutcomeStatus,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct GpuCommandError {
     pub code: GpuCommandErrorCode,
     pub message: String,
@@ -333,7 +291,7 @@ impl GpuCommandError {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum GpuCommandErrorCode {
     NoPermission,
     InvalidArgument,
@@ -469,7 +427,7 @@ mod tests {
                 firmware_version: Some("98.02".into()),
                 bus_id: Some("0000:01:00.0".into()),
                 memory: MemoryInfo {
-                    total_mi_b: Some(32_768),
+                    total_mib: Some(32_768),
                 },
                 compute: ComputeInfo {
                     api: Some(ComputeApi::Cuda),
@@ -536,12 +494,12 @@ mod tests {
 
         let value = serde_json::to_value(response).expect("serialize response");
 
-        assert_eq!(value["gpus"][0]["driverVersion"], "595.58.03");
-        assert_eq!(value["gpus"][0]["memory"]["totalMiB"], 32_768);
+        assert_eq!(value["gpus"][0]["driver_version"], "595.58.03");
+        assert_eq!(value["gpus"][0]["memory"]["total_mib"], 32_768);
         assert_eq!(value["gpus"][0]["compute"]["api"], "cuda");
-        assert_eq!(value["gpus"][0]["clocks"]["graphicsCurrentMHz"], 1_365);
+        assert_eq!(value["gpus"][0]["clocks"]["graphics_current_mhz"], 1_365);
         assert_eq!(
-            value["gpus"][0]["control"]["powerLimit"].get("desiredWatts"),
+            value["gpus"][0]["control"]["power_limit"].get("desired_watts"),
             None
         );
     }
@@ -609,8 +567,8 @@ mod tests {
                     voltage_millivolts: None,
                     temperature_c: Some(71),
                     gpu_utilization_percent: Some(96),
-                    memory_used_mi_b: Some(10_240),
-                    memory_total_mi_b: Some(32_768),
+                    memory_used_mib: Some(10_240),
+                    memory_total_mib: Some(32_768),
                     performance_state: Some("P0".into()),
                 },
             }],
@@ -620,17 +578,23 @@ mod tests {
         let value = serde_json::to_value(response).expect("serialize response");
 
         assert_eq!(value["gpus"][0]["power"]["support"], "supported");
-        assert_eq!(value["gpus"][0]["stableId"], "GPU-123");
+        assert_eq!(value["gpus"][0]["stable_id"], "GPU-123");
         assert_eq!(
             value["gpus"][0]["clocks"]["graphics"]["support"],
             "supported"
         );
-        assert_eq!(value["gpus"][0]["power"]["currentDrawWatts"], 312);
-        assert_eq!(value["gpus"][0]["power"]["currentLimitWatts"], 475);
+        assert_eq!(value["gpus"][0]["power"]["current_draw_watts"], 312);
+        assert_eq!(value["gpus"][0]["power"]["current_limit_watts"], 475);
         assert_eq!(value["gpus"][0]["cooling"]["fans"][0]["mode"], "auto");
-        assert_eq!(value["gpus"][0]["cooling"]["maxOperatingTemperatureC"], 90);
-        assert_eq!(value["gpus"][0]["clocks"]["graphics"]["maxOffsetMHz"], 200);
-        assert_eq!(value["gpus"][0]["telemetry"]["coreClockMHz"], 2_550);
-        assert_eq!(value["gpus"][0]["telemetry"]["performanceState"], "P0");
+        assert_eq!(
+            value["gpus"][0]["cooling"]["max_operating_temperature_c"],
+            90
+        );
+        assert_eq!(
+            value["gpus"][0]["clocks"]["graphics"]["max_offset_mhz"],
+            200
+        );
+        assert_eq!(value["gpus"][0]["telemetry"]["core_clock_mhz"], 2_550);
+        assert_eq!(value["gpus"][0]["telemetry"]["performance_state"], "P0");
     }
 }

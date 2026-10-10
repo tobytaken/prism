@@ -19,16 +19,16 @@ fn save_as_new(session: &FakeSession, gpu_id: &str, name: &str) -> Value {
     let states = session.send_json(json!({ "type": "get_tuning_states" }));
     let revision = states["payload"]
         .as_array()
-        .and_then(|states| states.iter().find(|state| state["gpuId"] == gpu_id))
+        .and_then(|states| states.iter().find(|state| state["gpu_id"] == gpu_id))
         .map_or(json!(""), |state| state["revision"].clone());
     json!({
         "type": "save_profile_as_new",
-        "payload": { "gpuId": gpu_id, "name": name, "revision": revision }
+        "payload": { "gpu_id": gpu_id, "name": name, "revision": revision }
     })
 }
 
 fn apply_by_id(profile_id: &str) -> Value {
-    json!({ "type": "apply_profile_by_id", "payload": { "profileId": profile_id } })
+    json!({ "type": "apply_profile_by_id", "payload": { "profile_id": profile_id } })
 }
 
 fn error_message(response: &Value) -> String {
@@ -58,7 +58,7 @@ fn users_see_only_their_own_profiles_and_a_reused_uid_with_another_username_inhe
     // Another user can't apply the profile by guessing its id, and nothing is written.
     for other in [&bob, &carol] {
         let response = other.send_json(apply_by_id(quiet["id"].as_str().unwrap()));
-        assert_eq!(response["payload"]["code"], "notFound", "{response}");
+        assert_eq!(response["payload"]["code"], "not_found", "{response}");
     }
     assert!(daemon.gpus.writes().is_empty());
 
@@ -72,42 +72,42 @@ fn save_as_new_captures_applied_known_values_and_keeps_explicit_default_requests
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
     // Use default for the graphics offset and the power limit, then a number for memory.
-    alice.send_json(json!({ "type": "reset_power_limit", "payload": { "gpuId": "GPU-123" } }));
+    alice.send_json(json!({ "type": "reset_power_limit", "payload": { "gpu_id": "GPU-123" } }));
     alice.send_json(json!({
         "type": "set_clock_offsets",
-        "payload": { "gpuId": "GPU-123", "graphicsOffsetMHz": "default", "memoryOffsetMHz": 40 }
+        "payload": { "gpu_id": "GPU-123", "graphics_offset_mhz": "default", "memory_offset_mhz": 40 }
     }));
 
     let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "  Defaults  ")));
     assert_eq!(profile["name"], "Defaults");
-    assert_eq!(profile["gpuId"], "GPU-123");
+    assert_eq!(profile["gpu_id"], "GPU-123");
     assert_eq!(
         profile["settings"],
         json!({
-            "powerLimitWatts": { "kind": "default" },
-            "graphicsOffsetMHz": { "kind": "default" },
-            "memoryOffsetMHz": { "kind": "value", "value": 40 }
+            "power_limit_watts": { "kind": "default" },
+            "graphics_offset_mhz": { "kind": "default" },
+            "memory_offset_mhz": { "kind": "value", "value": 40 }
         })
     );
 
     // A number equal to today's default stays a number.
     alice.send_json(json!({
-        "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 575 }
+        "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 575 }
     }));
     let fixed = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Fixed")));
     assert_eq!(
-        fixed["settings"]["powerLimitWatts"],
+        fixed["settings"]["power_limit_watts"],
         json!({ "kind": "value", "value": 575 })
     );
 
     // A default requested through a profile is kept too, until a later number replaces it.
     alice.send_json(json!({
         "type": "apply_profile",
-        "payload": { "gpuId": "GPU-123", "settings": { "powerLimitWatts": { "kind": "default" } } }
+        "payload": { "gpu_id": "GPU-123", "settings": { "power_limit_watts": { "kind": "default" } } }
     }));
     let again = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Default again")));
     assert_eq!(
-        again["settings"]["powerLimitWatts"],
+        again["settings"]["power_limit_watts"],
         json!({ "kind": "default" })
     );
 
@@ -117,7 +117,7 @@ fn save_as_new_captures_applied_known_values_and_keeps_explicit_default_requests
         .update("GPU-123", |gpu| gpu.power.current_limit_watts = Some(500));
     let outside = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Outside")));
     assert_eq!(
-        outside["settings"]["powerLimitWatts"],
+        outside["settings"]["power_limit_watts"],
         json!({ "kind": "value", "value": 500 })
     );
 }
@@ -126,17 +126,17 @@ fn save_as_new_captures_applied_known_values_and_keeps_explicit_default_requests
 fn a_failed_manual_write_does_not_replace_the_recorded_request() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    alice.send_json(json!({ "type": "reset_power_limit", "payload": { "gpuId": "GPU-123" } }));
+    alice.send_json(json!({ "type": "reset_power_limit", "payload": { "gpu_id": "GPU-123" } }));
     daemon
         .gpus
         .fail("GPU-123", Setter::PowerLimit, "Power write denied");
     alice.send_json(json!({
-        "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 575 }
+        "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 575 }
     }));
 
     let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
     assert_eq!(
-        profile["settings"]["powerLimitWatts"],
+        profile["settings"]["power_limit_watts"],
         json!({ "kind": "default" })
     );
 }
@@ -186,8 +186,8 @@ fn unsupported_settings_are_omitted_from_a_saved_profile() {
     assert_eq!(
         profile["settings"],
         json!({
-            "powerLimitWatts": { "kind": "value", "value": 475 },
-            "graphicsOffsetMHz": { "kind": "value", "value": 120 }
+            "power_limit_watts": { "kind": "value", "value": 475 },
+            "graphics_offset_mhz": { "kind": "value", "value": 120 }
         })
     );
 }
@@ -211,10 +211,10 @@ fn names_are_trimmed_and_unique_per_gpu_regardless_of_letter_case() {
         "Enter a name for the profile."
     );
     let other_gpu = saved(alice.send_json(save_as_new(&alice, "GPU-456", "Quiet")));
-    assert_eq!(other_gpu["gpuId"], "GPU-456");
+    assert_eq!(other_gpu["gpu_id"], "GPU-456");
     let names: Vec<_> = list(alice.send_json(LIST()))
         .into_iter()
-        .map(|profile| (profile["gpuId"].clone(), profile["name"].clone()))
+        .map(|profile| (profile["gpu_id"].clone(), profile["name"].clone()))
         .collect();
     assert_eq!(
         names,
@@ -236,10 +236,10 @@ fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_wri
     alice.seed_profiles(json!([{
         "id": "quiet",
         "name": "Quiet",
-        "gpuId": "GPU-123",
+        "gpu_id": "GPU-123",
         "settings": {
-            "powerLimitWatts": { "kind": "value", "value": 300 },
-            "memoryOffsetMHz": { "kind": "value", "value": 40 }
+            "power_limit_watts": { "kind": "value", "value": 300 },
+            "memory_offset_mhz": { "kind": "value", "value": 40 }
         }
     }]));
 
@@ -248,9 +248,9 @@ fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_wri
     assert_eq!(
         review["payload"]["corrections"],
         json!([{
-            "setting": "powerLimitWatts",
-            "savedValue": 300,
-            "proposedValue": 280,
+            "setting": "power_limit_watts",
+            "saved_value": 300,
+            "proposed_value": 280,
             "bound": "maximum"
         }])
     );
@@ -261,8 +261,8 @@ fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_wri
     // A correction that no longer matches the saved value changes neither the profile nor the GPU.
     let stale = alice.send_json(json!({
         "type": "correct_and_apply_profile",
-        "payload": { "profileId": "quiet", "corrections": [{
-            "setting": "powerLimitWatts", "savedValue": 320, "proposedValue": 280, "bound": "maximum"
+        "payload": { "profile_id": "quiet", "corrections": [{
+            "setting": "power_limit_watts", "saved_value": 320, "proposed_value": 280, "bound": "maximum"
         }] }
     }));
     assert_eq!(
@@ -274,15 +274,15 @@ fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_wri
 
     let corrected = alice.send_json(json!({
         "type": "correct_and_apply_profile",
-        "payload": { "profileId": "quiet", "corrections": review["payload"]["corrections"] }
+        "payload": { "profile_id": "quiet", "corrections": review["payload"]["corrections"] }
     }));
     assert_eq!(
         corrected["type"], "corrected_profile_application",
         "{corrected}"
     );
     let settings = json!({
-        "powerLimitWatts": { "kind": "value", "value": 280 },
-        "memoryOffsetMHz": { "kind": "value", "value": 40 }
+        "power_limit_watts": { "kind": "value", "value": 280 },
+        "memory_offset_mhz": { "kind": "value", "value": 40 }
     });
     assert_eq!(corrected["payload"]["profile"]["settings"], settings);
     assert_eq!(
@@ -309,14 +309,14 @@ fn a_corrected_profile_stays_saved_when_its_application_fails() {
         .fail("GPU-123", Setter::PowerLimit, "Power write denied");
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(json!([{
-        "id": "loud", "name": "Loud", "gpuId": "GPU-123",
-        "settings": { "powerLimitWatts": { "kind": "value", "value": 500 } }
+        "id": "loud", "name": "Loud", "gpu_id": "GPU-123",
+        "settings": { "power_limit_watts": { "kind": "value", "value": 500 } }
     }]));
 
     let corrected = alice.send_json(json!({
         "type": "correct_and_apply_profile",
-        "payload": { "profileId": "loud", "corrections": [{
-            "setting": "powerLimitWatts", "savedValue": 500, "proposedValue": 450, "bound": "maximum"
+        "payload": { "profile_id": "loud", "corrections": [{
+            "setting": "power_limit_watts", "saved_value": 500, "proposed_value": 450, "bound": "maximum"
         }] }
     }));
     assert_eq!(
@@ -324,7 +324,7 @@ fn a_corrected_profile_stays_saved_when_its_application_fails() {
         json!({ "status": "failed", "error": "Power write denied" })
     );
     assert_eq!(
-        list(alice.send_json(LIST()))[0]["settings"]["powerLimitWatts"],
+        list(alice.send_json(LIST()))[0]["settings"]["power_limit_watts"],
         json!({ "kind": "value", "value": 450 })
     );
 }
@@ -337,8 +337,8 @@ fn applying_a_profile_by_id_writes_only_its_settings_on_its_owning_gpu() {
     ]));
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(json!([{
-        "id": "quiet", "name": "Quiet", "gpuId": "GPU-456",
-        "settings": { "powerLimitWatts": { "kind": "value", "value": 400 } }
+        "id": "quiet", "name": "Quiet", "gpu_id": "GPU-456",
+        "settings": { "power_limit_watts": { "kind": "value", "value": 400 } }
     }]));
 
     let applied = alice.send_json(apply_by_id("quiet"));
@@ -362,7 +362,7 @@ fn applying_a_profile_by_id_writes_only_its_settings_on_its_owning_gpu() {
 fn profiles_and_recorded_default_requests_survive_a_daemon_restart_and_a_reboot() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    alice.send_json(json!({ "type": "reset_power_limit", "payload": { "gpuId": "GPU-123" } }));
+    alice.send_json(json!({ "type": "reset_power_limit", "payload": { "gpu_id": "GPU-123" } }));
     let quiet = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Quiet")));
     drop(alice);
 
@@ -376,7 +376,7 @@ fn profiles_and_recorded_default_requests_survive_a_daemon_restart_and_a_reboot(
     assert_eq!(list(alice.send_json(LIST())), vec![quiet]);
     let after_reboot = saved(alice.send_json(save_as_new(&alice, "GPU-123", "After reboot")));
     assert_eq!(
-        after_reboot["settings"]["powerLimitWatts"],
+        after_reboot["settings"]["power_limit_watts"],
         json!({ "kind": "default" })
     );
     assert_eq!(
@@ -415,7 +415,7 @@ fn profile_requests_need_a_session_that_identifies_the_caller() {
 
 #[test]
 fn an_unhealthy_store_refuses_profile_requests_and_is_preserved() {
-    let corrupt: &[u8] = b"{\"schemaVersion\": 2, \"users\": [tru";
+    let corrupt: &[u8] = b"{\"schema_version\": 2, \"users\": [tru";
     let daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
         &[(TUNING_STORE_FILE_NAME, corrupt)],
@@ -453,7 +453,7 @@ fn live_clock_offsets_accept_the_app_field_names_and_default_requests() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let response = daemon.user(1000, "alice").send_json(json!({
         "type": "set_clock_offsets",
-        "payload": { "gpuId": "GPU-123", "graphicsOffsetMHz": "default", "memoryOffsetMHz": 80 }
+        "payload": { "gpu_id": "GPU-123", "graphics_offset_mhz": "default", "memory_offset_mhz": 80 }
     }));
     assert_eq!(response["payload"]["graphics"]["status"], "succeeded");
     assert_eq!(response["payload"]["memory"]["status"], "succeeded");
@@ -469,10 +469,10 @@ fn cooling_profiles_capture_complete_curves_and_ticks_do_not_invalidate_saving()
     ));
     let alice = daemon.user(1000, "alice");
     let cooling = json!({"arrangement":"shared","setting":{"mode":"curve","points":[
-        {"temperatureC":45,"speedPercent":20}, {"temperatureC":85,"speedPercent":100}
+        {"temperature_c":45,"speed_percent":20}, {"temperature_c":85,"speed_percent":100}
     ]}});
     alice.send_json(
-        json!({"type":"apply_cooling","payload":{"gpuId":"GPU-123","configuration":cooling}}),
+        json!({"type":"apply_cooling","payload":{"gpu_id":"GPU-123","configuration":cooling}}),
     );
     let request = save_as_new(&alice, "GPU-123", "Curve");
     daemon.set_temperature("GPU-123", Some(80));
@@ -488,12 +488,12 @@ fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omiss
         vec![super::harness::cooled_gpu()],
     ));
     let alice = daemon.user(1000, "alice");
-    let cooling = json!({"arrangement":"perFan","fans":[
-        {"fanIndex":0,"setting":{"mode":"curve","points":[{"temperatureC":45,"speedPercent":20},{"temperatureC":85,"speedPercent":100}]}},
-        {"fanIndex":1,"setting":{"mode":"fixed","speedPercent":50}}
+    let cooling = json!({"arrangement":"per_fan","fans":[
+        {"fan_index":0,"setting":{"mode":"curve","points":[{"temperature_c":45,"speed_percent":20},{"temperature_c":85,"speed_percent":100}]}},
+        {"fan_index":1,"setting":{"mode":"fixed","speed_percent":50}}
     ]});
     alice.seed_profiles(
-        json!([{"id":"curve","name":"Curve","gpuId":"GPU-123","settings":{"cooling":cooling}}]),
+        json!([{"id":"curve","name":"Curve","gpu_id":"GPU-123","settings":{"cooling":cooling}}]),
     );
     daemon.set_temperature("GPU-123", Some(80));
     let result = alice.send_json(apply_by_id("curve"));
@@ -503,7 +503,7 @@ fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omiss
     );
     let performance = alice.send_json(json!({"type":"get_performance"}));
     assert_eq!(
-        performance["payload"]["gpus"][0]["cooling"]["control"]["rememberedCurve"],
+        performance["payload"]["gpus"][0]["cooling"]["control"]["remembered_curve"],
         cooling
     );
     assert_eq!(
@@ -514,7 +514,7 @@ fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omiss
         daemon.gpus.gpu("GPU-123").cooling.fans[1].current_speed_percent,
         Some(50)
     );
-    alice.send_json(json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{"powerLimitWatts":{"kind":"default"}}}}));
+    alice.send_json(json!({"type":"apply_profile","payload":{"gpu_id":"GPU-123","settings":{"power_limit_watts":{"kind":"default"}}}}));
     let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", "Still curve")));
     assert_eq!(profile["settings"]["cooling"], cooling);
 }
@@ -525,9 +525,9 @@ fn cooling_range_corrections_require_review_and_keep_the_corrected_profile_after
         vec![super::harness::cooled_gpu()],
     ));
     let alice = daemon.user(1000, "alice");
-    let cooling = json!({"arrangement":"shared","setting":{"mode":"fixed","speedPercent":10}});
+    let cooling = json!({"arrangement":"shared","setting":{"mode":"fixed","speed_percent":10}});
     alice.seed_profiles(
-        json!([{"id":"fixed","name":"Fixed","gpuId":"GPU-123","settings":{"cooling":cooling}}]),
+        json!([{"id":"fixed","name":"Fixed","gpu_id":"GPU-123","settings":{"cooling":cooling}}]),
     );
     let result = alice.send_json(apply_by_id("fixed"));
     assert_eq!(
@@ -537,14 +537,14 @@ fn cooling_range_corrections_require_review_and_keep_the_corrected_profile_after
     let corrections = result["payload"]["corrections"].clone();
     assert_eq!(corrections[0]["setting"], "cooling", "{result}");
     assert_eq!(
-        corrections[0]["proposedValue"]["setting"]["speedPercent"],
+        corrections[0]["proposed_value"]["setting"]["speed_percent"],
         20
     );
     assert!(daemon.gpus.writes().is_empty());
     daemon.gpus.fail("GPU-123", Setter::FanSpeed, "Denied");
-    let result = alice.send_json(json!({"type":"correct_and_apply_profile","payload":{"profileId":"fixed","corrections":corrections}}));
+    let result = alice.send_json(json!({"type":"correct_and_apply_profile","payload":{"profile_id":"fixed","corrections":corrections}}));
     assert_eq!(
-        result["payload"]["profile"]["settings"]["cooling"]["setting"]["speedPercent"], 20,
+        result["payload"]["profile"]["settings"]["cooling"]["setting"]["speed_percent"], 20,
         "{result}"
     );
     assert_eq!(
@@ -559,9 +559,9 @@ fn cooling_profile_validation_blocks_all_writes_when_fixed_bounds_are_unknown() 
     gpu.cooling.fans[0].min_speed_percent = None;
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
     let result = daemon.send_json(
-        json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
-            "powerLimitWatts":{"kind":"value","value":500},
-            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speedPercent":60}}
+        json!({"type":"apply_profile","payload":{"gpu_id":"GPU-123","settings":{
+            "power_limit_watts":{"kind":"value","value":500},
+            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speed_percent":60}}
         }}}),
     );
     assert_eq!(
@@ -601,8 +601,8 @@ fn a_partial_cooling_profile_reports_each_fan_and_does_not_become_current() {
     let alice = daemon.user(1000, "alice");
     saved(alice.send_json(save_as_new(&alice, "GPU-123", "Before")));
     alice.seed_profiles(
-        json!([{"id":"fixed","name":"Fixed","gpuId":"GPU-123","settings":{
-            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speedPercent":70}}
+        json!([{"id":"fixed","name":"Fixed","gpu_id":"GPU-123","settings":{
+            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speed_percent":70}}
         }}]),
     );
     daemon
@@ -614,7 +614,7 @@ fn a_partial_cooling_profile_reports_each_fan_and_does_not_become_current() {
     assert_eq!(cooling["fans"][0]["outcome"]["status"], "succeeded");
     assert_eq!(cooling["fans"][1]["outcome"]["status"], "failed");
     let states = alice.send_json(json!({"type":"get_tuning_states"}));
-    assert!(states["payload"][0]["currentProfile"].is_null());
+    assert!(states["payload"][0]["current_profile"].is_null());
 }
 
 #[test]
@@ -632,14 +632,14 @@ fn unknown_cooling_policy_blocks_capture_instead_of_saving_a_sampled_speed() {
 
 #[test]
 fn cooling_application_keeps_working_with_an_unhealthy_store_and_reports_unrecorded_manual_state() {
-    let preserved = b"{\"schemaVersion\":999}";
+    let preserved = b"{\"schema_version\":999}";
     let daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![super::harness::cooled_gpu()]),
         &[(TUNING_STORE_FILE_NAME, preserved)],
     );
     let result = daemon.send_json(
-        json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
-            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speedPercent":70}}
+        json!({"type":"apply_profile","payload":{"gpu_id":"GPU-123","settings":{
+            "cooling":{"arrangement":"shared","setting":{"mode":"fixed","speed_percent":70}}
         }}}),
     );
     assert_eq!(
@@ -663,9 +663,9 @@ fn per_fan_profiles_must_cover_the_complete_current_fan_inventory() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(
         vec![super::harness::cooled_gpu()],
     ));
-    let result = daemon.send_json(json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
-        "powerLimitWatts":{"kind":"value","value":500},
-        "cooling":{"arrangement":"perFan","fans":[{"fanIndex":0,"setting":{"mode":"fixed","speedPercent":60}}]}
+    let result = daemon.send_json(json!({"type":"apply_profile","payload":{"gpu_id":"GPU-123","settings":{
+        "power_limit_watts":{"kind":"value","value":500},
+        "cooling":{"arrangement":"per_fan","fans":[{"fan_index":0,"setting":{"mode":"fixed","speed_percent":60}}]}
     }}}));
     assert_eq!(
         result["payload"]["power"]["status"], "unattempted",
@@ -681,15 +681,15 @@ fn cooling_corrections_do_not_require_speed_bounds_for_automatic_fans() {
     gpu.cooling.fans[0].max_speed_percent = None;
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
     let result = daemon.send_json(
-        json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
-            "cooling":{"arrangement":"perFan","fans":[
-                {"fanIndex":0,"setting":{"mode":"automatic"}},
-                {"fanIndex":1,"setting":{"mode":"fixed","speedPercent":10}}
+        json!({"type":"apply_profile","payload":{"gpu_id":"GPU-123","settings":{
+            "cooling":{"arrangement":"per_fan","fans":[
+                {"fan_index":0,"setting":{"mode":"automatic"}},
+                {"fan_index":1,"setting":{"mode":"fixed","speed_percent":10}}
             ]}
         }}}),
     );
     assert_eq!(
-        result["payload"]["corrections"][0]["proposedValue"]["fans"][1]["setting"]["speedPercent"],
+        result["payload"]["corrections"][0]["proposed_value"]["fans"][1]["setting"]["speed_percent"],
         20,
         "{result}"
     );
@@ -702,12 +702,12 @@ fn unrecorded_manual_cooling_is_reported_as_possibly_stale_until_cooling_is_reco
         vec![super::harness::cooled_gpu()],
     ));
     let alice = daemon.user(1000, "alice");
-    alice.send_json(json!({"type":"reset_power_limit","payload":{"gpuId":"GPU-123"}}));
+    alice.send_json(json!({"type":"reset_power_limit","payload":{"gpu_id":"GPU-123"}}));
     let blocker = daemon.persistent_path(&format!("{TUNING_STORE_FILE_NAME}.tmp"));
     std::fs::create_dir(&blocker).unwrap();
     let result = alice.send_json(
-        json!({"type":"apply_cooling","payload":{"gpuId":"GPU-123","configuration":{
-            "arrangement":"shared","setting":{"mode":"fixed","speedPercent":70}
+        json!({"type":"apply_cooling","payload":{"gpu_id":"GPU-123","configuration":{
+            "arrangement":"shared","setting":{"mode":"fixed","speed_percent":70}
         }}}),
     );
     assert_eq!(result["payload"]["outcome"]["status"], "succeeded");
@@ -718,13 +718,13 @@ fn unrecorded_manual_cooling_is_reported_as_possibly_stale_until_cooling_is_reco
     let startup = || {
         let response = alice.send_json(json!({"type":"get_startup_state"}));
         assert_eq!(response["type"], "startup_state", "{response}");
-        response["payload"]["possiblyStale"].clone()
+        response["payload"]["possibly_stale"].clone()
     };
     assert_eq!(startup(), json!(["GPU-123"]));
-    alice.send_json(json!({"type":"reset_power_limit","payload":{"gpuId":"GPU-123"}}));
+    alice.send_json(json!({"type":"reset_power_limit","payload":{"gpu_id":"GPU-123"}}));
     assert_eq!(startup(), json!(["GPU-123"]));
     alice.send_json(
-        json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
+        json!({"type":"apply_profile","payload":{"gpu_id":"GPU-123","settings":{
             "cooling":{"arrangement":"shared","setting":{"mode":"automatic"}}
         }}}),
     );
@@ -736,15 +736,15 @@ fn curve_range_review_preserves_valid_full_speed_plateau_points() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(
         vec![super::harness::cooled_gpu()],
     ));
-    let result = daemon.send_json(json!({"type":"apply_profile","payload":{"gpuId":"GPU-123","settings":{
+    let result = daemon.send_json(json!({"type":"apply_profile","payload":{"gpu_id":"GPU-123","settings":{
         "cooling":{"arrangement":"shared","setting":{"mode":"curve","points":[
-            {"temperatureC":45,"speedPercent":10}, {"temperatureC":85,"speedPercent":100}, {"temperatureC":90,"speedPercent":100}
+            {"temperature_c":45,"speed_percent":10}, {"temperature_c":85,"speed_percent":100}, {"temperature_c":90,"speed_percent":100}
         ]}}
     }}}));
     assert_eq!(
-        result["payload"]["corrections"][0]["proposedValue"]["setting"]["points"],
+        result["payload"]["corrections"][0]["proposed_value"]["setting"]["points"],
         json!([
-            {"temperatureC":45,"speedPercent":20}, {"temperatureC":85,"speedPercent":100}, {"temperatureC":90,"speedPercent":100}
+            {"temperature_c":45,"speed_percent":20}, {"temperature_c":85,"speed_percent":100}, {"temperature_c":90,"speed_percent":100}
         ]),
         "{result}"
     );
@@ -754,11 +754,11 @@ fn curve_range_review_preserves_valid_full_speed_plateau_points() {
 #[test]
 fn version_eight_remembered_curves_survive_adding_profile_cooling() {
     let curve = json!({"arrangement":"shared","setting":{"mode":"curve","points":[
-        {"temperatureC":45,"speedPercent":20}, {"temperatureC":85,"speedPercent":100}
+        {"temperature_c":45,"speed_percent":20}, {"temperature_c":85,"speed_percent":100}
     ]}});
-    let state = serde_json::to_vec(&json!({"schemaVersion":8,"users":[{
-        "uid":1000,"username":"alice","rememberedCurves":{"GPU-123":curve},
-        "profiles":[{"id":"legacy","name":"Legacy","gpuId":"GPU-123","settings":{"powerLimitWatts":{"kind":"default"}}}]
+    let state = serde_json::to_vec(&json!({"schema_version":8,"users":[{
+        "uid":1000,"username":"alice","remembered_curves":{"GPU-123":curve},
+        "profiles":[{"id":"legacy","name":"Legacy","gpu_id":"GPU-123","settings":{"power_limit_watts":{"kind":"default"}}}]
     }]})).unwrap();
     let mut daemon = Harness::start_with_persistent_files(
         FakeGpuBackend::with_gpus(vec![super::harness::cooled_gpu()]),
@@ -781,13 +781,13 @@ fn version_eight_remembered_curves_survive_adding_profile_cooling() {
     );
     let performance = alice.send_json(json!({"type":"get_performance"}));
     assert_eq!(
-        performance["payload"]["gpus"][0]["cooling"]["control"]["rememberedCurve"],
+        performance["payload"]["gpus"][0]["cooling"]["control"]["remembered_curve"],
         curve
     );
     let stored: Value =
         serde_json::from_slice(&daemon.persistent_file(TUNING_STORE_FILE_NAME).unwrap()).unwrap();
     assert_eq!(
-        stored["schemaVersion"],
+        stored["schema_version"],
         super::tuning_store::TUNING_STORE_SCHEMA_VERSION
     );
 }

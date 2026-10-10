@@ -38,7 +38,7 @@ fn native_steam_process_is_recognized_for_its_real_uid_without_an_association() 
     assert_eq!(
         running(&alice),
         json!({"status":"available", "games":[{
-            "game":{"kind":"steam", "appId":570}, "pid":123, "startTimeTicks":420
+            "game":{"kind":"steam", "app_id":570}, "pid":123, "start_time_ticks":420
         }]})
     );
     assert_eq!(
@@ -75,9 +75,9 @@ fn proton_flatpak_and_reaper_signals_group_by_game_and_keep_the_earliest_process
     assert_eq!(
         running(&alice),
         json!({"status":"available", "games":[
-            {"game":{"kind":"steam", "appId":570}, "pid":30, "startTimeTicks":600},
-            {"game":{"kind":"steam", "appId":620}, "pid":20, "startTimeTicks":500},
-            {"game":{"kind":"steam", "appId":730}, "pid":40, "startTimeTicks":700}
+            {"game":{"kind":"steam", "app_id":570}, "pid":30, "start_time_ticks":600},
+            {"game":{"kind":"steam", "app_id":620}, "pid":20, "start_time_ticks":500},
+            {"game":{"kind":"steam", "app_id":730}, "pid":40, "start_time_ticks":700}
         ]})
     );
 }
@@ -129,7 +129,7 @@ fn changes_are_pushed_only_to_the_owner_and_partial_scans_are_unavailable_until_
     daemon.core().scan_running_games();
     assert_eq!(
         alice.pushed_events(),
-        vec![json!({"type":"runningGamesChanged", "payload":running(&alice)})]
+        vec![json!({"type":"running_games_changed", "payload":running(&alice)})]
     );
     assert!(bob.pushed_events().is_empty());
     daemon.core().scan_running_games();

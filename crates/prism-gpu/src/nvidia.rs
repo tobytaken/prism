@@ -700,8 +700,8 @@ fn build_telemetry_info(
             "GPU utilization",
             warnings,
         ),
-        memory_used_mi_b: memory_info.as_ref().map(|value| bytes_to_mib(value.used)),
-        memory_total_mi_b: memory_info.as_ref().map(|value| bytes_to_mib(value.total)),
+        memory_used_mib: memory_info.as_ref().map(|value| bytes_to_mib(value.used)),
+        memory_total_mib: memory_info.as_ref().map(|value| bytes_to_mib(value.total)),
         performance_state,
     }
 }
@@ -777,7 +777,7 @@ fn map_snapshot(snapshot: NvidiaSnapshot) -> GpuDevice {
         firmware_version: snapshot.firmware_version,
         bus_id: snapshot.bus_id,
         memory: MemoryInfo {
-            total_mi_b: snapshot.memory_total_bytes.map(bytes_to_mib),
+            total_mib: snapshot.memory_total_bytes.map(bytes_to_mib),
         },
         compute: ComputeInfo {
             api: Some(ComputeApi::Cuda),
@@ -1041,7 +1041,7 @@ mod tests {
         });
 
         assert_eq!(device.vendor, GpuVendor::Nvidia);
-        assert_eq!(device.memory.total_mi_b, Some(32_768));
+        assert_eq!(device.memory.total_mib, Some(32_768));
         assert_eq!(device.power.enforced_limit_watts, Some(475));
         assert_eq!(device.compute.api, Some(ComputeApi::Cuda));
         assert_eq!(device.compute.capability.as_deref(), Some("12.0"));
@@ -1133,8 +1133,8 @@ mod tests {
         assert_eq!(telemetry.fan_speed_percent, Some(40));
         assert_eq!(telemetry.temperature_c, Some(71));
         assert_eq!(telemetry.gpu_utilization_percent, Some(96));
-        assert_eq!(telemetry.memory_used_mi_b, Some(12_288));
-        assert_eq!(telemetry.memory_total_mi_b, Some(32_768));
+        assert_eq!(telemetry.memory_used_mib, Some(12_288));
+        assert_eq!(telemetry.memory_total_mib, Some(32_768));
         assert_eq!(telemetry.performance_state.as_deref(), Some("P0"));
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("graphics clock"));

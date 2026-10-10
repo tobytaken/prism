@@ -109,7 +109,6 @@ impl DaemonPaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct PrismDaemonConfigFile {
     admin_group: Option<String>,
     admin_user: Option<String>,

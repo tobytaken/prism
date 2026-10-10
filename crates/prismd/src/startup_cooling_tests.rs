@@ -15,22 +15,22 @@ fn send(session: &FakeSession, request: Value) -> Value {
 
 fn curve() -> Value {
     json!({"mode": "curve", "points": [
-        {"temperatureC": 40, "speedPercent": 30},
-        {"temperatureC": 80, "speedPercent": 100}
+        {"temperature_c": 40, "speed_percent": 30},
+        {"temperature_c": 80, "speed_percent": 100}
     ]})
 }
 
 fn mixed() -> Value {
-    json!({"arrangement": "perFan", "fans": [
-        {"fanIndex": 0, "setting": curve()},
-        {"fanIndex": 1, "setting": {"mode": "fixed", "speedPercent": 55}}
+    json!({"arrangement": "per_fan", "fans": [
+        {"fan_index": 0, "setting": curve()},
+        {"fan_index": 1, "setting": {"mode": "fixed", "speed_percent": 55}}
     ]})
 }
 
 fn seed(session: &FakeSession, cooling: Value) {
     session.seed_profiles(json!([{
-        "id": "cool", "name": "Cool", "gpuId": "GPU-123", "settings": {
-            "powerLimitWatts": { "kind": "value", "value": 300 },
+        "id": "cool", "name": "Cool", "gpu_id": "GPU-123", "settings": {
+            "power_limit_watts": { "kind": "value", "value": 300 },
             "cooling": cooling
         }
     }]));
@@ -39,9 +39,9 @@ fn seed(session: &FakeSession, cooling: Value) {
 fn use_startup_profile(session: &FakeSession) {
     send(
         session,
-        json!({ "type": "set_startup_profile", "payload": { "gpuId": "GPU-123", "profileId": "cool" } }),
+        json!({ "type": "set_startup_profile", "payload": { "gpu_id": "GPU-123", "profile_id": "cool" } }),
     );
-    set_behavior(session, "startupProfiles");
+    set_behavior(session, "startup_profiles");
 }
 
 fn set_behavior(session: &FakeSession, behavior: &str) {
@@ -56,7 +56,7 @@ fn apply_cooling(session: &FakeSession, configuration: Value) {
     let response = send(
         session,
         json!({"type": "apply_cooling", "payload": {
-            "gpuId": "GPU-123", "configuration": configuration
+            "gpu_id": "GPU-123", "configuration": configuration
         }}),
     );
     assert_eq!(response["outcome"]["status"], "succeeded", "{response}");
@@ -72,7 +72,7 @@ fn completed_outcome(daemon: &Harness) -> Value {
             .as_array()
             .unwrap()
             .iter()
-            .find(|outcome| outcome["gpuId"] == "GPU-123")
+            .find(|outcome| outcome["gpu_id"] == "GPU-123")
             .filter(|outcome| outcome["reason"] != STARTUP_IN_PROGRESS)
         {
             return outcome.clone();
@@ -124,7 +124,7 @@ fn a_startup_profile_runs_its_complete_cooling_from_the_fresh_temperature_once_p
     assert_eq!(fan(&daemon, 1), (Some(FanControlMode::Manual), Some(55)));
     assert_eq!(control(&daemon)["applied"], mixed());
     let state = tuning_state(&daemon);
-    assert_eq!(state["currentProfile"]["id"], "cool");
+    assert_eq!(state["current_profile"]["id"], "cool");
     assert_eq!(state["reported"]["cooling"], mixed());
     // The daemon keeps following the curve with no app running.
     daemon.set_temperature("GPU-123", Some(80));
@@ -150,11 +150,11 @@ fn restoring_last_applied_values_restores_the_latest_manual_cooling_configuratio
     let alice = daemon.user(1000, "alice");
     apply_cooling(
         &alice,
-        json!({"arrangement": "shared", "setting": {"mode": "fixed", "speedPercent": 70}}),
+        json!({"arrangement": "shared", "setting": {"mode": "fixed", "speed_percent": 70}}),
     );
     let shared_curve = json!({"arrangement": "shared", "setting": curve()});
     apply_cooling(&alice, shared_curve.clone());
-    set_behavior(&alice, "restoreLastApplied");
+    set_behavior(&alice, "restore_last_applied");
     drop(alice);
     // Ordinary curve output is not a manual value.
     daemon.set_temperature("GPU-123", Some(85));
@@ -163,8 +163,8 @@ fn restoring_last_applied_values_restores_the_latest_manual_cooling_configuratio
     // Temporary automatic applications, such as a game's, never become last applied values.
     let temporary = daemon.core().apply_cooling(
         serde_json::from_value(json!({
-            "gpuId": "GPU-123",
-            "configuration": {"arrangement": "shared", "setting": {"mode": "fixed", "speedPercent": 90}}
+            "gpu_id": "GPU-123",
+            "configuration": {"arrangement": "shared", "setting": {"mode": "fixed", "speed_percent": 90}}
         }))
         .unwrap(),
         CoolingApplicationSource::NonManual,
@@ -199,7 +199,7 @@ fn startup_off_and_gpus_without_manual_cooling_leave_cooling_unchanged() {
     let alice = daemon.user(1000, "alice");
     apply_cooling(
         &alice,
-        json!({"arrangement": "shared", "setting": {"mode": "fixed", "speedPercent": 70}}),
+        json!({"arrangement": "shared", "setting": {"mode": "fixed", "speed_percent": 70}}),
     );
     drop(alice);
     let writes = daemon.gpus.writes();
@@ -216,9 +216,9 @@ fn startup_off_and_gpus_without_manual_cooling_leave_cooling_unchanged() {
     let alice = daemon.user(1000, "alice");
     send(
         &alice,
-        json!({ "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 300 } }),
+        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 300 } }),
     );
-    set_behavior(&alice, "restoreLastApplied");
+    set_behavior(&alice, "restore_last_applied");
     drop(alice);
     daemon.reboot();
     assert_eq!(completed_outcome(&daemon)["status"], "applied");
@@ -261,7 +261,7 @@ fn unusable_saved_cooling_is_reported_at_startup_without_writing_or_clamping() {
         let before = daemon.gpus.gpu("GPU-123");
         daemon.reboot();
         let outcome = completed_outcome(&daemon);
-        assert_eq!(outcome["status"], "notAttempted", "{reason}: {outcome}");
+        assert_eq!(outcome["status"], "not_attempted", "{reason}: {outcome}");
         assert!(
             outcome["reason"].as_str().unwrap().contains(reason),
             "{reason}: {outcome}"
@@ -303,7 +303,7 @@ fn a_rejected_fan_command_at_startup_is_reported_per_fan_and_suspends_the_curve(
     );
     assert!(!control(&daemon)["suspension"].is_null());
     assert_eq!(fan(&daemon, 0).0, Some(FanControlMode::Auto));
-    assert!(tuning_state(&daemon)["currentProfile"].is_null());
+    assert!(tuning_state(&daemon)["current_profile"].is_null());
 }
 
 #[test]
@@ -311,7 +311,7 @@ fn a_crash_after_restoring_cooling_skips_the_next_restore_once() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     let alice = daemon.user(1000, "alice");
     apply_cooling(&alice, json!({"arrangement": "shared", "setting": curve()}));
-    set_behavior(&alice, "restoreLastApplied");
+    set_behavior(&alice, "restore_last_applied");
     drop(alice);
     daemon.gpus.update("GPU-123", |gpu| {
         for fan in &mut gpu.cooling.fans {
@@ -322,7 +322,7 @@ fn a_crash_after_restoring_cooling_skips_the_next_restore_once() {
     assert_eq!(completed_outcome(&daemon)["status"], "applied");
     daemon.crash_and_reboot();
     let skipped = completed_outcome(&daemon);
-    assert_eq!(skipped["status"], "notAttempted");
+    assert_eq!(skipped["status"], "not_attempted");
     assert!(skipped["reason"].as_str().unwrap().contains("skipped once"));
     assert!(control(&daemon)["applied"].is_null());
     daemon.gpus.update("GPU-123", |gpu| {

@@ -16,7 +16,7 @@ pub(super) const STARTUP_IN_PROGRESS: &str = "Startup is in progress.";
 const SCHEMA_VERSION: u64 = 1;
 
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct BootDocument {
     schema_version: u64,
     boot_id: String,
@@ -27,7 +27,7 @@ struct BootDocument {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct Dismissal {
     uid: u32,
     username: String,

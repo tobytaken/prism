@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, tunable_gpu};
 
 fn profile(id: &str, name: &str, gpu_id: &str) -> Value {
-    json!({ "id": id, "name": name, "gpuId": gpu_id,
-        "settings": { "powerLimitWatts": { "kind": "value", "value": 300 } } })
+    json!({ "id": id, "name": name, "gpu_id": gpu_id,
+        "settings": { "power_limit_watts": { "kind": "value", "value": 300 } } })
 }
 
 fn profiles(session: &FakeSession) -> Value {
@@ -19,12 +19,12 @@ fn state(session: &FakeSession) -> Value {
 
 fn rename(session: &FakeSession, id: &str, name: &str) -> Value {
     session.send_json(json!({
-        "type": "rename_profile", "payload": { "profileId": id, "name": name }
+        "type": "rename_profile", "payload": { "profile_id": id, "name": name }
     }))
 }
 
 fn delete(session: &FakeSession, id: &str) -> Value {
-    session.send_json(json!({ "type": "delete_profile", "payload": { "profileId": id } }))
+    session.send_json(json!({ "type": "delete_profile", "payload": { "profile_id": id } }))
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn a_profile_deleted_while_an_application_waits_is_never_applied_or_made_current
     let gate = daemon.gpus.block("GPU-123", Setter::PowerLimit);
     let live_write = daemon.send_in_background(
         serde_json::from_value(json!({
-            "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 350 }
+            "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 350 }
         }))
         .unwrap(),
     );
@@ -57,7 +57,7 @@ fn a_profile_deleted_while_an_application_waits_is_never_applied_or_made_current
     std::thread::spawn(move || {
         applied
             .send(applying_session.send_json(json!({
-                "type": "apply_profile_by_id", "payload": { "profileId": "quiet" }
+                "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" }
             })))
             .unwrap();
     });
@@ -72,9 +72,9 @@ fn a_profile_deleted_while_an_application_waits_is_never_applied_or_made_current
         true
     );
     let response = application.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert_eq!(response["payload"]["code"], "notFound", "{response}");
+    assert_eq!(response["payload"]["code"], "not_found", "{response}");
     assert_eq!(profiles(&alice), json!([]));
-    assert_eq!(state(&alice)["currentProfile"], Value::Null);
+    assert_eq!(state(&alice)["current_profile"], Value::Null);
     assert_eq!(
         daemon.gpus.gpu("GPU-123").power.current_limit_watts,
         Some(350)
@@ -96,7 +96,7 @@ fn rename_rejects_a_case_insensitive_clash_on_the_same_gpu_but_allows_the_name_o
     ]));
     let before = profiles(&alice);
     let clash = rename(&alice, "quiet", "  lOuD  ");
-    assert_eq!(clash["payload"]["code"], "invalidArgument", "{clash}");
+    assert_eq!(clash["payload"]["code"], "invalid_argument", "{clash}");
     assert_eq!(
         clash["payload"]["message"],
         "A profile named \"lOuD\" already exists for this GPU. Choose another name."
@@ -123,9 +123,9 @@ fn only_the_profiles_owner_can_rename_or_delete_it_and_empty_names_are_rejected(
         assert_eq!(profiles(&other), json!([]));
         assert_eq!(
             rename(&other, "quiet", "Silent")["payload"]["code"],
-            "notFound"
+            "not_found"
         );
-        assert_eq!(delete(&other, "quiet")["payload"]["code"], "notFound");
+        assert_eq!(delete(&other, "quiet")["payload"]["code"], "not_found");
     }
     let invalid = rename(&alice, "quiet", " \n\t ");
     assert_eq!(
@@ -134,9 +134,9 @@ fn only_the_profiles_owner_can_rename_or_delete_it_and_empty_names_are_rejected(
     );
     assert_eq!(
         rename(&alice, "missing", "Silent")["payload"]["code"],
-        "notFound"
+        "not_found"
     );
-    assert_eq!(delete(&alice, "missing")["payload"]["code"], "notFound");
+    assert_eq!(delete(&alice, "missing")["payload"]["code"], "not_found");
     assert_eq!(profiles(&alice), before);
     assert!(daemon.gpus.writes().is_empty());
 }
@@ -151,7 +151,7 @@ fn deleting_a_non_current_profile_keeps_the_current_profile_and_absent_gpus_prof
         profile("loud", "Loud", "GPU-123"),
         profile("absent", "Quiet", "GPU-456")
     ]));
-    alice.send_json(json!({ "type": "apply_profile_by_id", "payload": { "profileId": "quiet" } }));
+    alice.send_json(json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" } }));
     let before = state(&alice);
     let writes = daemon.gpus.writes();
     assert_eq!(delete(&alice, "loud")["payload"]["success"], true);
@@ -178,7 +178,7 @@ fn deleting_the_current_profile_clears_its_reference_without_retuning_and_persis
         profile("loud", "Loud", "GPU-123")
     ]));
     alice.send_json(json!({
-        "type": "apply_profile_by_id", "payload": { "profileId": "quiet" }
+        "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" }
     }));
     alice.pushed_events();
     bob.pushed_events();
@@ -186,7 +186,7 @@ fn deleting_the_current_profile_clears_its_reference_without_retuning_and_persis
     let writes = daemon.gpus.writes();
 
     let deleted = alice.send_json(json!({
-        "type": "delete_profile", "payload": { "profileId": "quiet" }
+        "type": "delete_profile", "payload": { "profile_id": "quiet" }
     }));
     assert_eq!(
         deleted,
@@ -196,14 +196,14 @@ fn deleting_the_current_profile_clears_its_reference_without_retuning_and_persis
         profiles(&alice),
         json!([profile("loud", "Loud", "GPU-123")])
     );
-    assert_eq!(state(&alice)["currentProfile"], Value::Null);
+    assert_eq!(state(&alice)["current_profile"], Value::Null);
     assert_eq!(state(&alice)["reported"], before["reported"]);
     assert_ne!(state(&alice)["revision"], before["revision"]);
     assert_eq!(daemon.gpus.writes(), writes);
     assert_eq!(
         bob.pushed_events(),
         vec![json!({
-            "type": "tuningStateChanged", "payload": state(&bob)
+            "type": "tuning_state_changed", "payload": state(&bob)
         })]
     );
     drop(alice);
@@ -214,11 +214,11 @@ fn deleting_the_current_profile_clears_its_reference_without_retuning_and_persis
         profiles(&alice),
         json!([profile("loud", "Loud", "GPU-123")])
     );
-    assert_eq!(state(&alice)["currentProfile"], Value::Null);
+    assert_eq!(state(&alice)["current_profile"], Value::Null);
     let application = alice.send_json(json!({
-        "type": "apply_profile_by_id", "payload": { "profileId": "quiet" }
+        "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" }
     }));
-    assert_eq!(application["payload"]["code"], "notFound");
+    assert_eq!(application["payload"]["code"], "not_found");
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn renaming_trims_the_name_keeps_the_id_and_updates_the_current_profile_across_s
     let bob = daemon.user(1001, "bob");
     alice.seed_profiles(json!([profile("quiet", "Quiet", "GPU-123")]));
     alice.send_json(json!({
-        "type": "apply_profile_by_id", "payload": { "profileId": "quiet" }
+        "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" }
     }));
     alice.pushed_events();
     bob.pushed_events();
@@ -244,14 +244,14 @@ fn renaming_trims_the_name_keeps_the_id_and_updates_the_current_profile_across_s
         json!([profile("quiet", "Silent", "GPU-123")])
     );
     assert_eq!(
-        state(&bob)["currentProfile"],
+        state(&bob)["current_profile"],
         json!({ "id": "quiet", "name": "Silent" })
     );
     assert_ne!(state(&alice)["revision"], before["revision"]);
     assert_eq!(
         bob.pushed_events(),
         vec![json!({
-            "type": "tuningStateChanged", "payload": state(&bob)
+            "type": "tuning_state_changed", "payload": state(&bob)
         })]
     );
     assert_eq!(daemon.gpus.writes(), writes);
@@ -265,7 +265,7 @@ fn renaming_trims_the_name_keeps_the_id_and_updates_the_current_profile_across_s
         json!([profile("quiet", "Silent", "GPU-123")])
     );
     assert_eq!(
-        state(&alice)["currentProfile"],
+        state(&alice)["current_profile"],
         json!({ "id": "quiet", "name": "Silent" })
     );
 }

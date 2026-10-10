@@ -1,7 +1,7 @@
 {
   "type": "event",
   "event": {
-    "type": "storeHealthChanged",
+    "type": "store_health_changed",
     "payload": { "status": "healthy" }
   }
 }

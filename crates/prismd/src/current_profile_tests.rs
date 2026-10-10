@@ -8,19 +8,19 @@ const STALE: &str = "The GPU's values changed since you last looked. Review them
 
 fn quiet_and_loud() -> Value {
     json!([
-        { "id": "quiet", "name": "Quiet", "gpuId": "GPU-123",
-          "settings": { "powerLimitWatts": { "kind": "value", "value": 300 } } },
-        { "id": "loud", "name": "Loud", "gpuId": "GPU-123",
+        { "id": "quiet", "name": "Quiet", "gpu_id": "GPU-123",
+          "settings": { "power_limit_watts": { "kind": "value", "value": 300 } } },
+        { "id": "loud", "name": "Loud", "gpu_id": "GPU-123",
           "settings": {
-              "powerLimitWatts": { "kind": "value", "value": 500 },
-              "memoryOffsetMHz": { "kind": "value", "value": 100 }
+              "power_limit_watts": { "kind": "value", "value": 500 },
+              "memory_offset_mhz": { "kind": "value", "value": 100 }
           } }
     ])
 }
 
 fn apply_by_id(session: &FakeSession, profile_id: &str) -> Value {
     let response = session.send_json(
-        json!({ "type": "apply_profile_by_id", "payload": { "profileId": profile_id } }),
+        json!({ "type": "apply_profile_by_id", "payload": { "profile_id": profile_id } }),
     );
     assert_eq!(response["type"], "profile_application", "{response}");
     response["payload"].clone()
@@ -34,13 +34,13 @@ fn state(session: &FakeSession) -> Value {
         .as_array()
         .unwrap()
         .iter()
-        .find(|state| state["gpuId"] == "GPU-123")
+        .find(|state| state["gpu_id"] == "GPU-123")
         .cloned()
         .expect("GPU-123 has a tuning state")
 }
 
 fn current(session: &FakeSession) -> Value {
-    state(session)["currentProfile"].clone()
+    state(session)["current_profile"].clone()
 }
 
 fn revision(session: &FakeSession) -> Value {
@@ -50,14 +50,14 @@ fn revision(session: &FakeSession) -> Value {
 fn save_as_new(session: &FakeSession, name: &str, revision: Value) -> Value {
     session.send_json(json!({
         "type": "save_profile_as_new",
-        "payload": { "gpuId": "GPU-123", "name": name, "revision": revision }
+        "payload": { "gpu_id": "GPU-123", "name": name, "revision": revision }
     }))
 }
 
 fn save_to_current(session: &FakeSession, revision: Value) -> Value {
     session.send_json(json!({
         "type": "save_to_current_profile",
-        "payload": { "gpuId": "GPU-123", "revision": revision }
+        "payload": { "gpu_id": "GPU-123", "revision": revision }
     }))
 }
 
@@ -102,7 +102,7 @@ fn a_reviewed_or_blocked_application_leaves_the_previous_current_profile_and_the
 
     // Loud's 500 W exceeds the 450 W maximum, so it needs a review and nothing is written.
     let review = apply_by_id(&alice, "loud");
-    assert_eq!(review["corrections"][0]["proposedValue"], 450);
+    assert_eq!(review["corrections"][0]["proposed_value"], 450);
     assert_eq!(current(&alice), json!({ "id": "quiet", "name": "Quiet" }));
     assert_eq!(daemon.gpus.writes(), writes);
     assert_eq!(
@@ -150,7 +150,7 @@ fn a_corrected_and_applied_profile_becomes_current() {
 
     let corrected = alice.send_json(json!({
         "type": "correct_and_apply_profile",
-        "payload": { "profileId": "loud", "corrections": review["corrections"] }
+        "payload": { "profile_id": "loud", "corrections": review["corrections"] }
     }));
     assert_eq!(
         corrected["payload"]["application"]["power"]["status"],
@@ -167,7 +167,7 @@ fn save_to_current_overwrites_the_current_profile_with_the_applied_values() {
     apply_by_id(&alice, "quiet");
     alice.send_json(json!({
         "type": "set_clock_offsets",
-        "payload": { "gpuId": "GPU-123", "graphicsOffsetMHz": "default", "memoryOffsetMHz": 40 }
+        "payload": { "gpu_id": "GPU-123", "graphics_offset_mhz": "default", "memory_offset_mhz": 40 }
     }));
 
     let saved = save_to_current(&alice, revision(&alice));
@@ -175,11 +175,11 @@ fn save_to_current_overwrites_the_current_profile_with_the_applied_values() {
     let expected = json!({
         "id": "quiet",
         "name": "Quiet",
-        "gpuId": "GPU-123",
+        "gpu_id": "GPU-123",
         "settings": {
-            "powerLimitWatts": { "kind": "value", "value": 300 },
-            "graphicsOffsetMHz": { "kind": "default" },
-            "memoryOffsetMHz": { "kind": "value", "value": 40 }
+            "power_limit_watts": { "kind": "value", "value": 300 },
+            "graphics_offset_mhz": { "kind": "default" },
+            "memory_offset_mhz": { "kind": "value", "value": 40 }
         }
     });
     assert_eq!(saved["payload"], expected);
@@ -194,13 +194,13 @@ fn save_as_new_creates_a_profile_that_becomes_current_and_leaves_the_previous_on
     alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
     alice.send_json(json!({
-        "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 350 }
+        "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 350 }
     }));
 
     let saved = save_as_new(&alice, "Warmer", revision(&alice));
     assert_eq!(saved["type"], "profile", "{saved}");
     assert_eq!(
-        saved["payload"]["settings"]["powerLimitWatts"],
+        saved["payload"]["settings"]["power_limit_watts"],
         json!({ "kind": "value", "value": 350 })
     );
     let id = saved["payload"]["id"].clone();
@@ -210,7 +210,7 @@ fn save_as_new_creates_a_profile_that_becomes_current_and_leaves_the_previous_on
         .find(|profile| profile["id"] == "quiet")
         .unwrap();
     assert_eq!(
-        quiet["settings"]["powerLimitWatts"],
+        quiet["settings"]["power_limit_watts"],
         json!({ "kind": "value", "value": 300 })
     );
 }
@@ -247,7 +247,7 @@ fn a_save_with_a_stale_revision_is_rejected_and_saves_nothing() {
     let bob = daemon.user(1001, "bob");
     let seen = revision(&alice);
     bob.send_json(json!({
-        "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 320 }
+        "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 320 }
     }));
     assert_eq!(
         daemon.gpus.gpu("GPU-123").power.current_limit_watts,
@@ -334,23 +334,23 @@ fn current_profile_and_revision_changes_are_pushed_to_every_session() {
     bob.pushed_events();
 
     apply_by_id(&alice, "quiet");
-    let pushed = json!({ "type": "tuningStateChanged", "payload": state(&bob) });
-    assert_eq!(pushed["payload"]["currentProfile"]["name"], "Quiet");
+    let pushed = json!({ "type": "tuning_state_changed", "payload": state(&bob) });
+    assert_eq!(pushed["payload"]["current_profile"]["name"], "Quiet");
     assert_eq!(bob.pushed_events(), vec![pushed.clone()]);
     assert_eq!(alice.pushed_events(), vec![pushed]);
 
     // A live change keeps the current profile but changes the revision.
     let before = revision(&bob);
     alice.send_json(json!({
-        "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 320 }
+        "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 320 }
     }));
     let pushed = bob.pushed_events();
     assert_eq!(
         pushed,
-        vec![json!({ "type": "tuningStateChanged", "payload": state(&bob) })]
+        vec![json!({ "type": "tuning_state_changed", "payload": state(&bob) })]
     );
     assert_ne!(pushed[0]["payload"]["revision"], before);
-    assert_eq!(pushed[0]["payload"]["currentProfile"]["name"], "Quiet");
+    assert_eq!(pushed[0]["payload"]["current_profile"]["name"], "Quiet");
 }
 
 #[test]
@@ -359,7 +359,7 @@ fn the_tuning_state_reports_the_values_its_revision_covers() {
     let alice = daemon.user(1000, "alice");
     assert_eq!(
         state(&alice)["reported"],
-        json!({ "powerLimitWatts": 475, "graphicsOffsetMHz": 120, "memoryOffsetMHz": 0 })
+        json!({ "power_limit_watts": 475, "graphics_offset_mhz": 120, "memory_offset_mhz": 0 })
     );
     daemon.gpus.update("GPU-123", |gpu| {
         gpu.power.current_limit_watts = None;
@@ -367,6 +367,6 @@ fn the_tuning_state_reports_the_values_its_revision_covers() {
     });
     assert_eq!(
         state(&alice)["reported"],
-        json!({ "powerLimitWatts": null, "graphicsOffsetMHz": 120, "memoryOffsetMHz": -40 })
+        json!({ "power_limit_watts": null, "graphics_offset_mhz": 120, "memory_offset_mhz": -40 })
     );
 }

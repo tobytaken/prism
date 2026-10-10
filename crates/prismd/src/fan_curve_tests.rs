@@ -7,7 +7,7 @@ use super::harness::{FakeGpuBackend, Harness, cooled_gpu};
 fn points(points: &[(i64, i64)]) -> Value {
     points
         .iter()
-        .map(|(temperature, speed)| json!({ "temperatureC": temperature, "speedPercent": speed }))
+        .map(|(temperature, speed)| json!({ "temperature_c": temperature, "speed_percent": speed }))
         .collect()
 }
 
@@ -19,7 +19,7 @@ fn curve_support(daemon: &Harness, gpu_id: &str) -> Value {
         .unwrap()
         .iter()
         .find(|gpu| gpu["id"] == gpu_id)
-        .unwrap_or_else(|| panic!("no GPU {gpu_id} in {response}"))["cooling"]["curveSupport"]
+        .unwrap_or_else(|| panic!("no GPU {gpu_id} in {response}"))["cooling"]["curve_support"]
         .clone()
 }
 
@@ -31,10 +31,10 @@ fn performance_offers_a_starter_curve_within_the_gpus_limits() {
         curve_support(&daemon, "GPU-123"),
         json!({
             "status": "available",
-            "maxOperatingTemperatureC": 90,
-            "fullSpeedTemperatureC": 85,
-            "minSpeedPercent": 20,
-            "maxSpeedPercent": 100,
+            "max_operating_temperature_c": 90,
+            "full_speed_temperature_c": 85,
+            "min_speed_percent": 20,
+            "max_speed_percent": 100,
             "starter": points(&[(45, 20), (65, 60), (75, 80), (85, 100)]),
         })
     );
@@ -110,7 +110,7 @@ fn the_starter_curve_tracks_the_reported_thermal_boundary() {
         gpu.cooling.max_operating_temperature_c = Some(105);
     });
     let support = curve_support(&daemon, "GPU-123");
-    assert_eq!(support["fullSpeedTemperatureC"], 100);
+    assert_eq!(support["full_speed_temperature_c"], 100);
     assert_eq!(
         support["starter"],
         points(&[(60, 20), (80, 60), (90, 80), (100, 100)])
@@ -120,7 +120,7 @@ fn the_starter_curve_tracks_the_reported_thermal_boundary() {
 fn preview(daemon: &Harness, gpu_id: &str, curve: &[(i64, i64)]) -> Value {
     daemon.send_json(json!({
         "type": "preview_fan_curve",
-        "payload": { "gpuId": gpu_id, "points": points(curve) },
+        "payload": { "gpu_id": gpu_id, "points": points(curve) },
     }))
 }
 
@@ -175,7 +175,7 @@ fn preview_reports_why_curves_are_unavailable() {
     );
     let missing = preview(&daemon, "GPU-999", &[(45, 20), (85, 100)]);
     assert_eq!(missing["type"], "error", "{missing}");
-    assert_eq!(missing["payload"]["code"], "notFound");
+    assert_eq!(missing["payload"]["code"], "not_found");
     assert!(daemon.gpus.writes().is_empty());
 }
 
@@ -184,14 +184,14 @@ fn preview_rejects_fractional_and_unknown_point_fields() {
     let request = |point: Value| {
         serde_json::from_value::<prism_protocol::DaemonRequest>(json!({
             "type": "preview_fan_curve",
-            "payload": { "gpuId": "GPU-123", "points": [point, { "temperatureC": 85, "speedPercent": 100 }] },
+            "payload": { "gpu_id": "GPU-123", "points": [point, { "temperature_c": 85, "speed_percent": 100 }] },
         }))
     };
 
-    assert!(request(json!({ "temperatureC": 45, "speedPercent": 20 })).is_ok());
-    assert!(request(json!({ "temperatureC": 45.5, "speedPercent": 20 })).is_err());
-    assert!(request(json!({ "temperatureC": 45, "speedPercent": "20" })).is_err());
-    assert!(request(json!({ "temperatureC": 45, "speedPercent": 20, "rpm": 900 })).is_err());
+    assert!(request(json!({ "temperature_c": 45, "speed_percent": 20 })).is_ok());
+    assert!(request(json!({ "temperature_c": 45.5, "speed_percent": 20 })).is_err());
+    assert!(request(json!({ "temperature_c": 45, "speed_percent": "20" })).is_err());
+    assert!(request(json!({ "temperature_c": 45, "speed_percent": 20, "rpm": 900 })).is_err());
 }
 
 /// The same contract holds the fake desktop to the daemon's judgment.
@@ -212,14 +212,14 @@ fn support_and_previews_follow_the_shared_contract() {
     for limits in contract["limits"].as_array().unwrap() {
         let name = limits["name"].as_str().unwrap();
         daemon.gpus.update("GPU-123", |gpu| {
-            gpu.cooling.max_operating_temperature_c = limits["maxOperatingTemperatureC"]
+            gpu.cooling.max_operating_temperature_c = limits["max_operating_temperature_c"]
                 .as_u64()
                 .map(|c| c as u32);
             for (fan, range) in gpu
                 .cooling
                 .fans
                 .iter_mut()
-                .zip(limits["fanSpeedRanges"].as_array().unwrap())
+                .zip(limits["fan_speed_ranges"].as_array().unwrap())
             {
                 fan.min_speed_percent = range[0].as_u64().map(|speed| speed as u32);
                 fan.max_speed_percent = range[1].as_u64().map(|speed| speed as u32);
@@ -227,7 +227,7 @@ fn support_and_previews_follow_the_shared_contract() {
         });
         assert_eq!(
             curve_support(&daemon, "GPU-123"),
-            limits["curveSupport"],
+            limits["curve_support"],
             "{name}"
         );
 
