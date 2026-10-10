@@ -1,0 +1,21 @@
+import { Theme } from "../theme.slint";
+
+// The surface every pop-up (menu, popover, dialog, the command palette) draws on: raised, edged in
+// ink, with C's hard offset shadow. The shadow is a plain offset Rectangle rather than
+// `drop-shadow-*`, so the software renderer draws it too. The pop-up that uses it declares the
+// accessible role (see widgets.slint).
+export component PopupSurface inherits Rectangle {
+    Rectangle {
+        x: Theme.shadow-offset;
+        y: Theme.shadow-offset;
+        background: Theme.color.shadow;
+    }
+
+    Rectangle {
+        background: Theme.color.raised;
+        border-width: Theme.stroke.hairline;
+        border-color: Theme.color.ink;
+
+        @children
+    }
+}

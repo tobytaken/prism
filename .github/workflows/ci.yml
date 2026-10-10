@@ -33,7 +33,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install Slint's build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig-dev
-      - run: cargo test --locked --workspace --all-features
+      # The screenshot tests run only in the pinned image (the screenshots job).
+      - run: cargo test --locked --workspace --all-features -- --skip screenshot::
+
+  screenshots:
+    runs-on: ubuntu-latest
+    # One pinned image, where the reference PNGs come from. Keep the image and packages in step
+    # with scripts/update-screenshots.sh.
+    container: rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Slint's build dependencies
+        run: apt-get update && apt-get install -y --no-install-recommends pkg-config libfontconfig-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked -p prism --test screenshots
+      - name: Keep the screenshots that differ
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: target/tmp/screenshots/
 
   deny:
     runs-on: ubuntu-latest
