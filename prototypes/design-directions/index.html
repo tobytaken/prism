@@ -1,0 +1,1061 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Wayfinder ticket "Which design direction should Prism take?" (#101).
+  Three design directions for the native Prism GUI, switchable via ?variant=A|B|C
+  (plus ?size=default|half|min|compact and ?daemon=0). Open this file in a browser; no build step.
+
+  Native-drawable only: solid fills, rounded corners, shadows, gradients, custom paths (canvas).
+  No backdrop blur, no filters, no CSS-only tricks. All data is simulated in memory.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYPE · Prism design directions</title>
+<style>
+html,body{margin:0;height:100%;}
+body{background:linear-gradient(160deg,#3b4150 0%,#23262e 60%,#1b1d22 100%);display:flex;align-items:center;justify-content:center;overflow:hidden;font-family:system-ui,sans-serif;}
+#stage{position:relative;}
+#win{position:relative;flex:none;overflow:hidden;border-radius:10px;box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px rgba(0,0,0,.4);transform-origin:center center;}
+
+/* ---------- generic window plumbing (bindings, not layout) ---------- */
+.win{display:flex;flex-direction:column;width:100%;height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:var(--fs,12px);line-height:1.35;}
+.win *{box-sizing:border-box;}
+.win button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left;}
+.win input{font:inherit;color:inherit;}
+.win h1,.win h2,.win h3,.win p{margin:0;font-weight:inherit;}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+.muted{color:var(--muted);}
+.sp{flex:1;}
+.win canvas{display:block;width:100%;height:100%;}
+.win kbd{font-family:var(--mono);font-size:10px;padding:1px 4px;border-radius:3px;border:1px solid var(--border);color:var(--muted);}
+[data-needsd]{display:none!important;}
+.nod [data-needsd]{display:flex!important;}
+[data-pend]{display:none;}
+[data-pend].on{display:inline;}
+[data-problem]{display:none!important;}
+[data-problem].on{display:flex!important;}
+.nod [data-edit],.nod [data-step],.nod [data-set],.nod [data-drag],.nod [data-curve]{opacity:.45;pointer-events:none;}
+input[type=range]{width:100%;margin:0;accent-color:var(--accent);height:16px;}
+.drag{user-select:none;}
+
+/* generic overlays, themed by each variant's variables */
+.ov{position:absolute;z-index:50;background:var(--panel2,var(--panel));border:1px solid var(--border);border-radius:var(--radius,6px);box-shadow:0 12px 32px rgba(0,0,0,.35);color:var(--text);}
+.ov-menu{min-width:220px;padding:4px;}
+.ov-menu button{display:flex;width:100%;padding:5px 8px;border-radius:calc(var(--radius,6px) - 2px);gap:8px;}
+.ov-menu button:hover{background:var(--hover);}
+.ov-menu button[disabled]{opacity:.4;pointer-events:none;}
+.ov-menu hr{border:0;border-top:1px solid var(--border);margin:4px 0;}
+.ov-palette{left:50%;top:56px;width:520px;margin-left:-260px;padding:0;overflow:hidden;}
+.ov-palette input{width:100%;padding:10px 12px;border:0;border-bottom:1px solid var(--border);background:transparent;outline:none;font-size:13px;}
+.ov-palette .items{max-height:300px;overflow:auto;padding:4px;}
+.ov-palette .it{display:flex;padding:6px 8px;border-radius:4px;gap:8px;}
+.ov-palette .it.on{background:var(--hover);}
+.ov-activity{right:8px;bottom:34px;width:380px;padding:10px;}
+.ov-activity h3{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:4px 0 6px;}
+.ov-activity .ev{display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--border);align-items:baseline;}
+.ov-activity .ev:first-of-type{border-top:0;}
+.ov-activity .act{color:var(--accent);}
+.ov-activity .bad{color:var(--danger);}
+
+/* ---------- prototype switcher (not part of any design) ---------- */
+#switcher{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:999;display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:999px;background:#fff;color:#111;font:12px/1 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.45),0 0 0 2px #e0249a;}
+#switcher button{border:0;background:#f0f0f0;border-radius:999px;padding:6px 10px;cursor:pointer;font:inherit;color:#111;}
+#switcher button:hover{background:#e3e3e3;}
+#switcher button.on{background:#111;color:#fff;}
+#switcher .lbl{min-width:170px;text-align:center;font-weight:600;}
+#switcher .div{width:1px;height:18px;background:#ccc;margin:0 4px;}
+#switcher .tag{font-size:10px;font-weight:700;color:#e0249a;letter-spacing:.06em;padding:0 6px;}
+
+/* =====================================================================
+   VARIANT A · Instrument. Zed-like graphite, hairline panes, amber accent.
+   Workspace = vitals strip on top, then one column per control domain.
+   ===================================================================== */
+.vA{--bg:#18181b;--panel:#1f1f23;--panel2:#26262b;--border:#2e2e34;--hover:#2c2c32;--text:#d6d6db;--muted:#8b8b94;--accent:#f0a830;--danger:#f2665a;--ok:#5ccf8a;
+  --temp:#f2665a;--util:#7aa2f7;--power:#f0a830;--fan:#55d0b8;--gclk:#c49bff;--mclk:#8fb8ff;--vram:#7aa2f7;--grid:#2a2a30;--line:#d6d6db;
+  --font:"Inter","IBM Plex Sans",system-ui,sans-serif;--mono:"JetBrains Mono","IBM Plex Mono",ui-monospace,monospace;--radius:6px;--fs:12px;}
+.vA .titlebar{height:34px;flex:none;display:flex;align-items:center;padding:0 6px 0 12px;gap:10px;border-bottom:1px solid var(--border);background:var(--bg);}
+.vA .tb-left{display:flex;align-items:center;gap:8px;width:224px;}
+.vA .logo{color:var(--accent);font-size:13px;}
+.vA .appname{font-weight:600;}
+.vA .crumb{color:var(--muted);}
+.vA .tb-search{flex:0 1 420px;margin:0 auto;display:flex;align-items:center;gap:8px;height:22px;padding:0 8px;border:1px solid var(--border);border-radius:5px;background:var(--panel);color:var(--muted);}
+.vA .tb-search span{flex:1;}
+.vA .tb-right{display:flex;align-items:center;gap:2px;}
+.vA .wc button,.vA .tbbtn{width:28px;height:24px;border-radius:4px;text-align:center;color:var(--muted);}
+.vA .wc button:hover,.vA .tbbtn:hover{background:var(--hover);color:var(--text);}
+.vA .wc{display:flex;gap:2px;margin-left:6px;}
+.vA .body{flex:1;display:flex;min-height:0;}
+.vA .side{width:236px;flex:none;border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 6px;gap:2px;background:var(--bg);}
+.vA .sect{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:8px 8px 4px;}
+.vA .gpu{display:block;width:100%;padding:7px 8px 6px;border-radius:5px;position:relative;border:1px solid transparent;}
+.vA .gpu:hover{background:var(--hover);}
+.vA .gpu.sel{background:var(--panel2);border-color:var(--border);}
+.vA .gpu.sel::before{content:"";position:absolute;left:-6px;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--accent);}
+.vA .gpu-top{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+.vA .gname{font-weight:600;}
+.vA .gprof{margin-left:auto;font-size:11px;color:var(--muted);}
+.vA .vitals{display:grid;grid-template-columns:1fr 1fr;gap:1px 10px;font-size:11px;}
+.vA .vitals span{display:flex;justify-content:space-between;}
+.vA .vitals i{font-style:normal;color:var(--muted);}
+.vA .spark{height:18px;margin-top:5px;}
+.vA .gwarn{color:var(--danger);font-size:11px;align-items:center;gap:4px;margin-top:4px;}
+.vA .nav{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border-radius:5px;color:var(--muted);}
+.vA .nav:hover{background:var(--hover);color:var(--text);}
+.vA .nav.sel{background:var(--panel2);color:var(--text);}
+.vA .nav svg{width:14px;height:14px;}
+.vA .main{flex:1;display:flex;flex-direction:column;min-width:0;}
+.vA .wshead{height:44px;flex:none;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--border);}
+.vA .wshead h1{font-size:14px;font-weight:600;}
+.vA .wshead .sub{font-size:11px;}
+.vA .profbtn{display:flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:5px;background:var(--panel);}
+.vA .profbtn:hover{background:var(--hover);}
+.vA .mod{color:var(--accent);font-size:11px;}
+.vA .seg{display:flex;border:1px solid var(--border);border-radius:5px;overflow:hidden;background:var(--panel);}
+.vA .seg button{padding:3px 8px;color:var(--muted);border-left:1px solid var(--border);text-align:center;}
+.vA .seg button:first-child{border-left:0;}
+.vA .seg button.on{background:var(--panel2);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent);}
+.vA .needsd{align-items:center;gap:8px;margin:8px 12px 0;padding:6px 10px;border:1px solid var(--border);border-left:2px solid var(--accent);border-radius:5px;background:var(--panel);}
+.vA .needsd button{color:var(--accent);}
+.vA .content{flex:1;display:flex;flex-direction:column;gap:8px;padding:8px 12px 10px;min-height:0;overflow:hidden;}
+.vA .strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;flex:none;}
+.vA .pane{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;min-width:0;min-height:0;}
+.vA .spane{display:flex;height:72px;}
+.vA .spane .lab{width:108px;flex:none;padding:8px 10px;display:flex;flex-direction:column;}
+.vA .spane .lab .k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
+.vA .spane .lab .v{font-size:20px;margin-top:2px;}
+.vA .spane .lab .s{font-size:10px;color:var(--muted);margin-top:auto;}
+.vA .spane .ch{flex:1;padding:6px 6px 6px 0;min-width:0;}
+.vA .cols{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;min-height:0;}
+.vA .pane > header{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-bottom:1px solid var(--border);flex:none;}
+.vA .pane > header h2{font-weight:600;}
+.vA .read{font-size:11px;color:var(--muted);}
+.vA .read b{color:var(--text);font-weight:500;}
+.vA .pchart{flex:1;min-height:90px;padding:6px 6px 2px 6px;border-bottom:1px solid var(--border);}
+.vA .pcurve{flex:1;min-height:150px;padding:6px 6px 2px 2px;border-bottom:1px solid var(--border);}
+.vA .ctl{padding:8px 10px;display:flex;flex-direction:column;gap:7px;overflow:hidden;}
+.vA .row{display:flex;align-items:center;gap:8px;}
+.vA .row label{color:var(--muted);}
+.vA .val{font-size:13px;}
+.vA .pend{color:var(--accent);font-size:12px;}
+.vA .small{font-size:10px;}
+.vA .stepper{display:flex;align-items:center;border:1px solid var(--border);border-radius:5px;background:var(--bg);}
+.vA .stepper button{width:22px;height:22px;text-align:center;color:var(--muted);}
+.vA .stepper button:hover{color:var(--text);background:var(--hover);}
+.vA .stepper span{min-width:72px;text-align:center;font-size:12px;}
+.vA .numin{width:62px;height:22px;padding:0 6px;border:1px solid var(--border);border-radius:5px;background:var(--bg);text-align:right;}
+.vA .fanrow{display:flex;gap:8px;font-size:11px;}
+.vA .fanrow b{font-weight:500;}
+.vA .inlinebad{align-items:center;gap:8px;padding:5px 8px;border-radius:5px;background:#3a1f1d;color:#ffb4ab;font-size:11px;}
+.vA .inlinebad button{margin-left:auto;color:#fff;text-decoration:underline;}
+.vA .details{flex:none;display:flex;align-items:center;gap:10px;height:28px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);font-size:11px;white-space:nowrap;overflow:hidden;}
+.vA .applybar{display:none;flex:none;align-items:center;gap:8px;height:22px;padding:0 3px 0 10px;border-radius:5px;background:#3a2c12;border:1px solid #5a4318;color:#ffd99a;}
+.vA.pending .applybar{display:flex;}
+.vA .applybar .hint{color:#c9a565;font-size:11px;}
+.vA .applybar button{height:16px;padding:0 8px;border-radius:3px;border:1px solid #6b5020;text-align:center;line-height:14px;}
+.vA .applybar button.primary{background:var(--accent);color:#1a1205;border-color:var(--accent);font-weight:600;}
+.vA .applybar kbd{border:0;padding:0;color:#4a3410;}
+.vA .status{height:30px;flex:none;display:flex;align-items:center;gap:14px;padding:0 10px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);background:var(--bg);}
+.vA .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:6px;}
+.nod.vA .status .dot{background:var(--muted);}
+.vA .status button:hover{color:var(--text);}
+.vA .status .prob{color:var(--danger);}
+.vA .placeholder{padding:40px;color:var(--muted);}
+.vA .placeholder h1{font-size:18px;color:var(--text);margin-bottom:8px;}
+/* A narrow: Power + Clocks stack, Cooling gets the second column */
+.vA.sz-half .side,.vA.sz-min .side{width:196px;}
+.vA.sz-half .tb-left,.vA.sz-min .tb-left{width:auto;}
+.vA.sz-half .cols,.vA.sz-min .cols{grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);grid-template-rows:1fr 1fr;}
+.vA.sz-half .cols > section:nth-child(3),.vA.sz-min .cols > section:nth-child(3){grid-column:2;grid-row:1 / span 2;}
+.vA.sz-half .wshead .sub,.vA.sz-min .wshead .sub,.vA.sz-half .applybar .hint,.vA.sz-min .applybar .hint{display:none;}
+.vA.sz-min .strip{display:none;}
+.vA.sz-half .wshead h1,.vA.sz-min .wshead h1{font-size:13px;}
+/* A compact */
+.vA .cmp{flex:1;display:flex;flex-direction:column;padding:6px;gap:4px;min-height:0;}
+.vA .cmp .gpu{background:var(--panel);border-color:var(--border);}
+.vA .cmp .vitals{font-size:12px;}
+.vA .cmp .prow{display:flex;align-items:center;gap:8px;padding:6px 8px;}
+
+/* =====================================================================
+   VARIANT B · Inspector. Blue-black, big canvas + property inspector.
+   The canvas follows the inspector group you're working in.
+   ===================================================================== */
+.vB{--bg:#0f1318;--panel:#141a21;--panel2:#1a212a;--border:#232c37;--hover:#1f2833;--text:#cfd8e3;--muted:#7a8696;--accent:#7fd13b;--danger:#ff6b6b;--ok:#7fd13b;
+  --temp:#ff8a5c;--util:#4fb3ff;--power:#ffcf4a;--fan:#5ee0c0;--gclk:#b48cff;--mclk:#ff7ac6;--vram:#4fb3ff;--grid:#1c242e;--line:#cfd8e3;
+  --font:"Inter","Cantarell",system-ui,sans-serif;--mono:"JetBrains Mono","Fira Code",ui-monospace,monospace;--radius:4px;--fs:12px;}
+.vB .titlebar{height:36px;flex:none;display:flex;align-items:center;gap:10px;padding:0 6px 0 10px;background:var(--panel);border-bottom:1px solid var(--border);}
+.vB .logo{width:18px;height:18px;border-radius:4px;background:linear-gradient(135deg,#7fd13b,#2c8a5a);}
+.vB .crumbs{display:flex;gap:6px;color:var(--muted);}
+.vB .crumbs b{color:var(--text);font-weight:500;}
+.vB .tbbtn{height:24px;padding:0 8px;border-radius:4px;color:var(--muted);display:flex;align-items:center;gap:6px;}
+.vB .tbbtn:hover{background:var(--hover);color:var(--text);}
+.vB .wc{display:flex;gap:4px;margin-left:4px;}
+.vB .wc button{width:24px;height:24px;border-radius:50%;text-align:center;color:var(--muted);background:var(--panel2);}
+.vB .wc button:hover{color:var(--text);background:var(--hover);}
+.vB .body{flex:1;display:flex;min-height:0;}
+.vB .side{width:212px;flex:none;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--border);}
+.vB .side .hd{font-size:11px;color:var(--muted);padding:10px 12px 6px;display:flex;}
+.vB .gpu{display:block;width:100%;padding:8px 12px 10px;border-left:2px solid transparent;}
+.vB .gpu:hover{background:var(--hover);}
+.vB .gpu.sel{background:var(--panel2);border-left-color:var(--accent);}
+.vB .gname{display:flex;font-weight:500;margin-bottom:6px;gap:6px;align-items:center;}
+.vB .gname .warn{color:var(--danger);font-size:11px;}
+.vB .meter{display:grid;grid-template-columns:30px 1fr 46px;align-items:center;gap:6px;font-size:10px;margin-top:3px;}
+.vB .meter i{font-style:normal;color:var(--muted);}
+.vB .meter .bar{height:4px;border-radius:2px;background:var(--border);overflow:hidden;}
+.vB .meter .bar div{height:100%;border-radius:2px;}
+.vB .meter span{text-align:right;}
+.vB .navs{margin-top:auto;border-top:1px solid var(--border);padding:6px;}
+.vB .nav{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border-radius:4px;color:var(--muted);}
+.vB .nav:hover{background:var(--hover);color:var(--text);}
+.vB .nav.sel{color:var(--text);background:var(--panel2);}
+.vB .nav svg{width:14px;height:14px;}
+.vB .center{flex:1;display:flex;flex-direction:column;min-width:0;}
+.vB .toolbar{height:36px;flex:none;display:flex;align-items:stretch;gap:0;padding:0 8px;border-bottom:1px solid var(--border);}
+.vB .tab{padding:0 12px;color:var(--muted);display:flex;align-items:center;border-bottom:2px solid transparent;}
+.vB .tab:hover{color:var(--text);}
+.vB .tab.on{color:var(--text);border-bottom-color:var(--accent);}
+.vB .seg{display:flex;align-items:center;gap:2px;}
+.vB .seg button{padding:3px 7px;border-radius:4px;color:var(--muted);}
+.vB .seg button.on{background:var(--panel2);color:var(--text);}
+.vB .canvaswrap{flex:1;display:flex;flex-direction:column;min-height:0;padding:10px;gap:10px;}
+.vB .cbox{position:relative;min-height:0;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:8px;}
+.vB .cbox .cap{position:absolute;left:46px;top:7px;font-size:11px;color:var(--muted);pointer-events:none;}
+.vB .cbox .cap b{color:var(--text);font-weight:500;}
+.vB .hintline{font-size:11px;color:var(--muted);flex:none;}
+.vB .insp{width:312px;flex:none;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--border);min-height:0;}
+.vB .ihead{padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
+.vB .ihead h1{font-size:13px;font-weight:600;}
+.vB .select{display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-radius:4px;background:var(--bg);border:1px solid var(--border);}
+.vB .select:hover{border-color:#33404f;}
+.vB .mod{color:var(--accent);font-size:11px;}
+.vB .needsd{margin:8px 12px 0;padding:6px 8px;border-radius:4px;background:var(--panel2);border:1px dashed #3a4a5c;align-items:center;gap:6px;font-size:11px;}
+.vB .needsd button{color:var(--accent);margin-left:auto;}
+.vB .groups{flex:1;overflow:auto;}
+.vB .grp{border-bottom:1px solid var(--border);}
+.vB .grp > button{display:flex;align-items:center;gap:6px;width:100%;padding:8px 12px;font-weight:600;}
+.vB .grp > button:hover{background:var(--hover);}
+.vB .grp.focus > button{color:var(--accent);}
+.vB .grp > button .r{margin-left:auto;font-weight:400;color:var(--muted);font-size:11px;}
+.vB .props{padding:0 12px 10px;display:flex;flex-direction:column;gap:5px;}
+.vB .prop{display:grid;grid-template-columns:96px 1fr;align-items:center;gap:8px;min-height:24px;}
+.vB .prop > label{color:var(--muted);}
+.vB .field{display:flex;align-items:center;gap:6px;}
+.vB .num{width:74px;height:22px;padding:0 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);text-align:right;}
+.vB .num:focus{outline:1px solid var(--accent);}
+.vB .unit{color:var(--muted);font-size:11px;}
+.vB .meas{margin-left:auto;font-size:11px;color:var(--muted);}
+.vB .pend{color:var(--accent);font-size:11px;}
+.vB .chips{display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px;}
+.vB .chips button{padding:2px 8px;border-radius:3px;color:var(--muted);}
+.vB .chips button.on{background:var(--panel2);color:var(--text);}
+.vB .inlinebad{margin:0 12px 8px;align-items:center;gap:6px;padding:6px 8px;border-radius:4px;background:#2a1618;border:1px solid #4a2226;color:#ff9b9b;font-size:11px;}
+.vB .inlinebad button{margin-left:auto;color:#fff;}
+.vB .ifoot{border-top:1px solid var(--border);padding:10px 12px;display:flex;flex-direction:column;gap:6px;flex:none;}
+.vB .diff{font-size:11px;display:flex;gap:6px;}
+.vB .diff s{color:var(--muted);}
+.vB .diff b{color:var(--accent);font-weight:500;}
+.vB .nodiff{font-size:11px;color:var(--muted);}
+.vB .btns{display:flex;gap:6px;}
+.vB .btns button{flex:1;height:26px;border-radius:4px;border:1px solid var(--border);text-align:center;}
+.vB .btns .primary{background:var(--accent);border-color:var(--accent);color:#0c1a05;font-weight:600;}
+.vB:not(.pending) .btns button{opacity:.4;pointer-events:none;}
+.vB .status{height:24px;flex:none;display:flex;align-items:center;gap:0;font-size:11px;color:var(--muted);background:var(--panel);border-top:1px solid var(--border);}
+.vB .status > *{padding:0 10px;height:100%;display:flex;align-items:center;gap:6px;border-right:1px solid var(--border);}
+.vB .status .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);}
+.nod.vB .status .dot{background:var(--danger);}
+.vB .status .prob{color:var(--danger);}
+.vB .status .hold{color:var(--accent);display:none;}
+.vB.pending .status .hold{display:flex;}
+.vB.sz-half .side,.vB.sz-min .side{width:180px;}
+.vB.sz-half .insp,.vB.sz-min .insp{width:284px;}
+.vB.sz-half .tab,.vB.sz-min .tab{padding:0 7px;}
+.vB.sz-half .toolbar,.vB.sz-min .toolbar{padding:0 4px;}
+.vB.sz-half .seg button,.vB.sz-min .seg button{padding:3px 4px;}
+.vB.sz-half .hintline,.vB.sz-min .hintline{display:none;}
+.vB .placeholder{padding:40px;color:var(--muted);}
+.vB .placeholder h1{font-size:18px;color:var(--text);margin-bottom:8px;}
+.vB .cmp{flex:1;display:flex;flex-direction:column;background:var(--panel);min-height:0;}
+.vB .cmp .gpu{padding:10px 12px;border-bottom:1px solid var(--border);}
+.vB .cmp .foot{margin-top:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);}
+
+/* =====================================================================
+   VARIANT C · Tracks. Light "test equipment": ink on warm paper, orange.
+   Every metric is a full-width track; controls sit on the chart itself.
+   ===================================================================== */
+.vC{--bg:#e9e6df;--panel:#f6f4ef;--panel2:#ffffff;--border:#d2cec4;--hover:#e2ded5;--text:#1c1b19;--muted:#77736a;--accent:#ff5a1f;--danger:#d93b2b;--ok:#2f9e5a;
+  --temp:#1c1b19;--util:#1c1b19;--power:#1c1b19;--fan:#1c1b19;--gclk:#1c1b19;--mclk:#77736a;--vram:#1c1b19;--grid:#e3dfd6;--line:#1c1b19;
+  --font:"Inter","Helvetica Neue",system-ui,sans-serif;--mono:"JetBrains Mono","IBM Plex Mono",ui-monospace,monospace;--radius:2px;--fs:12px;}
+.vC .titlebar{height:30px;flex:none;display:flex;align-items:center;padding:0 4px 0 12px;background:#1c1b19;color:#e9e6df;}
+.vC .word{font-family:var(--mono);font-weight:700;letter-spacing:.24em;font-size:11px;}
+.vC .word i{font-style:normal;color:var(--accent);}
+.vC .tbsearch{margin:0 auto;display:flex;align-items:center;gap:8px;color:#a8a399;font-family:var(--mono);font-size:11px;}
+.vC .tbsearch kbd{border-color:#4a4843;color:#a8a399;}
+.vC .tbbtn{height:22px;padding:0 8px;color:#a8a399;font-family:var(--mono);font-size:11px;}
+.vC .tbbtn:hover{color:#fff;}
+.vC .wc{display:flex;}
+.vC .wc button{width:30px;height:30px;text-align:center;color:#a8a399;}
+.vC .wc button:hover{background:#34322e;color:#fff;}
+.vC .body{flex:1;display:flex;min-height:0;}
+.vC .side{width:196px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg);}
+.vC .gpu{display:block;width:100%;padding:10px 12px;border-bottom:1px solid var(--border);position:relative;}
+.vC .gpu:hover{background:var(--hover);}
+.vC .gpu.sel{background:var(--panel2);}
+.vC .gpu.sel::after{content:"";position:absolute;right:-1px;top:0;bottom:0;width:3px;background:var(--accent);}
+.vC .gidx{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.1em;display:flex;}
+.vC .gidx .warn{margin-left:auto;color:var(--danger);}
+.vC .gname{font-weight:600;margin:2px 0 4px;}
+.vC .bigt{font-family:var(--mono);font-size:30px;line-height:1;letter-spacing:-.02em;}
+.vC .minis{display:flex;gap:10px;font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px;}
+.vC .minis b{color:var(--text);font-weight:500;}
+.vC .navs{margin-top:auto;border-top:1px solid var(--border);}
+.vC .nav{display:flex;width:100%;padding:9px 12px;font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);}
+.vC .nav:hover{color:var(--text);background:var(--hover);}
+.vC .nav.sel{color:var(--text);background:var(--panel2);}
+.vC .main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--panel);}
+.vC .head{flex:none;display:flex;align-items:center;gap:14px;padding:10px 14px;border-bottom:1px solid var(--border);}
+.vC .head h1{font-size:18px;font-weight:600;letter-spacing:-.01em;}
+.vC .head .sub{font-family:var(--mono);font-size:10px;color:var(--muted);}
+.vC .profs{display:flex;border:1px solid var(--text);}
+.vC .profs button{padding:5px 10px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;border-left:1px solid var(--text);text-align:center;position:relative;}
+.vC .profs button:first-child{border-left:0;}
+.vC .profs button.on{background:var(--text);color:var(--panel);}
+.vC .profs button .st{position:absolute;top:1px;right:2px;font-size:8px;color:var(--accent);}
+.vC .profs .more{padding:5px 8px;}
+.vC .mod{font-family:var(--mono);font-size:10px;color:var(--accent);}
+.vC .seg{display:flex;font-family:var(--mono);font-size:11px;}
+.vC .seg button{padding:3px 6px;color:var(--muted);}
+.vC .seg button.on{color:var(--text);box-shadow:inset 0 -2px 0 var(--accent);}
+.vC .applybar{display:flex;flex:none;align-items:center;gap:12px;padding:0 8px 0 14px;height:30px;border-bottom:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;}
+.vC.pending .applybar{background:var(--accent);color:#fff;border-bottom-color:var(--accent);}
+.vC .applybar .busy,.vC.pending .applybar .idle,.vC:not(.pending) .applybar button{display:none;}
+.vC.pending .applybar .busy{display:inline;}
+.vC .applybar button{height:22px;padding:0 12px;border:1px solid #fff;text-align:center;}
+.vC .applybar .primary{background:#fff;color:var(--accent);font-weight:700;}
+.vC .needsd{align-items:center;gap:10px;padding:6px 14px;background:#1c1b19;color:#e9e6df;font-family:var(--mono);font-size:11px;}
+.vC .needsd button{color:var(--accent);text-decoration:underline;}
+.vC .tracks{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+.vC .track{display:flex;border-bottom:1px solid var(--border);min-height:0;}
+.vC .tl{width:224px;flex:none;padding:8px 14px;display:flex;flex-direction:column;gap:4px;border-right:1px solid var(--border);}
+.vC .tk{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);display:flex;gap:6px;}
+.vC .tv{font-family:var(--mono);font-size:22px;line-height:1.05;}
+.vC .tv small{font-size:12px;color:var(--muted);}
+.vC .tc{flex:1;min-width:0;padding:6px 8px;display:flex;gap:8px;}
+.vC .tc > div{flex:1;min-width:0;position:relative;}
+.vC .tr{width:96px;flex:none;padding:8px 10px;border-left:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--muted);display:flex;flex-direction:column;gap:2px;}
+.vC .tr b{color:var(--text);font-weight:500;}
+.vC .ctlrow{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;}
+.vC .ctlrow label{color:var(--muted);width:44px;}
+.vC .step{display:flex;align-items:center;border:1px solid var(--text);}
+.vC .step button{width:20px;height:20px;text-align:center;}
+.vC .step button:hover{background:var(--text);color:var(--panel);}
+.vC .step span{min-width:64px;text-align:center;}
+.vC .pend{color:var(--accent);font-family:var(--mono);font-size:11px;white-space:nowrap;}
+.vC .chips{display:flex;align-self:flex-start;border:1px solid var(--text);font-family:var(--mono);font-size:10px;letter-spacing:.06em;}
+.vC .chips button{padding:3px 6px;border-left:1px solid var(--text);text-transform:uppercase;}
+.vC .chips button:first-child{border-left:0;}
+.vC .chips button.on{background:var(--text);color:var(--panel);}
+.vC .lnk{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);}
+.vC .chiplabel{position:absolute;left:6px;top:2px;font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--muted);pointer-events:none;}
+.vC .inlinebad{align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--danger);}
+.vC .inlinebad button{color:var(--danger);text-decoration:underline;}
+.vC .status{height:24px;flex:none;display:flex;align-items:center;gap:16px;padding:0 12px;background:#1c1b19;color:#a8a399;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;}
+.vC .status .dot{display:inline-block;width:6px;height:6px;background:var(--ok);margin-right:6px;}
+.nod.vC .status .dot{background:#77736a;}
+.vC .status .prob{color:var(--accent);}
+.vC .status button:hover{color:#fff;}
+.vC .status .hold{display:none;color:var(--accent);}
+.vC.pending .status .hold{display:inline;}
+.vC.sz-half .tl,.vC.sz-min .tl{width:176px;padding:8px 10px;}
+.vC.sz-half .tr,.vC.sz-min .tr{display:none;}
+.vC.sz-min .tv{font-size:18px;}
+.vC.sz-min .tl{gap:2px;padding-top:5px;}
+.vC.sz-half .side,.vC.sz-min .side{width:168px;}
+.vC.sz-half .head,.vC.sz-min .head{flex-wrap:wrap;gap:8px 14px;}
+.vC.sz-half .head .sub,.vC.sz-min .head .sub{display:none;}
+.vC.sz-half .fanhist,.vC.sz-min .fanhist{display:none;}
+.vC.sz-half .tc,.vC.sz-min .tc{padding:6px 10px 6px 6px;}
+.vC .placeholder{padding:40px;color:var(--muted);}
+.vC .placeholder h1{font-size:22px;color:var(--text);margin-bottom:8px;}
+.vC .cmp{flex:1;display:flex;flex-direction:column;min-height:0;background:var(--panel);}
+
+.vC .cmp .foot{margin-top:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);}
+.vC .cmp .profs button{flex:1;}
+.vC .ov{border-radius:0;border-color:var(--text);box-shadow:4px 4px 0 rgba(28,27,25,.9);}
+</style>
+</head>
+<body>
+<div id="stage"><div id="win"></div></div>
+<div id="switcher"></div>
+<script>
+'use strict';
+/* ============================== state ============================== */
+const VARIANTS = [
+  {key:'A', name:'Instrument'},
+  {key:'B', name:'Inspector'},
+  {key:'C', name:'Tracks'},
+];
+const SIZES = {default:[1280,800,'1280×800'], half:[960,1040,'Half 1080p'], min:[960,600,'Min 960×600'], compact:[340,430,'Compact']};
+const qs = new URLSearchParams(location.search);
+const S = {
+  variant: VARIANTS.some(v=>v.key===qs.get('variant')) ? qs.get('variant') : 'A',
+  size: SIZES[qs.get('size')] ? qs.get('size') : 'default',
+  daemon: qs.get('daemon') !== '0',
+  view: 'gpu', sel: 0, range: 300,
+  bFocus: 'overview', bDetails: false,
+  cCurve: true,
+  auto: {enabled:true, game:'Cyberpunk 2077', profile:'Quiet', gpu:0},
+  t: 0,
+  events: [],
+};
+const curveQuiet = [[35,25],[55,32],[70,48],[82,72],[90,100]];
+const curveBal   = [[35,30],[55,40],[68,58],[80,80],[88,100]];
+const curvePerf  = [[30,35],[50,50],[62,68],[74,88],[84,100]];
+function mkGpu(idx, o){
+  return Object.assign({idx, pending:{}, hist:{temp:[],util:[],power:[],fan:[],gclk:[],mclk:[],vram:[]},
+    t:{temp:40,util:5,power:30,fan:30,gclk:300,mclk:405,vram:1}}, o);
+}
+const GPUS = [
+  mkGpu(0, {name:'NVIDIA GeForce RTX 4080 SUPER', short:'RTX 4080 SUPER', bus:'0000:01:00.0', vramTotal:16, mem:'16 GB GDDR6X', pcie:'PCIe 4.0 ×16', vbios:'95.03.4C.00.A1',
+    fans:2, rpmKnown:true, limits:{powerMin:125, powerMax:350}, maxClk:2610, profile:'Quiet', startup:'Balanced', load:'game', ambient:30, thermal:0.12,
+    presets:{Quiet:{powerLimit:250,gOffset:0,mOffset:0,lockMin:null,lockMax:null,fanMode:'curve',fanManual:50,curve:curveQuiet},
+             Balanced:{powerLimit:320,gOffset:0,mOffset:0,lockMin:null,lockMax:null,fanMode:'curve',fanManual:50,curve:curveBal},
+             Performance:{powerLimit:350,gOffset:150,mOffset:1000,lockMin:null,lockMax:null,fanMode:'curve',fanManual:60,curve:curvePerf}},
+    coolingPaused:false}),
+  mkGpu(1, {name:'NVIDIA RTX A2000 12GB', short:'RTX A2000', bus:'0000:05:00.0', vramTotal:12, mem:'12 GB GDDR6', pcie:'PCIe 4.0 ×16', vbios:'94.06.19.00.2C',
+    fans:1, rpmKnown:false, limits:{powerMin:50, powerMax:70}, maxClk:1200, profile:'Compute', startup:'Compute', load:'compute', ambient:32, thermal:0.42,
+    presets:{Compute:{powerLimit:70,gOffset:0,mOffset:0,lockMin:null,lockMax:null,fanMode:'curve',fanManual:60,curve:curveBal},
+             Silent:{powerLimit:55,gOffset:0,mOffset:0,lockMin:null,lockMax:null,fanMode:'curve',fanManual:40,curve:curveQuiet}},
+    coolingPaused:true}),
+];
+S.gpus = GPUS;
+for (const g of GPUS) g.tuning = clone(g.presets[g.profile]);
+S.events = [
+  {t:'14:02', txt:'Cyberpunk 2077 started · automatic switch to Quiet on RTX 4080 SUPER', kind:'auto'},
+  {t:'13:58', txt:'Fan curve paused on RTX A2000 after 3 failed fan writes', kind:'bad', action:'Resume'},
+  {t:'09:12', txt:'Startup: applied Balanced to RTX 4080 SUPER, Compute to RTX A2000', kind:'ok'},
+];
+
+const G = () => S.gpus[S.sel];
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function eq(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function eff(g,k){ return k in g.pending ? g.pending[k] : g.tuning[k]; }
+function curveAt(c,temp){
+  if (temp<=c[0][0]) return c[0][1];
+  for (let i=1;i<c.length;i++) if (temp<=c[i][0]) { const [x0,y0]=c[i-1],[x1,y1]=c[i]; return y0+(y1-y0)*(temp-x0)/(x1-x0); }
+  return c[c.length-1][1];
+}
+function modified(g){ const p=g.presets[g.profile]; return !!p && !eq(p,g.tuning); }
+function nPending(g){ return Object.keys(g.pending).length; }
+
+/* ============================== simulation ============================== */
+function noise(a){ return (Math.random()-.5)*2*a; }
+function simStep(g,t){
+  let target;
+  if (g.load==='game'){ const ph=t%240; target = ph<25 ? 18+noise(4) : 68 + 18*Math.sin(t/37) + 8*Math.sin(t/9) + noise(5); }
+  else target = 18 + 14*Math.max(0,Math.sin(t/55)) + noise(3);
+  g.t.util = clamp(g.t.util + (target-g.t.util)*0.35, 0, 100);
+  const pl = g.tuning.powerLimit, idle = g.limits.powerMin*0.18;
+  g.t.power = clamp(idle + (g.limits.powerMax*0.86-idle)*g.t.util/100 + noise(g.limits.powerMax*0.012), 0, pl);
+  const mode = g.tuning.fanMode;
+  let fanT = mode==='curve' ? curveAt(g.tuning.curve, g.t.temp) : mode==='manual' ? g.tuning.fanManual : clamp((g.t.temp-35)*1.4+30,30,100);
+  if (g.coolingPaused) fanT = g.t.fan;
+  g.t.fan = clamp(g.t.fan + (fanT-g.t.fan)*0.15, 0, 100);
+  const tempT = g.ambient + g.t.power*g.thermal*(1.25 - g.t.fan/180);
+  g.t.temp = g.t.temp + (tempT-g.t.temp)*0.06;
+  const atLimit = g.t.power >= pl-1.5;
+  let clk = g.t.util>12 ? g.maxClk + g.tuning.gOffset - (atLimit?120+noise(30):noise(15)) : 210+noise(10);
+  if (g.tuning.lockMin!=null) clk = Math.max(clk,g.tuning.lockMin);
+  if (g.tuning.lockMax!=null) clk = Math.min(clk,g.tuning.lockMax);
+  g.t.gclk = clk;
+  g.t.mclk = g.t.util>8 ? (g.idx===0?11502:7001) + g.tuning.mOffset : 405;
+  g.t.vram = clamp(g.vramTotal*(g.load==='game'?0.62:0.35) + noise(.05), 0, g.vramTotal);
+  for (const k in g.hist){ g.hist[k].push(g.t[k]); if (g.hist[k].length>3600) g.hist[k].shift(); }
+}
+for (let i=0;i<3600;i++){ S.t=i; for (const g of GPUS) simStep(g,i); }
+
+/* ============================== formatting ============================== */
+const META = {
+  temp:{min:20,max:()=>100,unit:'°C',color:'--temp',label:'Temperature',fmt:v=>v.toFixed(0)},
+  util:{min:0,max:()=>100,unit:'%',color:'--util',label:'Utilization',fmt:v=>v.toFixed(0)},
+  power:{min:0,max:g=>g.limits.powerMax,unit:'W',color:'--power',label:'Power draw',fmt:v=>v.toFixed(0)},
+  fan:{min:0,max:()=>100,unit:'%',color:'--fan',label:'Fan speed',fmt:v=>v.toFixed(0)},
+  gclk:{min:0,max:g=>g.maxClk+400,unit:'MHz',color:'--gclk',label:'Graphics clock',fmt:v=>v.toFixed(0)},
+  mclk:{min:0,max:g=>g.idx===0?13000:8500,unit:'MHz',color:'--mclk',label:'Memory clock',fmt:v=>v.toFixed(0)},
+  vram:{min:0,max:g=>g.vramTotal,unit:'GB',color:'--vram',label:'Memory used',fmt:v=>v.toFixed(1)},
+};
+const signed = v => (v>0?'+':v<0?'−':'±')+Math.abs(v)+' MHz';
+const lockTxt = g => { const a=g.tuning.lockMin,b=g.tuning.lockMax; return a==null&&b==null?'off':`${a??'—'}–${b??'—'} MHz`; };
+const fanModeName = {auto:'Auto', manual:'Fixed', curve:'Curve'};
+const B = {
+  name:g=>g.name, short:g=>g.short,
+  temp:g=>g.t.temp.toFixed(0)+'°C', tempN:g=>g.t.temp.toFixed(0), util:g=>g.t.util.toFixed(0)+'%', power:g=>g.t.power.toFixed(0)+' W', powerN:g=>g.t.power.toFixed(0),
+  fan:g=>g.t.fan.toFixed(0)+'%', fanN:g=>g.t.fan.toFixed(0),
+  fan1rpm:g=>g.rpmKnown?Math.round(g.t.fan*31+180)+' rpm':'— rpm', fan2rpm:g=>g.rpmKnown?Math.round(g.t.fan*30.4+175)+' rpm':'— rpm',
+  gclk:g=>g.t.gclk.toFixed(0)+' MHz', gclkN:g=>g.t.gclk.toFixed(0), mclk:g=>g.t.mclk.toFixed(0)+' MHz', vram:g=>g.t.vram.toFixed(1)+' / '+g.vramTotal+' GB', vramN:g=>g.t.vram.toFixed(1),
+  enforced:g=>g.tuning.powerLimit+' W',
+  powerLimitCur:g=>g.tuning.powerLimit+' W', powerLimitCurN:g=>g.tuning.powerLimit, powerLimitPend:g=>'→ '+eff(g,'powerLimit')+' W',
+  gOffsetCur:g=>signed(g.tuning.gOffset), gOffsetPend:g=>'→ '+signed(eff(g,'gOffset')), gOffsetEff:g=>signed(eff(g,'gOffset')),
+  mOffsetCur:g=>signed(g.tuning.mOffset), mOffsetPend:g=>'→ '+signed(eff(g,'mOffset')), mOffsetEff:g=>signed(eff(g,'mOffset')),
+  lock:lockTxt, lockMinPend:g=>'→ '+(eff(g,'lockMin')??'—'), lockMaxPend:g=>'→ '+(eff(g,'lockMax')??'—'),
+  fanModeCur:g=>fanModeName[g.tuning.fanMode], fanModePend:g=>'→ '+fanModeName[eff(g,'fanMode')],
+  fanManualCur:g=>g.tuning.fanManual+'%', fanManualPend:g=>'→ '+eff(g,'fanManual')+'%',
+  curvePend:g=>'edited', curveTarget:g=>curveAt(eff(g,'curve'),g.t.temp).toFixed(0)+'%',
+  profile:g=>g.profile, profileMod:g=>modified(g)?'· not saved to profile':'',
+  profileModShort:g=>modified(g)?'modified':'',
+  pendingCount:g=>String(nPending(g)), pendingWord:g=>nPending(g)===1?'unapplied change':'unapplied changes',
+  autoStatus:()=>!S.auto.enabled?'Automatic switching paused':`${S.auto.game} → ${S.auto.profile}`,
+  daemon:()=>S.daemon?'prismd 0.9.2 connected':'prismd not running',
+  problems:()=>{ const n=S.gpus.filter(x=>x.coolingPaused).length; return n?`${n} problem${n>1?'s':''}`:'No problems'; },
+  stats:(g,el)=>{ const m=el.dataset.m, a=g.hist[m].slice(-S.range), mt=META[m]; const mx=Math.max(...a), mn=Math.min(...a), av=a.reduce((x,y)=>x+y,0)/a.length; return `${mt.fmt(mx)}|${mt.fmt(av)}|${mt.fmt(mn)}`; },
+};
+
+/* ============================== shared bits (not layout) ============================== */
+const ICON = {
+  games:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="4.5" width="13" height="7.5" rx="3.5"/><path d="M5 6.8v3M3.5 8.3h3"/><circle cx="10.6" cy="7.4" r=".7" fill="currentColor"/><circle cx="12" cy="9" r=".7" fill="currentColor"/></svg>',
+  drivers:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="4" y="4" width="8" height="8" rx="1"/><path d="M6 1.5V4M10 1.5V4M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5"/></svg>',
+  settings:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>',
+};
+const NAVS = [['games','Games'],['drivers','Drivers'],['settings','Settings']];
+const wc = () => `<div class="wc"><button title="Minimize">–</button><button title="Maximize">□</button><button title="Close">×</button></div>`;
+const rangeSeg = () => `<div class="seg">${[[60,'1m'],[300,'5m'],[900,'15m'],[3600,'1h']].map(([s,l])=>`<button data-range="${s}">${l}</button>`).join('')}</div>`;
+const b = (k,g,extra='') => `<span data-b="${k}"${g!=null?` data-g="${g}"`:''} ${extra}></span>`;
+const pend = (k,cls='pend mono') => `<span class="${cls}" data-pend="${k}"></span>`;
+function placeholder(){
+  const n = NAVS.find(x=>x[0]===S.view)[1];
+  return `<div class="placeholder"><h1>${n}</h1><p>Not mocked. This prototype covers the shell, the GPU workspace (monitoring + tuning) and the fan curve editor.</p></div>`;
+}
+const problemTxt = 'Fan curve paused after 3 failed fan writes';
+
+/* ============================== VARIANT A · Instrument ============================== */
+function renderA(){
+  const g = G();
+  const gpuRow = (x,i) => `
+    <button class="gpu ${S.view==='gpu'&&i===S.sel?'sel':''}" data-select="${i}">
+      <div class="gpu-top"><span class="gname">${x.short}</span><span class="gprof">${b('profile',i)}</span></div>
+      <div class="vitals mono">
+        <span><i>temp</i>${b('temp',i)}</span><span><i>load</i>${b('util',i)}</span>
+        <span><i>pwr</i>${b('power',i)}</span><span><i>fan</i>${b('fan',i)}</span>
+      </div>
+      <div class="spark"><canvas data-chart data-m="util" data-g="${i}" data-range="180" data-style="area" data-nogrid></canvas></div>
+      <span class="gwarn" data-problem data-g="${i}">● cooling paused</span>
+    </button>`;
+  if (S.size==='compact') return `
+    <div class="titlebar drag"><div class="tb-left" style="width:auto"><span class="logo">◆</span><span class="appname">Prism</span></div><span class="sp"></span>
+      <div class="tb-right"><button class="tbbtn" data-compact title="Full layout">⤢</button>${wc()}</div></div>
+    <div class="cmp">
+      ${S.gpus.map(gpuRow).join('')}
+      <div class="prow"><span class="muted">Profile</span><button class="profbtn" data-menu="profile" style="margin-left:auto"><b>${b('profile')}</b> ▾</button></div>
+    </div>
+    <div class="status"><span><span class="dot"></span>${b('autoStatus')}</span><span class="sp"></span><button class="prob" data-activity>${b('problems')}</button></div>`;
+
+  const strip = (bk,sub,m=bk) => `<div class="pane spane"><div class="lab"><span class="k">${META[m].label}</span><span class="v mono">${b(bk)}${bk==='vramN'?'<small class="muted" style="font-size:12px"> GB</small>':''}</span><span class="s mono">${sub}</span></div>
+      <div class="ch"><canvas data-chart data-m="${m}" data-style="area"></canvas></div></div>`;
+  const ws = `
+    <div class="wshead">
+      <div><h1>${g.name}</h1><div class="sub muted mono">${g.bus} · driver 580.82.09</div></div>
+      <span class="sp"></span>
+      <button class="profbtn" data-menu="profile"><span class="muted">Profile</span><b>${b('profile')}</b>${b('profileMod',null,'class="mod"')}<span class="muted">▾</span></button>
+      ${rangeSeg()}
+    </div>
+    <div class="needsd" data-needsd><span>Tuning needs <b>prismd</b>. Monitoring still works; Power, Clocks and Cooling show their current values read-only.</span><span class="sp"></span><button>Set up prismd</button></div>
+    <div class="content">
+      <div class="strip">${strip('temp','limit 90°C')}${strip('util','graphics')}${strip('vramN','of '+g.vramTotal+' GB','vram')}</div>
+      <div class="cols">
+        <section class="pane">
+          <header><h2>Power</h2><span class="sp"></span><span class="read mono">draw <b>${b('power')}</b></span></header>
+          <div class="pchart"><canvas data-chart data-m="power" data-style="area" data-limit="powerLimit" data-drag="powerLimit"></canvas></div>
+          <div class="ctl">
+            <div class="row"><label>Power limit</label><span class="sp"></span><span class="val mono">${b('powerLimitCur')}</span>${pend('powerLimit')}</div>
+            <input type="range" data-edit="powerLimit" min="${g.limits.powerMin}" max="${g.limits.powerMax}" step="5">
+            <div class="row small muted mono"><span>${g.limits.powerMin} W</span><span class="sp"></span><span>enforced ${b('enforced')}</span><span class="sp"></span><span>${g.limits.powerMax} W</span></div>
+          </div>
+        </section>
+        <section class="pane">
+          <header><h2>Clocks</h2><span class="sp"></span><span class="read mono">gfx <b>${b('gclk')}</b> · mem <b>${b('mclk')}</b></span></header>
+          <div class="pchart"><canvas data-chart data-m="gclk" data-style="line"></canvas></div>
+          <div class="ctl">
+            <div class="row"><label>Graphics offset</label><span class="sp"></span>${pend('gOffset')}
+              <div class="stepper"><button data-step="gOffset" data-d="-15">−</button><span class="mono">${b('gOffsetEff')}</span><button data-step="gOffset" data-d="15">+</button></div></div>
+            <div class="row"><label>Memory offset</label><span class="sp"></span>${pend('mOffset')}
+              <div class="stepper"><button data-step="mOffset" data-d="-100">−</button><span class="mono">${b('mOffsetEff')}</span><button data-step="mOffset" data-d="100">+</button></div></div>
+            <div class="row"><label>Clock lock</label><span class="sp"></span>
+              <input class="numin mono" data-edit="lockMin" placeholder="min" type="number" step="15"><span class="muted">–</span><input class="numin mono" data-edit="lockMax" placeholder="max" type="number" step="15"><span class="muted small">MHz</span></div>
+          </div>
+        </section>
+        <section class="pane">
+          <header><h2>Cooling</h2><span class="sp"></span>
+            <div class="seg">${['auto','manual','curve'].map(m=>`<button data-set="fanMode" data-val="${m}">${fanModeName[m]}</button>`).join('')}</div></header>
+          <div class="pcurve" data-when="fanMode:curve"><canvas data-curve></canvas></div>
+          <div class="pcurve" data-when="fanMode:manual" style="display:flex;flex-direction:column;justify-content:center;gap:8px;padding:12px">
+            <div class="row"><label>Fixed speed</label><span class="sp"></span><span class="val mono">${b('fanManualCur')}</span>${pend('fanManual')}</div>
+            <input type="range" data-edit="fanManual" min="30" max="100" step="1"></div>
+          <div class="pcurve muted" data-when="fanMode:auto" style="display:flex;align-items:center;justify-content:center">GPU default automatic cooling</div>
+          <div class="ctl">
+            <div class="inlinebad" data-problem>${problemTxt}<button data-resume>Resume</button></div>
+            <div class="fanrow mono"><span class="muted">Fan 1</span><b>${b('fan')}</b><span class="muted">${b('fan1rpm')}</span>
+              ${g.fans>1?`<span class="sp"></span><span class="muted">Fan 2</span><b>${b('fan')}</b><span class="muted">${b('fan2rpm')}</span>`:''}</div>
+            <div class="row small muted"><span>${g.fans>1?'Both fans share one configuration':'Single fan'}</span><span class="sp"></span>${g.fans>1?'<button style="color:var(--accent)">Configure per fan…</button>':''}</div>
+          </div>
+        </section>
+      </div>
+      <div class="details muted"><button>▸ Hardware details</button><span class="mono">${g.mem} · ${g.pcie} · VBIOS ${g.vbios} · power ${g.limits.powerMin}–${g.limits.powerMax} W</span></div>
+    </div>`;
+  return `
+    <div class="titlebar drag">
+      <div class="tb-left"><span class="logo">◆</span><span class="appname">Prism</span></div>
+      <button class="tb-search" data-palette><span>Search commands, profiles, GPUs…</span><kbd>Ctrl K</kbd></button>
+      <div class="tb-right"><button class="tbbtn" data-compact title="Compact mode">⤡</button>${wc()}</div>
+    </div>
+    <div class="body">
+      <aside class="side">
+        <div class="sect">GPUs</div>
+        ${S.gpus.map(gpuRow).join('')}
+        <div class="sect" style="margin-top:8px">Host</div>
+        ${NAVS.map(([k,l])=>`<button class="nav ${S.view===k?'sel':''}" data-view="${k}">${ICON[k]}${l}</button>`).join('')}
+      </aside>
+      <main class="main">${S.view==='gpu'?ws:placeholder()}</main>
+    </div>
+    <div class="status">
+      <span><span class="dot"></span>${b('daemon')}</span>
+      <span>Auto: ${b('autoStatus')}</span>
+      <span class="sp"></span>
+      <div class="applybar"><span><b>${b('pendingCount')}</b> ${b('pendingWord')} on ${g.short}</span><span class="hint">· automatic changes on hold</span>
+        <button data-discard>Discard</button><button class="primary" data-apply>Apply <kbd>Ctrl ⏎</kbd></button></div>
+      <button class="prob" data-activity>▲ ${b('problems')}</button>
+    </div>`;
+}
+
+/* ============================== VARIANT B · Inspector ============================== */
+function renderB(){
+  const g = G();
+  const meters = i => [['temp','temp',x=>(x.t.temp-20)/80],['load','util',x=>x.t.util/100],['pwr','power',x=>x.t.power/x.limits.powerMax],['fan','fan',x=>x.t.fan/100]]
+    .map(([l,m])=>`<div class="meter mono"><i>${l}</i><div class="bar"><div data-meter="${m}" data-g="${i}" style="background:var(--${m})"></div></div>${b(m,i)}</div>`).join('');
+  const gpuRow = (x,i) => `<button class="gpu ${S.view==='gpu'&&i===S.sel?'sel':''}" data-select="${i}">
+      <div class="gname">${x.short}<span class="warn" data-problem data-g="${i}">●</span><span class="sp"></span><span class="muted" style="font-weight:400;font-size:11px">${b('profile',i)}</span></div>${meters(i)}</button>`;
+  if (S.size==='compact') return `
+    <div class="titlebar drag"><div class="logo"></div><b>Prism</b><span class="sp"></span><button class="tbbtn" data-compact>⤢</button>${wc()}</div>
+    <div class="cmp">${S.gpus.map(gpuRow).join('')}
+      <div class="foot"><button class="select" data-menu="profile"><span class="muted">Profile</span><b>${b('profile')}</b><span class="sp"></span>▾</button>
+      <span class="muted" style="font-size:11px">Auto · ${b('autoStatus')}</span></div></div>
+    <div class="status"><span><span class="dot"></span>prismd</span><button class="prob" data-activity>${b('problems')}</button></div>`;
+
+  const tabs = [['overview','Overview'],['power','Power'],['clocks','Clocks'],['cooling','Cooling']];
+  const f = S.bFocus;
+  let canvas;
+  if (f==='overview') canvas = `<div class="cbox" style="flex:1"><canvas data-chart data-lanes="temp,util,power,fan,gclk,vram"></canvas></div>
+      <div class="hintline">Hover for values at a point in time · select a group in the inspector to work on it here</div>`;
+  else if (f==='power') canvas = `<div class="cbox" style="flex:3"><canvas data-chart data-m="power" data-style="area" data-limit="powerLimit" data-drag="powerLimit" data-axis></canvas><div class="cap">Power draw <b>${b('power')}</b> · drag the limit line</div></div>
+      <div class="cbox" style="flex:1"><canvas data-chart data-lanes="util,gclk"></canvas></div>`;
+  else if (f==='clocks') canvas = `<div class="cbox" style="flex:1"><canvas data-chart data-m="gclk" data-style="line" data-axis></canvas><div class="cap">Graphics clock <b>${b('gclk')}</b></div></div>
+      <div class="cbox" style="flex:1"><canvas data-chart data-m="mclk" data-style="line" data-axis></canvas><div class="cap">Memory clock <b>${b('mclk')}</b></div></div>`;
+  else canvas = `<div class="cbox" style="flex:3" data-when="fanMode:curve"><canvas data-curve data-big></canvas></div>
+      <div class="cbox muted" style="flex:3;display:flex;align-items:center;justify-content:center" data-when="fanMode:manual,auto">Fan curve not in use (<span data-b="fanModeCur"></span> mode)</div>
+      <div class="cbox" style="flex:1"><canvas data-chart data-lanes="temp,fan"></canvas></div>`;
+
+  const grp = (key,title,right,body) => `<div class="grp ${f===key?'focus':''}"><button data-focus="${key}">${(key==='details'?S.bDetails:true)?'▾':'▸'} ${title}<span class="r mono">${right}</span></button>
+      ${key!=='details'||S.bDetails?`<div class="props">${body}</div>`:''}</div>`;
+  const insp = `
+    <div class="ihead"><h1>${g.name}</h1>
+      <button class="select" data-menu="profile"><span class="muted">Profile</span><b>${b('profile')}</b>${b('profileModShort',null,'class="mod"')}<span class="sp"></span><span class="muted">▾</span></button></div>
+    <div class="needsd" data-needsd>Read-only: tuning needs prismd<button>Set up</button></div>
+    <div class="groups">
+      ${grp('power','Power',b('power'),`
+        <div class="prop"><label>Power limit</label><div class="field"><input class="num mono" type="number" data-edit="powerLimit" step="5" min="${g.limits.powerMin}" max="${g.limits.powerMax}"><span class="unit">W</span><span class="meas mono">${b('powerLimitCur')}</span></div></div>
+        <div class="prop"><label></label><input type="range" data-edit="powerLimit" min="${g.limits.powerMin}" max="${g.limits.powerMax}" step="5"></div>
+        <div class="prop"><label>Enforced</label><span class="mono">${b('enforced')}</span></div>`)}
+      ${grp('clocks','Clocks',b('gclk'),`
+        <div class="prop"><label>Graphics offset</label><div class="field"><input class="num mono" type="number" data-edit="gOffset" step="15"><span class="unit">MHz</span><span class="meas mono">${b('gOffsetCur')}</span></div></div>
+        <div class="prop"><label>Memory offset</label><div class="field"><input class="num mono" type="number" data-edit="mOffset" step="100"><span class="unit">MHz</span><span class="meas mono">${b('mOffsetCur')}</span></div></div>
+        <div class="prop"><label>Clock lock</label><div class="field"><input class="num mono" style="width:60px" type="number" data-edit="lockMin" placeholder="min" step="15"><span class="unit">–</span><input class="num mono" style="width:60px" type="number" data-edit="lockMax" placeholder="max" step="15"></div></div>`)}
+      ${grp('cooling','Cooling',b('fan')+' · '+b('temp'),`
+        <div class="prop"><label>Mode</label><div class="chips">${['auto','manual','curve'].map(m=>`<button data-set="fanMode" data-val="${m}">${fanModeName[m]}</button>`).join('')}</div></div>
+        <div class="prop" data-when="fanMode:manual"><label>Fixed speed</label><div class="field"><input class="num mono" type="number" data-edit="fanManual" min="30" max="100"><span class="unit">%</span></div></div>
+        <div class="prop" data-when="fanMode:curve"><label>Curve</label><div class="field"><span class="mono">${eff(g,'curve').length} points</span><span class="meas">target ${b('curveTarget')}</span></div></div>
+        <div class="prop"><label>Fans</label><div class="field mono" style="font-size:11px">${b('fan')} · ${b('fan1rpm')}${g.fans>1?` <span class="muted">(${g.fans}, shared)</span>`:''}</div></div>`)}
+      <div class="inlinebad" data-problem>${problemTxt}<button data-resume>Resume</button></div>
+      ${grp('details','Hardware details','',`<div class="prop"><label>Memory</label><span>${g.mem}</span></div><div class="prop"><label>Bus</label><span class="mono">${g.bus} · ${g.pcie}</span></div><div class="prop"><label>VBIOS</label><span class="mono">${g.vbios}</span></div>`)}
+    </div>
+    <div class="ifoot"><div data-difflist></div>
+      <div class="btns"><button data-discard>Discard</button><button class="primary" data-apply>Apply</button></div></div>`;
+  return `
+    <div class="titlebar drag"><div class="logo"></div>
+      <div class="crumbs"><b>Prism</b><span>/</span>${S.view==='gpu'?`<b>${g.short}</b><span>/</span><span>${tabs.find(t=>t[0]===f)[1]}</span>`:`<b>${NAVS.find(n=>n[0]===S.view)[1]}</b>`}</div>
+      <span class="sp"></span>
+      <button class="tbbtn" data-palette>⌕ Commands <kbd>Ctrl K</kbd></button><button class="tbbtn" data-compact>⤡</button>${wc()}</div>
+    <div class="body">
+      <aside class="side"><div class="hd">GPUs<span class="sp"></span>${S.gpus.length}</div>${S.gpus.map(gpuRow).join('')}
+        <div class="navs">${NAVS.map(([k,l])=>`<button class="nav ${S.view===k?'sel':''}" data-view="${k}">${ICON[k]}${l}</button>`).join('')}</div></aside>
+      ${S.view==='gpu'?`
+      <div class="center">
+        <div class="toolbar">${tabs.map(([k,l])=>`<button class="tab ${f===k?'on':''}" data-focus="${k}">${l}</button>`).join('')}<span class="sp"></span>${rangeSeg()}</div>
+        <div class="canvaswrap">${canvas}</div>
+      </div>
+      <aside class="insp">${insp}</aside>`:`<div class="center">${placeholder()}</div>`}
+    </div>
+    <div class="status">
+      <span><span class="dot"></span>${b('daemon')}</span>
+      <span>⇄ ${b('autoStatus')}</span>
+      <span class="hold">Automatic changes on hold while editing</span>
+      <span class="sp" style="border:0"></span>
+      <button class="prob" data-activity>${b('problems')}</button>
+    </div>`;
+}
+
+/* ============================== VARIANT C · Tracks ============================== */
+function renderC(){
+  const g = G();
+  const gpuRow = (x,i) => `<button class="gpu ${S.view==='gpu'&&i===S.sel?'sel':''}" data-select="${i}">
+      <div class="gidx">GPU ${i}<span class="warn" data-problem data-g="${i}">■ PAUSED</span></div>
+      <div class="gname">${x.short}${S.size==='compact'?` <span class="muted" style="font-weight:400">· ${b('profile',i)}</span>`:''}</div>
+      <div class="bigt">${b('tempN',i)}<span style="font-size:14px;color:var(--muted)">°C</span></div>
+      <div class="minis"><span><b>${b('util',i)}</b></span><span><b>${b('power',i)}</b></span><span>fan <b>${b('fan',i)}</b></span></div>
+    </button>`;
+  const profs = (cls='') => `<div class="profs ${cls}">${Object.keys(g.presets).map(p=>`<button data-profile="${p}">${p}${g.startup===p?'<span class="st" title="Startup profile">●</span>':''}</button>`).join('')}<button class="more" data-menu="profile">⋯</button></div>`;
+  if (S.size==='compact') return `
+    <div class="titlebar drag"><span class="word">PRI<i>S</i>M</span><span class="sp"></span><button class="tbbtn" data-compact>FULL</button>${wc()}</div>
+    <div class="cmp">${S.gpus.map(gpuRow).join('')}
+      <div class="foot">${profs()}<span class="mono muted" style="font-size:10px;letter-spacing:.06em">AUTO · ${b('autoStatus')}</span></div></div>
+    <div class="status"><span><span class="dot"></span>prismd</span><span class="sp"></span><button class="prob" data-activity>${b('problems')}</button></div>`;
+
+  const stats = m => `<div class="tr" data-statbox="${m}"><span>max <b data-st="0"></b></span><span>avg <b data-st="1"></b></span><span>min <b data-st="2"></b></span></div>`;
+  const track = (h, left, chart, m) => `<div class="track" style="height:${h}px;flex:${h>150?'1 1 '+h+'px':'none'}"><div class="tl">${left}</div><div class="tc">${chart}</div>${m?stats(m):'<div class="tr"></div>'}</div>`;
+  const hs = S.size==='min' ? [58,58,92,96] : [84,84,112,112];
+  const tracks = `
+    ${track(hs[0], `<span class="tk">Temperature</span><span class="tv">${b('tempN')}<small>°C</small></span>`, `<div><canvas data-chart data-m="temp" data-style="line"></canvas></div>`, 'temp')}
+    ${track(hs[1], `<span class="tk">Utilization</span><span class="tv">${b('util')}</span>`, `<div><canvas data-chart data-m="util" data-style="area"></canvas></div>`, 'util')}
+    ${track(hs[2], `<span class="tk">Power</span><span class="tv">${b('powerN')}<small> W</small></span>
+        <div class="ctlrow"><label>limit</label><div class="step"><button data-step="powerLimit" data-d="-5">−</button><span>${b('powerLimitCur')}</span><button data-step="powerLimit" data-d="5">+</button></div>${pend('powerLimit','pend')}</div>
+        <span class="tk" style="font-size:9px">or drag the orange line</span>`,
+      `<div><canvas data-chart data-m="power" data-style="line" data-limit="powerLimit" data-drag="powerLimit"></canvas></div>`, 'power')}
+    ${track(hs[3], `<span class="tk">Clocks</span><span class="tv">${b('gclkN')}<small> MHz</small></span>
+        <div class="ctlrow"><label>gfx</label><div class="step"><button data-step="gOffset" data-d="-15">−</button><span>${b('gOffsetEff')}</span><button data-step="gOffset" data-d="15">+</button></div>${pend('gOffset','pend')}</div>
+        <div class="ctlrow"><label>mem</label><div class="step"><button data-step="mOffset" data-d="-100">−</button><span>${b('mOffsetEff')}</span><button data-step="mOffset" data-d="100">+</button></div>${pend('mOffset','pend')}</div>`,
+      `<div><span class="chiplabel">GRAPHICS</span><canvas data-chart data-m="gclk" data-style="line"></canvas></div>`, 'gclk')}
+    ${track(S.cCurve?220:96, `<span class="tk">Fans<span class="sp"></span><button class="lnk" data-ccurve>${S.cCurve?'Hide curve':'Edit curve'}</button></span><span class="tv">${b('fanN')}<small>% · ${b('fan1rpm')}</small></span>
+        <div class="chips">${['auto','manual','curve'].map(m=>`<button data-set="fanMode" data-val="${m}">${fanModeName[m]}</button>`).join('')}</div>
+        <div class="ctlrow" data-when="fanMode:manual"><label>fixed</label><input type="range" data-edit="fanManual" min="30" max="100" style="width:100px">${pend('fanManual','pend')}</div>
+        <div class="inlinebad" data-problem>${problemTxt}<button data-resume>Resume</button></div>`,
+      `${S.cCurve?`<div style="flex:1.1"><span class="chiplabel" style="left:36px">CURVE · TEMP → FAN</span><canvas data-curve></canvas></div>`:''}<div class="${S.cCurve?'fanhist':''}"><span class="chiplabel">FAN SPEED</span><canvas data-chart data-m="fan" data-style="line"></canvas></div>`, 'fan')}
+  `;
+  const ws = `
+    <div class="head">
+      <div><h1>${g.short}</h1><div class="sub">${g.bus} · ${g.mem} · ${g.pcie}</div></div>
+      <span class="sp"></span>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">${profs()}<span class="mod">${b('profileMod')}</span></div>
+      ${rangeSeg()}
+    </div>
+    <div class="applybar"><span class="idle">No unapplied changes · edits are staged here until you apply them</span><span class="busy">${b('pendingCount')} ${b('pendingWord')} · automatic changes on hold</span><span class="sp"></span><button data-discard>Discard</button><button class="primary" data-apply>Apply</button></div>
+    <div class="needsd" data-needsd>TUNING NEEDS PRISMD. VALUES BELOW ARE READ-ONLY.<button>SET UP</button></div>
+    <div class="tracks">${tracks}</div>`;
+  return `
+    <div class="titlebar drag"><span class="word">PRI<i>S</i>M</span>
+      <button class="tbsearch" data-palette>COMMANDS <kbd>CTRL K</kbd></button>
+      <button class="tbbtn" data-compact>COMPACT</button>${wc()}</div>
+    <div class="body">
+      <aside class="side">${S.gpus.map(gpuRow).join('')}
+        <div class="navs">${NAVS.map(([k,l])=>`<button class="nav ${S.view===k?'sel':''}" data-view="${k}">${l}</button>`).join('')}</div></aside>
+      <main class="main">${S.view==='gpu'?ws:placeholder()}</main>
+    </div>
+    <div class="status"><span><span class="dot"></span>${b('daemon')}</span><span>AUTO: ${b('autoStatus')}</span><span class="hold">EDIT HOLD</span><span class="sp"></span><button class="prob" data-activity>▲ ${b('problems')}</button></div>`;
+}
+
+/* ============================== rendering + binding ============================== */
+const win = document.getElementById('win');
+let SCALE = 1;
+function render(){
+  closeOverlays();
+  const [w,h] = SIZES[S.size];
+  win.style.width = w+'px'; win.style.height = h+'px';
+  win.className = 'win v'+S.variant+' sz-'+S.size;
+  win.innerHTML = {A:renderA,B:renderB,C:renderC}[S.variant]();
+  fit(); bindCanvases(); update(); renderSwitcher();
+  const p = new URLSearchParams(); p.set('variant',S.variant); if (S.size!=='default') p.set('size',S.size); if (!S.daemon) p.set('daemon','0');
+  history.replaceState(null,'','?'+p);
+}
+function fit(){
+  const [w,h] = SIZES[S.size];
+  SCALE = Math.min(1,(innerWidth-32)/w,(innerHeight-84)/h);
+  win.style.transform = `scale(${SCALE})`;
+  document.getElementById('stage').style.cssText = `width:${w*SCALE}px;height:${h*SCALE}px;margin-bottom:46px;display:flex;align-items:center;justify-content:center`;
+}
+const gOf = el => S.gpus[el.dataset.g!=null ? +el.dataset.g : S.sel];
+
+function update(){
+  const g = G();
+  win.classList.toggle('pending', nPending(g)>0);
+  win.classList.toggle('nod', !S.daemon);
+  win.querySelectorAll('[data-b]').forEach(el=>{ const x=gOf(el); const v=B[el.dataset.b](x,el); if (el.textContent!==v) el.textContent=v; });
+  win.querySelectorAll('[data-pend]').forEach(el=>{ const k=el.dataset.pend, x=gOf(el), on=k in x.pending; el.classList.toggle('on',on); if(on) el.textContent=(B[k+'Pend']||(()=>'→ edited'))(x); });
+  win.querySelectorAll('[data-edit]').forEach(el=>{ const x=gOf(el), v=eff(x,el.dataset.edit); if (document.activeElement!==el) el.value = v==null?'':v; el.disabled=!S.daemon; });
+  win.querySelectorAll('[data-set]').forEach(el=>el.classList.toggle('on', eff(gOf(el),el.dataset.set)===el.dataset.val));
+  win.querySelectorAll('[data-range]').forEach(el=>el.classList.toggle('on', +el.dataset.range===S.range));
+  win.querySelectorAll('[data-profile]').forEach(el=>el.classList.toggle('on', G().profile===el.dataset.profile));
+  win.querySelectorAll('[data-when]').forEach(el=>{ const [k,vs]=el.dataset.when.split(':'); el.style.display = vs.split(',').includes(eff(gOf(el),k)) ? '' : 'none'; });
+  win.querySelectorAll('[data-problem]').forEach(el=>el.classList.toggle('on', !!gOf(el).coolingPaused));
+  win.querySelectorAll('[data-meter]').forEach(el=>{ const x=gOf(el), m=el.dataset.meter, mt=META[m]; el.style.width = clamp((x.t[m]-mt.min)/(mt.max(x)-mt.min),0,1)*100+'%'; });
+  win.querySelectorAll('[data-statbox]').forEach(el=>{ const parts=B.stats(g,{dataset:{m:el.dataset.statbox}}).split('|'); el.querySelectorAll('[data-st]').forEach(s=>s.textContent=parts[+s.dataset.st]); });
+  const dl = win.querySelector('[data-difflist]');
+  if (dl) dl.innerHTML = nPending(g) ? Object.keys(g.pending).map(k=>`<div class="diff mono"><span class="muted" style="width:96px">${LABEL[k]}</span><s>${show(k,g.tuning[k])}</s>→<b>${show(k,g.pending[k])}</b></div>`).join('')
+    : `<div class="nodiff">No unapplied changes. Edits are staged here until you apply them.</div>`;
+  win.querySelectorAll('canvas[data-chart]').forEach(drawChart);
+  win.querySelectorAll('canvas[data-curve]').forEach(drawCurve);
+}
+const LABEL = {powerLimit:'Power limit',gOffset:'Graphics offset',mOffset:'Memory offset',lockMin:'Lock min',lockMax:'Lock max',fanMode:'Fan mode',fanManual:'Fixed speed',curve:'Fan curve'};
+function show(k,v){ if(k==='curve') return v.length+' pts'; if(k==='fanMode') return fanModeName[v]; if(k==='powerLimit') return v+' W'; if(k==='fanManual') return v+'%'; if(k.endsWith('Offset')) return signed(v); return v==null?'—':v+' MHz'; }
+
+function setPending(g,k,v){
+  if (!S.daemon) return;
+  if (eq(v,g.tuning[k])) delete g.pending[k]; else g.pending[k]=v;
+  update();
+}
+function apply(){
+  const g=G(); if(!nPending(g)) return;
+  const n=nPending(g); Object.assign(g.tuning, clone(g.pending)); g.pending={};
+  S.events.unshift({t:now(), txt:`Applied ${n} change${n>1?'s':''} to ${g.short}`, kind:'ok'}); update();
+}
+function discard(){ G().pending={}; update(); }
+function applyProfile(name){
+  const g=G(); g.profile=name; g.tuning=clone(g.presets[name]); g.pending={};
+  S.events.unshift({t:now(), txt:`Applied profile ${name} to ${g.short}`, kind:'ok'}); update();
+}
+const now = () => new Date().toTimeString().slice(0,5);
+
+/* ---------- canvas drawing ---------- */
+function hexA(hex,a){ hex=hex.trim(); if(hex[0]!=='#') return hex; const n=parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
+function prep(cv){
+  const w=cv.offsetWidth, h=cv.offsetHeight; if(!w||!h) return null;
+  const dpr=Math.max(1,(window.devicePixelRatio||1)*SCALE);
+  if (cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){ cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr); }
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
+  return {ctx,w,h,cs:getComputedStyle(cv)};
+}
+const V = (cs,n) => cs.getPropertyValue(n).trim();
+function sample(g,m,range,cols){
+  const a=g.hist[m], n=Math.min(range,a.length), d=a.slice(-n);
+  if (n<=cols) return d;
+  const out=[], step=n/cols; for(let i=0;i<cols;i++){ let s=0,c=0; for(let j=Math.floor(i*step);j<Math.floor((i+1)*step);j++){s+=d[j];c++;} out.push(s/c); } return out;
+}
+function series(P,g,m,x0,y0,w,h,o={}){
+  const {ctx,cs}=P, mt=META[m], min=mt.min, max=mt.max(g);
+  const d=sample(g,m,o.range||S.range,Math.max(2,Math.floor(w/1.5)));
+  const X=i=>x0+i/(d.length-1)*w, Y=v=>y0+2+(h-4)-(clamp(v,min,max)-min)/(max-min)*(h-4);
+  const col=V(cs,mt.color)||V(cs,'--line');
+  ctx.beginPath(); d.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v)));
+  if (o.fill){ ctx.save(); ctx.lineTo(X(d.length-1),y0+h); ctx.lineTo(x0,y0+h); ctx.closePath();
+    const gr=ctx.createLinearGradient(0,y0,0,y0+h); gr.addColorStop(0,hexA(col,.28)); gr.addColorStop(1,hexA(col,0)); ctx.fillStyle=gr; ctx.fill(); ctx.restore();
+    ctx.beginPath(); d.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v))); }
+  ctx.strokeStyle=col; ctx.lineWidth=o.lw||1.4; ctx.lineJoin='round'; ctx.stroke();
+  return {X,Y,d,min,max,col};
+}
+function grid(P,x0,y0,w,h,rows=3){
+  const {ctx,cs}=P; ctx.strokeStyle=V(cs,'--grid'); ctx.lineWidth=1; ctx.beginPath();
+  for(let i=1;i<=rows;i++){ const y=Math.round(y0+h*i/(rows+1))+.5; ctx.moveTo(x0,y); ctx.lineTo(x0+w,y); }
+  const cols=6; for(let i=1;i<cols;i++){ const x=Math.round(x0+w*i/cols)+.5; ctx.moveTo(x,y0); ctx.lineTo(x,y0+h); }
+  ctx.stroke();
+}
+function drawChart(cv){
+  const P=prep(cv); if(!P) return; const {ctx,w,h,cs}=P, g=gOf(cv);
+  const font=V(cs,'--mono'), text=V(cs,'--text'), muted=V(cs,'--muted');
+  ctx.font=`10px ${font}`;
+  if (cv.dataset.lanes!=null){
+    const lanes=cv.dataset.lanes.split(','), lh=h/lanes.length;
+    lanes.forEach((m,i)=>{ const y0=i*lh; grid(P,0,y0+14,w,lh-18,1);
+      if(i){ ctx.strokeStyle=V(cs,'--border'); ctx.beginPath(); ctx.moveTo(0,y0+.5); ctx.lineTo(w,y0+.5); ctx.stroke(); }
+      const s=series(P,g,m,0,y0+14,w,lh-18,{fill:true});
+      ctx.fillStyle=muted; ctx.fillText(META[m].label.toUpperCase(),4,y0+11);
+      ctx.fillStyle=s.col; const val=META[m].fmt(g.t[m])+' '+META[m].unit; ctx.fillText(val,w-ctx.measureText(val).width-4,y0+11);
+      if (cv._hx!=null){ const idx=Math.round(cv._hx/w*(s.d.length-1)), v=s.d[clamp(idx,0,s.d.length-1)];
+        ctx.fillStyle=text; const t=META[m].fmt(v)+' '+META[m].unit; ctx.fillText(t,clamp(cv._hx+6,0,w-60),y0+11); }
+    });
+    if (cv._hx!=null){ ctx.strokeStyle=hexA(text,.5); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(cv._hx+.5,0); ctx.lineTo(cv._hx+.5,h); ctx.stroke(); ctx.setLineDash([]); }
+    return;
+  }
+  const m=cv.dataset.m, axis=cv.dataset.axis!=null, L=axis?34:0;
+  if (cv.dataset.nogrid==null) grid(P,L,0,w-L,h);
+  const s=series(P,g,m,L,0,w-L,h,{fill:cv.dataset.style==='area', range:+cv.dataset.range||S.range});
+  if (axis){ ctx.fillStyle=muted; [0,.5,1].forEach(f=>{ const v=s.min+(s.max-s.min)*f; ctx.fillText(Math.round(v)+'',2,h-f*h+(f===1?9:f===0?-2:3)); }); }
+  if (cv.dataset.limit){
+    const k=cv.dataset.limit, acc=V(cs,'--accent');
+    const cur=g.tuning[k], y=Math.round(s.Y(cur))+.5;
+    ctx.strokeStyle=acc; ctx.lineWidth=1.5; ctx.setLineDash(k in g.pending?[4,3]:[]); ctx.beginPath(); ctx.moveTo(L,y); ctx.lineTo(w,y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=acc; ctx.fillText(`limit ${cur} W`, w-ctx.measureText(`limit ${cur} W`).width-4, y-4);
+    if (k in g.pending){ const pv=g.pending[k], py=Math.round(s.Y(pv))+.5; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(L,py); ctx.lineTo(w,py); ctx.stroke();
+      ctx.fillRect(w-10,py-4,8,8); const t=`pending ${pv} W`; ctx.fillText(t, L+6, py-4); }
+    else ctx.fillRect(w-10,y-4,8,8);
+  }
+  if (cv._hx!=null && cv._hx>L){ const idx=Math.round((cv._hx-L)/(w-L)*(s.d.length-1)), v=s.d[clamp(idx,0,s.d.length-1)];
+    ctx.strokeStyle=hexA(text,.45); ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(cv._hx+.5,0); ctx.lineTo(cv._hx+.5,h); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=text; ctx.fillText(META[m].fmt(v)+' '+META[m].unit, clamp(cv._hx+6,0,w-60), 12); }
+}
+const CT=[20,100], CF=[0,100];
+function curveGeom(cv,w,h){ const big=cv.dataset.big!=null, l=big?40:30, r=big?16:14, t=big?14:8, bt=big?26:18;
+  return {l,r,t,bt,X:v=>l+(v-CT[0])/(CT[1]-CT[0])*(w-l-r), Y:v=>t+(1-(v-CF[0])/(CF[1]-CF[0]))*(h-t-bt),
+    iX:x=>CT[0]+(x-l)/(w-l-r)*(CT[1]-CT[0]), iY:y=>CF[0]+(1-(y-t)/(h-t-bt))*(CF[1]-CF[0])}; }
+function drawCurve(cv){
+  const P=prep(cv); if(!P) return; const {ctx,w,h,cs}=P, g=gOf(cv), C=curveGeom(cv,w,h);
+  const acc=V(cs,'--accent'), line=V(cs,'--fan')||V(cs,'--line'), muted=V(cs,'--muted'), text=V(cs,'--text'), gridc=V(cs,'--grid');
+  ctx.font=`10px ${V(cs,'--mono')}`; ctx.lineWidth=1;
+  ctx.strokeStyle=gridc; ctx.beginPath();
+  for(let tt=30;tt<=90;tt+=10){ const x=Math.round(C.X(tt))+.5; ctx.moveTo(x,C.t); ctx.lineTo(x,h-C.bt); }
+  for(let f=20;f<=80;f+=20){ const y=Math.round(C.Y(f))+.5; ctx.moveTo(C.l,y); ctx.lineTo(w-C.r,y); }
+  ctx.stroke();
+  ctx.fillStyle=muted;
+  for(let tt=20;tt<=100;tt+=20) ctx.fillText(tt+'°', C.X(tt)-8, h-C.bt+13);
+  for(let f=0;f<=100;f+=50) ctx.fillText(f+'%', 2, C.Y(f)+3);
+  const path = c => { ctx.beginPath(); ctx.moveTo(C.X(CT[0]),C.Y(c[0][1])); c.forEach(([x,y])=>ctx.lineTo(C.X(x),C.Y(y))); ctx.lineTo(C.X(CT[1]),C.Y(c[c.length-1][1])); };
+  const dim = !S.daemon || g.coolingPaused;
+  ctx.globalAlpha = dim ? .55 : 1;
+  if ('curve' in g.pending){ path(g.tuning.curve); ctx.strokeStyle=hexA(muted,.9); ctx.setLineDash([4,3]); ctx.lineWidth=1.2; ctx.stroke(); ctx.setLineDash([]); }
+  const c=eff(g,'curve');
+  path(c); ctx.lineTo(C.X(CT[1]),h-C.bt); ctx.lineTo(C.X(CT[0]),h-C.bt); ctx.closePath(); ctx.fillStyle=hexA(line,.1); ctx.fill();
+  path(c); ctx.strokeStyle=('curve' in g.pending)?acc:line; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.stroke();
+  c.forEach(([x,y],i)=>{ const px=C.X(x),py=C.Y(y); ctx.fillStyle=V(cs,'--panel')||'#000'; ctx.strokeStyle=cv._drag===i?acc:(('curve' in g.pending)?acc:line); ctx.lineWidth=1.8;
+    ctx.beginPath(); if (S.variant==='C') ctx.rect(px-4,py-4,8,8); else ctx.arc(px,py,4.5,0,7); ctx.fill(); ctx.stroke();
+    if (cv._drag===i||cv._hover===i){ ctx.fillStyle=text; ctx.fillText(`${x}° → ${y}%`, clamp(px+8,0,w-70), py-8); } });
+  ctx.globalAlpha=1;
+  // live marker: measured temperature and fan speed
+  const tx=C.X(clamp(g.t.temp,CT[0],CT[1])), fy=C.Y(g.t.fan);
+  ctx.strokeStyle=hexA(V(cs,'--temp')||acc,.8); ctx.setLineDash([3,3]); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(tx+.5,C.t); ctx.lineTo(tx+.5,h-C.bt); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle=V(cs,'--temp')||acc; ctx.beginPath(); ctx.arc(tx,fy,4,0,7); ctx.fill();
+  ctx.strokeStyle=V(cs,'--bg'); ctx.lineWidth=1.5; ctx.stroke();
+  const lbl=`now ${g.t.temp.toFixed(0)}°C · fan ${g.t.fan.toFixed(0)}%`; ctx.fillStyle=text;
+  ctx.fillText(lbl, clamp(tx+8,C.l,w-C.r-ctx.measureText(lbl).width), C.t+10);
+  if (g.coolingPaused){ ctx.fillStyle=V(cs,'--danger'); ctx.fillText('PAUSED · fan held at last speed', C.l+6, h-C.bt-6); }
+}
+function bindCanvases(){
+  win.querySelectorAll('canvas[data-chart]').forEach(cv=>{
+    cv.addEventListener('pointermove',e=>{ cv._hx=e.offsetX; if(cv._dragging) dragLimit(cv,e); drawChart(cv); });
+    cv.addEventListener('pointerleave',()=>{ cv._hx=null; drawChart(cv); });
+    if (cv.dataset.drag){ cv.style.cursor='ns-resize';
+      cv.addEventListener('pointerdown',e=>{ cv._dragging=true; cv.setPointerCapture(e.pointerId); dragLimit(cv,e); });
+      cv.addEventListener('pointerup',()=>cv._dragging=false); }
+  });
+  win.querySelectorAll('canvas[data-curve]').forEach(cv=>{
+    const pts = () => { const C=curveGeom(cv,cv.offsetWidth,cv.offsetHeight); return [C, eff(gOf(cv),'curve').map(([x,y])=>[C.X(x),C.Y(y)])]; };
+    const near = e => { const [,p]=pts(); let best=-1,bd=12; p.forEach(([x,y],i)=>{ const d=Math.hypot(x-e.offsetX,y-e.offsetY); if(d<bd){bd=d;best=i;} }); return best; };
+    cv.addEventListener('pointerdown',e=>{ const g=gOf(cv); if(!S.daemon||g.coolingPaused) return; const i=near(e); if(i<0) return; cv._drag=i; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointermove',e=>{
+      if (cv._drag==null){ const i=near(e); cv._hover=i<0?null:i; cv.style.cursor=i<0?'default':'grab'; drawCurve(cv); return; }
+      const g=gOf(cv), [C]=pts(), c=clone(eff(g,'curve')), i=cv._drag;
+      const lo=i?c[i-1][0]+2:CT[0], hi=i<c.length-1?c[i+1][0]-2:CT[1];
+      c[i]=[Math.round(clamp(C.iX(e.offsetX),lo,hi)), Math.round(clamp(C.iY(e.offsetY),0,100))];
+      setPending(g,'curve',c);
+    });
+    cv.addEventListener('pointerup',()=>{ cv._drag=null; drawCurve(cv); });
+  });
+}
+function dragLimit(cv,e){
+  if(!S.daemon) return; const g=gOf(cv), k=cv.dataset.drag, mt=META[cv.dataset.m];
+  const v=mt.max(g)*(1-e.offsetY/cv.offsetHeight);
+  setPending(g,k,Math.round(clamp(v,g.limits.powerMin,g.limits.powerMax)/5)*5);
+}
+
+/* ---------- events ---------- */
+win.addEventListener('click',e=>{
+  const t=e.target.closest('button,[data-select]'); if(!t||!win.contains(t)) return;
+  const d=t.dataset;
+  if (d.select!=null){ S.sel=+d.select; S.view='gpu'; if(S.size==='compact'){} render(); }
+  else if (d.view){ S.view=d.view; render(); }
+  else if (d.range){ S.range=+d.range; update(); }
+  else if (d.step){ const g=G(), k=d.step; let v=eff(g,k)+(+d.d); if(k==='powerLimit') v=clamp(v,g.limits.powerMin,g.limits.powerMax); setPending(g,k,v); }
+  else if (d.set){ setPending(G(),d.set,d.val); }
+  else if (d.apply!=null) apply();
+  else if (d.discard!=null) discard();
+  else if (d.profile){ applyProfile(d.profile); }
+  else if (d.menu){ e.stopPropagation(); openMenu(t); }
+  else if (d.palette!=null){ e.stopPropagation(); openPalette(); }
+  else if (d.activity!=null){ e.stopPropagation(); openActivity(); }
+  else if (d.compact!=null){ S.size = S.size==='compact'?'default':'compact'; render(); }
+  else if (d.focus){ if (d.focus==='details') S.bDetails=!S.bDetails; else S.bFocus = S.bFocus===d.focus && d.focus!=='overview' ? 'overview' : d.focus; render(); }
+  else if (d.ccurve!=null){ S.cCurve=!S.cCurve; render(); }
+  else if (d.resume!=null){ resume(); }
+});
+function resume(){ for(const g of S.gpus) g.coolingPaused=false; S.events.unshift({t:now(),txt:'Fan curve resumed on RTX A2000',kind:'ok'}); update(); }
+win.addEventListener('input',e=>{
+  const el=e.target; if(!el.dataset.edit) return; const k=el.dataset.edit;
+  let v = el.value===''?null:+el.value; if (v!=null && isNaN(v)) return;
+  if (k==='powerLimit' && el.type==='number' && v!=null && (v<+el.min||v>+el.max)) return;
+  setPending(gOf(el),k,v);
+});
+
+/* ---------- overlays (shared, themed) ---------- */
+function closeOverlays(){ win.querySelectorAll('.ov').forEach(o=>o.remove()); }
+document.addEventListener('click',e=>{ if(!e.target.closest('.ov')) closeOverlays(); });
+function relRect(el){ const r=el.getBoundingClientRect(), w=win.getBoundingClientRect(); return {x:(r.left-w.left)/SCALE, y:(r.top-w.top)/SCALE, w:r.width/SCALE, h:r.height/SCALE}; }
+function openMenu(anchor){
+  closeOverlays(); const g=G(), r=relRect(anchor), m=document.createElement('div'); m.className='ov ov-menu';
+  const items = Object.keys(g.presets).map(p=>`<button data-mp="${p}"><span style="width:12px">${g.profile===p?'✓':''}</span>${p}<span class="sp"></span><span class="muted">${g.startup===p?'startup':''}</span></button>`).join('')
+    + `<hr><button data-ms ${modified(g)?'':'disabled'}><span style="width:12px"></span>Save to ${g.profile}</button><button><span style="width:12px"></span>Save as new profile…</button><button><span style="width:12px"></span>Manage profiles…</button><hr>`
+    + (g.startup===g.profile?`<button disabled><span style="width:12px">✓</span>${g.profile} is the startup profile</button>`:`<button data-mst><span style="width:12px"></span>Use as startup profile</button>`);
+  m.innerHTML=items; win.appendChild(m);
+  const left = clamp(r.x + r.w - 220, 4, SIZES[S.size][0]-228);
+  m.style.left=left+'px'; m.style.top=(r.y+r.h+4)+'px';
+  m.addEventListener('click',e=>{ const t=e.target.closest('button'); if(!t) return;
+    if(t.dataset.mp) applyProfile(t.dataset.mp);
+    else if(t.dataset.ms!=null){ g.presets[g.profile]=clone(g.tuning); }
+    else if(t.dataset.mst!=null){ g.startup=g.profile; render(); return; }
+    closeOverlays(); update(); });
+}
+function openActivity(){
+  closeOverlays(); const a=document.createElement('div'); a.className='ov ov-activity';
+  const probs = S.gpus.filter(g=>g.coolingPaused);
+  a.innerHTML = `<h3>Problems</h3>${probs.length?probs.map(g=>`<div class="ev"><span class="bad">●</span><span>${g.short}: ${problemTxt}</span><span class="sp"></span><button class="act" data-resume>Resume</button></div>`).join(''):'<div class="ev muted">No problems</div>'}
+    <h3 style="margin-top:12px">Recent</h3>${S.events.slice(0,6).map(ev=>`<div class="ev"><span class="muted mono" style="font-size:11px">${ev.t}</span><span>${ev.txt}</span></div>`).join('')}`;
+  win.appendChild(a);
+  a.addEventListener('click',e=>{ if(e.target.closest('[data-resume]')){ resume(); openActivity(); } });
+}
+function commands(){
+  const g=G(), c=[];
+  Object.keys(g.presets).forEach(p=>c.push([`Apply profile ${p}`, ()=>applyProfile(p)]));
+  S.gpus.forEach((x,i)=>c.push([`Go to ${x.short}`, ()=>{S.sel=i;S.view='gpu';render();}]));
+  NAVS.forEach(([k,l])=>c.push([`Go to ${l}`, ()=>{S.view=k;render();}]));
+  c.push([S.auto.enabled?'Pause automatic switching':'Resume automatic switching', ()=>{S.auto.enabled=!S.auto.enabled;update();}]);
+  c.push(['Apply changes', apply], ['Discard changes', discard], ['Toggle compact mode', ()=>{S.size=S.size==='compact'?'default':'compact';render();}], ['Open Activity', ()=>setTimeout(openActivity)]);
+  return c;
+}
+function openPalette(){
+  closeOverlays(); const p=document.createElement('div'); p.className='ov ov-palette';
+  if (S.size==='compact'){ p.style.width='320px'; p.style.marginLeft='-160px'; p.style.top='36px'; }
+  p.innerHTML=`<input placeholder="Type a command…"><div class="items"></div>`; win.appendChild(p);
+  const inp=p.querySelector('input'), list=p.querySelector('.items'); let sel=0, cur=[];
+  const draw=()=>{ const q=inp.value.toLowerCase(); cur=commands().filter(c=>c[0].toLowerCase().includes(q)); sel=clamp(sel,0,cur.length-1);
+    list.innerHTML=cur.map((c,i)=>`<div class="it ${i===sel?'on':''}" data-i="${i}">${c[0]}</div>`).join(''); };
+  inp.addEventListener('input',()=>{sel=0;draw();});
+  inp.addEventListener('keydown',e=>{ if(e.key==='ArrowDown'){sel++;draw();e.preventDefault();} else if(e.key==='ArrowUp'){sel--;draw();e.preventDefault();}
+    else if(e.key==='Enter'&&cur[sel]){ const f=cur[sel][1]; closeOverlays(); f(); } else if(e.key==='Escape') closeOverlays(); });
+  list.addEventListener('click',e=>{ const it=e.target.closest('.it'); if(it){ const f=cur[+it.dataset.i][1]; closeOverlays(); f(); } });
+  draw(); inp.focus();
+}
+
+/* ---------- keyboard ---------- */
+document.addEventListener('keydown',e=>{
+  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); openPalette(); return; }
+  if ((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); apply(); return; }
+  if (e.key==='Escape'){ closeOverlays(); return; }
+  const a=document.activeElement; if (a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)) return;
+  if (e.key==='ArrowRight'||e.key==='ArrowLeft'){ cycle(e.key==='ArrowRight'?1:-1); }
+});
+function cycle(d){ const i=VARIANTS.findIndex(v=>v.key===S.variant); S.variant=VARIANTS[(i+d+VARIANTS.length)%VARIANTS.length].key; render(); }
+
+/* ---------- prototype switcher ---------- */
+function renderSwitcher(){
+  const sw=document.getElementById('switcher'), v=VARIANTS.find(x=>x.key===S.variant);
+  sw.innerHTML=`<span class="tag">PROTOTYPE</span><button data-c="-1">←</button><span class="lbl">${v.key} · ${v.name}</span><button data-c="1">→</button><span class="div"></span>
+    ${Object.entries(SIZES).map(([k,s])=>`<button data-size="${k}" class="${S.size===k?'on':''}">${s[2]}</button>`).join('')}<span class="div"></span>
+    <button data-daemon class="${S.daemon?'':'on'}">${S.daemon?'Daemon: on':'Daemon: off'}</button>`;
+}
+document.getElementById('switcher').addEventListener('click',e=>{
+  const t=e.target.closest('button'); if(!t) return;
+  if (t.dataset.c) cycle(+t.dataset.c);
+  else if (t.dataset.size){ S.size=t.dataset.size; render(); }
+  else if (t.dataset.daemon!=null){ S.daemon=!S.daemon; if(!S.daemon) for(const g of S.gpus) g.pending={}; render(); }
+});
+
+/* ---------- go ---------- */
+addEventListener('resize',()=>{ fit(); update(); });
+setInterval(()=>{ S.t++; for(const g of S.gpus) simStep(g,S.t); update(); }, 1000);
+render();
+</script>
+</body>
+</html>
