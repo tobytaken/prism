@@ -365,14 +365,14 @@ describe("Apply all tuning changes", () => {
     ).toHaveValue(475);
   });
 
-  it("keeps a lost acknowledgement unknown and continues applying independent edits", async () => {
+  it("keeps a lost acknowledgment unknown and continues applying independent edits", async () => {
     const user = userEvent.setup();
     const response = createPerformanceResponse();
     const fake = fakeDesktopGpuApi(response);
     fake.setPower.mockImplementation(async (id, watts) => {
       response.gpus.find((gpu) => gpu.id === id)!.power.currentLimitWatts =
         watts;
-      throw new Error("Acknowledgement lost");
+      throw new Error("Acknowledgment lost");
     });
     renderWithQueryClient(
       <MemoryRouter>
@@ -390,7 +390,7 @@ describe("Apply all tuning changes", () => {
     await user.click(screen.getByRole("button", { name: "Apply all" }));
     await screen.findByText("Fan 1: Applied");
     expect(
-      screen.getByText("Power limit: Outcome unknown — Acknowledgement lost"),
+      screen.getByText("Power limit: Outcome unknown — Acknowledgment lost"),
     ).toBeInTheDocument();
     expect(screen.getByText("Current limit 500 W")).toBeInTheDocument();
     expect(

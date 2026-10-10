@@ -107,7 +107,7 @@ it("lists this GPU's profiles with their values, and choosing one applies it and
   expect(profileSelector("GPU-456")).toHaveTextContent("No current profile");
 });
 
-it("leaves the GPU, the profile and the current profile unchanged when the range review is cancelled", async () => {
+it("leaves the GPU, the profile and the current profile unchanged when the range review is canceled", async () => {
   const user = userEvent.setup();
   const fake = createFakeDesktop({
     profiles: [quiet, loud],

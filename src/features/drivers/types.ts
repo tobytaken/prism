@@ -5,7 +5,7 @@ export type DriverJobStatus =
   | "running"
   | "succeeded"
   | "failed"
-  | "cancelled"
+  | "canceled"
   | "rebootRequired"
   | "manualStepRequired";
 

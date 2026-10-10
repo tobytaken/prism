@@ -503,7 +503,7 @@ describe("Editing a fan curve", () => {
     });
     expect(pointValues(editor)[1]).toEqual([68, 65]);
     // Keep dragging while the previous position's preview is still pending.
-    // On the doubled-size graph, this is 70°C and 70% on the labelled axes.
+    // On the doubled-size graph, this is 70°C and 70% on the labeled axes.
     await user.pointer({
       target: handle,
       coords: { clientX: 596, clientY: 159 },
@@ -861,7 +861,7 @@ describe("Editing a fan curve", () => {
     ).toBe(true);
   });
 
-  it("needs the daemon's judgement before offering a curve", async () => {
+  it("needs the daemon's judgment before offering a curve", async () => {
     renderPerformance({ ...sharedCooling, curveSupport: null });
     const editor = await curveEditor();
 

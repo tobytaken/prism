@@ -194,7 +194,7 @@ fn preview_rejects_fractional_and_unknown_point_fields() {
     assert!(request(json!({ "temperatureC": 45, "speedPercent": 20, "rpm": 900 })).is_err());
 }
 
-/// The same contract holds the fake desktop to the daemon's judgement.
+/// The same contract holds the fake desktop to the daemon's judgment.
 #[test]
 fn support_and_previews_follow_the_shared_contract() {
     let contract: Value = serde_json::from_str(include_str!(

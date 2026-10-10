@@ -65,7 +65,7 @@ describe("driver API bridge", () => {
     });
     const cancelJob = vi.spyOn(driverApi, "cancelJob").mockResolvedValue({
       id: "driver-1",
-      status: "cancelled",
+      status: "canceled",
       action: "installRecommended",
       startedAtUnixMs: 0,
       finishedAtUnixMs: 1,

@@ -185,7 +185,7 @@ const prismStub: PrismDesktopApi = {
     }),
     cancelJob: async (jobId) => ({
       id: jobId,
-      status: "cancelled",
+      status: "canceled",
       action: "installRecommended",
       startedAtUnixMs: 0,
       finishedAtUnixMs: 1,

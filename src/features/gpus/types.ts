@@ -174,7 +174,7 @@ export interface CoolingInfo {
   maxOperatingTemperatureC: number | null;
   /** Why the maximum operating temperature is unknown. */
   maxOperatingTemperatureReason: string | null;
-  /** The daemon's judgement of shared fan curves; null when the readings bypassed the daemon. */
+  /** The daemon's judgment of shared fan curves; null when the readings bypassed the daemon. */
   curveSupport: FanCurveSupport | null;
   /** Prism's control of the fans; null when the readings bypassed the daemon. */
   control: CoolingControl | null;

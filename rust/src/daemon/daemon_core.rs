@@ -754,7 +754,7 @@ impl DaemonCore {
         }
     }
 
-    /// The GPUs' readings, with the daemon's judgement of the fan curves each can use and Prism's
+    /// The GPUs' readings, with the daemon's judgment of the fan curves each can use and Prism's
     /// control of each identified GPU's fans.
     fn performance(&self, peer: Option<&SessionPeer>) -> GpuPerformanceResponse {
         let mut performance = self.dependencies.backend.performance();
