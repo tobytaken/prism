@@ -1,0 +1,134 @@
+{
+  "revision": "e2f0bbf95ab7cd9d8a004b203cc4a70ef1b59dff",
+  "date": "2026-10-10",
+  "timeZone": "CEST",
+  "issue": 129,
+  "host": {
+    "os": "CachyOS",
+    "kernel": "7.2.9-2-cachyos",
+    "desktop": "KDE Plasma 6.7.5 Wayland (KWin 6.7.5)",
+    "outputs": ["3840x2160 at scale 1.25", "2560x1440 at scale 1", "3840x2160"],
+    "gpus": ["NVIDIA GeForce RTX 5090", "AMD Radeon 610M (iGPU)"],
+    "driver": "615.78.08",
+    "mesa": "26.2.4",
+    "rustc": "1.97.1",
+    "slint": "1.18.1",
+    "inputMethod": "fcitx5 5.1.23 with fcitx5-mozc 3.34.6239.2",
+    "flatpak": "1.18.4",
+    "flatpakRuntime": "org.freedesktop.Platform 26.08",
+    "flatpakGlExtension": "org.freedesktop.Platform.GL.nvidia-615-78-08"
+  },
+  "binary": {
+    "releaseBytes": 31234512,
+    "releaseStrippedBytes": 23874288,
+    "spikeProfileBytes": 17684616,
+    "spikeProfileEnv": [
+      "CARGO_PROFILE_RELEASE_LTO=fat",
+      "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1",
+      "CARGO_PROFILE_RELEASE_STRIP=true",
+      "CARGO_PROFILE_RELEASE_PANIC=abort"
+    ],
+    "spikeReferenceMiB": 15.8,
+    "issue": 167
+  },
+  "idleMemoryMiB": {
+    "method": "smaps_rollup after a 20 s settle, sampled every 5 s for 60 s; VRAM from nvidia-smi -q -d PIDS",
+    "spikeRealNvml": { "rss": 170, "pss": 101, "uss": 91, "vram": 35 },
+    "releaseWarmShaderCache": { "rss": 131.6, "pss": 69.9, "uss": 64.2, "vram": 37 },
+    "releaseWarmShaderCacheRepeatPss": [68.3, 68.5, 68.1, 68.2],
+    "spikeProfileWarmShaderCache": { "rss": 126.5, "pss": 65.0, "uss": 59.2, "vram": 37 },
+    "heap": {
+      "warmShaderCache": { "pss": 67.8, "heap": 7.2 },
+      "shaderDiskCacheDisabled": { "pss": 107.1, "heap": 40.7 },
+      "issue": 169
+    }
+  },
+  "minimized": {
+    "minimizedAt": "22:47:49",
+    "restoredAt": "23:24:39",
+    "seconds": 2210,
+    "memorySampling": { "everySeconds": 30, "samples": 71, "spanSeconds": 2101 },
+    "memoryMiB": {
+      "first": { "rss": 194.3, "pss": 122.4, "uss": 114.6, "vram": 37 },
+      "last": { "rss": 194.3, "pss": 122.2, "uss": 114.6, "vram": 37 },
+      "pssSpread": 0.2
+    },
+    "shaderCache": "cold: first launch of a freshly built binary",
+    "secondsWithoutFrames": 2202,
+    "secondsWithFrames": 8,
+    "secondsWithFramesDetail": "1 s minimize transition (3 fps), then 7 s (2,5,2,2,1,1,1 fps) about 3 min in, cause not identified"
+  },
+  "samplingCadence": {
+    "method": "voluntary context switches of the UI and sampler threads from /proc, each second, in a separate 6 min minimized run",
+    "measuredSeconds": 359,
+    "secondsWithoutUiWake": 0,
+    "secondsWithoutSamplerWake": 0,
+    "uiWakesPerSecond": { "1": 353, "2": 3, "57": 1, "145": 1, "194": 1 },
+    "samplerWakesPerSecond": { "1": 346, "2": 9, "5": 1, "7": 1, "8": 1, "11": 1 }
+  },
+  "secondLaunch": [
+    { "via": "shell", "activationToken": null, "window": { "minimized": true, "active": false } },
+    { "via": "kioclient exec of a desktop file", "activationToken": null, "window": { "minimized": true, "active": false } },
+    { "via": "KRunner, Enter on the desktop entry", "activationToken": "kwin-159", "window": { "minimized": false, "active": true } }
+  ],
+  "ime": {
+    "keysInjectedWith": "ydotool through uinput, so keys pass through fcitx5",
+    "steps": ["Ctrl+K", "fcitx5-remote -o; -s mozc", "type nihon", "Space", "Enter"],
+    "preedit": "にほn shown inline; placeholder drawn under it",
+    "converted": "日本 shown inline; placeholder drawn under it",
+    "committed": "日本 committed to the field, palette filtered to No matching commands, highlighted command not run",
+    "result": "fail",
+    "issue": 163
+  },
+  "dpms": {
+    "offAt": "23:25:53",
+    "offSeconds": 30,
+    "secondsWithoutFrames": 28,
+    "afterOn": "frames at 1 fps, chart and readouts updating",
+    "result": "pass"
+  },
+  "suspend": {
+    "mode": "deep",
+    "suspendedAt": "23:26:46",
+    "resumeDetectedAt": "23:27:52",
+    "afterResume": {
+      "alive": true,
+      "framesPerSecond": 1,
+      "telemetry": "34 C, 56 W",
+      "memoryMiB": { "rss": 195.8, "pss": 122.8, "uss": 115.4, "vram": 37 }
+    },
+    "chart": "no gap at the suspend; the monotonic clock stopped",
+    "result": "pass",
+    "chartIssue": 164
+  },
+  "flatpak": {
+    "packaging": "host-built release binary repackaged with flatpak build-init/build-finish and the manifest's finish-args, not flatpak-builder",
+    "matchingExtension": {
+      "eglVendor": "libEGL_nvidia.so.615.78.08 from GL/nvidia-615-78-08",
+      "nvml": "libnvidia-ml.so.615.78.08 from GL/nvidia-615-78-08",
+      "telemetry": "33 C, 57 W, fan 30 %",
+      "memoryMiB": { "rss": 197.6, "pss": 170.8, "uss": 158.2, "vram": 37 },
+      "shaderCache": "cold: first launch in the sandbox",
+      "result": "pass"
+    },
+    "mismatchWithDefaultFallback": {
+      "env": "FLATPAK_GL_DRIVERS=nvidia-614-00-00:default",
+      "stderr": ["MESA-EGL: warning: pci id for fd 15: 10de:2b85, driver (null)", "MESA-EGL: warning: egl: failed to create dri2 screen"],
+      "rendering": "Mesa software rendering: no DRM fd open, not on the NVIDIA GPU",
+      "telemetry": "No GPU telemetry: libnvidia-ml.so.1 cannot be opened; advice names the host driver",
+      "memoryMiB": { "rss": 164.5, "pss": 156.1, "uss": 149.8, "vram": null },
+      "result": "fail",
+      "issue": 165
+    },
+    "noGl": {
+      "env": "FLATPAK_GL_DRIVERS=nvidia-614-00-00",
+      "outcome": "process alive with no window, no stderr output, single-instance name held; second launch handed over and nothing appeared",
+      "result": "fail",
+      "issue": 166
+    }
+  },
+  "notTested": {
+    "checks": ["GNOME Wayland", "second launch raises the window on GNOME Wayland", "PRIME on-demand laptop"],
+    "issue": 168
+  }
+}
