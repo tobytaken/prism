@@ -20,16 +20,16 @@ pub trait DaemonBackend: Send + Sync {
 /// The host's NVIDIA GPUs, read and tuned through NVML.
 #[derive(Default)]
 pub struct RealDaemonBackend {
-    gpus: GpuProviders,
+    providers: GpuProviders,
 }
 
 impl DaemonBackend for RealDaemonBackend {
     fn inventory(&self) -> GpuInventoryResponse {
-        self.gpus.inventory()
+        self.providers.inventory()
     }
 
     fn performance(&self) -> GpuPerformanceResponse {
-        self.gpus.performance()
+        self.providers.performance()
     }
 
     fn set_power_limit(&self, request: SetGpuPowerLimitRequest) -> Result<(), String> {

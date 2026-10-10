@@ -35,7 +35,7 @@ fn every_fixture_is_found_by_its_name() {
             "no-fan-control",
             "edge-ranges",
             "nvml-missing",
-            "empty",
+            "empty-inventory",
             "driver-not-loaded",
         ]
     );
@@ -52,7 +52,7 @@ fn an_unknown_fixture_name_lists_the_known_ones() {
     assert_eq!(
         error.to_string(),
         "unknown simulated GPU fixture \"rtx-9090\"; expected one of: tunable, two-identical, \
-         no-fan-control, edge-ranges, nvml-missing, empty, driver-not-loaded"
+         no-fan-control, edge-ranges, nvml-missing, empty-inventory, driver-not-loaded"
     );
 }
 
@@ -250,23 +250,38 @@ fn driver_not_loaded_fixture_reports_no_gpus_and_why() {
     );
 }
 
-#[test]
-fn telemetry_replayed_against_a_fixed_clock_is_identical_across_runs() {
-    let replay = || {
-        SimulatedFixture::ALL
-            .iter()
-            .flat_map(|&fixture| {
-                [0, 1, 7, 59, 3_600].map(|second| {
-                    let gpus = at(fixture, second);
-                    let mut bytes = serde_json::to_vec(&gpus.inventory()).unwrap();
-                    bytes.extend(serde_json::to_vec(&gpus.performance()).unwrap());
-                    bytes
-                })
-            })
-            .collect::<Vec<_>>()
-    };
+/// The replay every fixture's readings must match, one JSON line per fixture and second.
+const RECORDED_REPLAY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/simulated-replay.jsonl");
 
-    assert_eq!(replay(), replay());
+/// Rewrites the recorded replay instead of checking it, after an intended fixture change.
+const RECORD_REPLAY_VAR: &str = "PRISM_RECORD_SIMULATED_REPLAY";
+
+#[test]
+fn telemetry_replayed_against_a_fixed_clock_matches_the_recorded_replay() {
+    let mut replay = String::new();
+    for fixture in SimulatedFixture::ALL {
+        for second in [0, 1, 7, 3_600] {
+            let gpus = at(fixture, second);
+            let line = serde_json::json!({
+                "fixture": fixture.name(),
+                "second": second,
+                "inventory": gpus.inventory(),
+                "performance": gpus.performance(),
+            });
+            replay.push_str(&line.to_string());
+            replay.push('\n');
+        }
+    }
+
+    if std::env::var_os(RECORD_REPLAY_VAR).is_some() {
+        std::fs::write(RECORDED_REPLAY, &replay).expect("record the replay");
+    }
+    let recorded = std::fs::read_to_string(RECORDED_REPLAY).expect("read the recorded replay");
+    assert!(
+        replay == recorded,
+        "simulated readings differ from {RECORDED_REPLAY}; if the fixtures changed on purpose, \
+         rerun with {RECORD_REPLAY_VAR}=1 and review the diff"
+    );
 }
 
 #[test]

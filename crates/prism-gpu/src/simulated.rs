@@ -68,7 +68,7 @@ impl SimulatedFixture {
             Self::NoFanControl => "no-fan-control",
             Self::EdgeRanges => "edge-ranges",
             Self::NvmlMissing => "nvml-missing",
-            Self::EmptyInventory => "empty",
+            Self::EmptyInventory => "empty-inventory",
             Self::DriverNotLoaded => "driver-not-loaded",
         }
     }
