@@ -1,7 +1,22 @@
 // Prism's own widget set (ADR 0009). It grows only as screens need it.
+//
+// Accessibility: every widget declares its `accessible-role`, a label, its value (with
+// min/max/step on a spinbox or slider), its checked state (on a switch or checkbox), read-only when
+// there's no tuning access, and an `accessible-action-*` for each thing it does. The audit in
+// `tests/accessibility.rs` checks this in every fixture state, and each declared action has a
+// test that invokes it.
+//
+// Slint 1.18's `AccessibleRole` has no menu, dialog, popover, tooltip or alert role, so:
+// - `Menu` is a `list` with a `list-item` per entry.
+// - `Dialog` and `Popover` are a `groupbox` labeled by their title.
+// - `Tooltip` isn't a node of its own: its text goes into the owning widget's
+//   `accessible-description`.
+// - Chart parts (`Grid`, `Series`, …) are `accessible-role: none`; the track's readout carries the
+//   value.
 
 export { StyledText } from "widgets/styled-text.slint";
 export { Divider, VerticalDivider } from "widgets/divider.slint";
 export { PressArea } from "widgets/press-area.slint";
 export { ListRow } from "widgets/list-row.slint";
 export { Grid, Series } from "widgets/chart.slint";
+export { PopupSurface } from "widgets/popup-surface.slint";

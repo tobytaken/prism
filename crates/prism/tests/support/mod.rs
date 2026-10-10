@@ -1,6 +1,12 @@
 //! The app harness: the real window and glue on simulated GPUs, a fixed clock and fake settings,
 //! under Slint's testing backend with no display.
 
+// Each test binary uses part of the harness.
+#![allow(dead_code)]
+
+pub mod audit;
+pub mod screenshot;
+
 use std::cell::Cell;
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -10,8 +16,8 @@ use std::time::Duration;
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
 use prism::settings::{GuiSettings, SettingsStore};
 use prism::{App, Clock, Environment, HostServices, PrismdConnector, Sampling};
-use prism_gpu::GpuProviders;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
+use prism_gpu::{GpuPerformanceResponse, GpuProviders, GpuTelemetryProvider};
 use prism_ui::AppearanceMode;
 use slint::ComponentHandle;
 
@@ -57,6 +63,19 @@ impl Harness {
             GpuProviders::empty()
                 .with_inventory(gpus.clone())
                 .with_telemetry(gpus)
+        })
+    }
+
+    /// Prism on the tunable fixture with its temperature sensor gone.
+    pub fn without_temperature() -> Self {
+        Self::with_gpus(AppearanceMode::Light, |clock| {
+            let tunable = || {
+                let clock = clock.clone();
+                SimulatedGpus::new(SimulatedFixture::TunableGpu, move || clock.now())
+            };
+            GpuProviders::empty()
+                .with_inventory(tunable())
+                .with_telemetry(WithoutTemperature(tunable()))
         })
     }
 
@@ -120,14 +139,51 @@ impl Harness {
     }
 }
 
-/// Sets up Slint's testing backend for this thread, once: each test thread gets its own backend
-/// and mocked time.
-pub fn init_testing_backend() {
-    thread_local! {
-        static INITIALIZED: Cell<bool> = const { Cell::new(false) };
+/// The tunable fixture's GPUs, with their temperature sensor gone.
+struct WithoutTemperature(SimulatedGpus);
+
+impl GpuTelemetryProvider for WithoutTemperature {
+    fn performance(&self) -> GpuPerformanceResponse {
+        let mut performance = self.0.performance();
+        for gpu in &mut performance.gpus {
+            gpu.telemetry.temperature_c = None;
+        }
+        performance
     }
-    if !INITIALIZED.replace(true) {
-        i_slint_backend_testing::init_no_event_loop();
+}
+
+/// The testing backend a thread runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backend {
+    /// No renderer, with mocked text metrics.
+    Mock,
+    /// The software renderer, for screenshots.
+    Software,
+}
+
+thread_local! {
+    static BACKEND: Cell<Option<Backend>> = const { Cell::new(None) };
+}
+
+/// Sets up Slint's testing backend for this thread unless it has one: each test thread gets its
+/// own backend and mocked time.
+pub fn init_testing_backend() {
+    if BACKEND.get().is_none() {
+        init_backend(Backend::Mock, i_slint_backend_testing::init_no_event_loop);
+    }
+}
+
+/// Sets up `backend` for this thread with `init`, once.
+fn init_backend(backend: Backend, init: impl FnOnce()) {
+    match BACKEND.get() {
+        None => {
+            init();
+            BACKEND.set(Some(backend));
+        }
+        Some(current) => assert_eq!(
+            current, backend,
+            "this thread already runs another testing backend"
+        ),
     }
 }
 

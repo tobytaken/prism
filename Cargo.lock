@@ -1755,6 +1755,7 @@ dependencies = [
  "cfg_aliases",
  "i-slint-common",
  "i-slint-core",
+ "i-slint-renderer-software",
  "vtable",
 ]
 
@@ -3496,6 +3497,7 @@ name = "prism"
 version = "0.1.0"
 dependencies = [
  "i-slint-backend-testing",
+ "png",
  "prism-gpu",
  "prism-ui",
  "serde",

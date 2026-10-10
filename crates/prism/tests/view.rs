@@ -3,9 +3,7 @@
 mod support;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
-use prism::Clock;
-use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
-use prism_gpu::{GpuPerformanceResponse, GpuProviders, GpuTelemetryProvider};
+use prism_gpu::simulated::SimulatedFixture;
 use prism_ui::AppearanceMode;
 use slint::ComponentHandle;
 
@@ -104,30 +102,9 @@ fn the_temperature_track_shows_the_reading_its_chart_and_range_statistics() {
     );
 }
 
-/// The tunable fixture's GPUs, with their temperature sensor gone.
-struct WithoutTemperature(SimulatedGpus);
-
-impl GpuTelemetryProvider for WithoutTemperature {
-    fn performance(&self) -> GpuPerformanceResponse {
-        let mut performance = self.0.performance();
-        for gpu in &mut performance.gpus {
-            gpu.telemetry.temperature_c = None;
-        }
-        performance
-    }
-}
-
 #[test]
 fn an_unavailable_reading_shows_as_unknown_with_a_reason() {
-    let harness = Harness::with_gpus(AppearanceMode::Light, |clock| {
-        let tunable = || {
-            let clock = clock.clone();
-            SimulatedGpus::new(SimulatedFixture::TunableGpu, move || clock.now())
-        };
-        GpuProviders::empty()
-            .with_inventory(tunable())
-            .with_telemetry(WithoutTemperature(tunable()))
-    });
+    let harness = Harness::without_temperature();
     harness.tick();
 
     let reading = harness.find(Text, "Temperature reading");

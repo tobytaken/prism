@@ -55,6 +55,15 @@ Light and dark follow the desktop. To pin one, set `appearance = "light"` or `ap
 
 The view tests in `crates/prism/tests` drive the real window headless with Slint's testing backend, so they need no display. They find elements through Slint's debug info, which `prism`'s build script compiles in outside release builds.
 
+The accessibility audit in `crates/prism/tests/accessibility.rs` walks the window in every simulated fixture state. It fails when an interactive element has no label, a spinbox or slider has no value or range, a switch or checkbox has no checked state, or a tuning control stays editable without tuning access. Each accessible action a widget declares needs a test that invokes it.
+
+The screenshot tests in `crates/prism/tests/screenshots.rs` draw the window with Slint's software renderer in Light and Dark and compare it against the reference PNGs in `crates/prism/tests/screenshots/`. CI runs them in one pinned container image. A mismatch saves the new screenshot under `target/tmp/screenshots/`. After an intended visual change, or a Slint bump, regenerate the references in that image with Docker and commit them:
+
+```bash
+bash scripts/update-screenshots.sh          # regenerate the references
+bash scripts/update-screenshots.sh --check  # or only run the screenshot tests there
+```
+
 ## Daemon
 
 Build the daemon:

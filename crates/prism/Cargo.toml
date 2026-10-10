@@ -23,7 +23,9 @@ toml.workspace = true
 slint-build.workspace = true
 
 [dev-dependencies]
-i-slint-backend-testing.workspace = true
+# The software renderer draws the screenshot tests.
+i-slint-backend-testing = { workspace = true, features = ["renderer-software"] }
+png.workspace = true
 prism-gpu = { workspace = true, features = ["simulated"] }
 tempfile.workspace = true
 

@@ -31,6 +31,8 @@ export struct Colors {
     chrome-ink-strong: color,
     chrome-rule: color,
     chrome-hover: color,
+    // C's hard pop-up shadow.
+    shadow: color,
 }
 
 export struct TextStyle {
@@ -133,6 +135,7 @@ export global Theme {
         chrome-ink-strong: #ffffff,
         chrome-rule: #4a4843,
         chrome-hover: #34322e,
+        shadow: #1c1b19e6,
     };
     property <Colors> dark-colors: {
         canvas: #121110,
@@ -154,6 +157,7 @@ export global Theme {
         chrome-ink-strong: #ffffff,
         chrome-rule: #3a3732,
         chrome-hover: #23211e,
+        shadow: #000000b3,
     };
     out property <Colors> color: dark ? dark-colors : light-colors;
 
@@ -192,7 +196,8 @@ export global Theme {
         selection: 3px,
     };
     out property <Radii> radius: { none: 0px, small: 3px };
-    // C's hard pop-up shadow, drawn as an offset Rectangle so every renderer shows it.
+    // C's hard pop-up shadow, drawn as an offset Rectangle so every renderer shows it (see
+    // PopupSurface).
     out property <length> shadow-offset: 6px;
     out property <Sizes> size: {
         window-width: 1280px,
