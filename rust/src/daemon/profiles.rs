@@ -11,9 +11,8 @@ use crate::gpu::{
     GpuPerformanceResponse,
 };
 use crate::protocol::{
-    CurrentProfile, GpuTuningProfile, GpuTuningState, ProfileImportResponse,
-    ProfileRangeCorrection, ProfileSetting, ProfileSettingKey, ProfileSettings, RangeBound,
-    ReportedTuningValues,
+    CurrentProfile, GpuTuningProfile, GpuTuningState, ProfileRangeCorrection, ProfileSetting,
+    ProfileSettingKey, ProfileSettings, RangeBound, ReportedTuningValues,
 };
 
 impl From<TuningStoreWriteError> for GpuCommandError {
@@ -291,7 +290,6 @@ impl TuningDocument {
         self.users
             .iter()
             .flat_map(|user| &user.profiles)
-            .chain(&self.ownerless_profiles)
             .find(|profile| profile.id == id)
     }
 
@@ -376,54 +374,6 @@ impl TuningDocument {
         self.startup_profiles.retain(|_, id| id != profile_id);
         self.unlink_profile(profile_id);
         Ok(())
-    }
-
-    /// Adds the profiles under the caller, keeping their ids. A profile whose id already exists
-    /// is skipped, and a name already used on the same GPU gets the first free " (n)" suffix.
-    pub fn import_profiles(
-        &mut self,
-        peer: &SessionPeer,
-        profiles: Vec<GpuTuningProfile>,
-    ) -> Result<ProfileImportResponse, GpuCommandError> {
-        let invalid = |message: &str| {
-            GpuCommandError::new(
-                GpuCommandErrorCode::InvalidArgument,
-                format!("The profiles to import are invalid: {message}"),
-            )
-        };
-        for profile in &profiles {
-            if profile.id.trim().is_empty() {
-                return Err(invalid("a profile has no id."));
-            }
-            if profile.gpu_id.trim().is_empty() {
-                return Err(invalid("a profile has no owning GPU."));
-            }
-            if profile.settings.is_empty() {
-                return Err(invalid("a profile has no settings."));
-            }
-            profile_name(&profile.name).map_err(|_| invalid("a profile has no name."))?;
-        }
-        let mut response = ProfileImportResponse {
-            imported: vec![],
-            skipped: vec![],
-        };
-        for mut profile in profiles {
-            if self.any_profile(&profile.id).is_some() {
-                response.skipped.push(profile.id);
-                continue;
-            }
-            let own = &mut self.user_mut(peer.uid, &peer.username).profiles;
-            let base = profile.name.trim().to_string();
-            profile.name = base.clone();
-            let mut suffix = 2;
-            while name_taken(own, &profile.gpu_id, &profile.name, None) {
-                profile.name = format!("{base} ({suffix})");
-                suffix += 1;
-            }
-            own.push(profile.clone());
-            response.imported.push(profile);
-        }
-        Ok(response)
     }
 
     /// Moves each reviewed saved value to the bound it exceeded, provided the profile still

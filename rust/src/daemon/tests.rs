@@ -296,7 +296,6 @@ fn profiles_validate_fresh_support_ranges_and_stable_ownership_before_any_write(
             });
         }
         let before = daemon.performance();
-        let saved = daemon.saved_state_bytes();
         let result = daemon.send_json(apply_profile_request(json!({
             "powerLimitWatts": { "kind": "value", "value": 450 },
             "graphicsOffsetMHz": { "kind": "value", "value": 150 },
@@ -314,7 +313,6 @@ fn profiles_validate_fresh_support_ranges_and_stable_ownership_before_any_write(
         }
         assert_eq!(daemon.performance(), before, "{invalid}");
         assert!(daemon.gpus.writes().is_empty(), "{invalid}");
-        assert_eq!(daemon.saved_state_bytes(), saved, "{invalid}");
     }
 }
 
@@ -383,7 +381,7 @@ fn out_of_range_profile_values_propose_every_bound_correction_without_any_write(
         "memoryOffsetMHz": { "kind": "value", "value": 80 }
     })));
     let contract: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../src/test/contracts/profile-corrections.json"
+        "../../tests/contracts/profile-corrections.json"
     ))
     .unwrap();
     assert_eq!(result["payload"], contract);
@@ -452,10 +450,8 @@ fn profile_application_reports_partial_failure_and_validates_retries() {
     assert_eq!(result["payload"]["power"]["status"], "succeeded");
     assert_eq!(result["payload"]["graphics"]["status"], "failed");
     assert_eq!(result["payload"]["memory"]["status"], "unattempted");
-    let contract: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../src/test/contracts/profile-outcomes.json"
-    ))
-    .unwrap();
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/contracts/profile-outcomes.json")).unwrap();
     assert_eq!(result["payload"], contract);
     let roundtrip: DaemonResponse = serde_json::from_value(result).unwrap();
     assert!(matches!(roundtrip, DaemonResponse::ProfileApplication(_)));
@@ -666,10 +662,8 @@ fn live_offsets_report_partial_success() {
     assert_eq!(json["payload"]["graphics"]["status"], "succeeded");
     assert_eq!(json["payload"]["memory"]["status"], "failed");
     assert_eq!(json["payload"]["memory"]["error"], "Memory write failed");
-    let contract: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../src/test/contracts/tuning-outcomes.json"
-    ))
-    .unwrap();
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/contracts/tuning-outcomes.json")).unwrap();
     assert_eq!(json["payload"], contract);
     let roundtrip: DaemonResponse = serde_json::from_value(json).unwrap();
     assert!(matches!(roundtrip, DaemonResponse::ClockOffsets(_)));
@@ -736,7 +730,7 @@ fn live_reset_reports_partial_outcomes_and_memory_only_retry_leaves_graphics_alo
 #[test]
 fn performance_reads_preserve_tuning_states_and_recover() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../src/test/contracts/tuning-observations.json"
+        "../../tests/contracts/tuning-observations.json"
     ))
     .unwrap();
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![observed_gpu()]));
@@ -803,7 +797,6 @@ fn power_limit_commands_return_command_responses_without_mutating_state() {
 
     assert!(!response.success);
     assert_eq!(response.error.as_deref(), Some("mock permission denied"));
-    assert!(daemon.saved_state_bytes().is_none());
 }
 
 #[test]
@@ -960,7 +953,7 @@ fn a_client_slow_to_send_its_request_does_not_hold_up_other_connections() {
 const TUNING_STORE: &str = TUNING_STORE_FILE_NAME;
 
 #[test]
-fn without_a_tuning_store_the_daemon_starts_healthy_at_the_current_schema() {
+fn without_a_tuning_store_the_daemon_starts_healthy_and_writes_nothing_until_needed() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
 
     assert_eq!(
@@ -972,7 +965,7 @@ fn without_a_tuning_store_the_daemon_starts_healthy_at_the_current_schema() {
         daemon.status().tuning_store,
         Some(TuningStoreHealth::Healthy {})
     );
-    assert!(daemon.persistent_file(TUNING_STORE).is_some());
+    assert!(daemon.persistent_file(TUNING_STORE).is_none());
 }
 
 fn assert_unhealthy(daemon: &Harness, expected: TuningStoreProblem) {
@@ -993,7 +986,7 @@ fn assert_unhealthy(daemon: &Harness, expected: TuningStoreProblem) {
 }
 
 // Acceptance scenario 11 from #8, as far as it exists so far: the file is preserved, manual
-// tuning works and the problem is reported. Startup and legacy reapplication are suspended.
+// tuning works and the problem is reported. Startup is suspended.
 #[test]
 fn a_corrupt_tuning_store_is_preserved_and_reported_while_manual_tuning_keeps_working() {
     let corrupt: &[u8] = b"{\"schemaVersion\": 1, \"profiles\": [tru";

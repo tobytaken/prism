@@ -23,12 +23,12 @@ fn pause(daemon: &Harness, session: &FakeSession, paused: bool) {
 fn resuming_after_gpu_return_keeps_the_cooling_baseline_when_driver_fan_policy_was_reset() {
     let (daemon, alice) = cooled_dota();
     apply_cooling(&alice, separate_cooling());
-    ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+    alice.seed_profiles(json!([
         { "id": "fixed", "name": "Fixed", "gpuId": LINKED, "settings": {
             "powerLimitWatts": value(350),
             "cooling": { "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 50 } }
         } }
-    ] } })));
+    ]));
     link(&alice, LINKED, Some("fixed"));
     set_switching(&daemon, &alice, true);
     daemon.run_steam_game(123, 1000, 420, DOTA);
@@ -272,8 +272,7 @@ fn linked_dota() -> (Harness, FakeSession) {
     daemon.clock.advance(5_000);
     daemon.install_steam_app("alice", DOTA, "Dota 2");
     let alice = daemon.user(1000, "alice");
-    ok(alice.send_json(
-        json!({ "type": "import_profiles", "payload": { "profiles": [
+    alice.seed_profiles(json!([
         { "id": "daily", "name": "Daily", "gpuId": LINKED,
           "settings": { "powerLimitWatts": value(400), "graphicsOffsetMHz": value(60) } },
         { "id": "gaming", "name": "Gaming", "gpuId": LINKED,
@@ -282,8 +281,7 @@ fn linked_dota() -> (Harness, FakeSession) {
           "settings": { "powerLimitWatts": value(320) } },
         { "id": "quiet", "name": "Quiet", "gpuId": UNLINKED,
           "settings": { "powerLimitWatts": value(300) } }
-    ] } }),
-    ));
+    ]));
     ok(alice
         .send_json(json!({ "type": "apply_profile_by_id", "payload": { "profileId": "daily" } })));
     ok(alice.send_json(json!({ "type": "set_power_limit",
@@ -717,12 +715,10 @@ fn cooled_dota() -> (Harness, FakeSession) {
         gpu.cooling = super::harness::cooled_gpu().cooling;
         gpu.telemetry.temperature_c = Some(40);
     });
-    ok(alice.send_json(
-        json!({ "type": "import_profiles", "payload": { "profiles": [
+    alice.seed_profiles(json!([
         { "id": "fans", "name": "Fans", "gpuId": LINKED,
           "settings": { "powerLimitWatts": value(330), "cooling": shared_curve() } }
-    ] } }),
-    ));
+    ]));
     link(&alice, LINKED, Some("fans"));
     (daemon, alice)
 }
@@ -880,12 +876,10 @@ fn cooling_only_profiles_restore_automatic_fixed_and_shared_curve_configurations
     ] {
         let (daemon, alice) = cooled_dota();
         apply_cooling(&alice, baseline.clone());
-        ok(alice.send_json(
-            json!({ "type": "import_profiles", "payload": { "profiles": [
+        alice.seed_profiles(json!([
             { "id": "only-fans", "name": "Only fans", "gpuId": LINKED,
               "settings": { "cooling": separate_cooling() } }
-        ] } }),
-        ));
+        ]));
         link(&alice, LINKED, Some("only-fans"));
         set_switching(&daemon, &alice, true);
         daemon.run_steam_game(123, 1000, 420, DOTA);
@@ -1201,12 +1195,10 @@ fn an_override_waits_for_all_linked_games_even_when_switching_is_disabled() {
 #[test]
 fn adjusting_and_applying_a_profile_reserves_manual_precedence_before_saving_the_correction() {
     let (daemon, alice) = linked_dota();
-    ok(alice.send_json(
-        json!({ "type": "import_profiles", "payload": { "profiles": [
+    alice.seed_profiles(json!([
         { "id": "loud", "name": "Loud", "gpuId": LINKED,
           "settings": { "powerLimitWatts": value(650) } }
-    ] } }),
-    ));
+    ]));
     set_switching(&daemon, &alice, true);
     let before = writes_to(&daemon, LINKED).len();
     let applying = daemon.user(1000, "alice");
@@ -1534,11 +1526,11 @@ fn restart_preserves_the_game_and_baseline_curves_while_recognition_waits() {
 fn a_shared_cooling_baseline_is_not_restored_onto_changed_fans_when_the_gpu_returns() {
     let (daemon, alice) = cooled_dota();
     apply_cooling(&alice, shared_curve());
-    ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+    alice.seed_profiles(json!([
         { "id": "fixed", "name": "Fixed", "gpuId": LINKED, "settings": {
             "cooling": { "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 55 } }
         } }
-    ] } })));
+    ]));
     link(&alice, LINKED, Some("fixed"));
     set_switching(&daemon, &alice, true);
     daemon.run_steam_game(123, 1000, 420, DOTA);
@@ -1562,13 +1554,11 @@ fn the_same_running_game_reconciles_reset_controls_when_its_gpu_returns() {
     apply_cooling(&alice, separate_cooling());
     let fixed =
         json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 55 } });
-    ok(alice.send_json(
-        json!({ "type": "import_profiles", "payload": { "profiles": [
+    alice.seed_profiles(json!([
         { "id": "fixed", "name": "Fixed", "gpuId": LINKED, "settings": {
             "powerLimitWatts": value(330), "cooling": fixed
         } }
-    ] } }),
-    ));
+    ]));
     link(&alice, LINKED, Some("fixed"));
     set_switching(&daemon, &alice, true);
     daemon.run_steam_game(123, 1000, 420, DOTA);
@@ -1871,12 +1861,10 @@ fn applying_manual_tuning_while_a_profile_waits_keeps_the_override_after_edit_ho
 #[test]
 fn partial_automatic_failure_rolls_back_and_waits_for_retry_even_when_the_game_changes() {
     let (daemon, alice) = linked_dota();
-    ok(alice.send_json(
-        json!({ "type": "import_profiles", "payload": { "profiles": [
+    alice.seed_profiles(json!([
         { "id": "partial", "name": "Partial", "gpuId": LINKED,
           "settings": { "powerLimitWatts": value(300), "memoryOffsetMHz": value(100) } }
-    ] } }),
-    ));
+    ]));
     link(&alice, LINKED, Some("partial"));
     daemon
         .gpus
@@ -2089,11 +2077,11 @@ fn restoration_and_retry_validate_fresh_baseline_ranges_without_clamping_or_part
 fn rollback_runs_in_reverse_order_and_does_not_overwrite_an_unexpected_reading() {
     for changed_outside in [false, true] {
         let (daemon, alice) = linked_dota();
-        ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+        alice.seed_profiles(json!([
             { "id": "all", "name": "All", "gpuId": LINKED, "settings": {
                 "powerLimitWatts": value(300), "graphicsOffsetMHz": value(100), "memoryOffsetMHz": value(100)
             } }
-        ] } })));
+        ]));
         link(&alice, LINKED, Some("all"));
         daemon
             .gpus
@@ -2350,9 +2338,9 @@ fn partial_fixed_fan_failure_attempts_default_automatic_cooling_and_reports_ever
         let (daemon, alice) = cooled_dota();
         let fixed =
             json!({ "arrangement": "shared", "setting": { "mode": "fixed", "speedPercent": 75 } });
-        ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+        alice.seed_profiles(json!([
             { "id": "fixed-failure", "name": "Fixed failure", "gpuId": LINKED, "settings": { "cooling": fixed } }
-        ] } })));
+        ]));
         link(&alice, LINKED, Some("fixed-failure"));
         daemon
             .gpus
@@ -2402,9 +2390,9 @@ fn partial_fixed_fan_failure_attempts_default_automatic_cooling_and_reports_ever
         daemon.run_curves_for(500);
         assert_eq!(writes_to(&daemon, LINKED), writes);
         if fallback == "restored" {
-            ok(alice.send_json(json!({ "type": "import_profiles", "payload": { "profiles": [
+            alice.seed_profiles(json!([
                 { "id": "default-fans", "name": "Default fans", "gpuId": LINKED, "settings": { "cooling": { "arrangement": "shared", "setting": { "mode": "automatic" } } } }
-            ] } })));
+            ]));
             link(&alice, LINKED, Some("default-fans"));
             ok(alice.send_json(
                 json!({ "type": "retry_automatic_switching", "payload": { "gpuId": LINKED } }),

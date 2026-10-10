@@ -42,8 +42,7 @@ fn opted_in_user(
         daemon.install_steam_app(username, *app_id, name);
     }
     let session = daemon.user(uid, username);
-    ok(session
-        .send_json(json!({ "type": "import_profiles", "payload": { "profiles": profiles } })));
+    session.seed_profiles(profiles);
     for (app_id, _) in games {
         ok(session.send_json(json!({ "type": "add_steam_game", "payload": { "appId": app_id } })));
     }
@@ -444,11 +443,11 @@ fn cooling(session: &FakeSession) -> Value {
 }
 
 fn link_cooling(session: &FakeSession, app_id: u32, id: &str, configuration: Value) {
-    ok(session.send_json(
-        json!({ "type": "import_profiles", "payload": { "profiles": [
-        profile(id, id, json!({ "cooling": configuration }))
-    ] } }),
-    ));
+    session.seed_profiles(json!([profile(
+        id,
+        id,
+        json!({ "cooling": configuration })
+    )]));
     link(session, app_id, id);
 }
 

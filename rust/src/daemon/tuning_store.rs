@@ -37,7 +37,7 @@ const MIGRATIONS: [fn(RawDocument) -> Result<RawDocument, String>;
     // Version 5 adds Restore last applied and the unclean-shutdown guard's record, absent until
     // a boot restores last applied tuning values.
     Ok,
-    // Version 6 imports legacy configurations with the current inventory during opening.
+    // Version 6 marked the one-time import of legacy configurations, which no longer exists.
     Ok,
     // Version 7 adds users' game associations and automatic switching opt-ins, none until set.
     Ok,
@@ -59,10 +59,6 @@ pub struct TuningDocument {
     pub automatic_failures: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub switching_pauses: BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ownerless_profiles: Vec<GpuTuningProfile>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub legacy_migration: Option<super::migration::LegacyMigration>,
     #[serde(default, skip_serializing_if = "StartupBehavior::is_off")]
     pub startup_behavior: StartupBehavior,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -100,8 +96,6 @@ pub struct UserState {
     pub remembered_curves: BTreeMap<String, crate::cooling::CoolingConfiguration>,
     #[serde(default)]
     pub profiles: Vec<GpuTuningProfile>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub migration_notice_dismissed: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub games: Vec<super::games::GameAssociation>,
     /// Whether the user opted in to automatic switching; off by default.
@@ -137,7 +131,6 @@ impl TuningDocument {
                     username: username.into(),
                     remembered_curves: BTreeMap::new(),
                     profiles: vec![],
-                    migration_notice_dismissed: false,
                     games: vec![],
                     automatic_switching: false,
                 });
@@ -148,9 +141,8 @@ impl TuningDocument {
     }
 }
 
-/// The daemon's tuning store: one versioned document, separate from the legacy saved
-/// configurations. It fails closed: a document it can't use is preserved untouched and never
-/// rewritten.
+/// The daemon's tuning store: one versioned document. It fails closed: a document it can't use
+/// is preserved untouched and never rewritten.
 pub struct TuningStore {
     path: PathBuf,
     state: Mutex<StoreState>,
@@ -166,19 +158,8 @@ enum StoreState {
 }
 
 impl TuningStore {
-    #[cfg(test)]
     pub fn open(path: PathBuf) -> Self {
-        Self::open_with_inventory(path, || crate::gpu::GpuPerformanceResponse {
-            gpus: vec![],
-            warnings: vec![],
-        })
-    }
-
-    pub fn open_with_inventory(
-        path: PathBuf,
-        inventory: impl FnOnce() -> crate::gpu::GpuPerformanceResponse,
-    ) -> Self {
-        let state = match load(&path, inventory) {
+        let state = match load(&path) {
             Ok(document) => StoreState::Healthy(document),
             Err((problem, detail)) => {
                 eprintln!(
@@ -357,17 +338,11 @@ fn parent_dir(path: &Path) -> &Path {
 type LoadError = (TuningStoreProblem, String);
 
 /// Reads the document, treating a missing one as empty.
-fn load(
-    path: &Path,
-    inventory: impl FnOnce() -> crate::gpu::GpuPerformanceResponse,
-) -> Result<TuningDocument, LoadError> {
+fn load(path: &Path) -> Result<TuningDocument, LoadError> {
     let unreadable = |detail: String| (TuningStoreProblem::Unreadable, detail);
     let contents = match fs::read(path) {
         Ok(contents) => contents,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            return super::migration::upgrade(path, TuningDocument::default(), inventory)
-                .map_err(unreadable);
-        }
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(TuningDocument::default()),
         Err(error) => return Err(unreadable(error.to_string())),
     };
     let mut document: RawDocument =
@@ -393,14 +368,8 @@ fn load(
     for migrate in &MIGRATIONS[version as usize - 1..] {
         document = migrate(document).map_err(unreadable)?;
     }
-    let document = serde_json::from_value(serde_json::Value::Object(document))
-        .map_err(|error| unreadable(error.to_string()))?;
-    if version < 6 {
-        super::migration::upgrade(path, document, inventory).map_err(unreadable)
-    } else {
-        super::migration::archive(path).map_err(unreadable)?;
-        Ok(document)
-    }
+    serde_json::from_value(serde_json::Value::Object(document))
+        .map_err(|error| unreadable(error.to_string()))
 }
 
 #[cfg(test)]

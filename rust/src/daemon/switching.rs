@@ -876,7 +876,7 @@ impl Switching {
         failure: String,
     ) {
         for key in captured {
-            activation.baseline.remove(&key);
+            activation.baseline.remove(key);
             activation.expected.remove(key);
         }
         if activation.application.is_none() {

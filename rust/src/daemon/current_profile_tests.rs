@@ -6,12 +6,6 @@ use super::harness::{tunable_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
 
 const STALE: &str = "The GPU's values changed since you last looked. Review them and save again.";
 
-fn import(session: &FakeSession, profiles: Value) {
-    let response = session
-        .send_json(json!({ "type": "import_profiles", "payload": { "profiles": profiles } }));
-    assert_eq!(response["type"], "profile_import", "{response}");
-}
-
 fn quiet_and_loud() -> Value {
     json!([
         { "id": "quiet", "name": "Quiet", "gpuId": "GPU-123",
@@ -81,7 +75,7 @@ fn error_message(response: &Value) -> &str {
 fn a_gpu_starts_with_no_current_profile_and_an_applied_profile_becomes_current() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     assert_eq!(current(&alice), Value::Null);
 
     let applied = apply_by_id(&alice, "quiet");
@@ -102,7 +96,7 @@ fn a_reviewed_or_blocked_application_leaves_the_previous_current_profile_and_the
     gpu.power.max_limit_watts = Some(450);
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
     let writes = daemon.gpus.writes();
 
@@ -133,7 +127,7 @@ fn a_reviewed_or_blocked_application_leaves_the_previous_current_profile_and_the
 fn a_partly_applied_profile_leaves_the_gpu_with_no_current_profile() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
     daemon
         .gpus
@@ -151,7 +145,7 @@ fn a_corrected_and_applied_profile_becomes_current() {
     gpu.power.max_limit_watts = Some(450);
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![gpu]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     let review = apply_by_id(&alice, "loud");
 
     let corrected = alice.send_json(json!({
@@ -169,7 +163,7 @@ fn a_corrected_and_applied_profile_becomes_current() {
 fn save_to_current_overwrites_the_current_profile_with_the_applied_values() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
     alice.send_json(json!({
         "type": "set_clock_offsets",
@@ -197,7 +191,7 @@ fn save_to_current_overwrites_the_current_profile_with_the_applied_values() {
 fn save_as_new_creates_a_profile_that_becomes_current_and_leaves_the_previous_one_alone() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
     alice.send_json(json!({
         "type": "set_power_limit", "payload": { "gpuId": "GPU-123", "limitWatts": 350 }
@@ -236,7 +230,7 @@ fn save_to_current_needs_a_current_profile() {
 fn a_save_with_a_stale_revision_is_rejected_and_saves_nothing() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
     let before = profiles(&alice);
 
@@ -282,7 +276,7 @@ fn the_revision_is_shared_by_every_user_and_stable_while_nothing_changes() {
 fn another_users_current_profile_is_shown_by_name_and_cannot_be_saved_over() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
     let quiet = profiles(&alice)
         .into_iter()
@@ -316,7 +310,7 @@ fn another_users_current_profile_is_shown_by_name_and_cannot_be_saved_over() {
 fn the_current_profile_survives_a_daemon_restart_and_is_cleared_at_reboot_when_startup_is_off() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
     drop(alice);
 
@@ -335,7 +329,7 @@ fn current_profile_and_revision_changes_are_pushed_to_every_session() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
     let bob = daemon.user(1001, "bob");
-    import(&alice, quiet_and_loud());
+    alice.seed_profiles(quiet_and_loud());
     alice.pushed_events();
     bob.pushed_events();
 

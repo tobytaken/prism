@@ -319,7 +319,6 @@ fn query_performance_device(
     let telemetry = query_telemetry(device, &name, &power, &cooling, warnings);
 
     GpuPerformanceDevice {
-        nvidia_index: Some(index),
         id,
         stable_id,
         vendor: GpuVendor::Nvidia,
@@ -739,11 +738,7 @@ fn average_fan_speed_percent(cooling: &CoolingInfo) -> Option<u32> {
         }
     }
 
-    if count == 0 {
-        None
-    } else {
-        Some((total / count) as u32)
-    }
+    total.checked_div(count).map(|average| average as u32)
 }
 
 fn format_performance_state(state: PerformanceState) -> Option<String> {
@@ -914,7 +909,7 @@ fn with_device_mut<T>(
     operation: impl FnOnce(&mut Device<'_>) -> Result<T, String>,
 ) -> Result<T, String> {
     let nvml = shared_nvml().map_err(|error| format!("Unable to initialize NVML: {error}"))?;
-    let mut device = find_device_by_id(&nvml, gpu_id)?;
+    let mut device = find_device_by_id(nvml, gpu_id)?;
 
     operation(&mut device)
 }

@@ -4,13 +4,6 @@ use serde_json::{json, Value};
 
 use super::harness::{tunable_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
 
-fn import(session: &FakeSession, profiles: Value) {
-    let response = session.send_json(json!({
-        "type": "import_profiles", "payload": { "profiles": profiles }
-    }));
-    assert_eq!(response["type"], "profile_import", "{response}");
-}
-
 fn profile(id: &str, name: &str, gpu_id: &str) -> Value {
     json!({ "id": id, "name": name, "gpuId": gpu_id,
         "settings": { "powerLimitWatts": { "kind": "value", "value": 300 } } })
@@ -40,7 +33,7 @@ fn a_profile_deleted_while_an_application_waits_is_never_applied_or_made_current
     use std::time::Duration;
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, json!([profile("quiet", "Quiet", "GPU-123")]));
+    alice.seed_profiles(json!([profile("quiet", "Quiet", "GPU-123")]));
     let gate = daemon.gpus.block("GPU-123", Setter::PowerLimit);
     let live_write = daemon.send_in_background(
         serde_json::from_value(json!({
@@ -96,14 +89,11 @@ fn a_profile_deleted_while_an_application_waits_is_never_applied_or_made_current
 fn rename_rejects_a_case_insensitive_clash_on_the_same_gpu_but_allows_the_name_on_another_gpu() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(
-        &alice,
-        json!([
-            profile("quiet", "Quiet", "GPU-123"),
-            profile("loud", "Loud", "GPU-123"),
-            profile("other", "Quiet", "GPU-456")
-        ]),
-    );
+    alice.seed_profiles(json!([
+        profile("quiet", "Quiet", "GPU-123"),
+        profile("loud", "Loud", "GPU-123"),
+        profile("other", "Quiet", "GPU-456")
+    ]));
     let before = profiles(&alice);
     let clash = rename(&alice, "quiet", "  lOuD  ");
     assert_eq!(clash["payload"]["code"], "invalidArgument", "{clash}");
@@ -127,7 +117,7 @@ fn rename_rejects_a_case_insensitive_clash_on_the_same_gpu_but_allows_the_name_o
 fn only_the_profiles_owner_can_rename_or_delete_it_and_empty_names_are_rejected() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, json!([profile("quiet", "Quiet", "GPU-123")]));
+    alice.seed_profiles(json!([profile("quiet", "Quiet", "GPU-123")]));
     let before = profiles(&alice);
     for other in [daemon.user(1001, "bob"), daemon.user(1000, "carol")] {
         assert_eq!(profiles(&other), json!([]));
@@ -156,14 +146,11 @@ fn deleting_a_non_current_profile_keeps_the_current_profile_and_absent_gpus_prof
 ) {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(
-        &alice,
-        json!([
-            profile("quiet", "Quiet", "GPU-123"),
-            profile("loud", "Loud", "GPU-123"),
-            profile("absent", "Quiet", "GPU-456")
-        ]),
-    );
+    alice.seed_profiles(json!([
+        profile("quiet", "Quiet", "GPU-123"),
+        profile("loud", "Loud", "GPU-123"),
+        profile("absent", "Quiet", "GPU-456")
+    ]));
     alice.send_json(json!({ "type": "apply_profile_by_id", "payload": { "profileId": "quiet" } }));
     let before = state(&alice);
     let writes = daemon.gpus.writes();
@@ -186,13 +173,10 @@ fn deleting_the_current_profile_clears_its_reference_without_retuning_and_persis
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
     let bob = daemon.user(1001, "bob");
-    import(
-        &alice,
-        json!([
-            profile("quiet", "Quiet", "GPU-123"),
-            profile("loud", "Loud", "GPU-123")
-        ]),
-    );
+    alice.seed_profiles(json!([
+        profile("quiet", "Quiet", "GPU-123"),
+        profile("loud", "Loud", "GPU-123")
+    ]));
     alice.send_json(json!({
         "type": "apply_profile_by_id", "payload": { "profileId": "quiet" }
     }));
@@ -243,7 +227,7 @@ fn renaming_trims_the_name_keeps_the_id_and_updates_the_current_profile_across_s
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
     let bob = daemon.user(1001, "bob");
-    import(&alice, json!([profile("quiet", "Quiet", "GPU-123")]));
+    alice.seed_profiles(json!([profile("quiet", "Quiet", "GPU-123")]));
     alice.send_json(json!({
         "type": "apply_profile_by_id", "payload": { "profileId": "quiet" }
     }));

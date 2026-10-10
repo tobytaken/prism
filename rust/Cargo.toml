@@ -1,18 +1,15 @@
 [package]
 name = "prism-rust"
 version = "0.1.0"
-description = "Rust sidecar and daemon for Prism Electron"
+description = "Prism's Rust GPU library and privileged daemon"
 authors = ["Tobias Steinhaeusler"]
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-or-later"
+publish = false
 
 [lib]
 name = "prism_rust"
 path = "src/lib.rs"
-
-[[bin]]
-name = "prism_backend"
-path = "src/bin/prism_backend.rs"
 
 [[bin]]
 name = "prismd"
@@ -36,6 +33,7 @@ users = "0.11.0"
 tempfile = "3.23.0"
 
 [package.metadata.deb]
+license-file = ["../LICENSE", "0"]
 depends = "$auto"
 section = "utils"
 priority = "optional"
@@ -47,7 +45,8 @@ assets = [
   ["target/release/prismd", "usr/bin/prismd", "755"],
   ["../contrib/systemd/prismd.service", "lib/systemd/system/prismd.service", "644"],
   ["../contrib/prismd.toml", "etc/prism/prismd.toml", "644"],
-  ["../README.md", "usr/share/doc/prism-electron/README.md", "644"]
+  ["../README.md", "usr/share/doc/prismd/README.md", "644"],
+  ["../THIRD-PARTY-LICENSES", "usr/share/doc/prismd/THIRD-PARTY-LICENSES", "644"]
 ]
 
 [package.metadata.generate-rpm]
@@ -55,10 +54,12 @@ auto-req = "no"
 
 [package.metadata.generate-rpm.variants.prismd]
 name = "prismd"
-summary = "Privileged daemon for Prism Electron"
+summary = "Privileged daemon for Prism"
 assets = [
   { source = "target/release/prismd", dest = "/usr/bin/prismd", mode = "755" },
   { source = "../contrib/systemd/prismd.service", dest = "/lib/systemd/system/prismd.service", mode = "644" },
   { source = "../contrib/prismd.toml", dest = "/etc/prism/prismd.toml", mode = "644", config = "noreplace" },
-  { source = "../README.md", dest = "/usr/share/doc/prism-electron/README.md", mode = "644", doc = true }
+  { source = "../README.md", dest = "/usr/share/doc/prismd/README.md", mode = "644", doc = true },
+  { source = "../LICENSE", dest = "/usr/share/licenses/prismd/LICENSE", mode = "644", doc = true },
+  { source = "../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/prismd/THIRD-PARTY-LICENSES", mode = "644", doc = true }
 ]

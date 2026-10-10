@@ -3,7 +3,7 @@ use std::{ffi::CString, io};
 
 /// The document portal exposes this attribute on exported files, including directory exports.
 /// https://flatpak.github.io/xdg-desktop-portal/docs/documents-and-fuse.html#custom-xattrs
-pub(crate) fn host_path(selected: &str) -> io::Result<String> {
+pub fn host_path(selected: &str) -> io::Result<String> {
     if !selected.starts_with('/') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

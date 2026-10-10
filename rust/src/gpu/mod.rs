@@ -88,10 +88,6 @@ pub struct GpuPerformanceResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuPerformanceDevice {
-    /// Original NVML slot, used only to resolve legacy index keys during migration.
-    /// A skipped device must not shift the identity of later devices.
-    #[serde(skip)]
-    pub(crate) nvidia_index: Option<u32>,
     pub id: String,
     #[serde(default)]
     pub stable_id: Option<String>,
@@ -616,7 +612,6 @@ mod tests {
     fn performance_response_serializes_camel_case() {
         let response = GpuPerformanceResponse {
             gpus: vec![GpuPerformanceDevice {
-                nvidia_index: None,
                 id: "GPU-123".into(),
                 stable_id: Some("GPU-123".into()),
                 vendor: GpuVendor::Nvidia,
@@ -716,7 +711,7 @@ mod tests {
     #[test]
     fn daemon_status_round_trips_the_shared_unhealthy_store_contract() {
         let contract: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../src/test/contracts/daemon-status-unhealthy-store.json"
+            "../../tests/contracts/daemon-status-unhealthy-store.json"
         ))
         .unwrap();
 

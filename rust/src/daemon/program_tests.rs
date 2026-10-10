@@ -32,13 +32,10 @@ fn manual_native_program_switches_by_file_identity_and_re_resolves_updates() {
         &alice,
         json!({"type":"add_program", "payload":{"path":"/games/game"}}),
     );
-    ok(
-        &alice,
-        json!({"type":"import_profiles", "payload":{"profiles":[{
-            "id":"gaming", "name":"Gaming", "gpuId":"GPU-A",
-            "settings":{"powerLimitWatts":{"kind":"value", "value":350}}
-        }]}}),
-    );
+    alice.seed_profiles(json!([{
+        "id":"gaming", "name":"Gaming", "gpuId":"GPU-A",
+        "settings":{"powerLimitWatts":{"kind":"value", "value":350}}
+    }]));
     ok(
         &alice,
         json!({"type":"set_game_profile", "payload":{"game":game, "gpuId":"GPU-A", "profileId":"gaming"}}),
@@ -123,13 +120,10 @@ fn wine_mapped_image_switches_without_matching_the_shared_preloader_or_another_u
         &alice,
         json!({"type":"add_program", "payload":{"path":"/games/game.exe"}}),
     );
-    ok(
-        &alice,
-        json!({"type":"import_profiles", "payload":{"profiles":[{
-            "id":"gaming", "name":"Gaming", "gpuId":"GPU-A",
-            "settings":{"powerLimitWatts":{"kind":"value", "value":350}}
-        }]}}),
-    );
+    alice.seed_profiles(json!([{
+        "id":"gaming", "name":"Gaming", "gpuId":"GPU-A",
+        "settings":{"powerLimitWatts":{"kind":"value", "value":350}}
+    }]));
     ok(
         &alice,
         json!({"type":"set_game_profile", "payload":{"game":{"kind":"program","path":"/games/game.exe"}, "gpuId":"GPU-A", "profileId":"gaming"}}),

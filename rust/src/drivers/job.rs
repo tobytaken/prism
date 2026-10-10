@@ -448,13 +448,13 @@ fn validate_apt_get(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    if args.len() >= 4 && args[0..3] == ["-y", "install", "--only-upgrade"] {
-        if args[3..]
+    if args.len() >= 4
+        && args[0..3] == ["-y", "install", "--only-upgrade"]
+        && args[3..]
             .iter()
             .all(|package| is_deb_nvidia_package(package))
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     Err(format!("apt-get arguments are not allowlisted: {args:?}"))

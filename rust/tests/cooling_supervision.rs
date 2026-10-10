@@ -345,10 +345,8 @@ impl Drop for Daemon {
 }
 
 fn cooled_gpu() -> GpuPerformanceDevice {
-    let fixture: GpuPerformanceResponse = serde_json::from_str(include_str!(
-        "../../src/test/contracts/tuning-observations.json"
-    ))
-    .unwrap();
+    let fixture: GpuPerformanceResponse =
+        serde_json::from_str(include_str!("../tests/contracts/tuning-observations.json")).unwrap();
     let mut gpu = fixture.gpus.into_iter().next().unwrap();
     gpu.cooling.is_supported = true;
     gpu.cooling.unsupported_reason = None;

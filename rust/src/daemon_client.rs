@@ -19,10 +19,9 @@ use crate::protocol::{
 use crate::protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
     CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
-    GpuTuningProfile, GpuTuningState, ImportProfilesRequest, LiveClockOffsetsRequest,
-    ProfileApplicationResponse, ProfileIdRequest, ProfileImportResponse, RenameProfileRequest,
-    SaveProfileAsNewRequest, SaveToCurrentProfileRequest, SetStartupBehaviorRequest,
-    SetStartupProfileRequest, StartupGpuRequest, StartupState,
+    GpuTuningProfile, GpuTuningState, LiveClockOffsetsRequest, ProfileApplicationResponse,
+    ProfileIdRequest, RenameProfileRequest, SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
+    SetStartupBehaviorRequest, SetStartupProfileRequest, StartupGpuRequest, StartupState,
 };
 
 mod session;
@@ -206,16 +205,6 @@ pub fn correct_and_apply_gpu_profile(
         DaemonResponse::CorrectedProfileApplication(response) => Ok(response),
         DaemonResponse::Error(error) => Err(error),
         _ => Err(unexpected_response_error("corrected profile application")),
-    }
-}
-
-pub fn import_gpu_profiles(
-    request: ImportProfilesRequest,
-) -> Result<ProfileImportResponse, GpuCommandError> {
-    match send_request(DaemonRequest::ImportProfiles(request))? {
-        DaemonResponse::ProfileImport(response) => Ok(response),
-        DaemonResponse::Error(error) => Err(error),
-        _ => Err(unexpected_response_error("profile import")),
     }
 }
 
@@ -492,26 +481,4 @@ pub fn dismiss_startup_outcome(
     request: StartupGpuRequest,
 ) -> Result<DaemonCommandResponse, GpuCommandError> {
     send_gpu_command(DaemonRequest::DismissStartupOutcome(request))
-}
-
-pub fn get_migration_state() -> Result<crate::protocol::MigrationState, GpuCommandError> {
-    match send_request(DaemonRequest::GetMigrationState)? {
-        DaemonResponse::MigrationState(state) => Ok(state),
-        DaemonResponse::Error(error) => Err(error),
-        _ => Err(unexpected_response_error("migration state")),
-    }
-}
-
-pub fn adopt_migrated_profile(
-    request: ProfileIdRequest,
-) -> Result<GpuTuningProfile, GpuCommandError> {
-    match send_request(DaemonRequest::AdoptMigratedProfile(request))? {
-        DaemonResponse::Profile(profile) => Ok(profile),
-        DaemonResponse::Error(error) => Err(error),
-        _ => Err(unexpected_response_error("adopted profile")),
-    }
-}
-
-pub fn dismiss_migration_notice() -> Result<DaemonCommandResponse, GpuCommandError> {
-    send_gpu_command(DaemonRequest::DismissMigrationNotice)
 }

@@ -1,56 +1,40 @@
-# Prism Electron
+# Prism
 
-Prism Electron is a Linux-only Electron + Rust desktop app for inspecting and configuring NVIDIA GPUs. It replaces the Chromium-hosting part of the original Tauri app while keeping the GPU logic and privileged daemon in Rust.
+Prism is a Linux GPU control center for watching, tuning and managing NVIDIA GPUs and their drivers. It is being rewritten as a native Rust GUI built with Slint ([ADR 0007](docs/adr/0007-native-rust-gui.md), [ADR 0008](docs/adr/0008-slint-gui-toolkit.md), [#120](https://github.com/tobytaken/prism-electron/issues/120)). The Electron app has been removed; this repository currently holds the Rust GPU library and `prismd`.
+
+Prism is licensed under the GNU General Public License, version 3 or later (`GPL-3.0-or-later`); see [`LICENSE`](./LICENSE).
 
 ## Architecture
 
-- Electron provides the Chromium shell, secure preload bridge, and Linux packaging.
-- The React renderer lives under [`src`](./src).
-- `prism_backend` is an unprivileged Rust sidecar started by Electron.
-- `prismd` is a privileged host daemon that owns persistent GPU configuration writes.
-- Native installs can read GPU inventory directly when `prismd` is unavailable.
-- Flatpak installs require `prismd` for reads and writes.
+- `prismd` is a privileged host daemon that owns all tuning writes and tuning state.
+- The Rust library under [`rust`](./rust) reads GPUs through NVML and talks to `prismd`. The native GUI will link it in-process.
 
 ## Development
 
-Install dependencies:
+Run the checks CI runs:
 
 ```bash
-bun install
+cd rust
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo deny check licenses
 ```
 
-Run the Electron app:
+CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check and the `prismd` package smoke builds.
+
+`cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`rust/deny.toml`](./rust/deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
 
 ```bash
-bun run dev
+bash scripts/generate-third-party-licenses.sh
 ```
 
-Run renderer and Electron tests:
-
-```bash
-bun run test
-```
-
-Run the Rust tests:
-
-```bash
-cargo test --manifest-path rust/Cargo.toml
-```
-
-CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run the JavaScript checks, Rust tests, and packaging smoke checks. The manual workflow becomes available once this configuration is on the default branch.
-
-## Sidecar and Daemon
-
-Build the Electron sidecar:
-
-```bash
-bun run build:sidecar:debug
-```
+## Daemon
 
 Build the daemon:
 
 ```bash
-bun run build:daemon:release
+cargo build --manifest-path rust/Cargo.toml --release --bin prismd
 ```
 
 Install the daemon on the host for local testing:
@@ -59,7 +43,7 @@ Install the daemon on the host for local testing:
 bash scripts/install-prismd-host.sh
 ```
 
-The daemon listens on `/run/prism/prismd.sock` and stores desired GPU settings in `/var/lib/prism/state.json`. Its versioned tuning store lives in `/var/lib/prism/tuning-state.json` and holds each user's GPU tuning profiles, which only that user sees, and each GPU's current profile, which every user sees by name. The first time the app connects, it imports profiles saved by earlier versions of the app and renames its old `gpu-tuning-profiles.json` file to `gpu-tuning-profiles.json.imported`. If the tuning store can't be read, or was written by a newer version of Prism, the daemon leaves it untouched, the Performance page reports the problem, and manual tuning keeps working.
+The daemon listens on `/run/prism/prismd.sock`. Its versioned tuning store lives in `/var/lib/prism/tuning-state.json` and holds each user's GPU tuning profiles, which only that user sees, and each GPU's current profile, which every user sees by name. If the tuning store can't be read, or was written by a newer version of Prism, the daemon leaves it untouched, reports the problem, and manual tuning keeps working.
 
 The default daemon config is:
 
@@ -68,47 +52,32 @@ admin_group = "wheel"
 # admin_user = "your-username"
 ```
 
-## Packaging
-
-Install the required host tooling before building release artifacts:
-
-```bash
-bun install
-cargo install cargo-deb cargo-generate-rpm
-```
-
-GUI package makers also require distro tooling on the host:
-
-- `deb`: `dpkg` and `fakeroot`
-- `rpm`: `rpmbuild`
-- `flatpak`: `flatpak-builder` and `eu-strip`
-
-GUI app:
-
-```bash
-bun run package:gui:deb
-bun run package:gui:rpm
-bun run package:gui:flatpak
-```
-
-Host daemon:
-
-```bash
-bun run package:daemon:deb
-bun run package:daemon:rpm
-```
-
-## Flatpak host setup
-
-The Flatpak build expects a host-installed `prismd` and permission to access `/run/prism`. The app does not try to install the daemon from inside the sandbox.
-
-For Flatpak-host setups where group-based socket access is awkward, set `admin_user` in `/etc/prism/prismd.toml` and restart the daemon:
+For setups where group-based socket access is awkward, such as a Flatpak app, set `admin_user` in `/etc/prism/prismd.toml` and restart the daemon:
 
 ```bash
 sudo systemctl restart prismd
 ```
 
-## Startup behavior
+## Packaging
+
+Install the packaging tools:
+
+```bash
+cargo install cargo-deb cargo-generate-rpm
+```
+
+Build the `prismd` packages:
+
+```bash
+bash scripts/package-prismd-deb.sh
+bash scripts/package-prismd-rpm.sh
+```
+
+## Daemon behavior
+
+The sections below describe what the daemon does. Their references to pages and controls describe the removed Electron app; the native GUI will expose the same behavior.
+
+### Startup behavior
 
 Settings → Startup offers the host-wide **Off** (default), **Startup profiles** and **Restore last applied** choices. Use **Manage profiles…** in each GPU's Performance selector to choose its startup profile, or **No startup profile**. Anyone authorized to tune GPUs can change these choices; the latest change wins, and other users see the startup profile by name. A designation follows the profile's latest saved values and name, and deleting the profile clears the designation.
 
@@ -116,15 +85,15 @@ The host daemon applies startup profiles once per kernel boot id without the app
 
 **Restore last applied** restores, per GPU, each setting's most recent successful manual value from a profile application or live tuning change, including explicit **Use default** requests, with the same validation and waiting. A GPU keeps its previous current profile only when its values are restored in full. Before writing restored values, the daemon persists and syncs a record of the attempt in the tuning store; stopping the daemon while the host shuts down (systemd reports `stopping`) marks the boot clean, while a daemon restart mid-boot records nothing. If the previous boot attempted a restore and wasn't clean, the next boot skips the restore once and says so in the startup outcome. Startup profiles skip this guard. When a manual write reaches the GPU but its last applied values can't be recorded, the write still reports success with "This change was not recorded for startup.", and Settings marks Restore last applied as possibly stale (kept in `/var/lib/prism/last-applied-possibly-stale.json`) until that setting's next successful record.
 
-The once-per-boot marker and outcomes live in `/run/prism/startup-state.json`. The service preserves this directory across stops and restarts. Unreadable tuning or boot state suspends startup behavior. Legacy `state.json` configurations migrate once to ownerless **Previous startup settings** profiles, with startup behavior set to **Startup profiles**. UUID keys survive absent GPUs; bus IDs and NVIDIA indices must resolve uniquely against the current inventory. Unresolved configurations are listed with their values in a per-user dismissible notice. Saved clock locks are no longer restored. The first authorized user to open Prism can take ownership with **Add to my profiles** on Performance. The original file is archived as `state.json.migrated`; schema version 6 prevents repeat migration. **Off** performs no boot-time tuning.
+The once-per-boot marker and outcomes live in `/run/prism/startup-state.json`. The service preserves this directory across stops and restarts. Unreadable tuning or boot state suspends startup behavior. **Off** performs no boot-time tuning.
 
-## Remembered fan curves
+### Remembered fan curves
 
 After you successfully apply a custom fan curve, Prism remembers the curve and shared or separate fan arrangement for your account and that individual GPU. Switching to Automatic or Fixed, closing Prism, reconnecting, and restarting the host retain this choice. Selecting Curve from shared control recalls the arrangement as an unapplied draft; review it and Apply to activate it. In separate controls, selecting Curve recalls that fan's curve when available and preserves other fan edits. Recalled curves must still meet the GPU's current limits. Discarded edits, failed applications, temporary automatic applications and their restorations, and normal curve output changes do not replace the remembered choice.
 
 The daemon stores remembered curves and optional profile cooling configurations in tuning-store schema version 9, using the existing uid-and-username ownership safeguards and GPU UUIDs. Earlier stores upgrade without creating remembered choices or adding cooling to existing profiles; version 8 remembered curves are preserved.
 
-## Games
+### Games
 
 **Automatic switching is experimental and not yet validated for release.** The
 [9 October live validation](docs/validation/2026-10-09-nvidia-game-recognition.md)

@@ -27,17 +27,13 @@ fn mixed() -> Value {
     ]})
 }
 
-fn import(session: &FakeSession, cooling: Value) {
-    let response = send(
-        session,
-        json!({ "type": "import_profiles", "payload": { "profiles": [{
-            "id": "cool", "name": "Cool", "gpuId": "GPU-123", "settings": {
-                "powerLimitWatts": { "kind": "value", "value": 300 },
-                "cooling": cooling
-            }
-        }] } }),
-    );
-    assert_eq!(response["imported"][0]["id"], "cool", "{response}");
+fn seed(session: &FakeSession, cooling: Value) {
+    session.seed_profiles(json!([{
+        "id": "cool", "name": "Cool", "gpuId": "GPU-123", "settings": {
+            "powerLimitWatts": { "kind": "value", "value": 300 },
+            "cooling": cooling
+        }
+    }]));
 }
 
 fn use_startup_profile(session: &FakeSession) {
@@ -111,7 +107,7 @@ fn tuning_state(daemon: &Harness) -> Value {
 fn a_startup_profile_runs_its_complete_cooling_from_the_fresh_temperature_once_per_boot() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, mixed());
+    seed(&alice, mixed());
     use_startup_profile(&alice);
     drop(alice);
     daemon.set_temperature("GPU-123", Some(60));
@@ -256,7 +252,7 @@ fn unusable_saved_cooling_is_reported_at_startup_without_writing_or_clamping() {
     for (reason, change) in cases {
         let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
         let alice = daemon.user(1000, "alice");
-        import(&alice, mixed());
+        seed(&alice, mixed());
         use_startup_profile(&alice);
         drop(alice);
         daemon.gpus.update("GPU-123", change);
@@ -281,7 +277,7 @@ fn unusable_saved_cooling_is_reported_at_startup_without_writing_or_clamping() {
 fn a_rejected_fan_command_at_startup_is_reported_per_fan_and_suspends_the_curve() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     let alice = daemon.user(1000, "alice");
-    import(&alice, json!({"arrangement": "shared", "setting": curve()}));
+    seed(&alice, json!({"arrangement": "shared", "setting": curve()}));
     use_startup_profile(&alice);
     drop(alice);
     daemon

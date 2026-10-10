@@ -6,7 +6,6 @@ mod cooling_profiles;
 mod daemon_core;
 mod games;
 mod host;
-mod migration;
 mod possibly_stale;
 mod profiles;
 mod programs;
@@ -31,8 +30,6 @@ mod games_tests;
 mod harness;
 #[cfg(test)]
 mod manage_profile_tests;
-#[cfg(test)]
-mod migration_tests;
 #[cfg(test)]
 mod overlapping_games_tests;
 #[cfg(test)]

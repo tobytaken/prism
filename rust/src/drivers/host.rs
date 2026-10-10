@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
@@ -131,7 +131,7 @@ pub fn command_exists(command: &str) -> bool {
     };
 
     env::split_paths(&paths).any(|path| {
-        let candidate = PathBuf::from(path).join(command);
+        let candidate = path.join(command);
         candidate.is_file()
     })
 }
