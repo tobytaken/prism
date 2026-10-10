@@ -27,6 +27,8 @@ cargo test --workspace --all-features
 cargo deny check licenses
 ```
 
+CI runs the screenshot tests in their own job, in a pinned container image (see [GUI](#gui)). The commands above run them on this host, where they usually match too.
+
 CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check and the `prismd` package smoke builds. The smoke builds also check that no release build enables the `simulated` feature.
 
 `cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`deny.toml`](./deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency and embedded font; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
@@ -57,7 +59,7 @@ The view tests in `crates/prism/tests` drive the real window headless with Slint
 
 The accessibility audit in `crates/prism/tests/accessibility.rs` walks the window in every simulated fixture state. It fails when an interactive element has no label, a spinbox or slider has no value or range, a switch or checkbox has no checked state, or a tuning control stays editable without tuning access. Each accessible action a widget declares needs a test that invokes it.
 
-The screenshot tests in `crates/prism/tests/screenshots.rs` draw the window with Slint's software renderer in Light and Dark and compare it against the reference PNGs in `crates/prism/tests/screenshots/`. CI runs them in one pinned container image. A mismatch saves the new screenshot under `target/tmp/screenshots/`. After an intended visual change, or a Slint bump, regenerate the references in that image with Docker and commit them:
+The screenshot tests in `crates/prism/tests/screenshots.rs` draw the window with Slint's software renderer in light and dark and compare it against the reference PNGs in `crates/prism/tests/screenshots/`. CI runs them in one pinned container image. A mismatch saves the new screenshot under `target/tmp/screenshots/`. After an intended visual change, or a Slint bump, regenerate the references in that image with Docker and commit them:
 
 ```bash
 bash scripts/update-screenshots.sh          # regenerate the references

@@ -8,17 +8,13 @@ use std::ops::ControlFlow;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
 
-/// Whether the state under audit lets the user tune.
+/// Whether the state under audit has tuning access.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tuning {
-    Editable,
-    /// Without tuning access every control that changes the GPU turns read-only in place.
-    ReadOnly,
+pub enum TuningAccess {
+    Granted,
+    /// Without tuning access every control turns read-only in place.
+    Denied,
 }
-
-/// Controls that stay editable without tuning access because they don't change the GPU. Add a
-/// control's label here only when it's editable in every state.
-const ALWAYS_EDITABLE: &[&str] = &[];
 
 /// Chart parts carry no role; the track's readout carries the value.
 const CHART_PARTS: &[&str] = &["Grid", "Series"];
@@ -97,7 +93,7 @@ pub fn elements(root: &impl ElementRoot) -> Vec<Element> {
 }
 
 /// What each element fails to declare, one line per problem.
-pub fn problems(elements: &[Element], tuning: Tuning) -> Vec<String> {
+pub fn problems(elements: &[Element], access: TuningAccess) -> Vec<String> {
     use AccessibleRole::*;
 
     let mut problems = Vec::new();
@@ -131,13 +127,7 @@ pub fn problems(elements: &[Element], tuning: Tuning) -> Vec<String> {
                 problem("no checked state");
             }
         }
-        if tuning == Tuning::ReadOnly
-            && is_editable(role)
-            && element.read_only != Some(true)
-            && !element
-                .label()
-                .is_some_and(|label| ALWAYS_EDITABLE.contains(&label))
-        {
+        if access == TuningAccess::Denied && is_editable(role) && element.read_only != Some(true) {
             problem("not read-only");
         }
     }
@@ -146,8 +136,8 @@ pub fn problems(elements: &[Element], tuning: Tuning) -> Vec<String> {
 
 /// Panics with every problem in the window, naming `state`.
 #[track_caller]
-pub fn assert_accessible(state: &str, root: &impl ElementRoot, tuning: Tuning) {
-    let problems = problems(&elements(root), tuning);
+pub fn assert_accessible(state: &str, root: &impl ElementRoot, access: TuningAccess) {
+    let problems = problems(&elements(root), access);
     assert!(
         problems.is_empty(),
         "{state}: {} accessibility problem(s):\n{}",

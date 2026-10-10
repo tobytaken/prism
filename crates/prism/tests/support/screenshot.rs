@@ -10,7 +10,7 @@ use slint::{PhysicalSize, Rgba8Pixel, SharedPixelBuffer};
 
 use super::{Backend, init_backend};
 
-/// Set to regenerate the reference PNGs instead of comparing against them.
+/// Set to `1` to regenerate the reference PNGs instead of comparing against them.
 const UPDATE: &str = "PRISM_UPDATE_SCREENSHOTS";
 
 /// How far a channel of a pixel may stray from the reference, out of 255, before it counts as
@@ -31,7 +31,7 @@ pub fn init_rendering_backend() {
 }
 
 /// Draws `window` at `size` (in pixels, at a scale factor of 1) and compares it with the reference
-/// `tests/screenshots/<name>.png`. With `PRISM_UPDATE_SCREENSHOTS` set, writes the reference
+/// `tests/screenshots/<name>.png`. With `PRISM_UPDATE_SCREENSHOTS=1`, writes the reference
 /// instead.
 #[track_caller]
 pub fn assert_screenshot(name: &str, window: &slint::Window, (width, height): (u32, u32)) {
@@ -44,7 +44,7 @@ pub fn assert_screenshot(name: &str, window: &slint::Window, (width, height): (u
     let actual = window.take_snapshot().expect("draw the window");
     let reference = reference_path(name);
 
-    if std::env::var_os(UPDATE).is_some() {
+    if std::env::var_os(UPDATE).is_some_and(|update| update == "1") {
         write_png(&reference, &actual);
         return;
     }

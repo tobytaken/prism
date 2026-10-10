@@ -11,14 +11,14 @@ use prism_gpu::simulated::SimulatedFixture;
 use slint::ComponentHandle;
 
 use support::Harness;
-use support::audit::{Element, Tuning, assert_accessible, elements, is_interactive, problems};
+use support::audit::{
+    Element, TuningAccess, assert_accessible, elements, is_interactive, problems,
+};
 
-/// Until the GUI connects to prismd (#120, step 7) no state has tuning access, so every control
-/// that changes the GPU must be read-only.
-const TUNING: Tuning = Tuning::ReadOnly;
-
+/// Audits the window in `state`. Until the GUI connects to prismd (#120, step 7) no state has
+/// tuning access, so every control must be read-only.
 fn audit(state: &str, harness: &Harness) {
-    assert_accessible(state, harness.app.window(), TUNING);
+    assert_accessible(state, harness.app.window(), TuningAccess::Denied);
 }
 
 /// The rows of the sidebar list labeled `list`, by label.
@@ -34,6 +34,8 @@ fn rows(harness: &Harness, list: &str) -> Vec<String> {
         .collect()
 }
 
+/// Add each prismd connection reason, tuning access granted and denied, and every menu, popover
+/// and dialog open as they land (#120's testing decisions).
 #[test]
 fn every_fixture_state_is_accessible() {
     for fixture in SimulatedFixture::ALL {
@@ -102,6 +104,13 @@ fn every_declared_accessible_action_has_a_test() {
     }
     declared.sort();
 
+    let tests = include_str!("accessibility.rs");
+    for (_, _, test) in ACTION_TESTS {
+        assert!(
+            tests.contains(&format!("#[test]\nfn {test}()")),
+            "ACTION_TESTS names {test}, which isn't a test here"
+        );
+    }
     let mut tested: Vec<_> = ACTION_TESTS
         .iter()
         .map(|(component, action, _)| (component.to_string(), action.to_string()))
@@ -167,14 +176,20 @@ fn the_window_buttons_default_actions_minimize_maximize_and_close() {
 }
 
 #[test]
-fn the_audit_sees_the_window_s_interactive_elements() {
+fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
     let harness = Harness::new(SimulatedFixture::TwoIdenticalGpus);
-    harness.tick();
+    // A series needs two readings.
+    harness.ticks(2);
 
     let interactive: Vec<_> = elements(harness.app.window())
         .into_iter()
         .filter(|element| is_interactive(element.role))
         .filter_map(|element| element.label)
+        .collect();
+    let chart_parts: Vec<_> = elements(harness.app.window())
+        .into_iter()
+        .filter(|element| ["Grid", "Series"].contains(&element.type_name.as_str()))
+        .map(|element| (element.type_name, element.role))
         .collect();
 
     assert_eq!(
@@ -188,6 +203,13 @@ fn the_audit_sees_the_window_s_interactive_elements() {
             "Games",
             "Drivers",
             "Settings",
+        ]
+    );
+    assert_eq!(
+        chart_parts,
+        [
+            ("Grid".to_owned(), AccessibleRole::None),
+            ("Series".to_owned(), AccessibleRole::None),
         ]
     );
 }
@@ -240,7 +262,7 @@ fn an_interactive_element_without_a_label_fails() {
     let blank = element("SectionRow", "Sidebar::games", AccessibleRole::ListItem, "");
 
     assert_eq!(
-        problems(&[unlabeled, blank], Tuning::Editable),
+        problems(&[unlabeled, blank], TuningAccess::Granted),
         [
             "WindowButton <no id> (Button): no label",
             "SectionRow Sidebar::games (ListItem): no label",
@@ -256,7 +278,10 @@ fn text_and_containers_need_no_label() {
         element("Sidebar", "", AccessibleRole::Groupbox, ""),
     ];
 
-    assert_eq!(problems(&elements, Tuning::Editable), Vec::<String>::new());
+    assert_eq!(
+        problems(&elements, TuningAccess::Granted),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
@@ -274,7 +299,7 @@ fn a_spinbox_or_slider_without_its_value_and_range_fails() {
     };
 
     assert_eq!(
-        problems(&[without_range, without_value], Tuning::Editable),
+        problems(&[without_range, without_value], TuningAccess::Granted),
         [
             "Stepper PowerTrack::limit (Spinbox \"Power limit\"): no minimum",
             "Stepper PowerTrack::limit (Spinbox \"Power limit\"): no step",
@@ -297,7 +322,7 @@ fn a_switch_or_checkbox_without_its_checked_state_fails() {
     };
 
     assert_eq!(
-        problems(&[not_checkable, without_checked], Tuning::Editable),
+        problems(&[not_checkable, without_checked], TuningAccess::Granted),
         [
             "Toggle FansTrack::curve (Switch \"Fan curve\"): not checkable",
             "Toggle FansTrack::curve (Checkbox \"Fan curve\"): no checked state",
@@ -314,10 +339,16 @@ fn a_control_that_stays_editable_without_tuning_access_fails() {
     let editable = [spinbox(), switch()];
     let locked = editable.clone().map(read_only);
 
-    assert_eq!(problems(&editable, Tuning::Editable), Vec::<String>::new());
-    assert_eq!(problems(&locked, Tuning::ReadOnly), Vec::<String>::new());
     assert_eq!(
-        problems(&editable, Tuning::ReadOnly),
+        problems(&editable, TuningAccess::Granted),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        problems(&locked, TuningAccess::Denied),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        problems(&editable, TuningAccess::Denied),
         [
             "Stepper PowerTrack::limit (Spinbox \"Power limit\"): not read-only",
             "Toggle FansTrack::curve (Switch \"Fan curve\"): not read-only",
@@ -337,7 +368,7 @@ fn a_chart_part_with_an_accessible_role_fails() {
     };
 
     assert_eq!(
-        problems(&[series, unrolled], Tuning::Editable),
+        problems(&[series, unrolled], TuningAccess::Granted),
         ["Series <no id> (Image): a chart part with a role; the track's readout carries the value"]
     );
 }
