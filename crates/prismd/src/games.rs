@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::DaemonCore;
 use super::session::SessionPeer;
 use super::steam_library::installed_steam_apps;
 use super::tuning_store::TuningDocument;
-use super::DaemonCore;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 use prism_protocol::{
     DaemonResponse, GameEntry, GameId, GamesState, SetGameProfileRequest, SteamApp,

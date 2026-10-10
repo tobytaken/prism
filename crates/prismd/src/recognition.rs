@@ -1,5 +1,5 @@
 //! Complete host process scans. An incomplete scan never means that a game ended.
-use super::programs::{candidate_executable, is_wine_loader, mapped_images, FileIdentity};
+use super::programs::{FileIdentity, candidate_executable, is_wine_loader, mapped_images};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -41,15 +41,17 @@ impl DaemonCore {
         let core = std::sync::Arc::downgrade(self);
         std::thread::Builder::new()
             .name("prismd-recognition".into())
-            .spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_millis(1500));
-                let Some(core) = core.upgrade() else {
-                    break;
-                };
-                if core.stopping.load(std::sync::atomic::Ordering::SeqCst) {
-                    break;
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    let Some(core) = core.upgrade() else {
+                        break;
+                    };
+                    if core.stopping.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                    core.scan_running_games();
                 }
-                core.scan_running_games();
             })?;
         Ok(())
     }

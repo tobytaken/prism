@@ -1,8 +1,8 @@
 //! Seam 1: each GPU's current profile and the per-GPU state revision that guards saves.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{tunable_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, tunable_gpu};
 
 const STALE: &str = "The GPU's values changed since you last looked. Review them and save again.";
 

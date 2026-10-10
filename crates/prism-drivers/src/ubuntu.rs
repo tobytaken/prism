@@ -75,9 +75,11 @@ mod tests {
     fn ubuntu_plan_recommends_install_when_driver_is_missing() {
         let plans = ubuntu_plans(&host(), &nvidia(None));
 
-        assert!(plans
-            .iter()
-            .any(|plan| plan.id == "ubuntu-install-recommended" && plan.recommended));
+        assert!(
+            plans
+                .iter()
+                .any(|plan| plan.id == "ubuntu-install-recommended" && plan.recommended)
+        );
     }
 
     fn host() -> DriverHostInfo {

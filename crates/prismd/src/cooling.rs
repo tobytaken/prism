@@ -10,11 +10,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
+use super::SessionPeer;
 use super::backend::DaemonBackend;
 use super::host::Clock;
 use super::profiles::verified_gpu;
-use super::tuning_store::{write_atomically, TuningStore};
-use super::SessionPeer;
+use super::tuning_store::{TuningStore, write_atomically};
 use prism_gpu::cooling::{
     ApplyCoolingRequest, CoolingApplication, CoolingConfiguration, CoolingControl, CoolingRecovery,
     CurveSuspension, FanConfiguration, FanOutcome, FanRequest, FanRestoration, FanSetting,
@@ -322,20 +322,19 @@ impl CoolingController {
         let mut application = self.apply_configuration(backend, request);
         let control = self.control(&uuid);
         application.revision = control.revision;
-        if custom_curve && application.outcome.status == TuningOutcomeStatus::Succeeded {
-            if let (CoolingApplicationSource::Manual(peer), Some(configuration)) =
+        if custom_curve
+            && application.outcome.status == TuningOutcomeStatus::Succeeded
+            && let (CoolingApplicationSource::Manual(peer), Some(configuration)) =
                 (source, control.applied)
-            {
-                if let Err(error) = self.tuning_store.update(|document| {
-                    document
-                        .user_mut(peer.uid, &peer.username)
-                        .remembered_curves
-                        .insert(uuid, configuration);
-                }) {
-                    // Hardware success stays success. Store health reports the persistence failure.
-                    eprintln!("Could not remember the manually applied fan curve: {error}");
-                }
-            }
+            && let Err(error) = self.tuning_store.update(|document| {
+                document
+                    .user_mut(peer.uid, &peer.username)
+                    .remembered_curves
+                    .insert(uuid, configuration);
+            })
+        {
+            // Hardware success stays success. Store health reports the persistence failure.
+            eprintln!("Could not remember the manually applied fan curve: {error}");
         }
         application
     }
@@ -350,7 +349,10 @@ impl CoolingController {
             .expected_revision
             .is_some_and(|revision| revision != self.control(&request.gpu_id).revision)
         {
-            return unattempted(&[], "Cooling changed since this draft was opened. Review the current cooling controls before applying again.");
+            return unattempted(
+                &[],
+                "Cooling changed since this draft was opened. Review the current cooling controls before applying again.",
+            );
         }
         let performance = backend.performance();
         let Ok(gpu) = verified_gpu(&performance, &request.gpu_id) else {
@@ -769,10 +771,10 @@ impl CoolingController {
         let targets = match resumption(gpu, &cooling, &interrupted) {
             Ok(targets) => targets,
             Err(NotResumable::Problems(problems)) => {
-                return self.not_resumed(backend, uuid, &fans, &problems.join(" "))
+                return self.not_resumed(backend, uuid, &fans, &problems.join(" "));
             }
             Err(NotResumable::ExternalControl(reason)) => {
-                return self.leave_to_external_control(uuid, &fans, &reason)
+                return self.leave_to_external_control(uuid, &fans, &reason);
             }
         };
         // Validation rejected a missing temperature.

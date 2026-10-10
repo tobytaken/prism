@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use prism_drivers::{request_host_reboot, DriverService};
+use prism_drivers::{DriverService, request_host_reboot};
 use prism_gpu::cooling::{ApplyCoolingRequest, CoolingConfiguration, FanConfiguration, FanSetting};
 use prism_gpu::fan_curve::{self, FanCurvePreview, PreviewFanCurveRequest};
 use prism_gpu::{
@@ -19,15 +19,15 @@ use prism_protocol::{
 
 use super::backend::DaemonBackend;
 use super::cooling::{
-    recover_abandoned_curves, CoolingApplicationSource, CoolingController, EVALUATION_INTERVAL_MS,
+    CoolingApplicationSource, CoolingController, EVALUATION_INTERVAL_MS, recover_abandoned_curves,
 };
 use super::host::{Clock, HostShutdownSignal, UserDirectory};
-use super::possibly_stale::{PossiblyStale, POSSIBLY_STALE_FILE_NAME};
+use super::possibly_stale::{POSSIBLY_STALE_FILE_NAME, PossiblyStale};
 use super::profiles::{capture_settings, new_profile_id, profile_name, uuid_of, verified_gpu};
 use super::queue::{GpuOperationQueues, PendingOperation};
 use super::tuning::TuningOrigin;
 use super::tuning::{apply_live_offsets, apply_profile, reset_live_offsets};
-use super::tuning_store::{TuningDocument, TuningStore, TUNING_STORE_FILE_NAME};
+use super::tuning_store::{TUNING_STORE_FILE_NAME, TuningDocument, TuningStore};
 use super::{DaemonSession, SessionPeer, SessionPolicy};
 
 /// Everything the daemon core needs from the host, so tests can substitute each part.
@@ -339,11 +339,11 @@ impl DaemonCore {
         uuid: &str,
         revision: String,
         keep: impl FnOnce(
-                &mut TuningDocument,
-                ProfileSettings,
-            ) -> Result<GpuTuningProfile, GpuCommandError>
-            + Send
-            + 'static,
+            &mut TuningDocument,
+            ProfileSettings,
+        ) -> Result<GpuTuningProfile, GpuCommandError>
+        + Send
+        + 'static,
     ) -> Result<GpuTuningProfile, GpuCommandError> {
         let store = Arc::clone(&self.tuning_store);
         let uuid = uuid.to_string();
@@ -457,19 +457,18 @@ impl DaemonCore {
         &self,
         gpu_id: String,
         write: impl FnOnce(&dyn DaemonBackend) -> (T, Vec<(ProfileSettingKey, ProfileSetting)>)
-            + Send
-            + 'static,
+        + Send
+        + 'static,
     ) -> T {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
         self.manual_write(&gpu_id.clone(), move |backend| {
             let (mut response, applied) = write(backend);
-            if !applied.is_empty() {
-                if let Some(uuid) = uuid_of(&backend.performance(), &gpu_id) {
-                    if !record_manual(&store, &stale, &uuid, &applied, |_| {}) {
-                        response.not_recorded();
-                    }
-                }
+            if !applied.is_empty()
+                && let Some(uuid) = uuid_of(&backend.performance(), &gpu_id)
+                && !record_manual(&store, &stale, &uuid, &applied, |_| {})
+            {
+                response.not_recorded();
             }
             response
         })
@@ -587,13 +586,13 @@ impl DaemonCore {
         if let Ok(true) = self
             .tuning_store
             .read(|document| document.restored_in(boot_id))
-        {
-            if let Err(error) = self
+            && let Err(error) = self
                 .tuning_store
                 .update(|document| document.restore_attempt = None)
-            {
-                eprintln!("failed to record a clean shutdown after restoring last applied tuning values: {error}");
-            }
+        {
+            eprintln!(
+                "failed to record a clean shutdown after restoring last applied tuning values: {error}"
+            );
         }
     }
 
@@ -878,15 +877,17 @@ impl DaemonCore {
         let core = Arc::downgrade(self);
         std::thread::Builder::new()
             .name("prismd-cooling".into())
-            .spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_millis(EVALUATION_INTERVAL_MS));
-                let Some(core) = core.upgrade() else {
-                    break;
-                };
-                if core.stopping.load(Ordering::SeqCst) {
-                    break;
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(EVALUATION_INTERVAL_MS));
+                    let Some(core) = core.upgrade() else {
+                        break;
+                    };
+                    if core.stopping.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    core.follow_curves();
                 }
-                core.follow_curves();
             })?;
         Ok(())
     }
@@ -1193,10 +1194,10 @@ impl ManualWriteResponse for ClockOffsetResponse {
 impl ManualWriteResponse for ProfileApplicationResponse {
     fn not_recorded(&mut self) {
         mark_not_recorded([&mut self.power, &mut self.graphics, &mut self.memory]);
-        if let Some(cooling) = &mut self.cooling {
-            if cooling.outcome.status == TuningOutcomeStatus::Succeeded {
-                cooling.outcome.error = Some(NOT_RECORDED.into());
-            }
+        if let Some(cooling) = &mut self.cooling
+            && cooling.outcome.status == TuningOutcomeStatus::Succeeded
+        {
+            cooling.outcome.error = Some(NOT_RECORDED.into());
         }
     }
 }

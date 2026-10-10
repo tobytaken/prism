@@ -1,8 +1,8 @@
 use prism_gpu::{
-    collect_inventory, collect_performance, reset_gpu_power_limit, set_gpu_clock_offsets,
-    set_gpu_fan_mode_auto, set_gpu_fan_speed, set_gpu_power_limit, GpuInventoryResponse,
-    GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
-    SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+    GpuInventoryResponse, GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest,
+    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest, collect_inventory,
+    collect_performance, reset_gpu_power_limit, set_gpu_clock_offsets, set_gpu_fan_mode_auto,
+    set_gpu_fan_speed, set_gpu_power_limit,
 };
 
 /// The GPUs the daemon reads and tunes. Calls arrive from several threads at once:

@@ -1,8 +1,8 @@
 //! Seam 1: applying cooling configurations and following shared fan curves in the daemon.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{cooled_gpu, FakeGpuBackend, Harness, Setter};
+use super::harness::{FakeGpuBackend, Harness, Setter, cooled_gpu};
 use prism_gpu::FanControlMode;
 
 /// The starter curve for a 20-100% range under a 90°C maximum operating temperature.
@@ -248,11 +248,13 @@ fn an_application_validates_fresh_readings_and_the_curve_before_any_write() {
     daemon.set_temperature("GPU-123", None);
     assert!(rejected(shared_curve(&STARTER)).contains("temperature is unavailable"));
     daemon.set_temperature("GPU-123", Some(71));
-    assert!(rejected(json!({
-        "arrangement": "perFan",
-        "fans": [{ "fanIndex": 2, "setting": { "mode": "automatic" } }],
-    }))
-    .contains("Fan 3 isn't reported"));
+    assert!(
+        rejected(json!({
+            "arrangement": "perFan",
+            "fans": [{ "fanIndex": 2, "setting": { "mode": "automatic" } }],
+        }))
+        .contains("Fan 3 isn't reported")
+    );
     let missing = daemon.send_json(json!({
         "type": "apply_cooling",
         "payload": { "gpuId": "GPU-999", "configuration": shared_curve(&STARTER) },
@@ -544,9 +546,11 @@ fn a_failed_fixed_write_reports_default_automatic_recovery_for_each_targeted_fan
             restoration(1, "restored", None)
         ])
     );
-    assert!(fans(&daemon)
-        .iter()
-        .all(|fan| fan.0 == Some(FanControlMode::Auto)));
+    assert!(
+        fans(&daemon)
+            .iter()
+            .all(|fan| fan.0 == Some(FanControlMode::Auto))
+    );
 }
 
 #[test]
@@ -626,9 +630,11 @@ fn a_restart_that_cant_validate_the_curve_returns_to_automatic_cooling_until_a_r
     daemon.start_daemon();
 
     let unavailable = "The GPU's temperature is unavailable, so a curve can't be followed. Refresh the GPU readings and try again.";
-    assert!(daemon.gpus.writes()[writes..]
-        .iter()
-        .all(|(_, setter)| *setter == Setter::FanModeAuto));
+    assert!(
+        daemon.gpus.writes()[writes..]
+            .iter()
+            .all(|(_, setter)| *setter == Setter::FanModeAuto)
+    );
     assert_eq!(fans(&daemon)[0].0, Some(FanControlMode::Auto));
     assert_eq!(fans(&daemon)[1].0, Some(FanControlMode::Auto));
     assert_eq!(
@@ -980,10 +986,12 @@ fn curve_output_changes_are_not_tuning_changes() {
 
     assert_eq!(speeds(&daemon), vec![Some(90), Some(90)]);
     assert_eq!(revision(&session), before);
-    assert!(session
-        .pushed_events()
-        .iter()
-        .all(|event| event["type"] != "tuningStateChanged"));
+    assert!(
+        session
+            .pushed_events()
+            .iter()
+            .all(|event| event["type"] != "tuningStateChanged")
+    );
     let startup = session.send_json(json!({ "type": "get_startup_state" }));
     assert_eq!(startup["payload"]["possiblyStale"], json!([]));
     assert_eq!(daemon.persistent_file("tuning-state.json"), manual_state);
@@ -1293,9 +1301,11 @@ fn mixed_modes_keep_success_failed_and_unattempted_fans_distinct() {
             restoration(2, "restored", None)
         ])
     );
-    assert!(fans(&daemon)
-        .iter()
-        .all(|fan| fan.0 == Some(FanControlMode::Auto)));
+    assert!(
+        fans(&daemon)
+            .iter()
+            .all(|fan| fan.0 == Some(FanControlMode::Auto))
+    );
     daemon.set_temperature("GPU-123", Some(85));
     daemon.run_curves_for(500);
     assert_eq!(control(&daemon)["requested"], json!([]));
@@ -1318,10 +1328,12 @@ fn another_sessions_cooling_change_rejects_a_stale_draft_without_writing() {
     let writes = daemon.gpus.writes();
     let stale = second.send_json(request);
     assert_eq!(stale["payload"]["outcome"]["status"], "unattempted");
-    assert!(stale["payload"]["outcome"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("Review"));
+    assert!(
+        stale["payload"]["outcome"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("Review")
+    );
     assert_eq!(daemon.gpus.writes(), writes);
     let applied_revision = control(&daemon)["revision"].clone();
     daemon.set_temperature("GPU-123", Some(80));
@@ -1429,9 +1441,11 @@ fn changing_a_fixed_fans_policy_yields_only_its_gpus_curve() {
     daemon.set_temperature("GPU-456", Some(80));
     daemon.run_curves_for(500);
     assert_eq!(control(&daemon)["suspension"]["kind"], "externalControl");
-    assert!(daemon.gpus.writes()[writes..]
-        .iter()
-        .all(|(uuid, _)| uuid == "GPU-456"));
+    assert!(
+        daemon.gpus.writes()[writes..]
+            .iter()
+            .all(|(uuid, _)| uuid == "GPU-456")
+    );
     assert_eq!(
         daemon.gpus.gpu("GPU-456").cooling.fans[0].current_speed_percent,
         Some(90)

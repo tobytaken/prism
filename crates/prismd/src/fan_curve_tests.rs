@@ -1,8 +1,8 @@
 //! Seam 1: previewing shared fan curves against the capabilities the GPU reports.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{cooled_gpu, FakeGpuBackend, Harness};
+use super::harness::{FakeGpuBackend, Harness, cooled_gpu};
 
 fn points(points: &[(i64, i64)]) -> Value {
     points

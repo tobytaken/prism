@@ -1,9 +1,9 @@
 //! Seam 1: automatic switching while one linked game runs on a GPU, driven by fixture processes
 //! and complete scans, through daemon session requests and pushed events.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{tunable_gpu_with_id, FakeGpuBackend, FakeSession, Harness, Setter};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, tunable_gpu_with_id};
 use super::tuning_store::TUNING_STORE_FILE_NAME;
 
 const LINKED: &str = "GPU-A";
@@ -367,8 +367,8 @@ fn writes_to(daemon: &Harness, gpu_id: &str) -> Vec<Setter> {
 }
 
 #[test]
-fn a_linked_game_applies_its_profile_to_linked_gpus_only_and_its_end_restores_the_exact_pre_game_values(
-) {
+fn a_linked_game_applies_its_profile_to_linked_gpus_only_and_its_end_restores_the_exact_pre_game_values()
+ {
     let (daemon, alice) = linked_dota();
     set_switching(&daemon, &alice, true);
     let manual = last_applied(&daemon);
@@ -534,9 +534,11 @@ fn recognition_unavailable_mid_game_holds_values_shows_the_uncertainty_and_resto
     let held = status(&alice);
     assert_eq!(held["condition"]["status"], "recognitionUnavailable");
     assert_eq!(held["gpus"], json!([active_on_linked()]));
-    assert!(alice
-        .pushed_events()
-        .contains(&json!({ "type": "automaticSwitchingChanged", "payload": held })));
+    assert!(
+        alice
+            .pushed_events()
+            .contains(&json!({ "type": "automaticSwitchingChanged", "payload": held }))
+    );
 
     daemon.end_process(300);
     daemon.scan();
@@ -590,22 +592,27 @@ fn status_is_pushed_live_and_another_users_game_shows_without_its_details() {
     daemon.scan();
     let active = json!({ "condition": { "status": "ready" }, "gpus": [active_on_linked()] });
     assert_eq!(status(&alice), active);
-    assert!(alice
-        .pushed_events()
-        .contains(&json!({ "type": "automaticSwitchingChanged", "payload": active })));
+    assert!(
+        alice
+            .pushed_events()
+            .contains(&json!({ "type": "automaticSwitchingChanged", "payload": active }))
+    );
     let other = json!({ "condition": { "status": "off" },
         "gpus": [{ "gpuId": LINKED, "state": { "status": "anotherUser" }, "application": successful_numeric_application() }] });
     assert_eq!(status(&bob), other);
-    assert!(bob
-        .pushed_events()
-        .contains(&json!({ "type": "automaticSwitchingChanged", "payload": other })));
+    assert!(
+        bob.pushed_events()
+            .contains(&json!({ "type": "automaticSwitchingChanged", "payload": other }))
+    );
 
     // An unchanged status isn't pushed again.
     daemon.scan();
-    assert!(!alice
-        .pushed_events()
-        .iter()
-        .any(|event| event["type"] == "automaticSwitchingChanged"));
+    assert!(
+        !alice
+            .pushed_events()
+            .iter()
+            .any(|event| event["type"] == "automaticSwitchingChanged")
+    );
 }
 
 #[test]
@@ -1155,10 +1162,12 @@ fn external_changes_are_checked_before_switching_profiles_but_only_for_controlle
         status(&alice)["gpus"][0]["state"]["changedOutsidePrism"],
         true
     );
-    assert!(alice
-        .pushed_events()
-        .iter()
-        .any(|event| event["payload"]["gpus"][0]["state"]["changedOutsidePrism"] == true));
+    assert!(
+        alice
+            .pushed_events()
+            .iter()
+            .any(|event| event["payload"]["gpus"][0]["state"]["changedOutsidePrism"] == true)
+    );
 }
 
 #[test]
@@ -1383,8 +1392,8 @@ fn a_faulted_game_curve_is_not_resurrected_by_restoration_after_a_daemon_restart
 }
 
 #[test]
-fn a_game_ending_while_the_daemon_is_down_restores_only_after_a_complete_scan_without_rerunning_startup(
-) {
+fn a_game_ending_while_the_daemon_is_down_restores_only_after_a_complete_scan_without_rerunning_startup()
+ {
     let (mut daemon, alice) = linked_dota();
     ok(
         alice.send_json(json!({ "type": "set_startup_profile", "payload": {
@@ -1579,13 +1588,15 @@ fn the_same_running_game_reconciles_reset_controls_when_its_gpu_returns() {
     let alice = daemon.user(1000, "alice");
     assert_eq!(values(&daemon).0, Some(330));
     assert_eq!(cooling(&alice)["applied"], fixed);
-    assert!(daemon
-        .gpus
-        .gpu(LINKED)
-        .cooling
-        .fans
-        .iter()
-        .all(|fan| fan.current_speed_percent == Some(55)));
+    assert!(
+        daemon
+            .gpus
+            .gpu(LINKED)
+            .cooling
+            .fans
+            .iter()
+            .all(|fan| fan.current_speed_percent == Some(55))
+    );
     daemon.end_process(123);
     daemon.scan();
     assert_eq!(values(&daemon), PRE_GAME);
@@ -1740,11 +1751,13 @@ fn every_session_receives_the_waiting_status_and_other_users_do_not_see_private_
     daemon.run_steam_game(123, 1000, 420, DOTA);
     daemon.scan();
     for session in [&alice, &second] {
-        assert!(session
-            .pushed_events()
-            .iter()
-            .any(|event| event["type"] == "automaticSwitchingChanged"
-                && event["payload"]["gpus"][0]["state"]["status"] == "waitingForEdits"));
+        assert!(
+            session
+                .pushed_events()
+                .iter()
+                .any(|event| event["type"] == "automaticSwitchingChanged"
+                    && event["payload"]["gpus"][0]["state"]["status"] == "waitingForEdits")
+        );
     }
     assert_eq!(
         status(&bob)["gpus"][0]["state"],

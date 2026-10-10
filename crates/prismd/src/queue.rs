@@ -72,28 +72,30 @@ fn spawn_worker(
     let (sender, operations) = mpsc::channel::<Operation>();
     thread::Builder::new()
         .name("prismd-gpu-queue".into())
-        .spawn(move || loop {
-            let operation = match operations.recv_timeout(idle_lifetime) {
-                Ok(operation) => operation,
-                Err(RecvTimeoutError::Disconnected) => return,
-                Err(RecvTimeoutError::Timeout) => {
-                    let Some(workers) = workers.upgrade() else {
-                        return;
-                    };
-                    // Holding the lock, no new operation can arrive between this check and removal.
-                    let mut workers = lock(&workers);
-                    match operations.try_recv() {
-                        Ok(operation) => operation,
-                        Err(TryRecvError::Empty) => {
-                            workers.remove(&gpu_id);
+        .spawn(move || {
+            loop {
+                let operation = match operations.recv_timeout(idle_lifetime) {
+                    Ok(operation) => operation,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                    Err(RecvTimeoutError::Timeout) => {
+                        let Some(workers) = workers.upgrade() else {
                             return;
+                        };
+                        // Holding the lock, no new operation can arrive between this check and removal.
+                        let mut workers = lock(&workers);
+                        match operations.try_recv() {
+                            Ok(operation) => operation,
+                            Err(TryRecvError::Empty) => {
+                                workers.remove(&gpu_id);
+                                return;
+                            }
+                            Err(TryRecvError::Disconnected) => return,
                         }
-                        Err(TryRecvError::Disconnected) => return,
                     }
-                }
-            };
-            // A panicking operation fails only its own request; the queue keeps serving.
-            let _ = panic::catch_unwind(AssertUnwindSafe(operation));
+                };
+                // A panicking operation fails only its own request; the queue keeps serving.
+                let _ = panic::catch_unwind(AssertUnwindSafe(operation));
+            }
         })
         .expect("failed to start a GPU operation queue worker");
     sender

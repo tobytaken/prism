@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::host::{PackageManager, SecureBootState};
 use crate::nvidia::gpu_supports_open_modules;
-use crate::{collect_driver_status, DriverAction, DriverJob, DriverJobStatus};
+use crate::{DriverAction, DriverJob, DriverJobStatus, collect_driver_status};
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 
 const LOG_TAIL_LIMIT: usize = 80;
@@ -228,10 +228,10 @@ impl DriverJobStore {
     }
 
     fn update_job(&self, job_id: &str, update: impl FnOnce(&mut DriverJob)) {
-        if let Ok(mut state) = self.state.lock() {
-            if let Some(job) = state.jobs.iter_mut().find(|job| job.id == job_id) {
-                update(job);
-            }
+        if let Ok(mut state) = self.state.lock()
+            && let Some(job) = state.jobs.iter_mut().find(|job| job.id == job_id)
+        {
+            update(job);
         }
         self.persist();
     }
@@ -523,7 +523,7 @@ fn unix_timestamp_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_deb_nvidia_package, validate_driver_command, DriverCommand, DriverJobStore};
+    use super::{DriverCommand, DriverJobStore, is_deb_nvidia_package, validate_driver_command};
     use crate::{DriverAction, DriverJobStatus};
 
     #[test]

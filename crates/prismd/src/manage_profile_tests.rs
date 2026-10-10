@@ -1,8 +1,8 @@
 //! Seam 1: managing the caller's GPU tuning profiles through daemon session requests.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{tunable_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, tunable_gpu};
 
 fn profile(id: &str, name: &str, gpu_id: &str) -> Value {
     json!({ "id": id, "name": name, "gpuId": gpu_id,
@@ -142,8 +142,8 @@ fn only_the_profiles_owner_can_rename_or_delete_it_and_empty_names_are_rejected(
 }
 
 #[test]
-fn deleting_a_non_current_profile_keeps_the_current_profile_and_absent_gpus_profiles_can_be_managed(
-) {
+fn deleting_a_non_current_profile_keeps_the_current_profile_and_absent_gpus_profiles_can_be_managed()
+ {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(json!([
@@ -222,8 +222,8 @@ fn deleting_the_current_profile_clears_its_reference_without_retuning_and_persis
 }
 
 #[test]
-fn renaming_trims_the_name_keeps_the_id_and_updates_the_current_profile_across_sessions_and_restarts(
-) {
+fn renaming_trims_the_name_keeps_the_id_and_updates_the_current_profile_across_sessions_and_restarts()
+ {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let alice = daemon.user(1000, "alice");
     let bob = daemon.user(1001, "bob");

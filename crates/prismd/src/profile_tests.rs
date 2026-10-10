@@ -1,9 +1,9 @@
 //! Seam 1: GPU tuning profiles owned by the daemon's tuning store, driven through fake sessions.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::harness::{
-    tunable_gpu, tunable_gpu_with_id, FakeGpuBackend, FakeSession, Harness, Setter,
+    FakeGpuBackend, FakeSession, Harness, Setter, tunable_gpu, tunable_gpu_with_id,
 };
 use super::tuning_store::TUNING_STORE_FILE_NAME;
 use prism_gpu::ControlSupport;
@@ -226,8 +226,8 @@ fn names_are_trimmed_and_unique_per_gpu_regardless_of_letter_case() {
 }
 
 #[test]
-fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_writes_nothing_until_requested(
-) {
+fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_writes_nothing_until_requested()
+ {
     let mut gpu = tunable_gpu();
     gpu.power.min_limit_watts = Some(100);
     gpu.power.max_limit_watts = Some(280);
@@ -482,8 +482,8 @@ fn cooling_profiles_capture_complete_curves_and_ticks_do_not_invalidate_saving()
 }
 
 #[test]
-fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omission_leaves_it_alone(
-) {
+fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omission_leaves_it_alone()
+ {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(
         vec![super::harness::cooled_gpu()],
     ));
@@ -646,10 +646,12 @@ fn cooling_application_keeps_working_with_an_unhealthy_store_and_reports_unrecor
         result["payload"]["cooling"]["outcome"]["status"],
         "succeeded"
     );
-    assert!(result["payload"]["cooling"]["outcome"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("not recorded"));
+    assert!(
+        result["payload"]["cooling"]["outcome"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("not recorded")
+    );
     assert_eq!(
         daemon.persistent_file(TUNING_STORE_FILE_NAME).as_deref(),
         Some(&preserved[..])

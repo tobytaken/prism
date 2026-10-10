@@ -1,8 +1,8 @@
 //! Remembered choices through caller-scoped daemon requests, across session and host lifetimes.
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::cooling::CoolingApplicationSource;
-use super::harness::{cooled_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, cooled_gpu};
 
 fn curve() -> Value {
     json!({"arrangement": "shared", "setting": {"mode": "curve", "points": [
@@ -35,8 +35,7 @@ fn remembered_curve_survives_modes_sessions_daemon_restart_and_reboot() {
         json!({"mode": "fixed", "speedPercent": 55}),
     ] {
         assert_eq!(
-            apply(&alice, json!({"arrangement": "shared", "setting": setting}))["outcome"]
-                ["status"],
+            apply(&alice, json!({"arrangement": "shared", "setting": setting}))["outcome"]["status"],
             "succeeded"
         );
         assert_eq!(remembered(&alice), curve());

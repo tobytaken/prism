@@ -19,7 +19,7 @@ use prism_gpu::{
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 use prismd::DaemonBackend;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DEADLINE: Duration = Duration::from_secs(10);
 

@@ -1,7 +1,7 @@
 //! Seam 1: manual programs through caller sessions, fixture processes and fake GPUs.
-use super::harness::{tunable_gpu_with_id, FakeGpuBackend, FakeSession, Harness};
-use serde_json::{json, Value};
-use std::os::unix::fs::{symlink, MetadataExt};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, tunable_gpu_with_id};
+use serde_json::{Value, json};
+use std::os::unix::fs::{MetadataExt, symlink};
 
 fn ok(session: &FakeSession, request: Value) -> Value {
     let response = session.send_json(request);
@@ -257,9 +257,11 @@ fn running_program_picker_scopes_ownership_labels_wine_and_ancestry_and_demotes_
         .iter()
         .position(|entry| entry["helper"] == true)
         .unwrap();
-    assert!(entries[first_helper..]
-        .iter()
-        .all(|entry| entry["helper"] == true));
+    assert!(
+        entries[first_helper..]
+            .iter()
+            .all(|entry| entry["helper"] == true)
+    );
 }
 
 #[test]

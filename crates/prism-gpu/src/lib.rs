@@ -8,9 +8,9 @@ use crate::cooling::CoolingControl;
 use crate::fan_curve::FanCurveSupport;
 
 use nvidia::{
-    collect_nvidia_performance, reset_nvidia_clock_offsets, reset_nvidia_power_limit,
-    set_nvidia_clock_offsets, set_nvidia_fan_auto, set_nvidia_fan_speed, set_nvidia_power_limit,
-    NvmlNvidiaProvider,
+    NvmlNvidiaProvider, collect_nvidia_performance, reset_nvidia_clock_offsets,
+    reset_nvidia_power_limit, set_nvidia_clock_offsets, set_nvidia_fan_auto, set_nvidia_fan_speed,
+    set_nvidia_power_limit,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

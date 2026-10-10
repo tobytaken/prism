@@ -109,10 +109,10 @@ pub struct DaemonSession {
 
 impl DaemonSession {
     pub fn set_edit_holds(&self, gpu_ids: Vec<String>) {
-        if let Some(subscribers) = self.subscribers.upgrade() {
-            if let Some((_, _, holds)) = subscribers.0.lock().unwrap().senders.get_mut(&self.id) {
-                *holds = gpu_ids.into_iter().collect();
-            }
+        if let Some(subscribers) = self.subscribers.upgrade()
+            && let Some((_, _, holds)) = subscribers.0.lock().unwrap().senders.get_mut(&self.id)
+        {
+            *holds = gpu_ids.into_iter().collect();
         }
     }
 

@@ -211,7 +211,7 @@ fn connect_and_receive(
             return Err(RequestError::new(
                 GpuCommandErrorCode::Internal,
                 "invalid daemon session opening response",
-            ))
+            ));
         }
     };
     stream.set_read_timeout(None).map_err(super::map_io_error)?;

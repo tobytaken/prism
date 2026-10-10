@@ -1,7 +1,7 @@
 //! Session messages use a big-endian u32 length followed by UTF-8 JSON.
 use std::io::{self, Read, Write};
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 

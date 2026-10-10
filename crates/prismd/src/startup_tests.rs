@@ -1,8 +1,8 @@
 //! Seam 1: host-wide startup choices and outcomes through identified daemon sessions.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{tunable_gpu, FakeGpuBackend, FakeSession, Harness};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, tunable_gpu};
 
 fn startup_gpu() -> prism_gpu::GpuPerformanceDevice {
     let mut gpu = tunable_gpu();
@@ -156,21 +156,25 @@ fn startup_validates_every_setting_without_writing_or_clamping_and_reports_why()
         let state = completed_startup(&daemon);
         let outcome = &state["outcomes"][0];
         assert_eq!(outcome["status"], "notAttempted");
-        assert!(outcome["reason"]
-            .as_str()
-            .unwrap()
-            .contains(if unsupported {
-                "unsupported"
-            } else {
-                "outside"
-            }));
+        assert!(
+            outcome["reason"]
+                .as_str()
+                .unwrap()
+                .contains(if unsupported {
+                    "unsupported"
+                } else {
+                    "outside"
+                })
+        );
         assert_eq!(outcome["application"]["power"]["status"], "unattempted");
         // Boot outcomes are host-wide; the profile's saved values stay private.
         let bob = daemon.user(1001, "bob");
         let shared = startup(&bob);
-        assert!(shared["outcomes"][0]["application"]
-            .get("corrections")
-            .is_none());
+        assert!(
+            shared["outcomes"][0]["application"]
+                .get("corrections")
+                .is_none()
+        );
         assert!(!shared["outcomes"].to_string().contains("requested 100"));
         drop(bob);
         assert!(daemon.gpus.writes().is_empty());
@@ -297,10 +301,12 @@ fn a_gpu_arriving_after_the_deadline_is_reported_absent_and_never_applied_later_
     reading.release();
     let state = completed_startup(&daemon);
     assert_eq!(state["outcomes"][0]["status"], "notAttempted");
-    assert!(state["outcomes"][0]["reason"]
-        .as_str()
-        .unwrap()
-        .contains("absent at startup"));
+    assert!(
+        state["outcomes"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("absent at startup")
+    );
     daemon.restart();
     assert_eq!(completed_startup(&daemon), state);
     assert!(daemon.gpus.writes().is_empty());
@@ -327,9 +333,11 @@ fn readiness_waits_for_gpu_arrival_and_the_last_startup_write_while_reads_are_se
         core.wait_for_startup();
         ready.send(()).unwrap();
     });
-    assert!(notification
-        .recv_timeout(std::time::Duration::from_millis(20))
-        .is_err());
+    assert!(
+        notification
+            .recv_timeout(std::time::Duration::from_millis(20))
+            .is_err()
+    );
     assert!(daemon.performance().gpus.is_empty());
     let write = daemon.gpus.block("GPU-123", Setter::PowerLimit);
     daemon.gpus.arrive(startup_gpu());
@@ -365,10 +373,12 @@ fn an_interrupted_startup_reports_the_interruption_and_never_retries_this_boot()
     daemon.restart();
     let state = completed_startup(&daemon);
     assert_eq!(state["outcomes"][0]["status"], "notAttempted");
-    assert!(state["outcomes"][0]["reason"]
-        .as_str()
-        .unwrap()
-        .contains("interrupted"));
+    assert!(
+        state["outcomes"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("interrupted")
+    );
     daemon.gpus.arrive(startup_gpu());
     daemon.restart();
     assert_eq!(completed_startup(&daemon), state);
@@ -501,10 +511,12 @@ fn unreadable_boot_state_is_preserved_and_prevents_startup_writes_while_manual_t
         let alice = daemon.user(1000, "alice");
         let state = alice.send_json(json!({ "type": "get_startup_state" }));
         assert_eq!(state["type"], "error");
-        assert!(state["payload"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("boot state"));
+        assert!(
+            state["payload"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("boot state")
+        );
         assert_eq!(
             std::fs::read(daemon.boot_path("startup-state.json")).unwrap(),
             bytes

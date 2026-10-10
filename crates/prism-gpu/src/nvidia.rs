@@ -8,7 +8,7 @@ use nvml_wrapper::enums::device::{DeviceArchitecture, FanControlPolicy, SampleVa
 use nvml_wrapper::error::NvmlError;
 use nvml_wrapper::struct_wrappers::device::MemoryInfo as NvmlMemoryInfo;
 use nvml_wrapper::structs::device::FieldId;
-use nvml_wrapper::{cuda_driver_version_major, cuda_driver_version_minor, Device, Nvml};
+use nvml_wrapper::{Device, Nvml, cuda_driver_version_major, cuda_driver_version_minor};
 use once_cell::sync::OnceCell;
 use thiserror::Error;
 
@@ -990,9 +990,9 @@ fn milliwatts_to_watts(milliwatts: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
+        ClockOffsetSnapshot, NvidiaSnapshot, TelemetryQueryResults, ThermalLimitReadings,
         build_telemetry_info, bytes_to_mib, format_cuda_driver_version, map_mutation_error,
         map_snapshot, max_operating_temperature, milliwatts_to_watts, parse_fallback_index,
-        ClockOffsetSnapshot, NvidiaSnapshot, TelemetryQueryResults, ThermalLimitReadings,
     };
     use crate::{
         ComputeApi, ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuVendor,
@@ -1199,9 +1199,11 @@ mod tests {
             &mut warnings,
         );
         assert_eq!(celsius, None);
-        assert!(reason
-            .unwrap()
-            .contains("doesn't report a maximum operating temperature"));
+        assert!(
+            reason
+                .unwrap()
+                .contains("doesn't report a maximum operating temperature")
+        );
         assert!(warnings.is_empty());
 
         let (celsius, reason) = max_operating_temperature(

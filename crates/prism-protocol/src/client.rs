@@ -14,7 +14,7 @@ use crate::{
     ProfileIdRequest, RenameProfileRequest, SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
     SetStartupBehaviorRequest, SetStartupProfileRequest, StartupGpuRequest, StartupState,
 };
-use crate::{GpuDaemonStatus, DEFAULT_SOCKET_PATH};
+use crate::{DEFAULT_SOCKET_PATH, GpuDaemonStatus};
 use prism_drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
 use prism_gpu::cooling::{ApplyCoolingRequest, CoolingApplication};
 use prism_gpu::fan_curve::{FanCurvePreview, PreviewFanCurveRequest};
@@ -24,7 +24,7 @@ use prism_gpu::{
 };
 
 mod session;
-pub use session::{start_session, SessionNotification};
+pub use session::{SessionNotification, start_session};
 
 /// Why a request to prismd failed: prismd didn't answer, or it answered with an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -394,10 +394,9 @@ fn send_request(request: DaemonRequest) -> Result<DaemonResponse, RequestError> 
             | DaemonRequest::GetDriverJob(_)
             | DaemonRequest::CancelDriverJob(_)
             | DaemonRequest::RequestHostReboot
-    ) {
-        if let Some(session) = session::SESSION.get() {
-            return session.request(request);
-        }
+    ) && let Some(session) = session::SESSION.get()
+    {
+        return session.request(request);
     }
     let mut stream = UnixStream::connect(socket_path()).map_err(map_io_error)?;
     stream
@@ -514,7 +513,7 @@ mod tests {
 
     use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 
-    use super::{map_io_error, RequestError, RequestErrorCode};
+    use super::{RequestError, RequestErrorCode, map_io_error};
 
     #[test]
     fn a_socket_nobody_answers_means_the_daemon_is_unavailable() {

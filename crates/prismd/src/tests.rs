@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::harness::{
-    observed_gpu, tunable_gpu, tunable_gpu_with_id, FakeGpuBackend, Harness, Setter,
+    FakeGpuBackend, Harness, Setter, observed_gpu, tunable_gpu, tunable_gpu_with_id,
 };
 use super::tuning_store::{STAGED_FILE_SUFFIX, TUNING_STORE_FILE_NAME};
 use prism_gpu::{ControlSupport, GpuCommandErrorCode, GpuTargetRequest, SetGpuPowerLimitRequest};
@@ -232,9 +232,11 @@ fn a_non_admin_socket_peer_is_rejected_identically_for_sessions_and_one_shot_req
     };
     assert_eq!(actual, expected);
     assert_eq!(actual.code, GpuCommandErrorCode::NoPermission);
-    assert!(read_frame::<SessionMessage>(&mut session)
-        .unwrap()
-        .is_none());
+    assert!(
+        read_frame::<SessionMessage>(&mut session)
+            .unwrap()
+            .is_none()
+    );
     serving.join().unwrap().unwrap();
 }
 
@@ -251,10 +253,12 @@ fn profile_validation_blocks_all_writes_when_an_included_setting_is_unsupported(
     })));
     assert_eq!(result["payload"]["power"]["status"], "unattempted");
     assert_eq!(result["payload"]["memory"]["status"], "unattempted");
-    assert!(result["payload"]["memory"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("Memory clock offset is unsupported"));
+    assert!(
+        result["payload"]["memory"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("Memory clock offset is unsupported")
+    );
     assert_eq!(daemon.performance().gpus[0].power.current_limit_watts, None);
     assert!(daemon.gpus.writes().is_empty());
 }
@@ -322,10 +326,12 @@ fn profile_application_is_blocked_while_its_gpu_is_absent_and_works_once_it_retu
     daemon.gpus.depart("GPU-123");
     let result = daemon.send_json(request.clone());
     assert_eq!(result["payload"]["power"]["status"], "unattempted");
-    assert!(result["payload"]["power"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("The owning GPU is absent"));
+    assert!(
+        result["payload"]["power"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("The owning GPU is absent")
+    );
 
     daemon.gpus.arrive(tunable_gpu());
     let result = daemon.send_json(request);
@@ -465,10 +471,12 @@ fn profile_application_reports_partial_failure_and_validates_retries() {
     }));
     let rejected = daemon.send_json(retry.clone());
     assert_eq!(rejected["payload"]["graphics"]["status"], "unattempted");
-    assert!(rejected["payload"]["memory"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("-200 to 50"));
+    assert!(
+        rejected["payload"]["memory"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("-200 to 50")
+    );
 
     daemon.gpus.update("GPU-123", |gpu| {
         gpu.clocks.memory.max_offset_mhz = Some(200)

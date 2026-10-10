@@ -1,9 +1,9 @@
 //! Seam 1: restoring last applied tuning values at boot, its unclean-shutdown guard, and
 //! manual writes whose last applied values could not be recorded.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{tunable_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, tunable_gpu};
 use super::possibly_stale::POSSIBLY_STALE_FILE_NAME;
 use super::tuning_store::TUNING_STORE_FILE_NAME;
 

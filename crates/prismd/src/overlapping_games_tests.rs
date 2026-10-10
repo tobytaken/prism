@@ -1,9 +1,9 @@
 //! Seam 1: automatic switching while more than one linked game runs on a GPU, including games of
 //! different users sharing it, driven by fixture processes and complete scans.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{tunable_gpu_with_id, FakeGpuBackend, FakeSession, Harness, Setter};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, tunable_gpu_with_id};
 use super::tuning_store::TUNING_STORE_FILE_NAME;
 
 const GPU: &str = "GPU-A";
@@ -100,12 +100,14 @@ fn gpu_status(session: &FakeSession) -> Value {
     let response = session.send_json(json!({ "type": "get_automatic_switching_status" }));
     assert_eq!(response["type"], "automatic_switching_status", "{response}");
     // These scenarios assert winner selection; detailed operation outcomes have their own tests.
-    json!(response["payload"]["gpus"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|gpu| json!({ "gpuId": gpu["gpuId"], "state": gpu["state"] }))
-        .collect::<Vec<_>>())
+    json!(
+        response["payload"]["gpus"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|gpu| json!({ "gpuId": gpu["gpuId"], "state": gpu["state"] }))
+            .collect::<Vec<_>>()
+    )
 }
 
 fn active(app_id: u32, game_name: &str, profile_id: &str, profile_name: &str) -> Value {
@@ -610,8 +612,10 @@ fn overlapping_games_capture_cooling_only_when_first_written_and_restore_it_when
     daemon.end_process(100);
     daemon.scan();
     assert_eq!(cooling(&alice), restored, "cooling was already restored");
-    assert!(writes(&daemon)[before.len()..]
-        .iter()
-        .all(|setter| { !matches!(setter, Setter::FanSpeed | Setter::FanModeAuto) }));
+    assert!(
+        writes(&daemon)[before.len()..]
+            .iter()
+            .all(|setter| { !matches!(setter, Setter::FanSpeed | Setter::FanModeAuto) })
+    );
     assert_restored(&daemon, &alice, &manual);
 }

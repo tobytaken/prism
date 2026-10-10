@@ -1,7 +1,7 @@
 //! Profile validation uses the same cooling rules as live application. Corrections are proposals,
 //! never application-time clamping, and must still form a valid complete configuration.
-use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
 use prism_gpu::GpuPerformanceDevice;
+use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
 use prism_protocol::{CoolingSettingKey, ProfileRangeCorrection};
 
 pub(super) fn problems(

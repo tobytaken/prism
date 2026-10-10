@@ -1,6 +1,6 @@
 //! Seam 1: recognition through session responses and events, using only fixture processes.
 use super::harness::{FakeGpuBackend, FakeSession, Harness};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn process(daemon: &Harness, pid: u32, uid: u32, start: u64, env: &str, cmd: &str) {
     daemon.write_host_file(&format!("/proc/{pid}/environ"), env);

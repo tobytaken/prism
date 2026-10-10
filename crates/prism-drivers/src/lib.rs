@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::fedora::fedora_plans;
-use crate::host::{collect_host_info, DriverHostInfo, PackageManager};
+use crate::host::{DriverHostInfo, PackageManager, collect_host_info};
 use crate::job::DriverJobStore;
-use crate::nvidia::{collect_nvidia_status, NvidiaDriverStatus};
+use crate::nvidia::{NvidiaDriverStatus, collect_nvidia_status};
 use crate::ubuntu::ubuntu_plans;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 
@@ -258,7 +258,7 @@ fn unsupported_manual_steps(host: &DriverHostInfo) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_driver_status, DriverJobStatus};
+    use super::{DriverJobStatus, collect_driver_status};
 
     #[test]
     fn active_statuses_are_queued_or_running_only() {

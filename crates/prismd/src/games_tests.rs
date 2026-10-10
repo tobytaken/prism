@@ -1,9 +1,9 @@
 //! Seam 1: the caller's installed Steam apps and game associations, through daemon session
 //! requests, with Steam roots in a fake host root.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::harness::{tunable_gpu, tunable_gpu_with_id, FakeGpuBackend, FakeSession, Harness};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, tunable_gpu, tunable_gpu_with_id};
 
 const VALVE_ROOT: &str = "/home/alice/.local/share/Steam";
 const DEBIAN_ROOT: &str = "/home/alice/.steam/debian-installation";
@@ -93,8 +93,8 @@ fn steam_game(app_id: u32, name: &str, installed: bool, profiles: Value) -> Valu
 }
 
 #[test]
-fn installed_steam_apps_are_listed_from_every_library_of_the_callers_package_flatpak_and_snap_steam(
-) {
+fn installed_steam_apps_are_listed_from_every_library_of_the_callers_package_flatpak_and_snap_steam()
+ {
     let daemon = Harness::start(FakeGpuBackend::default());
     library_folders(
         &daemon,

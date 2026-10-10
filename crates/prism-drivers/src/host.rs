@@ -174,7 +174,7 @@ fn unquote_os_release_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_secure_boot, parse_os_release, SecureBootState};
+    use super::{SecureBootState, detect_secure_boot, parse_os_release};
     use std::fs;
 
     #[test]

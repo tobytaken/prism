@@ -167,7 +167,8 @@ pub(super) fn apply_with_baseline(
         before.cooling = capture_cooling_baseline(gpu, cooling.map(|c| c.control(&request.gpu_id)));
         if before.cooling.is_none() {
             return blocked(
-                "Cooling: the configuration before this attempt can't be read. Nothing was changed.");
+                "Cooling: the configuration before this attempt can't be read. Nothing was changed.",
+            );
         }
     }
     let expected_fans: std::collections::BTreeSet<_> =
@@ -330,10 +331,10 @@ pub(super) fn apply_with_baseline(
             }
             rollback.cooling = Some(result);
         }
-        if let Some(controller) = cooling {
-            if let Some(suspension) = controller.control(&gpu_id).suspension {
-                rollback.cooling_restoration = suspension.restoration;
-            }
+        if let Some(controller) = cooling
+            && let Some(suspension) = controller.control(&gpu_id).suspension
+        {
+            rollback.cooling_restoration = suspension.restoration;
         }
         let results: Vec<_> = [&rollback.power, &rollback.graphics, &rollback.memory]
             .into_iter()

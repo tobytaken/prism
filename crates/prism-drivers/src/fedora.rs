@@ -1,5 +1,5 @@
 use crate::host::{DriverHostInfo, SecureBootState};
-use crate::nvidia::{gpu_supports_open_modules, NvidiaDriverStatus};
+use crate::nvidia::{NvidiaDriverStatus, gpu_supports_open_modules};
 use crate::{DriverAction, DriverPlan};
 
 pub fn fedora_plans(host: &DriverHostInfo, nvidia: &NvidiaDriverStatus) -> Vec<DriverPlan> {
@@ -109,10 +109,12 @@ mod tests {
 
         let plans = fedora_plans(&host(), &status);
 
-        assert!(plans[0]
-            .blockers
-            .iter()
-            .any(|blocker| blocker.contains("RPM Fusion")));
+        assert!(
+            plans[0]
+                .blockers
+                .iter()
+                .any(|blocker| blocker.contains("RPM Fusion"))
+        );
     }
 
     fn host() -> DriverHostInfo {

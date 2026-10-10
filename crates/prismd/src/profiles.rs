@@ -122,7 +122,7 @@ pub(super) fn capture_settings(
                     "{}: support is unknown. {}",
                     reading.label,
                     reading.error.unwrap_or(refresh)
-                )))
+                )));
             }
             ControlSupport::Supported => {}
         }
@@ -433,8 +433,10 @@ impl TuningDocument {
                 }
             };
             if !valid {
-                return Err(GpuCommandError::new(GpuCommandErrorCode::InvalidArgument,
-                    "The saved profile changed while its corrections were being reviewed. Load it again to review current corrections. No GPU settings were changed."));
+                return Err(GpuCommandError::new(
+                    GpuCommandErrorCode::InvalidArgument,
+                    "The saved profile changed while its corrections were being reviewed. Load it again to review current corrections. No GPU settings were changed.",
+                ));
             }
         }
         profile.settings = corrected;
@@ -485,14 +487,16 @@ pub(super) fn new_profile_id() -> Result<String, GpuCommandError> {
 pub(super) fn capture_cooling(
     gpu: &GpuPerformanceDevice,
 ) -> Result<Option<prism_gpu::cooling::CoolingConfiguration>, GpuCommandError> {
-    use prism_gpu::cooling::{CoolingConfiguration, FanConfiguration, FanSetting};
     use prism_gpu::FanControlMode;
+    use prism_gpu::cooling::{CoolingConfiguration, FanConfiguration, FanSetting};
     if !gpu.cooling.is_supported {
         return Ok(None);
     }
     let unknown = || {
-        GpuCommandError::new(GpuCommandErrorCode::InvalidArgument,
-        "Cooling: the current configured policy is unavailable. Apply cooling successfully before saving.")
+        GpuCommandError::new(
+            GpuCommandErrorCode::InvalidArgument,
+            "Cooling: the current configured policy is unavailable. Apply cooling successfully before saving.",
+        )
     };
     if gpu.cooling.fans.is_empty() {
         return Err(unknown());

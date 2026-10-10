@@ -3,8 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::fan_curve::FanCurvePoint;
 use crate::TuningOutcome;
+use crate::fan_curve::FanCurvePoint;
 
 /// One fan's control mode: the GPU's default automatic cooling, a fixed requested speed, or a
 /// fan curve that the daemon follows as the GPU's temperature changes.

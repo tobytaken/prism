@@ -59,15 +59,15 @@ impl TuningDocument {
 }
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::automatic_tuning::apply_with_baseline;
 use super::backend::DaemonBackend;
 use super::boot_state::STARTUP_IN_PROGRESS;
 use super::cooling::CoolingController;
-use super::daemon_core::{tuning_state, DaemonCore};
+use super::daemon_core::{DaemonCore, tuning_state};
 use super::host::Clock;
 use super::profiles::verified_gpu;
 use super::switching::Switching;
@@ -212,16 +212,18 @@ impl DaemonCore {
         };
         let mut prepared = document.clone();
         prepare(&mut prepared);
-        if prepared != document {
-            if let Err(error) = self.tuning_store.update(prepare) {
-                for mut outcome in outcomes {
-                    if targets.contains_key(&outcome.gpu_id) {
-                        outcome.reason = Some(format!("Startup was skipped because Prism's tuning store couldn't be written: {error}"));
-                        self.boot_state.record(outcome)?;
-                    }
+        if prepared != document
+            && let Err(error) = self.tuning_store.update(prepare)
+        {
+            for mut outcome in outcomes {
+                if targets.contains_key(&outcome.gpu_id) {
+                    outcome.reason = Some(format!(
+                        "Startup was skipped because Prism's tuning store couldn't be written: {error}"
+                    ));
+                    self.boot_state.record(outcome)?;
                 }
-                return Err(error.into());
             }
+            return Err(error.into());
         }
         let deadline = self
             .dependencies

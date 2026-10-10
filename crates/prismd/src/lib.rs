@@ -69,16 +69,16 @@ use users::{get_group_by_gid, get_group_by_name, get_user_by_uid, get_user_group
 
 use prism_drivers::DriverService;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
-use prism_protocol::framing::{read_frame, write_frame, MAX_FRAME_BYTES};
+use prism_protocol::framing::{MAX_FRAME_BYTES, read_frame, write_frame};
 use prism_protocol::{
-    DaemonRequest, DaemonResponse, SessionMessage, SessionRequest, DEFAULT_SOCKET_PATH,
+    DEFAULT_SOCKET_PATH, DaemonRequest, DaemonResponse, SessionMessage, SessionRequest,
 };
 
 pub use backend::{DaemonBackend, RealDaemonBackend};
 pub use daemon_core::{CoreDependencies, DaemonCore};
 pub use host::{
-    read_boot_id, Clock, HostShutdownSignal, SystemClock, SystemUserDirectory,
-    SystemdShutdownSignal, UserDirectory,
+    Clock, HostShutdownSignal, SystemClock, SystemUserDirectory, SystemdShutdownSignal,
+    UserDirectory, read_boot_id,
 };
 pub use session::{DaemonSession, SessionPeer, SessionPolicy};
 

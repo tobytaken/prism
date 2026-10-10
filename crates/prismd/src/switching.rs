@@ -12,15 +12,15 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use super::automatic_tuning::apply as apply_automatic_profile;
 use super::automatic_tuning::ProfileApplicationOutcomes;
+use super::automatic_tuning::apply as apply_automatic_profile;
 use super::backend::DaemonBackend;
 use super::cooling::CoolingController;
 use super::host::{Clock, UserDirectory};
 use super::profiles::{capture_cooling, reading, verified_gpu};
 use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
-use super::tuning_store::{write_atomically, TuningDocument, TuningStore};
+use super::tuning_store::{TuningDocument, TuningStore, write_atomically};
 use prism_gpu::cooling::{CoolingConfiguration, SuspensionKind};
 use prism_gpu::{GpuPerformanceDevice, TuningOutcomeStatus};
 use prism_protocol::{
@@ -505,19 +505,18 @@ impl Switching {
                 );
                 return;
             }
-            if let Some(active) = activation.as_ref().filter(|_| !retry && !returning) {
-                if active.expected.iter().any(|(key, expected)| {
+            if let Some(active) = activation.as_ref().filter(|_| !retry && !returning)
+                && active.expected.iter().any(|(key, expected)| {
                     expected.is_none() || reading(gpu, *key).current.is_none()
-                }) {
-                    let mut active = active.clone();
-                    active.driving = wanted;
-                    active.failure = Some(
-                        "Current tuning values could not be verified, so nothing was changed."
-                            .into(),
-                    );
-                    self.record(gpu_id, Some(active));
-                    return;
-                }
+                })
+            {
+                let mut active = active.clone();
+                active.driving = wanted;
+                active.failure = Some(
+                    "Current tuning values could not be verified, so nothing was changed.".into(),
+                );
+                self.record(gpu_id, Some(active));
+                return;
             }
         }
         match (wanted, activation) {
@@ -768,10 +767,10 @@ impl Switching {
             ..Activation::default()
         };
         for (key, outcome) in application.numeric() {
-            if outcome.status == TuningOutcomeStatus::Succeeded {
-                if let Some(ProfileSetting::Value { value }) = before.get(key) {
-                    activation.baseline.insert(key, value);
-                }
+            if outcome.status == TuningOutcomeStatus::Succeeded
+                && let Some(ProfileSetting::Value { value }) = before.get(key)
+            {
+                activation.baseline.insert(key, value);
             }
         }
         if application
@@ -914,13 +913,12 @@ impl Switching {
                 .store
                 .read(|d| d.automatic_failures.get(gpu_id) != Some(&self.state.boot_id))
                 .unwrap_or(false)
-        {
-            if let Err(error) = self.store.update(|d| {
+            && let Err(error) = self.store.update(|d| {
                 d.automatic_failures
                     .insert(gpu_id.into(), self.state.boot_id.clone());
-            }) {
-                eprintln!("Could not record the automatic failure for next startup: {error}");
-            }
+            })
+        {
+            eprintln!("Could not record the automatic failure for next startup: {error}");
         }
         if let Err(error) = self.state.set(gpu_id, activation) {
             eprintln!("failed to record automatic switching state for {gpu_id}: {error}");
@@ -1081,8 +1079,10 @@ fn write_settings(
     // A restart or game exit is not an explicit cooling retry. In particular, restoring a
     // healthy pre-game curve must not replace the automatic fallback of a faulted game curve.
     if !retry && settings.cooling.is_some() && cooling.control(gpu_id).suspension.is_some() {
-        return ProfileApplicationResponse::unattempted(&settings,
-            "Cooling is suspended. Review and explicitly retry cooling before automatic switching can replace it.");
+        return ProfileApplicationResponse::unattempted(
+            &settings,
+            "Cooling is suspended. Review and explicitly retry cooling before automatic switching can replace it.",
+        );
     }
     if let Some(expected) = expected_fans {
         let readings = backend.performance();
@@ -1094,8 +1094,10 @@ fn write_settings(
                 .collect::<BTreeSet<_>>()
         });
         if expected.is_empty() || reported.as_ref() != Some(expected) {
-            return ProfileApplicationResponse::unattempted(&settings,
-                "Cooling: the pre-game fan identities are unavailable or the GPU's fans changed. Nothing was restored.");
+            return ProfileApplicationResponse::unattempted(
+                &settings,
+                "Cooling: the pre-game fan identities are unavailable or the GPU's fans changed. Nothing was restored.",
+            );
         }
     }
     apply_automatic_profile(

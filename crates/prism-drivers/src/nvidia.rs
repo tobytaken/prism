@@ -146,17 +146,16 @@ fn enrich_with_nvml(gpus: &mut Vec<NvidiaGpuInfo>, warnings: &mut Vec<String>) -
             .map(|architecture| architecture.to_string());
         let bus_id = device.pci_info().ok().map(|info| info.bus_id);
 
-        if let Some(bus_id) = bus_id.as_deref() {
-            if let Some(existing) = gpus
+        if let Some(bus_id) = bus_id.as_deref()
+            && let Some(existing) = gpus
                 .iter_mut()
                 .find(|gpu| gpu.bus_id.as_deref() == Some(bus_id))
-            {
-                existing.id = uuid.clone();
-                existing.name = name.clone();
-                existing.architecture = architecture.clone();
-                seen.insert(existing.id.clone());
-                continue;
-            }
+        {
+            existing.id = uuid.clone();
+            existing.name = name.clone();
+            existing.architecture = architecture.clone();
+            seen.insert(existing.id.clone());
+            continue;
         }
 
         if seen.insert(uuid.clone()) {
@@ -213,7 +212,7 @@ fn read_trimmed(path: impl AsRef<Path>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_sysfs_gpus, gpu_supports_open_modules, read_driver_version, NvidiaGpuInfo,
+        NvidiaGpuInfo, collect_sysfs_gpus, gpu_supports_open_modules, read_driver_version,
     };
     use std::fs;
 

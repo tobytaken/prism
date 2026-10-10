@@ -1,10 +1,10 @@
 //! Seam 1: cooling through the existing host-wide startup behavior, before any user logs in.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::boot_state::STARTUP_IN_PROGRESS;
 use super::cooling::CoolingApplicationSource;
-use super::harness::{cooled_gpu, FakeGpuBackend, FakeSession, Harness, Setter};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, cooled_gpu};
 use prism_gpu::{FanControlMode, GpuPerformanceDevice};
 
 fn send(session: &FakeSession, request: Value) -> Value {
@@ -222,11 +222,13 @@ fn startup_off_and_gpus_without_manual_cooling_leave_cooling_unchanged() {
     drop(alice);
     daemon.reboot();
     assert_eq!(completed_outcome(&daemon)["status"], "applied");
-    assert!(!daemon
-        .gpus
-        .writes()
-        .iter()
-        .any(|(_, setter)| matches!(setter, Setter::FanSpeed | Setter::FanModeAuto)));
+    assert!(
+        !daemon
+            .gpus
+            .writes()
+            .iter()
+            .any(|(_, setter)| matches!(setter, Setter::FanSpeed | Setter::FanModeAuto))
+    );
 }
 
 /// What the GPU reports differently at the next boot.
@@ -286,10 +288,12 @@ fn a_rejected_fan_command_at_startup_is_reported_per_fan_and_suspends_the_curve(
     daemon.reboot();
     let outcome = completed_outcome(&daemon);
     assert_eq!(outcome["status"], "failed", "{outcome}");
-    assert!(outcome["reason"]
-        .as_str()
-        .unwrap()
-        .contains("Fan rejected the speed."));
+    assert!(
+        outcome["reason"]
+            .as_str()
+            .unwrap()
+            .contains("Fan rejected the speed.")
+    );
     let application = &outcome["application"];
     assert_eq!(application["power"]["status"], "unattempted");
     assert_eq!(application["cooling"]["outcome"]["status"], "failed");
