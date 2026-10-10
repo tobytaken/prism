@@ -284,17 +284,22 @@ input[type=range]{width:100%;margin:0;accent-color:var(--accent);height:16px;}
    ===================================================================== */
 .vC{--bg:#e9e6df;--panel:#f6f4ef;--panel2:#ffffff;--border:#d2cec4;--hover:#e2ded5;--text:#1c1b19;--muted:#77736a;--accent:#ff5a1f;--danger:#d93b2b;--ok:#2f9e5a;
   --temp:#1c1b19;--util:#1c1b19;--power:#1c1b19;--fan:#1c1b19;--gclk:#1c1b19;--mclk:#77736a;--vram:#1c1b19;--grid:#e3dfd6;--line:#1c1b19;
-  --font:"Inter","Helvetica Neue",system-ui,sans-serif;--mono:"JetBrains Mono","IBM Plex Mono",ui-monospace,monospace;--radius:2px;--fs:12px;}
-.vC .titlebar{height:30px;flex:none;display:flex;align-items:center;padding:0 4px 0 12px;background:#1c1b19;color:#e9e6df;}
+  --font:"Inter","Helvetica Neue",system-ui,sans-serif;--mono:"JetBrains Mono","IBM Plex Mono",ui-monospace,monospace;--radius:2px;--fs:12px;
+  --chrome:#1c1b19;--chrome-text:#e9e6df;--chrome-muted:#a8a399;--chrome-border:#4a4843;--chrome-hover:#34322e;--chrome-hi:#fff;--ov-shadow:rgba(28,27,25,.9);}
+/* C dark: same ink-and-paper system, inverted; orange stays the only colour */
+.vC.dark{--bg:#121110;--panel:#1a1917;--panel2:#22201d;--border:#33302b;--hover:#292723;--text:#ece8df;--muted:#8e897f;--accent:#ff6326;--danger:#ff5a48;--ok:#4cc27a;
+  --temp:#ece8df;--util:#ece8df;--power:#ece8df;--fan:#ece8df;--gclk:#ece8df;--mclk:#8e897f;--vram:#ece8df;--grid:#262420;--line:#ece8df;
+  --chrome:#0a0a09;--chrome-text:#ece8df;--chrome-muted:#8e897f;--chrome-border:#3a3732;--chrome-hover:#23211e;--chrome-hi:#fff;--ov-shadow:rgba(0,0,0,.7);}
+.vC .titlebar{height:30px;flex:none;display:flex;align-items:center;padding:0 4px 0 12px;background:var(--chrome);color:var(--chrome-text);}
 .vC .word{font-family:var(--mono);font-weight:700;letter-spacing:.24em;font-size:11px;}
 .vC .word i{font-style:normal;color:var(--accent);}
-.vC .tbsearch{margin:0 auto;display:flex;align-items:center;gap:8px;color:#a8a399;font-family:var(--mono);font-size:11px;}
-.vC .tbsearch kbd{border-color:#4a4843;color:#a8a399;}
-.vC .tbbtn{height:22px;padding:0 8px;color:#a8a399;font-family:var(--mono);font-size:11px;}
-.vC .tbbtn:hover{color:#fff;}
+.vC .tbsearch{margin:0 auto;display:flex;align-items:center;gap:8px;color:var(--chrome-muted);font-family:var(--mono);font-size:11px;}
+.vC .tbsearch kbd{border-color:var(--chrome-border);color:var(--chrome-muted);}
+.vC .tbbtn{height:22px;padding:0 8px;color:var(--chrome-muted);font-family:var(--mono);font-size:11px;}
+.vC .tbbtn:hover{color:var(--chrome-hi);}
 .vC .wc{display:flex;}
-.vC .wc button{width:30px;height:30px;text-align:center;color:#a8a399;}
-.vC .wc button:hover{background:#34322e;color:#fff;}
+.vC .wc button{width:30px;height:30px;text-align:center;color:var(--chrome-muted);}
+.vC .wc button:hover{background:var(--chrome-hover);color:var(--chrome-hi);}
 .vC .body{flex:1;display:flex;min-height:0;}
 .vC .side{width:196px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg);}
 .vC .gpu{display:block;width:100%;padding:10px 12px;border-bottom:1px solid var(--border);position:relative;}
@@ -331,7 +336,7 @@ input[type=range]{width:100%;margin:0;accent-color:var(--accent);height:16px;}
 .vC.pending .applybar .busy{display:inline;}
 .vC .applybar button{height:22px;padding:0 12px;border:1px solid #fff;text-align:center;}
 .vC .applybar .primary{background:#fff;color:var(--accent);font-weight:700;}
-.vC .needsd{align-items:center;gap:10px;padding:6px 14px;background:#1c1b19;color:#e9e6df;font-family:var(--mono);font-size:11px;}
+.vC .needsd{align-items:center;gap:10px;padding:6px 14px;background:var(--chrome);color:var(--chrome-text);font-family:var(--mono);font-size:11px;}
 .vC .needsd button{color:var(--accent);text-decoration:underline;}
 .vC .tracks{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
 .vC .track{display:flex;border-bottom:1px solid var(--border);min-height:0;}
@@ -358,11 +363,11 @@ input[type=range]{width:100%;margin:0;accent-color:var(--accent);height:16px;}
 .vC .chiplabel{position:absolute;left:6px;top:2px;font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--muted);pointer-events:none;}
 .vC .inlinebad{align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--danger);}
 .vC .inlinebad button{color:var(--danger);text-decoration:underline;}
-.vC .status{height:24px;flex:none;display:flex;align-items:center;gap:16px;padding:0 12px;background:#1c1b19;color:#a8a399;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;}
+.vC .status{height:24px;flex:none;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--chrome);color:var(--chrome-muted);font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;}
 .vC .status .dot{display:inline-block;width:6px;height:6px;background:var(--ok);margin-right:6px;}
-.nod.vC .status .dot{background:#77736a;}
+.nod.vC .status .dot{background:var(--muted);}
 .vC .status .prob{color:var(--accent);}
-.vC .status button:hover{color:#fff;}
+.vC .status button:hover{color:var(--chrome-hi);}
 .vC .status .hold{display:none;color:var(--accent);}
 .vC.pending .status .hold{display:inline;}
 .vC.sz-half .tl,.vC.sz-min .tl{width:176px;padding:8px 10px;}
@@ -380,7 +385,10 @@ input[type=range]{width:100%;margin:0;accent-color:var(--accent);height:16px;}
 
 .vC .cmp .foot{margin-top:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);}
 .vC .cmp .profs button{flex:1;}
-.vC .ov{border-radius:0;border-color:var(--text);box-shadow:4px 4px 0 rgba(28,27,25,.9);}
+.vC .ov{border-radius:0;border-color:var(--text);box-shadow:4px 4px 0 var(--ov-shadow);}
+.vC.dark .gpu.sel{background:var(--panel);}
+.vC.dark .main{background:var(--panel);}
+.vC .themebtn{min-width:46px;text-align:center;}
 </style>
 </head>
 <body>
@@ -403,6 +411,7 @@ const S = {
   view: 'gpu', sel: 0, range: 300,
   bFocus: 'overview', bDetails: false,
   cCurve: true,
+  cDark: qs.get('theme')==='dark',
   auto: {enabled:true, game:'Cyberpunk 2077', profile:'Quiet', gpu:0},
   t: 0,
   events: [],
@@ -713,7 +722,7 @@ function renderC(){
     </button>`;
   const profs = (cls='') => `<div class="profs ${cls}">${Object.keys(g.presets).map(p=>`<button data-profile="${p}">${p}${g.startup===p?'<span class="st" title="Startup profile">●</span>':''}</button>`).join('')}<button class="more" data-menu="profile">⋯</button></div>`;
   if (S.size==='compact') return `
-    <div class="titlebar drag"><span class="word">PRI<i>S</i>M</span><span class="sp"></span><button class="tbbtn" data-compact>FULL</button>${wc()}</div>
+    <div class="titlebar drag"><span class="word">PRI<i>S</i>M</span><span class="sp"></span><button class="tbbtn themebtn" data-theme>${S.cDark?'LIGHT':'DARK'}</button><button class="tbbtn" data-compact>FULL</button>${wc()}</div>
     <div class="cmp">${S.gpus.map(gpuRow).join('')}
       <div class="foot">${profs()}<span class="mono muted" style="font-size:10px;letter-spacing:.06em">AUTO · ${b('autoStatus')}</span></div></div>
     <div class="status"><span><span class="dot"></span>prismd</span><span class="sp"></span><button class="prob" data-activity>${b('problems')}</button></div>`;
@@ -751,7 +760,7 @@ function renderC(){
   return `
     <div class="titlebar drag"><span class="word">PRI<i>S</i>M</span>
       <button class="tbsearch" data-palette>COMMANDS <kbd>CTRL K</kbd></button>
-      <button class="tbbtn" data-compact>COMPACT</button>${wc()}</div>
+      <button class="tbbtn themebtn" data-theme>${S.cDark?'LIGHT':'DARK'}</button><button class="tbbtn" data-compact>COMPACT</button>${wc()}</div>
     <div class="body">
       <aside class="side">${S.gpus.map(gpuRow).join('')}
         <div class="navs">${NAVS.map(([k,l])=>`<button class="nav ${S.view===k?'sel':''}" data-view="${k}">${l}</button>`).join('')}</div></aside>
@@ -767,10 +776,10 @@ function render(){
   closeOverlays();
   const [w,h] = SIZES[S.size];
   win.style.width = w+'px'; win.style.height = h+'px';
-  win.className = 'win v'+S.variant+' sz-'+S.size;
+  win.className = 'win v'+S.variant+' sz-'+S.size+(S.variant==='C'&&S.cDark?' dark':'');
   win.innerHTML = {A:renderA,B:renderB,C:renderC}[S.variant]();
   fit(); bindCanvases(); update(); renderSwitcher();
-  const p = new URLSearchParams(); p.set('variant',S.variant); if (S.size!=='default') p.set('size',S.size); if (!S.daemon) p.set('daemon','0');
+  const p = new URLSearchParams(); p.set('variant',S.variant); if (S.size!=='default') p.set('size',S.size); if (!S.daemon) p.set('daemon','0'); if (S.variant==='C'&&S.cDark) p.set('theme','dark');
   history.replaceState(null,'','?'+p);
 }
 function fit(){
@@ -969,6 +978,7 @@ win.addEventListener('click',e=>{
   else if (d.compact!=null){ S.size = S.size==='compact'?'default':'compact'; render(); }
   else if (d.focus){ if (d.focus==='details') S.bDetails=!S.bDetails; else S.bFocus = S.bFocus===d.focus && d.focus!=='overview' ? 'overview' : d.focus; render(); }
   else if (d.ccurve!=null){ S.cCurve=!S.cCurve; render(); }
+  else if (d.theme!=null){ S.cDark=!S.cDark; render(); }
   else if (d.resume!=null){ resume(); }
 });
 function resume(){ for(const g of S.gpus) g.coolingPaused=false; S.events.unshift({t:now(),txt:'Fan curve resumed on RTX A2000',kind:'ok'}); update(); }
@@ -1011,7 +1021,7 @@ function commands(){
   S.gpus.forEach((x,i)=>c.push([`Go to ${x.short}`, ()=>{S.sel=i;S.view='gpu';render();}]));
   NAVS.forEach(([k,l])=>c.push([`Go to ${l}`, ()=>{S.view=k;render();}]));
   c.push([S.auto.enabled?'Pause automatic switching':'Resume automatic switching', ()=>{S.auto.enabled=!S.auto.enabled;update();}]);
-  c.push(['Apply changes', apply], ['Discard changes', discard], ['Toggle compact mode', ()=>{S.size=S.size==='compact'?'default':'compact';render();}], ['Open Activity', ()=>setTimeout(openActivity)]);
+  c.push(['Apply changes', apply], ['Discard changes', discard], ['Toggle compact mode', ()=>{S.size=S.size==='compact'?'default':'compact';render();}], ...(S.variant==='C'?[['Toggle dark mode', ()=>{S.cDark=!S.cDark;render();}]]:[]), ['Open Activity', ()=>setTimeout(openActivity)]);
   return c;
 }
 function openPalette(){
@@ -1043,12 +1053,14 @@ function renderSwitcher(){
   const sw=document.getElementById('switcher'), v=VARIANTS.find(x=>x.key===S.variant);
   sw.innerHTML=`<span class="tag">PROTOTYPE</span><button data-c="-1">←</button><span class="lbl">${v.key} · ${v.name}</span><button data-c="1">→</button><span class="div"></span>
     ${Object.entries(SIZES).map(([k,s])=>`<button data-size="${k}" class="${S.size===k?'on':''}">${s[2]}</button>`).join('')}<span class="div"></span>
-    <button data-daemon class="${S.daemon?'':'on'}">${S.daemon?'Daemon: on':'Daemon: off'}</button>`;
+    <button data-daemon class="${S.daemon?'':'on'}">${S.daemon?'Daemon: on':'Daemon: off'}</button>
+    ${S.variant==='C'?`<button data-sdark class="${S.cDark?'on':''}">${S.cDark?'Dark':'Light'}</button>`:''}`;
 }
 document.getElementById('switcher').addEventListener('click',e=>{
   const t=e.target.closest('button'); if(!t) return;
   if (t.dataset.c) cycle(+t.dataset.c);
   else if (t.dataset.size){ S.size=t.dataset.size; render(); }
+  else if (t.dataset.sdark!=null){ S.cDark=!S.cDark; render(); }
   else if (t.dataset.daemon!=null){ S.daemon=!S.daemon; if(!S.daemon) for(const g of S.gpus) g.pending={}; render(); }
 });
 
