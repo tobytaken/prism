@@ -1,18 +1,20 @@
 # Prism
 
-Prism is a Linux GPU control center for watching, tuning and managing NVIDIA GPUs and their drivers. It is being rewritten as a native Rust GUI built with Slint ([ADR 0007](docs/adr/0007-native-rust-gui.md), [ADR 0008](docs/adr/0008-slint-gui-toolkit.md), [#120](https://github.com/tobytaken/prism-electron/issues/120)). The Electron app has been removed; this repository currently holds the Rust GPU library and `prismd`.
+Prism is a Linux GPU control center for watching, tuning and managing NVIDIA GPUs and their drivers. It is being rewritten as a native Rust GUI built with Slint ([ADR 0007](docs/adr/0007-native-rust-gui.md), [ADR 0008](docs/adr/0008-slint-gui-toolkit.md), [#120](https://github.com/tobytaken/prism-electron/issues/120)). The Electron app has been removed. The native GUI is a walking skeleton so far: a window with live GPU vitals and a Temperature track.
 
 Prism is licensed under the GNU General Public License, version 3 or later (`GPL-3.0-or-later`); see [`LICENSE`](./LICENSE).
 
 ## Architecture
 
 - `prismd` is a privileged host daemon that owns all tuning writes and tuning state.
-- The Cargo workspace keeps its crates under [`crates`](./crates). The dependency graph runs one way: `prism-gpu ← prism-drivers ← prism-protocol ← prismd`.
+- `prism` is the GUI. It reads GPU telemetry in-process through NVML and, later, from `prismd`, but never writes tuning itself.
+- The Cargo workspace keeps its crates under [`crates`](./crates). The dependency graph runs one way: `prism-gpu ← prism-drivers ← prism-protocol ← prismd`, and `prism-gpu ← prism-ui ← prism`.
   - [`prism-gpu`](./crates/prism-gpu) reads and tunes GPUs through NVML. It holds fan curves and cooling, and knows nothing of `prismd`. Callers choose the providers GPUs are read from; its `simulated` feature adds simulated GPUs with named fixtures for development and tests, which release builds leave out.
   - [`prism-drivers`](./crates/prism-drivers) detects the host and its NVIDIA driver, plans driver installs, and runs driver jobs.
   - [`prism-protocol`](./crates/prism-protocol) holds the `prismd` socket's wire types, framing and client, and the shared contract fixtures.
   - [`prismd`](./crates/prismd) is the daemon, along with its tests and its deb/rpm packaging metadata.
-- The native GUI will link these crates in-process.
+  - [`prism-ui`](./crates/prism-ui) is the GUI's logic as a pure state machine, with no Slint, threads or I/O. It takes inputs (telemetry samples, the GPU inventory, user intents) and returns the effects to perform. It also keeps the telemetry history and formats what the view shows.
+  - [`prism`](./crates/prism) is the GUI binary. It has the Slint view (`ui/`, with every visual token in `ui/theme.slint`), the 1 Hz sampler thread, and the composition root, which takes an `Environment` of GPU providers, settings store and clock so tests and the simulator can swap them.
 
 ## Development
 
@@ -27,11 +29,31 @@ cargo deny check licenses
 
 CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check and the `prismd` package smoke builds. The smoke builds also check that no release build enables the `simulated` feature.
 
-`cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`deny.toml`](./deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
+`cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`deny.toml`](./deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency and embedded font; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
 
 ```bash
 bash scripts/generate-third-party-licenses.sh
 ```
+
+Building the GUI needs `pkg-config` and the fontconfig development headers (`libfontconfig-dev` on Debian and Ubuntu, `fontconfig-devel` on Fedora).
+
+## GUI
+
+Run the GUI on this host's NVIDIA GPUs:
+
+```bash
+cargo run -p prism
+```
+
+Run it on simulated GPUs instead, with one of the fixtures `tunable`, `two-identical`, `no-fan-control`, `edge-ranges`, `nvml-missing`, `empty-inventory` or `driver-not-loaded`:
+
+```bash
+PRISM_SIMULATE=tunable cargo run -p prism --features simulated
+```
+
+Light and dark follow the desktop. To pin one, set `appearance = "light"` or `appearance = "dark"` in `~/.config/prism/settings.toml` (`$XDG_CONFIG_HOME/prism/settings.toml`). Settings → Appearance will set this later.
+
+The view tests in `crates/prism/tests` drive the real window headless with Slint's testing backend, so they need no display. They find elements through Slint's debug info, which `prism`'s build script compiles in outside release builds.
 
 ## Daemon
 

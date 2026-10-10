@@ -1,0 +1,183 @@
+import { Theme } from "../theme.slint";
+import { Divider, ListRow, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, ContentKind, Intents, Section, SidebarGpuView } from "../state.slint";
+
+// A GPU's block: its index and identity, name, a large temperature, then utilization, power draw
+// and fan speed.
+component GpuBlock inherits ListRow {
+    in property <SidebarGpuView> gpu;
+
+    height: Theme.size.gpu-block;
+    label: gpu.label;
+    description: gpu.vitals;
+    selected: gpu.selected;
+
+    VerticalLayout {
+        padding-top: Theme.space.l;
+        padding-bottom: Theme.space.l;
+        padding-left: Theme.space.xl;
+        padding-right: Theme.space.xl;
+
+        HorizontalLayout {
+            StyledText {
+                text: gpu.index;
+                style: Theme.text.label;
+                color: Theme.color.ink-muted;
+            }
+
+            StyledText {
+                text: gpu.identity;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                horizontal-alignment: right;
+            }
+        }
+
+        StyledText {
+            text: gpu.name;
+            style: Theme.text.name;
+            overflow: elide;
+        }
+
+        HorizontalLayout {
+            alignment: start;
+
+            StyledText {
+                text: gpu.temperature.value;
+                style: Theme.text.vital;
+                vertical-alignment: bottom;
+            }
+
+            if gpu.temperature.known: StyledText {
+                text: gpu.temperature.unit;
+                style: Theme.text.vital-unit;
+                color: Theme.color.ink-muted;
+                vertical-alignment: bottom;
+            }
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: Theme.space.l;
+            padding-top: Theme.space.s;
+
+            StyledText {
+                text: gpu.utilization.text;
+                style: Theme.text.value;
+            }
+
+            StyledText {
+                text: gpu.power-draw.text;
+                style: Theme.text.value;
+            }
+
+            HorizontalLayout {
+                StyledText {
+                    text: "fan ";
+                    style: Theme.text.value;
+                    color: Theme.color.ink-muted;
+                }
+
+                StyledText {
+                    text: gpu.fan-speed.text;
+                    style: Theme.text.value;
+                }
+            }
+        }
+    }
+
+    Divider {
+        y: parent.height - self.height;
+    }
+}
+
+component SectionRow inherits ListRow {
+    in property <string> text;
+
+    height: Theme.size.nav-row;
+
+    StyledText {
+        x: Theme.space.xl;
+        text: root.text;
+        style: Theme.text.label;
+        color: root.selected || root.has-hover ? Theme.color.ink : Theme.color.ink-muted;
+        accessible-role: none;
+    }
+
+    Divider {
+        y: parent.height - self.height;
+    }
+}
+
+// The left sidebar: a block per GPU with its live vitals, then the GAMES, DRIVERS and SETTINGS
+// rows.
+export component Sidebar inherits Rectangle {
+    width: Theme.size.sidebar;
+    background: Theme.color.canvas;
+
+    VerticalLayout {
+        Rectangle {
+            accessible-role: list;
+            accessible-label: "GPUs";
+            vertical-stretch: 0;
+            height: gpus.preferred-height;
+
+            gpus := VerticalLayout {
+                for gpu in AppState.gpus: GpuBlock {
+                    gpu: gpu;
+                    activated => {
+                        Intents.select-gpu(gpu.id);
+                    }
+                }
+
+                if AppState.content == ContentKind.no-gpus: VerticalLayout {
+                    padding: Theme.space.xl;
+                    spacing: Theme.space.xs;
+
+                    StyledText {
+                        text: AppState.no-gpus.title;
+                        style: Theme.text.name;
+                    }
+
+                    StyledText {
+                        text: AppState.no-gpus.reason;
+                        style: Theme.text.value;
+                        color: Theme.color.ink-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+        }
+
+        Divider { }
+
+        Rectangle {
+            accessible-role: list;
+            accessible-label: "Sections";
+            height: sections.preferred-height;
+
+            sections := VerticalLayout {
+                for section in [
+                    { section: Section.games, kind: ContentKind.games, text: "GAMES", label: "Games" },
+                    { section: Section.drivers, kind: ContentKind.drivers, text: "DRIVERS", label: "Drivers" },
+                    { section: Section.settings, kind: ContentKind.settings, text: "SETTINGS", label: "Settings" },
+                ]: SectionRow {
+                    text: section.text;
+                    label: section.label;
+                    selected: AppState.content == section.kind;
+                    activated => {
+                        Intents.go-to(section.section);
+                    }
+                }
+            }
+        }
+    }
+
+    VerticalDivider {
+        x: parent.width - self.width;
+    }
+}

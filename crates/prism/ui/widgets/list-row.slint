@@ -1,0 +1,37 @@
+import { Theme } from "../theme.slint";
+import { PressArea } from "press-area.slint";
+
+// A selectable row in a list, such as a sidebar entry; its content comes from the view. The
+// selected row is raised and marked with an accent bar on its right edge.
+export component ListRow inherits Rectangle {
+    in property <string> label;
+    in property <string> description;
+    in property <bool> selected;
+    out property <bool> has-hover: press.has-hover;
+    callback activated();
+
+    accessible-role: list-item;
+    accessible-label: label;
+    accessible-description: description;
+    accessible-item-selectable: true;
+    accessible-item-selected: selected;
+    accessible-action-default => {
+        root.activated();
+    }
+    forward-focus: press;
+    background: selected ? Theme.color.raised : press.has-hover ? Theme.color.hover : transparent;
+
+    press := PressArea {
+        activated => {
+            root.activated();
+        }
+    }
+
+    @children
+
+    if selected: Rectangle {
+        x: parent.width - Theme.stroke.selection;
+        width: Theme.stroke.selection;
+        background: Theme.color.accent;
+    }
+}

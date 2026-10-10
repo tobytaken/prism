@@ -1,0 +1,15 @@
+import { Theme } from "../theme.slint";
+
+// A horizontal hairline rule.
+export component Divider inherits Rectangle {
+    height: Theme.stroke.hairline;
+    background: Theme.color.rule;
+    accessible-role: none;
+}
+
+// A vertical hairline rule.
+export component VerticalDivider inherits Rectangle {
+    width: Theme.stroke.hairline;
+    background: Theme.color.rule;
+    accessible-role: none;
+}

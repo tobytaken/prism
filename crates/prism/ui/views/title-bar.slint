@@ -1,0 +1,98 @@
+import { Theme } from "../theme.slint";
+import { PressArea, StyledText } from "../widgets.slint";
+import { Intents } from "../state.slint";
+
+component WindowButton inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    callback activated();
+
+    width: Theme.size.window-button;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => {
+        root.activated();
+    }
+    forward-focus: press;
+    background: press.has-hover ? Theme.color.chrome-hover : transparent;
+
+    press := PressArea {
+        ring-color: Theme.color.chrome-ink;
+        activated => {
+            root.activated();
+        }
+    }
+
+    Image {
+        width: Theme.size.window-icon;
+        height: Theme.size.window-icon;
+        source: root.icon;
+        colorize: press.has-hover ? Theme.color.chrome-ink-strong : Theme.color.chrome-ink-muted;
+        accessible-role: none;
+    }
+}
+
+// Prism's own title bar: drag to move, double-click to maximize, window buttons on the right.
+export component TitleBar inherits Rectangle {
+    height: Theme.size.title-bar;
+    background: Theme.color.chrome;
+
+    WindowMoveArea {
+        TouchArea {
+            double-clicked => {
+                Intents.toggle-maximized();
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space.xl;
+
+        Rectangle {
+            accessible-role: text;
+            accessible-label: "Prism";
+            width: wordmark.preferred-width;
+
+            wordmark := HorizontalLayout {
+                for part in [
+                    { text: "PRI", accent: false },
+                    { text: "S", accent: true },
+                    { text: "M", accent: false },
+                ]: StyledText {
+                    text: part.text;
+                    style: Theme.text.wordmark;
+                    color: part.accent ? Theme.color.accent : Theme.color.chrome-ink;
+                    accessible-role: none;
+                }
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+
+        WindowButton {
+            label: "Minimize";
+            icon: @image-url("../icons/minimize.svg");
+            activated => {
+                Intents.minimize-window();
+            }
+        }
+
+        WindowButton {
+            label: "Maximize";
+            icon: @image-url("../icons/maximize.svg");
+            activated => {
+                Intents.toggle-maximized();
+            }
+        }
+
+        WindowButton {
+            label: "Close";
+            icon: @image-url("../icons/close.svg");
+            activated => {
+                Intents.close-window();
+            }
+        }
+    }
+}
