@@ -26,8 +26,12 @@ _Avoid_: GPU configuration, benchmark results
 Support for a particular tuning control on a GPU and its driver, including any allowed value range; support alone does not establish permission or current availability to change it.
 _Avoid_: Supported GPU when only one control has been checked
 
+**prismd connection**:
+Whether this Prism is connected to prismd and, if not, why: prismd is not installed, not running, failed to start, or speaks an incompatible protocol version. A connection can exist without tuning access.
+_Avoid_: Daemon status, onboarding state, session when referring to a run of the app
+
 **Tuning access**:
-Whether this Prism session can change GPU tuning at all, which requires a connected prismd; without it, tuning is read-only with a stated reason. A control is editable only with both tuning access and the GPU control capability for it.
+Whether this Prism can change GPU tuning at all, which requires a prismd connection whose user is allowed to tune; without it, tuning is read-only with a stated reason, either the connection's reason or that the user is not allowed. A control is editable only with both tuning access and the GPU control capability for it.
 _Avoid_: Daemon managed, permission when referring to a single control
 
 ### Tuning, profiles, and startup
