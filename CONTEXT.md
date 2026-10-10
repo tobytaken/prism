@@ -224,6 +224,10 @@ _Avoid_: Failed job, fully completed installation
 
 ### Appearance
 
+**Appearance mode**:
+The user's choice of System, Light, or Dark; System follows the desktop's light/dark preference and changes with it.
+_Avoid_: Theme, accent preference, color scheme
+
 **Accent preference**:
 The user's choice of an AMD, NVIDIA, or Intel color theme, or automatic selection from detected GPU vendors; choosing a vendor theme does not imply hardware support for that vendor.
 _Avoid_: GPU selection, tuning profile
