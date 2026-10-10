@@ -1,7 +1,7 @@
 use prism_gpu::{
-    GpuInventoryResponse, GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest,
-    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest, collect_inventory,
-    collect_performance, reset_gpu_power_limit, set_gpu_clock_offsets, set_gpu_fan_mode_auto,
+    GpuInventoryResponse, GpuPerformanceResponse, GpuProviders, GpuTargetRequest,
+    SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
+    SetGpuPowerLimitRequest, reset_gpu_power_limit, set_gpu_clock_offsets, set_gpu_fan_mode_auto,
     set_gpu_fan_speed, set_gpu_power_limit,
 };
 
@@ -17,15 +17,19 @@ pub trait DaemonBackend: Send + Sync {
     fn set_clock_offsets(&self, request: SetGpuClockOffsetsRequest) -> Result<(), String>;
 }
 
-pub struct RealDaemonBackend;
+/// The host's NVIDIA GPUs, read and tuned through NVML.
+#[derive(Default)]
+pub struct RealDaemonBackend {
+    gpus: GpuProviders,
+}
 
 impl DaemonBackend for RealDaemonBackend {
     fn inventory(&self) -> GpuInventoryResponse {
-        collect_inventory()
+        self.gpus.inventory()
     }
 
     fn performance(&self) -> GpuPerformanceResponse {
-        collect_performance()
+        self.gpus.performance()
     }
 
     fn set_power_limit(&self, request: SetGpuPowerLimitRequest) -> Result<(), String> {
