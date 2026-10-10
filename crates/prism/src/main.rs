@@ -1,16 +1,26 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
+use prism::single_instance::{self, Claim};
 use prism::{App, Environment};
 
 fn main() -> ExitCode {
-    let environment = match environment() {
+    let mut environment = match environment() {
         Ok(environment) => environment,
         Err(message) => {
             eprintln!("prism: {message}");
             return ExitCode::from(2);
         }
     };
+    match single_instance::claim(single_instance::launch_activation_token()) {
+        Ok(Claim::First(launches)) => environment.host.launches = Box::new(launches),
+        Ok(Claim::HandedOver) => {
+            eprintln!("prism: Prism is already running, so its window was raised instead");
+            return ExitCode::SUCCESS;
+        }
+        // Prism still runs, but launching it again opens another window.
+        Err(error) => eprintln!("prism: can't reach the session bus to run only once: {error}"),
+    }
     match App::new(environment).and_then(App::run) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

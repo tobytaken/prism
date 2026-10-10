@@ -143,7 +143,7 @@ impl Core {
         }
     }
 
-    fn gpus(&self) -> &[Gpu] {
+    pub(crate) fn gpus(&self) -> &[Gpu] {
         match &self.discovery {
             Discovery::Found { gpus, .. } => gpus,
             Discovery::Searching => &[],
@@ -178,19 +178,17 @@ impl Core {
 
     fn sidebar_gpu(&self, index: usize, gpu: &Gpu) -> SidebarGpu {
         let latest = latest_readings(gpu);
-        let index_label = index_label(index);
-        let name = short_gpu_name(&gpu.name).to_owned();
-        let identity = gpu.bus_id.as_deref().map(short_bus_id).unwrap_or_default();
         SidebarGpu {
             id: gpu.id.clone(),
-            label: [index_label.as_str(), &name, identity]
-                .into_iter()
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-                .join(" · "),
-            index: index_label,
-            name,
-            identity: identity.to_owned(),
+            label: gpu_label(index, gpu),
+            index: index_label(index),
+            name: short_gpu_name(&gpu.name).to_owned(),
+            identity: gpu
+                .bus_id
+                .as_deref()
+                .map(short_bus_id)
+                .unwrap_or_default()
+                .to_owned(),
             temperature: Readout::celsius(latest.temperature_c),
             utilization: Readout::percent(latest.utilization_percent),
             power_draw: Readout::watts(latest.power_draw_watts),
@@ -238,6 +236,17 @@ impl Core {
             chart: gpu.history.chart(metric, self.range, now),
         }
     }
+}
+
+/// Index, name and identity together, such as "GPU 0 · RTX 5090 · 01:00.0".
+pub(crate) fn gpu_label(index: usize, gpu: &Gpu) -> String {
+    let index = index_label(index);
+    let identity = gpu.bus_id.as_deref().map(short_bus_id).unwrap_or_default();
+    [index.as_str(), short_gpu_name(&gpu.name), identity]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// A GPU's position in the inventory, such as "GPU 0".

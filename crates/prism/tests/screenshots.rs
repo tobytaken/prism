@@ -38,6 +38,26 @@ mod screenshot {
         skeleton(AppearanceMode::Dark, "skeleton-dark");
     }
 
+    /// The palette over the skeleton, with the open GPU's command dimmed.
+    fn command_palette(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);
+        harness.ticks(30);
+        harness.ctrl("k");
+
+        assert_screenshot(name, harness.app.window().window(), WINDOW);
+    }
+
+    #[test]
+    fn the_command_palette_in_light() {
+        command_palette(AppearanceMode::Light, "command-palette-light");
+    }
+
+    #[test]
+    fn the_command_palette_in_dark() {
+        command_palette(AppearanceMode::Dark, "command-palette-dark");
+    }
+
     mod popup_surface {
         use super::*;
 

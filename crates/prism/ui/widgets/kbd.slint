@@ -1,0 +1,28 @@
+import { Theme } from "../theme.slint";
+import { StyledText } from "styled-text.slint";
+
+// A key of a shortcut, drawn as a key cap. It carries no accessible role; the command it belongs
+// to says its shortcut in its description.
+export component Kbd inherits Rectangle {
+    in property <string> text;
+
+    min-width: Theme.size.kbd;
+    height: Theme.size.kbd;
+    border-width: Theme.stroke.hairline;
+    border-color: Theme.color.rule;
+    background: Theme.color.surface;
+    accessible-role: none;
+
+    HorizontalLayout {
+        padding-left: Theme.space.xs;
+        padding-right: Theme.space.xs;
+
+        StyledText {
+            text: root.text;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            horizontal-alignment: center;
+            accessible-role: none;
+        }
+    }
+}

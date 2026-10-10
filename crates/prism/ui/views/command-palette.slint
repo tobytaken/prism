@@ -1,0 +1,150 @@
+import { Theme } from "../theme.slint";
+import { Divider, Kbd, PopupSurface, PressArea, StyledText, TextField } from "../widgets.slint";
+import { AppState, Intents, PaletteEntryView } from "../state.slint";
+
+// A command in the palette: its title, why it can't run when it can't (dimmed), and its shortcut.
+component PaletteRow inherits Rectangle {
+    in property <PaletteEntryView> entry;
+    callback activated();
+
+    height: Theme.size.palette-row;
+    accessible-role: list-item;
+    accessible-label: entry.title;
+    accessible-description: entry.description;
+    accessible-enabled: entry.available;
+    accessible-item-selectable: true;
+    accessible-item-selected: entry.highlighted;
+    accessible-action-default => {
+        root.activated();
+    }
+    background: entry.highlighted ? Theme.color.hover : transparent;
+
+    press := PressArea {
+        // Choosing a row runs it at once, so the palette's field keeps the focus.
+        focus-on-click: false;
+        activated => {
+            root.activated();
+        }
+    }
+
+    if entry.highlighted: Rectangle {
+        x: 0;
+        width: Theme.stroke.selection;
+        background: Theme.color.accent;
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space.xl;
+        padding-right: Theme.space.xl;
+        spacing: Theme.space.m;
+
+        StyledText {
+            text: entry.title;
+            style: Theme.text.body;
+            color: entry.available ? Theme.color.ink : Theme.color.ink-muted;
+            overflow: elide;
+            accessible-role: none;
+        }
+
+        if !entry.available: StyledText {
+            text: entry.reason;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            spacing: Theme.space.xxs;
+            padding-top: (Theme.size.palette-row - Theme.size.kbd) / 2;
+            padding-bottom: (Theme.size.palette-row - Theme.size.kbd) / 2;
+
+            for key in entry.keys: Kbd {
+                text: key;
+            }
+        }
+    }
+}
+
+// The command palette (Ctrl+K): a field that fuzzy-filters the commands below it. ↑ and ↓ move
+// the highlight, Return runs the highlighted command, and Escape or a click outside closes it.
+export component CommandPalette inherits Rectangle {
+    // Clicks outside the palette close it.
+    TouchArea {
+        clicked => {
+            Intents.dismiss();
+        }
+    }
+
+    PopupSurface {
+        x: (parent.width - self.width) / 2;
+        y: Theme.size.palette-top;
+        width: Theme.size.palette-width;
+        height: layout.preferred-height;
+        accessible-role: groupbox;
+        accessible-label: "Command palette";
+
+        // Clicks inside the palette stay there.
+        TouchArea { }
+
+        layout := VerticalLayout {
+            height: self.preferred-height;
+            padding: Theme.space.m;
+            spacing: Theme.space.m;
+
+            field := TextField {
+                label: "Command";
+                placeholder: "Type a command";
+                init => {
+                    self.focus();
+                }
+                edited(query) => {
+                    Intents.filter-palette(query);
+                }
+                accepted => {
+                    Intents.run-highlighted();
+                }
+                key-pressed(event) => {
+                    if event.text == Key.UpArrow {
+                        Intents.highlight-previous();
+                        return accept;
+                    }
+                    if event.text == Key.DownArrow {
+                        Intents.highlight-next();
+                        return accept;
+                    }
+                    reject
+                }
+            }
+
+            Divider { }
+
+            Rectangle {
+                accessible-role: list;
+                accessible-label: "Commands";
+                height: entries.preferred-height;
+
+                entries := VerticalLayout {
+                    for entry[index] in AppState.palette-entries: PaletteRow {
+                        entry: entry;
+                        activated => {
+                            Intents.run-palette-entry(index);
+                        }
+                    }
+
+                    if AppState.palette-entries.length == 0: StyledText {
+                        height: Theme.size.palette-row;
+                        x: Theme.space.xl;
+                        text: "No matching commands";
+                        style: Theme.text.body;
+                        color: Theme.color.ink-muted;
+                    }
+                }
+            }
+        }
+    }
+}

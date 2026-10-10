@@ -62,6 +62,15 @@ fn every_fixture_state_is_accessible() {
                 .invoke_accessible_default_action();
             audit(&format!("{name}, {section}"), &harness);
         }
+
+        harness.ctrl("k");
+        audit(&format!("{name}, command palette"), &harness);
+        harness.type_text("zzz");
+        audit(
+            &format!("{name}, command palette without matches"),
+            &harness,
+        );
+        harness.press(&[], slint::platform::Key::Escape);
     }
 
     let harness = Harness::without_temperature();
@@ -75,6 +84,11 @@ const ACTION_TESTS: &[(&str, &str, &str)] = &[
         "ListRow",
         "default",
         "a_list_row_s_default_action_activates_it",
+    ),
+    (
+        "PaletteRow",
+        "default",
+        "a_palette_row_s_default_action_runs_its_command",
     ),
     (
         "WindowButton",
@@ -151,6 +165,28 @@ fn a_list_row_s_default_action_activates_it() {
     drivers.invoke_accessible_default_action();
     assert_eq!(drivers.accessible_item_selected(), Some(true));
     assert_eq!(second_gpu.accessible_item_selected(), Some(false));
+}
+
+#[test]
+fn a_palette_row_s_default_action_runs_its_command() {
+    let harness = Harness::new(SimulatedFixture::TwoIdenticalGpus);
+    harness.tick();
+    harness.ctrl("k");
+
+    harness
+        .find(AccessibleRole::ListItem, "Go to Games")
+        .invoke_accessible_default_action();
+
+    assert_eq!(
+        harness.count(AccessibleRole::Groupbox, "Command palette"),
+        0
+    );
+    assert_eq!(
+        harness
+            .find(AccessibleRole::ListItem, "Games")
+            .accessible_item_selected(),
+        Some(true)
+    );
 }
 
 #[test]
@@ -353,6 +389,21 @@ fn a_control_that_stays_editable_without_tuning_access_fails() {
             "Stepper PowerTrack::limit (Spinbox \"Power limit\"): not read-only",
             "Toggle FansTrack::curve (Switch \"Fan curve\"): not read-only",
         ]
+    );
+}
+
+#[test]
+fn a_text_field_may_stay_editable_without_tuning_access() {
+    let field = element(
+        "TextInput",
+        "TextField::input",
+        AccessibleRole::TextInput,
+        "Command",
+    );
+
+    assert_eq!(
+        problems(&[field], TuningAccess::Denied),
+        Vec::<String>::new()
     );
 }
 

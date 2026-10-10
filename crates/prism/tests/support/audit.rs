@@ -164,11 +164,12 @@ pub fn is_interactive(role: AccessibleRole) -> bool {
     )
 }
 
-/// Roles whose value the user changes.
+/// Roles of the controls that hold tuning values. A text field isn't one: it searches commands or
+/// names things, which needs no tuning access.
 fn is_editable(role: AccessibleRole) -> bool {
     use AccessibleRole::*;
     matches!(
         role,
-        Checkbox | Combobox | Slider | Spinbox | TextInput | Switch | RadioButton
+        Checkbox | Combobox | Slider | Spinbox | Switch | RadioButton
     )
 }

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use prism_gpu::GpuProviders;
 
+use crate::activation::DesktopActivation;
 use crate::settings::{SettingsFile, SettingsStore};
 
 /// Everything [`App`](crate::App) reaches outside itself through.
@@ -43,10 +44,44 @@ pub enum PrismdConnector {
 }
 
 /// The host's desktop services, such as the systemctl probe, notifications and the
-/// single-instance bus. None are used yet; they arrive with the screens that need them.
-#[derive(Debug, Clone, Default)]
-#[non_exhaustive]
-pub struct HostServices {}
+/// single-instance bus. Each arrives with the screen or behavior that needs it.
+pub struct HostServices {
+    /// Where later launches of Prism hand over to this one.
+    pub launches: Box<dyn Launches>,
+    /// How the window is raised and focused.
+    pub activation: Box<dyn WindowActivation>,
+}
+
+impl Default for HostServices {
+    /// No later launch reaches this Prism, and the window is raised through the desktop.
+    fn default() -> Self {
+        Self {
+            launches: Box::new(NoLaunches),
+            activation: Box::new(DesktopActivation),
+        }
+    }
+}
+
+/// Later launches of Prism, which hand over to the running one and exit.
+pub trait Launches {
+    /// Calls `launched` with each later launch's activation token, from any thread.
+    fn listen(&self, launched: Box<dyn Fn(Option<String>) + Send + Sync>);
+}
+
+/// No later launch reaches this Prism, such as when there's no session bus.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoLaunches;
+
+impl Launches for NoLaunches {
+    fn listen(&self, _: Box<dyn Fn(Option<String>) + Send + Sync>) {}
+}
+
+/// Asks the desktop to focus the window.
+pub trait WindowActivation {
+    /// Focuses `window`, which is already shown, with the activation token that lets the desktop
+    /// do so, if there is one.
+    fn activate(&self, window: &slint::Window, activation_token: Option<&str>);
+}
 
 /// The GUI's monotonic clock.
 pub trait Clock: Send + Sync {
