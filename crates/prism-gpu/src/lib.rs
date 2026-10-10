@@ -416,7 +416,7 @@ mod tests {
     };
 
     #[test]
-    fn inventory_response_serializes_camel_case() {
+    fn inventory_response_serializes_rust_field_names() {
         let response = GpuInventoryResponse {
             gpus: vec![GpuDevice {
                 id: "gpu-0".into(),
@@ -505,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn performance_response_serializes_camel_case() {
+    fn performance_response_serializes_rust_field_names() {
         let response = GpuPerformanceResponse {
             gpus: vec![GpuPerformanceDevice {
                 id: "GPU-123".into(),
