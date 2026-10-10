@@ -158,12 +158,12 @@ pub struct CoolingInfo {
     /// Why the maximum operating temperature is unknown.
     #[serde(default)]
     pub max_operating_temperature_reason: Option<String>,
-    /// Whether one shared fan curve can control every fan, as judged by the daemon; unknown
-    /// when the readings didn't come from the daemon.
+    /// Whether one shared fan curve can control every fan, as judged by whoever follows the
+    /// curves; unknown when the readings came straight from the GPU.
     #[serde(default)]
     pub curve_support: Option<FanCurveSupport>,
-    /// Prism's control of the fans, as reported by the daemon; unknown when the readings didn't
-    /// come from the daemon.
+    /// Prism's control of the fans, as reported by whoever follows the curves; unknown when the
+    /// readings came straight from the GPU.
     #[serde(default)]
     pub control: Option<CoolingControl>,
 }

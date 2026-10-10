@@ -7,7 +7,7 @@ use crate::TuningOutcome;
 use crate::fan_curve::FanCurvePoint;
 
 /// One fan's control mode: the GPU's default automatic cooling, a fixed requested speed, or a
-/// fan curve that the daemon follows as the GPU's temperature changes.
+/// fan curve that Prism follows as the GPU's temperature changes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
 pub enum FanSetting {
@@ -102,7 +102,7 @@ pub struct CoolingControl {
     pub curve_temperature_c: Option<i64>,
     /// Why curve control stopped, until an application brings the curve back.
     pub suspension: Option<CurveSuspension>,
-    /// What the daemon did with the applied curves when it restarted within this host boot,
+    /// What became of the applied curves when curve control restarted within this host boot,
     /// until an application or a later suspension replaces it.
     #[serde(default)]
     pub recovery: Option<CoolingRecovery>,
@@ -127,8 +127,8 @@ pub struct CurveSuspension {
     pub restoration: Vec<FanRestoration>,
 }
 
-/// A restarted daemon's attempt to resume the curves its predecessor in the same host boot was
-/// following when it stopped. A curve that couldn't resume is suspended and waits for a retry.
+/// Restarted curve control's attempt to resume the curves it was following when it stopped in
+/// the same host boot. A curve that couldn't resume is suspended and waits for a retry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CoolingRecovery {

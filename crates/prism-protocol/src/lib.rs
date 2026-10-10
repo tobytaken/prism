@@ -791,6 +791,14 @@ mod daemon_status_tests {
     use super::{GpuDaemonStatus, TuningStoreHealth, TuningStoreProblem};
 
     #[test]
+    fn inventory_leaves_daemon_status_out_of_each_gpu() {
+        // Who can apply tuning is a fact about the install, not the GPU.
+        let control = serde_json::to_value(prism_gpu::GpuControlInfo::default()).unwrap();
+        assert_eq!(control.get("managedByDaemon"), None);
+        assert_eq!(control.get("daemonReachable"), None);
+    }
+
+    #[test]
     fn daemon_status_disconnected_preserves_socket_path() {
         let status = GpuDaemonStatus::disconnected("/run/prism/prismd.sock", None);
 

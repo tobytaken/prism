@@ -26,7 +26,8 @@ use prism_gpu::{
 mod session;
 pub use session::{SessionNotification, start_session};
 
-/// Why a request to prismd failed: prismd didn't answer, or it answered with an error.
+/// Why a request to prismd failed: prismd didn't answer, or the request failed with one of the
+/// codes prismd itself reports, whether prismd sent it or the client hit it locally.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestError {
     pub code: RequestErrorCode,
