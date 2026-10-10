@@ -2,6 +2,8 @@
 
 For [Define profile persistence, compatibility, and failure contracts](https://github.com/tobytaken/prism-electron/issues/8), the root host daemon is the single store for GPU tuning profiles, game associations, each user's automatic switching opt-in, startup behavior, and startup profiles. ADR-0002 and ADR-0003 require the daemon to act on the latest profile values with no app running, and a Flatpak app's files live inside its sandbox, so the daemon holds the only copy instead of mirroring the app's. Each item belongs to the caller identified by the daemon's peer credentials, keyed by uid with the username recorded so that a reused uid doesn't inherit another account's profiles. Users see only their own profiles, except the host-wide startup profile and current profile, which are shown to others by name. The app becomes a client, importing its existing per-user profile file once.
 
+_Amended 2026-10-10:_ [#121](https://github.com/tobytaken/prism-electron/issues/121) removed the one-time profile-file import. Prism was never released, so there are no profile files to carry over.
+
 Daemon state is split by how long it must live:
 
 - **Persistent** (survives reboots): profiles, associations, opt-ins, startup behavior and startup profiles, current-profile references, last applied tuning values, explicit automatic switching pauses, and the record used to detect an unclean shutdown.

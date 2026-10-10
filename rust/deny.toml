@@ -2,10 +2,12 @@
 # Prism's GPL-3.0-or-later.
 
 [graph]
+# Keep in step with about.toml.
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 
 [licenses]
-# Every license here is GPLv3-compatible. Add one only after checking that it is.
+# Every license here is GPLv3-compatible. Add one only after checking that it is, and keep
+# `accepted` in about.toml in step.
 allow = [
     "Apache-2.0",
     "BSD-2-Clause",

@@ -10,6 +10,8 @@ Boot-time application follows ADR-0001's validation rules, but nobody is present
 
 Existing saved GPU configurations are migrated once. Each one's power limit and offsets become a profile named "Previous startup settings", designated as that GPU's startup profile, with startup behavior set to startup profiles. The user is told once that saved clock locks are no longer restored. The saved configuration, its reapplication, and its reset are then retired.
 
+_Amended 2026-10-10:_ [#121](https://github.com/tobytaken/prism-electron/issues/121) removed this one-time migration. Prism was never released, so there are no saved configurations to carry over.
+
 ## Considered options
 
 - **Keep saved configuration reapplication alongside profiles**: rejected because two boot-time sources could conflict on the same GPU, and nothing in the current UI writes saved configurations.
