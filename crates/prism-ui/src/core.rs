@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use prism_gpu::{GpuInventoryResponse, GpuPerformanceResponse};
 
+use crate::palette::{Command, PaletteState, Shortcut};
 use crate::telemetry::{Readings, TelemetryHistory, TelemetryRange};
 
 /// The user's choice of System, Light or Dark; System follows the desktop's preference.
@@ -44,6 +45,9 @@ pub enum Input {
     },
     /// The user asked for something.
     Intent(Intent),
+    /// Prism was launched again, and that launch handed over to this one, with the activation
+    /// token it was started with, if any.
+    LaunchedAgain { activation_token: Option<String> },
 }
 
 /// Something the user asked for.
@@ -53,13 +57,30 @@ pub enum Intent {
     SelectGpu(String),
     GoTo(Section),
     CloseWindow,
+    OpenPalette,
+    /// Search the palette's commands for this query.
+    FilterPalette(String),
+    HighlightNext,
+    HighlightPrevious,
+    /// Run the palette's highlighted command.
+    RunHighlighted,
+    /// Run the palette's command at this index among its entries.
+    RunPaletteEntry(usize),
+    /// Close the topmost overlay.
+    Dismiss,
+    Press(Shortcut),
 }
 
 /// Something the core asks the caller to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// Start reading the GPUs in-process at 1 Hz.
     StartSampler,
+    /// Show the window, unminimized and focused, passing on the activation token that lets the
+    /// desktop focus it.
+    RaiseWindow {
+        activation_token: Option<String>,
+    },
     Quit,
 }
 
@@ -71,6 +92,9 @@ pub struct Core {
     pub(crate) selection: Option<Selection>,
     pub(crate) telemetry: Option<TelemetryState>,
     pub(crate) range: TelemetryRange,
+    pub(crate) palette: Option<PaletteState>,
+    /// Commands run lately, the latest first.
+    pub(crate) recent: Vec<Command>,
     revision: u64,
 }
 
@@ -166,6 +190,9 @@ impl Core {
                 Vec::new()
             }
             Input::Intent(intent) => self.intent(intent),
+            Input::LaunchedAgain { activation_token } => {
+                vec![Effect::RaiseWindow { activation_token }]
+            }
         }
     }
 
@@ -195,20 +222,61 @@ impl Core {
 
     fn intent(&mut self, intent: Intent) -> Vec<Effect> {
         match intent {
-            Intent::SelectGpu(id) => {
-                let Discovery::Found { gpus, .. } = &self.discovery else {
-                    return Vec::new();
-                };
-                if gpus.iter().any(|gpu| gpu.id == id) {
+            Intent::SelectGpu(id) => self.perform(Command::GoToGpu(id)),
+            Intent::GoTo(section) => self.perform(Command::GoTo(section)),
+            Intent::CloseWindow => self.perform(Command::Quit),
+            Intent::OpenPalette | Intent::Press(Shortcut::OpenPalette) => {
+                self.open_palette();
+                Vec::new()
+            }
+            Intent::FilterPalette(query) => {
+                self.filter_palette(query);
+                Vec::new()
+            }
+            Intent::HighlightNext => {
+                self.move_highlight(1);
+                Vec::new()
+            }
+            Intent::HighlightPrevious => {
+                self.move_highlight(-1);
+                Vec::new()
+            }
+            Intent::RunHighlighted => self.run(self.palette_command(None)),
+            Intent::RunPaletteEntry(index) => self.run(self.palette_command(Some(index))),
+            Intent::Dismiss | Intent::Press(Shortcut::Dismiss) => {
+                self.dismiss();
+                Vec::new()
+            }
+            Intent::Press(shortcut) => self.run(self.shortcut_command(shortcut)),
+        }
+    }
+
+    /// Runs a command from the palette or a shortcut, unless it can't run now.
+    fn run(&mut self, command: Option<Command>) -> Vec<Effect> {
+        let Some(command) = command else {
+            return Vec::new();
+        };
+        if self.unavailable(&command).is_some() {
+            return Vec::new();
+        }
+        self.record_run(&command);
+        self.dismiss();
+        self.perform(command)
+    }
+
+    fn perform(&mut self, command: Command) -> Vec<Effect> {
+        match command {
+            Command::GoToGpu(id) => {
+                if self.gpus().iter().any(|gpu| gpu.id == id) {
                     self.selection = Some(Selection::Gpu(id));
                 }
                 Vec::new()
             }
-            Intent::GoTo(section) => {
+            Command::GoTo(section) => {
                 self.selection = Some(Selection::Section(section));
                 Vec::new()
             }
-            Intent::CloseWindow => vec![Effect::Quit],
+            Command::Quit => vec![Effect::Quit],
         }
     }
 

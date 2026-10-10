@@ -25,6 +25,8 @@ slint = { version = "=1.18.1", default-features = false, features = [
     "backend-winit",
     "renderer-femtovg",
     "accessibility",
+    # Reaches the winit window to raise it with an activation token. Pinned with Slint above.
+    "unstable-winit-030",
 ] }
 slint-build = "=1.18.1"
 
@@ -38,6 +40,12 @@ tempfile = "3.23.0"
 thiserror = "2.0.18"
 toml = "0.9.8"
 users = "0.11.0"
+# The single-instance bus; the same zbus Slint's accessibility already uses.
+zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
+# Raising the window on Wayland with a later launch's activation token; the same crates winit uses.
+wayland-backend = { version = "0.3.17", features = ["client_system"] }
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

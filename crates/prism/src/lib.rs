@@ -9,14 +9,18 @@ mod ui {
 
 pub use crate::ui::*;
 
+mod activation;
 mod app;
 mod chart;
 mod environment;
 mod sampler;
 pub mod settings;
+pub mod single_instance;
 mod sync;
 
+pub use crate::activation::DesktopActivation;
 pub use crate::app::App;
 pub use crate::environment::{
-    Clock, Environment, HostServices, PrismdConnector, Sampling, SystemClock,
+    Clock, Environment, HostServices, Launches, NoLaunches, PrismdConnector, Sampling, SystemClock,
+    WindowActivation,
 };

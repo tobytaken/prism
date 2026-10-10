@@ -1,13 +1,13 @@
 //! Copies the core's view models into the Slint globals after every input.
 
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use prism_ui::format::Readout;
 use prism_ui::{AppearanceMode as CoreAppearance, Content, Core, Section as CoreSection};
 
 use crate::{
-    AppState, AppearanceMode, ContentKind, ExplainedStateView, MainWindow, ReadoutView,
-    SidebarGpuView, TemperatureTrackView, Theme, WorkspaceView,
+    AppState, AppearanceMode, ContentKind, ExplainedStateView, MainWindow, PaletteEntryView,
+    ReadoutView, SidebarGpuView, TemperatureTrackView, Theme, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -36,7 +36,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
             selected: gpu.selected,
         })
         .collect();
-    if let Some(model) = update_in_place(&state.get_gpus(), gpus) {
+    if let Some(model) = update_in_place(&state.get_gpus(), gpus, PartialEq::eq) {
         state.set_gpus(model);
     }
     if let Some(no_gpus) = &sidebar.no_gpus {
@@ -72,6 +72,31 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         Content::Section(CoreSection::Settings) => ContentKind::Settings,
     });
 
+    let palette = core.palette();
+    state.set_palette_open(palette.is_some());
+    let entries: Vec<_> = palette
+        .map(|palette| palette.entries)
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| PaletteEntryView {
+            title: entry.title.as_str().into(),
+            keys: ModelRc::new(VecModel::from(
+                entry
+                    .keys
+                    .iter()
+                    .map(SharedString::from)
+                    .collect::<Vec<_>>(),
+            )),
+            available: entry.unavailable.is_none(),
+            reason: entry.unavailable.as_deref().unwrap_or_default().into(),
+            description: entry.description().into(),
+            highlighted: entry.highlighted,
+        })
+        .collect();
+    if let Some(model) = update_in_place(&state.get_palette_entries(), entries, same_entry) {
+        state.set_palette_entries(model);
+    }
+
     let status = core.status_bar();
     state.set_connection(status.connection.into());
     state.set_telemetry(status.telemetry.into());
@@ -80,10 +105,11 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
 }
 
 /// Updates the rows of a model this module made, so Slint keeps the elements built for unchanged
-/// rows and their focus; returns a new model to set when `current` is another kind.
-fn update_in_place<T: Clone + PartialEq + 'static>(
+/// rows (`same`) and their focus; returns a new model to set when `current` is another kind.
+fn update_in_place<T: Clone + 'static>(
     current: &ModelRc<T>,
     rows: Vec<T>,
+    same: impl Fn(&T, &T) -> bool,
 ) -> Option<ModelRc<T>> {
     let Some(model) = current.as_any().downcast_ref::<VecModel<T>>() else {
         return Some(ModelRc::new(VecModel::from(rows)));
@@ -93,12 +119,23 @@ fn update_in_place<T: Clone + PartialEq + 'static>(
     }
     for (index, row) in rows.into_iter().enumerate() {
         match model.row_data(index) {
-            Some(existing) if existing == row => {}
+            Some(existing) if same(&existing, &row) => {}
             Some(_) => model.set_row_data(index, row),
             None => model.push(row),
         }
     }
     None
+}
+
+/// Whether two palette entries show the same, comparing their keys by content: models compare by
+/// identity.
+fn same_entry(a: &PaletteEntryView, b: &PaletteEntryView) -> bool {
+    a.title == b.title
+        && a.keys.iter().eq(b.keys.iter())
+        && a.available == b.available
+        && a.reason == b.reason
+        && a.description == b.description
+        && a.highlighted == b.highlighted
 }
 
 fn readout(readout: &Readout) -> ReadoutView {

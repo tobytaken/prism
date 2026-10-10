@@ -47,6 +47,26 @@ export struct WorkspaceView {
     temperature: TemperatureTrackView,
 }
 
+// A command in the palette. `keys` are its shortcut's keys, `reason` why it can't run when it
+// can't, and `description` both as a screen reader says them.
+export struct PaletteEntryView {
+    title: string,
+    keys: [string],
+    available: bool,
+    reason: string,
+    description: string,
+    highlighted: bool,
+}
+
+// A key press, for the window's global shortcuts.
+export struct KeyPress {
+    text: string,
+    control: bool,
+    shift: bool,
+    alt: bool,
+    meta: bool,
+}
+
 export enum Section { games, drivers, settings }
 
 export enum ContentKind { searching, no-gpus, gpu, games, drivers, settings }
@@ -58,6 +78,9 @@ export global AppState {
     in property <WorkspaceView> workspace;
     in property <string> connection;
     in property <string> telemetry;
+    in property <bool> palette-open;
+    // The commands matching the palette's query, recently run ones first.
+    in property <[PaletteEntryView]> palette-entries;
     // Changes with every input, so derived geometry knows when to redraw.
     in property <int> revision;
 
@@ -71,6 +94,17 @@ export global Intents {
     callback minimize-window();
     callback toggle-maximized();
     callback close-window();
+    callback filter-palette(query: string);
+    callback highlight-next();
+    callback highlight-previous();
+    callback run-highlighted();
+    callback run-palette-entry(index: int);
+    // Closes the topmost overlay.
+    callback dismiss();
+    // Runs the global shortcut `key` presses, if any, and says whether the key was spoken for. While
+    // a text field has focus, a shortcut that clashes with text editing is spoken for but doesn't
+    // run.
+    callback key-pressed(key: KeyPress, in-text-field: bool) -> bool;
 }
 
 // Wakes the UI thread after a worker thread has posted inputs for the core.

@@ -1,15 +1,16 @@
 import { Theme, AppearanceMode } from "theme.slint";
-import { AppState, ContentKind, ExplainedStateView, Inbox, Intents, ReadoutView, Section, SidebarGpuView, TemperatureTrackView, WorkspaceView } from "state.slint";
+import { AppState, ContentKind, ExplainedStateView, Inbox, Intents, KeyPress, PaletteEntryView, ReadoutView, Section, SidebarGpuView, TemperatureTrackView, WorkspaceView } from "state.slint";
 import { TitleBar } from "views/title-bar.slint";
 import { Sidebar } from "views/sidebar.slint";
 import { Workspace } from "views/workspace.slint";
 import { ExplainedState } from "views/explained-state.slint";
 import { StatusBar } from "views/status-bar.slint";
+import { CommandPalette } from "views/command-palette.slint";
 
-export { Theme, AppearanceMode, AppState, ContentKind, ExplainedStateView, Inbox, Intents, ReadoutView, Section, SidebarGpuView, TemperatureTrackView, WorkspaceView }
+export { Theme, AppearanceMode, AppState, ContentKind, ExplainedStateView, Inbox, Intents, KeyPress, PaletteEntryView, ReadoutView, Section, SidebarGpuView, TemperatureTrackView, WorkspaceView }
 
 // Prism's one window: frameless, with its own title bar, the sidebar, the content and the status
-// bar.
+// bar, and the command palette over them when it's open.
 export component MainWindow inherits Window {
     title: "Prism";
     no-frame: true;
@@ -20,45 +21,69 @@ export component MainWindow inherits Window {
     min-height: Theme.size.window-min-height;
     background: Theme.color.canvas;
     default-font-family: Theme.font-ui;
+    forward-focus: keys;
 
-    VerticalLayout {
-        TitleBar { }
+    // Gives the window's global shortcuts back the keyboard, after the element that had it went
+    // away, such as the palette's field when the palette closes.
+    public function focus-window() {
+        keys.focus();
+    }
 
-        HorizontalLayout {
-            vertical-stretch: 1;
-
-            Sidebar { }
-
-            Rectangle {
-                horizontal-stretch: 1;
-                background: Theme.color.surface;
-
-                if AppState.content == ContentKind.gpu: Workspace {
-                    workspace: AppState.workspace;
-                }
-                if AppState.content == ContentKind.searching: ExplainedState {
-                    title: "Looking for GPUs…";
-                }
-                if AppState.content == ContentKind.no-gpus: ExplainedState {
-                    title: AppState.no-gpus.title;
-                    reason: AppState.no-gpus.reason;
-                    hint: AppState.no-gpus.hint;
-                }
-                if AppState.content == ContentKind.games: ExplainedState {
-                    title: "Games";
-                    reason: "This section isn't built yet.";
-                }
-                if AppState.content == ContentKind.drivers: ExplainedState {
-                    title: "Drivers";
-                    reason: "This section isn't built yet.";
-                }
-                if AppState.content == ContentKind.settings: ExplainedState {
-                    title: "Settings";
-                    reason: "This section isn't built yet.";
-                }
-            }
+    // Keys no focused element used reach the global shortcuts here.
+    keys := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        key-pressed(event) => {
+            Intents.key-pressed({
+                text: event.text,
+                control: event.modifiers.control,
+                shift: event.modifiers.shift,
+                alt: event.modifiers.alt,
+                meta: event.modifiers.meta,
+            }, TextInputInterface.text-input-focused) ? EventResult.accept : EventResult.reject
         }
 
-        StatusBar { }
+        VerticalLayout {
+            TitleBar { }
+
+            HorizontalLayout {
+                vertical-stretch: 1;
+
+                Sidebar { }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: Theme.color.surface;
+
+                    if AppState.content == ContentKind.gpu: Workspace {
+                        workspace: AppState.workspace;
+                    }
+                    if AppState.content == ContentKind.searching: ExplainedState {
+                        title: "Looking for GPUs…";
+                    }
+                    if AppState.content == ContentKind.no-gpus: ExplainedState {
+                        title: AppState.no-gpus.title;
+                        reason: AppState.no-gpus.reason;
+                        hint: AppState.no-gpus.hint;
+                    }
+                    if AppState.content == ContentKind.games: ExplainedState {
+                        title: "Games";
+                        reason: "This section isn't built yet.";
+                    }
+                    if AppState.content == ContentKind.drivers: ExplainedState {
+                        title: "Drivers";
+                        reason: "This section isn't built yet.";
+                    }
+                    if AppState.content == ContentKind.settings: ExplainedState {
+                        title: "Settings";
+                        reason: "This section isn't built yet.";
+                    }
+                }
+            }
+
+            StatusBar { }
+        }
+
+        if AppState.palette-open: CommandPalette { }
     }
 }

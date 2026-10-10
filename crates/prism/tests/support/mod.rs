@@ -7,19 +7,23 @@
 pub mod audit;
 pub mod screenshot;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
 use prism::settings::{GuiSettings, SettingsStore};
-use prism::{App, Clock, Environment, HostServices, PrismdConnector, Sampling};
+use prism::{
+    App, Clock, Environment, HostServices, Launches, PrismdConnector, Sampling, WindowActivation,
+};
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuPerformanceResponse, GpuProviders, GpuTelemetryProvider};
 use prism_ui::AppearanceMode;
 use slint::ComponentHandle;
+use slint::platform::{Key, WindowEvent};
 
 /// A clock that only moves when the test advances it.
 #[derive(Default)]
@@ -45,8 +49,63 @@ impl SettingsStore for FixedSettings {
     }
 }
 
+/// Later launches of Prism that the test makes, as the single-instance bus would hand them over.
+#[derive(Clone, Default)]
+pub struct FakeLaunches(Listener);
+
+type Listener = Arc<Mutex<Option<Box<dyn Fn(Option<String>) + Send + Sync>>>>;
+
+impl FakeLaunches {
+    /// The side Prism holds, which owns the app ID's name until Prism drops it.
+    fn name(&self) -> Box<dyn Launches> {
+        Box::new(FakeName(self.0.clone()))
+    }
+
+    /// Launches Prism again with `activation_token`, which hands over to the running one.
+    pub fn launch(&self, activation_token: Option<&str>) {
+        let listener = self.0.lock().unwrap();
+        let launched = listener
+            .as_ref()
+            .expect("the running Prism owns the name and listens for later launches");
+        launched(activation_token.map(String::from));
+    }
+}
+
+struct FakeName(Listener);
+
+impl Launches for FakeName {
+    fn listen(&self, launched: Box<dyn Fn(Option<String>) + Send + Sync>) {
+        *self.0.lock().unwrap() = Some(launched);
+    }
+}
+
+impl Drop for FakeName {
+    /// Like closing the bus connection, gives up the name.
+    fn drop(&mut self) {
+        *self.0.lock().unwrap() = None;
+    }
+}
+
+/// Records each time the window is focused through the desktop, with the activation token.
+#[derive(Clone, Default)]
+pub struct RecordedActivation(Rc<RefCell<Vec<Option<String>>>>);
+
+impl RecordedActivation {
+    pub fn tokens(&self) -> Vec<Option<String>> {
+        self.0.borrow().clone()
+    }
+}
+
+impl WindowActivation for RecordedActivation {
+    fn activate(&self, _: &slint::Window, activation_token: Option<&str>) {
+        self.0.borrow_mut().push(activation_token.map(String::from));
+    }
+}
+
 pub struct Harness {
     pub app: App,
+    pub launches: FakeLaunches,
+    pub activation: RecordedActivation,
     clock: Arc<ManualClock>,
 }
 
@@ -86,10 +145,15 @@ impl Harness {
     ) -> Self {
         init_testing_backend();
         let clock = Arc::new(ManualClock::default());
+        let launches = FakeLaunches::default();
+        let activation = RecordedActivation::default();
         let app = App::new(Environment {
             gpus: gpus(clock.clone()),
             prismd: PrismdConnector::Placeholder,
-            host: HostServices::default(),
+            host: HostServices {
+                launches: launches.name(),
+                activation: Box::new(activation.clone()),
+            },
             settings: Box::new(FixedSettings(GuiSettings { appearance })),
             clock: clock.clone(),
             sampling: Sampling::OnDemand,
@@ -97,7 +161,12 @@ impl Harness {
         .expect("build the main window");
         app.window().show().expect("show the main window");
         ensure_element_tree(app.window());
-        Self { app, clock }
+        Self {
+            app,
+            launches,
+            activation,
+            clock,
+        }
     }
 
     /// Lets a second pass, then reads every GPU once.
@@ -109,6 +178,40 @@ impl Harness {
     pub fn ticks(&self, count: usize) {
         for _ in 0..count {
             self.tick();
+        }
+    }
+
+    /// Presses `key` with `modifiers` held, then lets go of them all.
+    pub fn press(&self, modifiers: &[Key], key: impl Into<slint::SharedString>) {
+        let window = self.app.window().window();
+        let key = key.into();
+        let dispatch = |event| window.dispatch_event(event);
+        for modifier in modifiers {
+            dispatch(WindowEvent::KeyPressed {
+                text: (*modifier).into(),
+            });
+        }
+        dispatch(WindowEvent::KeyPressed { text: key.clone() });
+        dispatch(WindowEvent::KeyReleased { text: key });
+        for modifier in modifiers.iter().rev() {
+            dispatch(WindowEvent::KeyReleased {
+                text: (*modifier).into(),
+            });
+        }
+    }
+
+    pub fn ctrl(&self, key: &str) {
+        self.press(&[Key::Control], key);
+    }
+
+    pub fn ctrl_shift(&self, key: &str) {
+        self.press(&[Key::Control, Key::Shift], key);
+    }
+
+    /// Types `text` one key at a time.
+    pub fn type_text(&self, text: &str) {
+        for letter in text.chars() {
+            self.press(&[], letter.to_string());
         }
     }
 
