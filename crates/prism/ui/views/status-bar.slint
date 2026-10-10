@@ -1,0 +1,46 @@
+import { Theme } from "../theme.slint";
+import { StyledText } from "../widgets.slint";
+import { AppState } from "../state.slint";
+
+// The status bar: the prismd connection, then where telemetry comes from.
+export component StatusBar inherits Rectangle {
+    height: Theme.size.status-bar;
+    background: Theme.color.chrome;
+
+    HorizontalLayout {
+        padding-left: Theme.space.xl;
+        padding-right: Theme.space.xl;
+        spacing: Theme.space.xxl;
+
+        HorizontalLayout {
+            spacing: Theme.space.s;
+            horizontal-stretch: 0;
+
+            VerticalLayout {
+                alignment: center;
+
+                Rectangle {
+                    width: Theme.size.status-dot;
+                    height: Theme.size.status-dot;
+                    background: Theme.color.chrome-ink-muted;
+                }
+            }
+
+            StyledText {
+                text: AppState.connection;
+                style: Theme.text.status;
+                color: Theme.color.chrome-ink-muted;
+            }
+        }
+
+        StyledText {
+            text: AppState.telemetry;
+            style: Theme.text.status;
+            color: Theme.color.chrome-ink-muted;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+    }
+}

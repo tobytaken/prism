@@ -15,6 +15,18 @@ publish = false
 prism-drivers = { path = "crates/prism-drivers" }
 prism-gpu = { path = "crates/prism-gpu" }
 prism-protocol = { path = "crates/prism-protocol" }
+prism-ui = { path = "crates/prism-ui" }
+
+# Slint and its testing backend are pinned exactly and bumped together (#120).
+i-slint-backend-testing = "=1.18.1"
+slint = { version = "=1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-femtovg",
+    "accessibility",
+] }
+slint-build = "=1.18.1"
 
 libc = "0.2.177"
 nvml-wrapper = "0.12.1"

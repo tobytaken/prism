@@ -1,0 +1,35 @@
+import { Theme } from "../theme.slint";
+
+// A chart's background grid. Chart parts carry no accessible role; the track's readout does.
+export component Grid inherits Rectangle {
+    in property <int> rows: 3;
+    in property <int> columns: 6;
+    accessible-role: none;
+
+    for row in rows: Rectangle {
+        x: 0;
+        y: round(parent.height * (row + 1) / (rows + 1) / 1px) * 1px;
+        width: parent.width;
+        height: Theme.stroke.hairline;
+        background: Theme.color.grid;
+    }
+    for column in columns - 1: Rectangle {
+        x: round(parent.width * (column + 1) / columns / 1px) * 1px;
+        y: 0;
+        width: Theme.stroke.hairline;
+        height: parent.height;
+        background: Theme.color.grid;
+    }
+}
+
+// A line through a series' readings. Rust supplies the path commands, in the chart's own pixels.
+export component Series inherits Path {
+    width: 100%;
+    height: 100%;
+    viewbox-width: self.width / 1px;
+    viewbox-height: self.height / 1px;
+    stroke: Theme.color.series;
+    stroke-width: Theme.stroke.series;
+    stroke-line-join: round;
+    accessible-role: none;
+}

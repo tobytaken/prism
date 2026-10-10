@@ -1,0 +1,79 @@
+// Prism's state and the user's intents, implemented in Rust. The glue copies the prism-ui core's
+// view models in here after every input; views only lay out and draw what they're given.
+
+// A reading as shown. `value` is the number or "—", `text` the value with its unit, and `spoken`
+// what a screen reader says.
+export struct ReadoutView {
+    value: string,
+    unit: string,
+    known: bool,
+    text: string,
+    spoken: string,
+}
+
+export struct SidebarGpuView {
+    id: string,
+    index: string,
+    name: string,
+    identity: string,
+    label: string,
+    temperature: ReadoutView,
+    utilization: ReadoutView,
+    power-draw: ReadoutView,
+    fan-speed: ReadoutView,
+    vitals: string,
+    selected: bool,
+}
+
+export struct ExplainedStateView {
+    title: string,
+    reason: string,
+    hint: string,
+}
+
+export struct TemperatureTrackView {
+    readout: ReadoutView,
+    unknown-reason: string,
+    range: string,
+    max: ReadoutView,
+    avg: ReadoutView,
+    min: ReadoutView,
+}
+
+export struct WorkspaceView {
+    id: string,
+    title: string,
+    subtitle: string,
+    temperature: TemperatureTrackView,
+}
+
+export enum Section { games, drivers, settings }
+
+export enum ContentKind { searching, no-gpus, gpu, games, drivers, settings }
+
+export global AppState {
+    in property <[SidebarGpuView]> gpus;
+    in property <ContentKind> content;
+    in property <ExplainedStateView> no-gpus;
+    in property <WorkspaceView> workspace;
+    in property <string> connection;
+    in property <string> telemetry;
+    // Changes with every input, so derived geometry knows when to redraw.
+    in property <int> revision;
+
+    // The selected GPU's temperature series as path commands for a chart of this size.
+    pure callback temperature-series(width: float, height: float, revision: int) -> string;
+}
+
+export global Intents {
+    callback select-gpu(id: string);
+    callback go-to(section: Section);
+    callback minimize-window();
+    callback toggle-maximized();
+    callback close-window();
+}
+
+// Wakes the UI thread after a worker thread has posted inputs for the core.
+export global Inbox {
+    callback inputs-posted();
+}

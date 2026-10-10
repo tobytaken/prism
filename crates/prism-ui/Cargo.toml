@@ -1,0 +1,18 @@
+[package]
+name = "prism-ui"
+description = "Prism's UI logic as a pure state machine, with no toolkit, threads or I/O"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+prism-gpu.workspace = true
+
+[dev-dependencies]
+prism-gpu = { workspace = true, features = ["simulated"] }
+
+[lints]
+workspace = true

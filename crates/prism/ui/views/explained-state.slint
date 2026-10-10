@@ -1,0 +1,40 @@
+import { Theme } from "../theme.slint";
+import { StyledText } from "../widgets.slint";
+
+// Content that has nothing to show yet, and why.
+export component ExplainedState inherits Rectangle {
+    in property <string> title;
+    in property <string> reason;
+    in property <string> hint;
+
+    VerticalLayout {
+        alignment: center;
+
+        HorizontalLayout {
+            alignment: center;
+
+            VerticalLayout {
+                width: Theme.size.explained-state;
+                spacing: Theme.space.m;
+
+                StyledText {
+                    text: root.title;
+                    style: Theme.text.heading;
+                }
+
+                if root.reason != "": StyledText {
+                    text: root.reason;
+                    style: Theme.text.body;
+                    color: Theme.color.ink-muted;
+                    wrap: word-wrap;
+                }
+
+                if root.hint != "": StyledText {
+                    text: root.hint;
+                    style: Theme.text.body;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,12 @@
+import { Theme, TextStyle } from "../theme.slint";
+
+// Text in one of the theme's named styles.
+export component StyledText inherits Text {
+    in property <TextStyle> style: Theme.text.body;
+    font-family: style.family;
+    font-size: style.size;
+    font-weight: style.weight;
+    letter-spacing: style.tracking;
+    color: Theme.color.ink;
+    vertical-alignment: center;
+}

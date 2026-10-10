@@ -1,0 +1,41 @@
+import { Theme } from "../theme.slint";
+
+// The pointer and keyboard handling every pressable widget shares: a click, Return or Space
+// activates it, and a keyboard-only focus ring in ink (never orange, which means pending) shows
+// when it was reached with Tab.
+export component PressArea inherits FocusScope {
+    in property <color> ring-color: Theme.color.ink;
+    out property <bool> has-hover: touch.has-hover;
+    out property <bool> pressed: touch.pressed;
+    property <bool> keyboard-focus;
+    callback activated();
+
+    focus-gained(reason) => {
+        keyboard-focus = reason == FocusReason.tab-navigation;
+    }
+    focus-lost => {
+        keyboard-focus = false;
+    }
+    key-pressed(event) => {
+        if (event.text == Key.Return || event.text == " ") {
+            root.activated();
+            return accept;
+        }
+        reject
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+
+    if keyboard-focus: Rectangle {
+        x: -Theme.stroke.focus-offset;
+        y: -Theme.stroke.focus-offset;
+        width: parent.width + 2 * Theme.stroke.focus-offset;
+        height: parent.height + 2 * Theme.stroke.focus-offset;
+        border-width: Theme.stroke.focus;
+        border-color: root.ring-color;
+    }
+}

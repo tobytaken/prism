@@ -1,0 +1,45 @@
+import { Theme } from "../theme.slint";
+import { Divider, StyledText } from "../widgets.slint";
+import { WorkspaceView } from "../state.slint";
+import { TemperatureTrack } from "temperature-track.slint";
+
+// The selected GPU's workspace: its header, then one full-width track per metric.
+export component Workspace inherits Rectangle {
+    in property <WorkspaceView> workspace;
+
+    VerticalLayout {
+        Rectangle {
+            height: Theme.size.header;
+
+            VerticalLayout {
+                padding-left: Theme.space.xxl;
+                padding-right: Theme.space.xxl;
+                alignment: center;
+
+                StyledText {
+                    text: root.workspace.title;
+                    style: Theme.text.title;
+                    overflow: elide;
+                }
+
+                StyledText {
+                    text: root.workspace.subtitle;
+                    style: Theme.text.subtitle;
+                    color: Theme.color.ink-muted;
+                }
+            }
+
+            Divider {
+                y: parent.height - self.height;
+            }
+        }
+
+        TemperatureTrack {
+            track: root.workspace.temperature;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+        }
+    }
+}
