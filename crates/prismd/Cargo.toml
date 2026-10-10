@@ -1,0 +1,55 @@
+[package]
+name = "prismd"
+description = "Privileged daemon for Prism"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[test]]
+name = "cooling_supervision"
+harness = false
+
+[dependencies]
+libc.workspace = true
+prism-drivers.workspace = true
+prism-gpu.workspace = true
+prism-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+users.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.deb]
+maintainer = "Tobias Steinhaeusler"
+license-file = ["../../LICENSE", "0"]
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+  ["target/release/prismd", "usr/bin/prismd", "755"],
+  ["../../contrib/systemd/prismd.service", "lib/systemd/system/prismd.service", "644"],
+  ["../../contrib/prismd.toml", "etc/prism/prismd.toml", "644"],
+  ["../../README.md", "usr/share/doc/prismd/README.md", "644"],
+  ["../../THIRD-PARTY-LICENSES", "usr/share/doc/prismd/THIRD-PARTY-LICENSES", "644"]
+]
+
+[package.metadata.generate-rpm]
+summary = "Privileged daemon for Prism"
+auto-req = "no"
+assets = [
+  { source = "target/release/prismd", dest = "/usr/bin/prismd", mode = "755" },
+  { source = "../../contrib/systemd/prismd.service", dest = "/lib/systemd/system/prismd.service", mode = "644" },
+  { source = "../../contrib/prismd.toml", dest = "/etc/prism/prismd.toml", mode = "644", config = "noreplace" },
+  { source = "../../README.md", dest = "/usr/share/doc/prismd/README.md", mode = "644", doc = true },
+  { source = "../../LICENSE", dest = "/usr/share/licenses/prismd/LICENSE", mode = "644", doc = true },
+  { source = "../../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/prismd/THIRD-PARTY-LICENSES", mode = "644", doc = true }
+]

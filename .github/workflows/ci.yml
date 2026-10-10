@@ -3,10 +3,6 @@ name: CI
 on:
   workflow_dispatch:
 
-defaults:
-  run:
-    working-directory: rust
-
 jobs:
   fmt:
     runs-on: ubuntu-latest
@@ -25,9 +21,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
-      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -35,9 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
-      - run: cargo test --locked
+      - run: cargo test --locked --workspace
 
   deny:
     runs-on: ubuntu-latest
@@ -50,8 +42,8 @@ jobs:
       - run: cargo deny --locked check licenses
       - name: THIRD-PARTY-LICENSES matches Cargo.lock
         run: |
-          bash ../scripts/generate-third-party-licenses.sh
-          git diff --exit-code -- ../THIRD-PARTY-LICENSES
+          bash scripts/generate-third-party-licenses.sh
+          git diff --exit-code -- THIRD-PARTY-LICENSES
 
   package-smoke:
     runs-on: ubuntu-latest
@@ -59,10 +51,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deb@3.6.3,cargo-generate-rpm@0.20.0
-      - run: bash ../scripts/package-prismd-deb.sh
-      - run: bash ../scripts/package-prismd-rpm.sh
+      - run: bash scripts/package-prismd-deb.sh
+      - run: bash scripts/package-prismd-rpm.sh

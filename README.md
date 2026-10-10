@@ -7,23 +7,27 @@ Prism is licensed under the GNU General Public License, version 3 or later (`GPL
 ## Architecture
 
 - `prismd` is a privileged host daemon that owns all tuning writes and tuning state.
-- The Rust library under [`rust`](./rust) reads GPUs through NVML and talks to `prismd`. The native GUI will link it in-process.
+- The Cargo workspace keeps its crates under [`crates`](./crates). The dependency graph runs one way: `prism-gpu ← prism-drivers ← prism-protocol ← prismd`.
+  - [`prism-gpu`](./crates/prism-gpu) reads and tunes GPUs through NVML. It holds fan curves and cooling, and knows nothing of `prismd`.
+  - [`prism-drivers`](./crates/prism-drivers) detects the host and its NVIDIA driver, plans driver installs, and runs driver jobs.
+  - [`prism-protocol`](./crates/prism-protocol) holds the `prismd` socket's wire types, framing and client, and the shared contract fixtures.
+  - [`prismd`](./crates/prismd) is the daemon, along with its tests and its deb/rpm packaging metadata.
+- The native GUI will link these crates in-process.
 
 ## Development
 
 Run the checks CI runs:
 
 ```bash
-cd rust
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 cargo deny check licenses
 ```
 
 CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check and the `prismd` package smoke builds.
 
-`cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`rust/deny.toml`](./rust/deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
+`cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`deny.toml`](./deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
 
 ```bash
 bash scripts/generate-third-party-licenses.sh
@@ -34,7 +38,7 @@ bash scripts/generate-third-party-licenses.sh
 Build the daemon:
 
 ```bash
-cargo build --manifest-path rust/Cargo.toml --release --bin prismd
+cargo build --release -p prismd
 ```
 
 Install the daemon on the host for local testing:
