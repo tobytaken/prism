@@ -235,6 +235,10 @@ impl Inner {
         let Some(shortcut) = Shortcut::for_key(&key) else {
             return false;
         };
+        // With nothing to close, Escape is left to whoever else wants it.
+        if shortcut == Shortcut::Dismiss && !self.core.borrow().palette_open() {
+            return false;
+        }
         // A focused text field keeps the keys it edits with.
         if !(in_text_field && shortcut.clashes_with_text_editing()) {
             self.handle(Input::Intent(Intent::Press(shortcut)));

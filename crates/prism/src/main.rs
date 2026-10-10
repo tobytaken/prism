@@ -18,8 +18,8 @@ fn main() -> ExitCode {
             eprintln!("prism: Prism is already running, so its window was raised instead");
             return ExitCode::SUCCESS;
         }
-        // Prism still runs, but launching it again opens another window.
-        Err(error) => eprintln!("prism: can't reach the session bus to run only once: {error}"),
+        // Prism still runs, but it can't make sure it's the only one.
+        Err(error) => eprintln!("prism: running without single instance: {error}"),
     }
     match App::new(environment).and_then(App::run) {
         Ok(()) => ExitCode::SUCCESS,

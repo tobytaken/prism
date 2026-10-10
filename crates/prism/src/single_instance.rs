@@ -68,7 +68,13 @@ pub fn claim_on(connection: Connection, activation_token: Option<String>) -> zbu
                 .iter()
                 .map(|token| (TOKEN_KEYS[0], Value::from(token.as_str())))
                 .collect();
-            proxy.call_method("Activate", &(platform_data,))?;
+            proxy
+                .call_method("Activate", &(platform_data,))
+                .map_err(|error| {
+                    zbus::Error::Failure(format!(
+                        "another Prism owns {APP_ID} but didn't take over this launch: {error}"
+                    ))
+                })?;
             Ok(Claim::HandedOver)
         }
         Err(error) => Err(error),

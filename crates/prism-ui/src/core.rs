@@ -259,7 +259,8 @@ impl Core {
         if self.unavailable(&command).is_some() {
             return Vec::new();
         }
-        self.ran(&command);
+        self.record_run(&command);
+        self.dismiss();
         self.perform(command)
     }
 

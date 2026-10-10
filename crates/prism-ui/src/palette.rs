@@ -14,7 +14,7 @@ pub(crate) enum Command {
 }
 
 /// How many recently run commands the palette remembers, to list first.
-const RECENT: usize = 8;
+const RECENT_LIMIT: usize = 8;
 
 /// The open palette's search.
 #[derive(Debug, Default)]
@@ -226,12 +226,11 @@ impl Core {
         already_open.then(|| "Already open".into())
     }
 
-    /// Notes that `command` ran, so the palette lists it first, and closes the palette.
-    pub(crate) fn ran(&mut self, command: &Command) {
+    /// Notes that `command` ran, so the palette lists it first.
+    pub(crate) fn record_run(&mut self, command: &Command) {
         self.recent.retain(|recent| recent != command);
         self.recent.insert(0, command.clone());
-        self.recent.truncate(RECENT);
-        self.palette = None;
+        self.recent.truncate(RECENT_LIMIT);
     }
 
     /// Every command that applies now, in catalog order. Commands that don't apply at all, such
