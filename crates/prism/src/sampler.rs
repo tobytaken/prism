@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use prism_gpu::{GpuInventoryResponse, GpuPerformanceResponse, GpuProviders};
 
 /// What the sampler read.
-pub(crate) enum Reading {
+pub(crate) enum SamplerReading {
     Inventory(GpuInventoryResponse),
     Telemetry(GpuPerformanceResponse),
 }
@@ -26,13 +26,13 @@ impl Sampler {
     }
 
     /// The next readings: the inventory first, then a telemetry sample.
-    pub(crate) fn read(&mut self) -> Vec<Reading> {
+    pub(crate) fn read(&mut self) -> Vec<SamplerReading> {
         let mut readings = Vec::with_capacity(2);
         if !self.inventory_read {
             self.inventory_read = true;
-            readings.push(Reading::Inventory(self.gpus.inventory()));
+            readings.push(SamplerReading::Inventory(self.gpus.inventory()));
         }
-        readings.push(Reading::Telemetry(self.gpus.performance()));
+        readings.push(SamplerReading::Telemetry(self.gpus.performance()));
         readings
     }
 
@@ -41,7 +41,7 @@ impl Sampler {
     pub(crate) fn spawn(
         mut self,
         interval: Duration,
-        mut post: impl FnMut(Reading) -> bool + Send + 'static,
+        mut post: impl FnMut(SamplerReading) -> bool + Send + 'static,
     ) -> std::io::Result<()> {
         thread::Builder::new()
             .name("prism-sampler".into())

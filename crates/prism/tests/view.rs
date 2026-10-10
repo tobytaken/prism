@@ -160,11 +160,9 @@ fn a_gpu_without_fan_control_shows_its_fan_speed_as_unknown() {
     let block = harness.find(ListItem, "GPU 0 · RTX 4060 Laptop GPU · 01:00.0");
 
     assert_eq!(texts(&block).last().map(String::as_str), Some("—"));
-    assert!(
-        block
-            .accessible_description()
-            .is_some_and(|vitals| vitals.ends_with("fan speed unknown"))
-    );
+    assert!(block.accessible_description().is_some_and(|vitals| {
+        vitals.ends_with("fan speed unknown. Fan speed: not reported by this GPU")
+    }));
 }
 
 #[test]

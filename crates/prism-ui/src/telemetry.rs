@@ -1,7 +1,9 @@
-//! GPU telemetry history, kept in memory for the session, and its range statistics.
+//! GPU telemetry history, kept in memory while Prism runs, and its range statistics.
 
 use std::collections::VecDeque;
 use std::time::Duration;
+
+use prism_gpu::GpuTelemetryInfo;
 
 /// One GPU's readings at one time; an unavailable reading is unknown, never zero.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -10,6 +12,17 @@ pub struct Readings {
     pub utilization_percent: Option<u32>,
     pub power_draw_watts: Option<u32>,
     pub fan_speed_percent: Option<u32>,
+}
+
+impl From<&GpuTelemetryInfo> for Readings {
+    fn from(telemetry: &GpuTelemetryInfo) -> Self {
+        Self {
+            temperature_c: telemetry.temperature_c,
+            utilization_percent: telemetry.gpu_utilization_percent,
+            power_draw_watts: telemetry.power_draw_watts,
+            fan_speed_percent: telemetry.fan_speed_percent,
+        }
+    }
 }
 
 impl Readings {
@@ -30,6 +43,25 @@ pub enum Metric {
     Utilization,
     PowerDraw,
     FanSpeed,
+}
+
+impl Metric {
+    pub const ALL: [Self; 4] = [
+        Self::Temperature,
+        Self::Utilization,
+        Self::PowerDraw,
+        Self::FanSpeed,
+    ];
+
+    /// The metric in running text, such as "fan speed".
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Temperature => "temperature",
+            Self::Utilization => "utilization",
+            Self::PowerDraw => "power draw",
+            Self::FanSpeed => "fan speed",
+        }
+    }
 }
 
 /// How far back a track looks.
@@ -98,7 +130,7 @@ pub struct ChartPoint {
     pub y: f32,
 }
 
-/// One GPU's readings over the session, oldest first, each stamped with when Prism received it.
+/// One GPU's readings since Prism started, oldest first, each stamped with when Prism received it.
 #[derive(Debug, Clone, Default)]
 pub struct TelemetryHistory {
     samples: VecDeque<(Duration, Readings)>,

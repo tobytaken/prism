@@ -115,7 +115,8 @@ fn readings_are_unknown_until_the_first_sample_arrives() {
     assert_eq!(core.sidebar().gpus[0].temperature.text(), "—");
     assert_eq!(
         core.sidebar().gpus[0].vitals(),
-        "temperature unknown, utilization unknown, power draw unknown, fan speed unknown"
+        "temperature unknown, utilization unknown, power draw unknown, fan speed unknown. \
+         Waiting for the first reading"
     );
     assert_eq!(track.readout.text(), "—");
     assert_eq!(
@@ -290,4 +291,36 @@ fn the_status_bar_does_not_claim_monitoring_when_no_gpu_can_be_read() {
     );
 
     assert_eq!(core.status_bar().telemetry, "NO GPU TELEMETRY");
+}
+
+#[test]
+fn selecting_a_gpu_that_is_not_in_the_inventory_keeps_the_current_one() {
+    let mut core = launched(SimulatedFixture::TunableGpu);
+    let current = workspace(&core).id;
+
+    core.handle(Input::Intent(Intent::SelectGpu("GPU-gone".into())));
+
+    assert_eq!(workspace(&core).id, current);
+}
+
+#[test]
+fn unknown_sidebar_vitals_say_why() {
+    let mut core = launched(SimulatedFixture::NoFanControl);
+    assert_eq!(
+        core.sidebar().gpus[0].vitals(),
+        "temperature unknown, utilization unknown, power draw unknown, fan speed unknown. \
+         Waiting for the first reading"
+    );
+
+    sampled(
+        &mut core,
+        simulated(SimulatedFixture::NoFanControl).performance(),
+        1,
+    );
+
+    assert_eq!(
+        core.sidebar().gpus[0].vitals(),
+        "temperature 41 °C, utilization 2%, power draw 5 W, fan speed unknown. Fan speed: not \
+         reported by this GPU"
+    );
 }

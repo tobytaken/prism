@@ -93,21 +93,21 @@ impl Harness {
         }
     }
 
-    /// The one element with `role` labelled `label`.
+    /// The one element with `role` labeled `label`.
     pub fn find(&self, role: AccessibleRole, label: &str) -> ElementHandle {
         let mut found = ElementHandle::find_by_accessible_label(self.app.window(), label)
             .filter(|element| element.accessible_role() == Some(role));
         let element = found
             .next()
-            .unwrap_or_else(|| panic!("no {role:?} is labelled {label:?}"));
+            .unwrap_or_else(|| panic!("no {role:?} is labeled {label:?}"));
         assert!(
             found.next().is_none(),
-            "more than one {role:?} is labelled {label:?}"
+            "more than one {role:?} is labeled {label:?}"
         );
         element
     }
 
-    /// How many elements with `role` are labelled `label`.
+    /// How many elements with `role` are labeled `label`.
     pub fn count(&self, role: AccessibleRole, label: &str) -> usize {
         ElementHandle::find_by_accessible_label(self.app.window(), label)
             .filter(|element| element.accessible_role() == Some(role))

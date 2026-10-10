@@ -176,13 +176,7 @@ impl Core {
         for gpu in gpus {
             match sample.gpus.iter().find(|device| device.id == gpu.id) {
                 Some(device) => {
-                    let telemetry = &device.telemetry;
-                    let readings = Readings {
-                        temperature_c: telemetry.temperature_c,
-                        utilization_percent: telemetry.gpu_utilization_percent,
-                        power_draw_watts: telemetry.power_draw_watts,
-                        fan_speed_percent: telemetry.fan_speed_percent,
-                    };
+                    let readings = Readings::from(&device.telemetry);
                     gpu.history.record(received_at, readings);
                     gpu.latest = Latest::Read(readings);
                 }
@@ -202,7 +196,12 @@ impl Core {
     fn intent(&mut self, intent: Intent) -> Vec<Effect> {
         match intent {
             Intent::SelectGpu(id) => {
-                self.selection = Some(Selection::Gpu(id));
+                let Discovery::Found { gpus, .. } = &self.discovery else {
+                    return Vec::new();
+                };
+                if gpus.iter().any(|gpu| gpu.id == id) {
+                    self.selection = Some(Selection::Gpu(id));
+                }
                 Vec::new()
             }
             Intent::GoTo(section) => {

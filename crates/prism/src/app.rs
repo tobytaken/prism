@@ -11,7 +11,7 @@ use prism_ui::{Content, Core, Effect, Input, Intent, Section as CoreSection, Tel
 
 use crate::chart::series_commands;
 use crate::environment::{Clock, Environment, Sampling};
-use crate::sampler::{Reading, Sampler};
+use crate::sampler::{Sampler, SamplerReading};
 use crate::sync::sync;
 use crate::{AppState, Inbox, Intents, MainWindow, Section};
 
@@ -28,8 +28,8 @@ struct Inner {
     /// The sampler before it starts, and afterwards while sampling is on demand.
     sampler: RefCell<Option<Sampler>>,
     /// Readings worker threads posted for the UI thread.
-    inbox: Receiver<Reading>,
-    outbox: Sender<Reading>,
+    inbox: Receiver<SamplerReading>,
+    outbox: Sender<SamplerReading>,
 }
 
 impl App {
@@ -108,7 +108,7 @@ impl Inner {
         window
             .global::<AppState>()
             .on_temperature_series(move |width, height, _revision| {
-                with(&inner, |inner| match inner.core.borrow().content() {
+                with_inner(&inner, |inner| match inner.core.borrow().content() {
                     Content::Gpu(workspace) => {
                         series_commands(&workspace.temperature.chart, width, height).into()
                     }
@@ -120,7 +120,7 @@ impl Inner {
         let intents = window.global::<Intents>();
         let inner = Rc::downgrade(this);
         intents.on_select_gpu(move |id| {
-            with(&inner, |inner| {
+            with_inner(&inner, |inner| {
                 inner.handle(Input::Intent(Intent::SelectGpu(id.into())))
             });
         });
@@ -131,19 +131,19 @@ impl Inner {
                 Section::Drivers => CoreSection::Drivers,
                 Section::Settings => CoreSection::Settings,
             };
-            with(&inner, |inner| {
+            with_inner(&inner, |inner| {
                 inner.handle(Input::Intent(Intent::GoTo(section)))
             });
         });
         let inner = Rc::downgrade(this);
         intents.on_close_window(move || {
-            with(&inner, |inner| {
+            with_inner(&inner, |inner| {
                 inner.handle(Input::Intent(Intent::CloseWindow))
             });
         });
         let inner = Rc::downgrade(this);
         window.window().on_close_requested(move || {
-            with(&inner, |inner| {
+            with_inner(&inner, |inner| {
                 inner.handle(Input::Intent(Intent::CloseWindow))
             });
             // Quitting hides the window itself.
@@ -165,7 +165,7 @@ impl Inner {
 
         let inner = Rc::downgrade(this);
         window.global::<Inbox>().on_inputs_posted(move || {
-            with(&inner, |inner| {
+            with_inner(&inner, |inner| {
                 while let Ok(reading) = inner.inbox.try_recv() {
                     inner.receive(reading);
                 }
@@ -183,10 +183,10 @@ impl Inner {
     }
 
     /// Takes in a reading, stamped with the time it reached the UI thread.
-    fn receive(&self, reading: Reading) {
+    fn receive(&self, reading: SamplerReading) {
         self.handle(match reading {
-            Reading::Inventory(inventory) => Input::InventoryRead(inventory),
-            Reading::Telemetry(gpus) => Input::TelemetrySampled {
+            SamplerReading::Inventory(inventory) => Input::InventoryRead(inventory),
+            SamplerReading::Telemetry(gpus) => Input::TelemetrySampled {
                 gpus,
                 source: TelemetrySource::InProcess,
                 received_at: self.clock.now(),
@@ -227,6 +227,6 @@ impl Inner {
     }
 }
 
-fn with<T>(inner: &Weak<Inner>, f: impl FnOnce(&Inner) -> T) -> Option<T> {
+fn with_inner<T>(inner: &Weak<Inner>, f: impl FnOnce(&Inner) -> T) -> Option<T> {
     inner.upgrade().map(|inner| f(&inner))
 }

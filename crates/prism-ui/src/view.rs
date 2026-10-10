@@ -28,19 +28,25 @@ pub struct SidebarGpu {
     pub utilization: Readout,
     pub power_draw: Readout,
     pub fan_speed: Readout,
+    /// Why some of the vitals are unknown, when they are.
+    pub unknown_reason: Option<String>,
     pub selected: bool,
 }
 
 impl SidebarGpu {
-    /// The vitals as a screen reader says them.
+    /// The vitals as a screen reader says them, with why any are unknown.
     pub fn vitals(&self) -> String {
-        format!(
+        let vitals = format!(
             "temperature {}, utilization {}, power draw {}, fan speed {}",
             self.temperature.spoken(),
             self.utilization.spoken(),
             self.power_draw.spoken(),
             self.fan_speed.spoken()
-        )
+        );
+        match &self.unknown_reason {
+            Some(reason) => format!("{vitals}. {reason}"),
+            None => vitals,
+        }
     }
 }
 
@@ -172,7 +178,7 @@ impl Core {
 
     fn sidebar_gpu(&self, index: usize, gpu: &Gpu) -> SidebarGpu {
         let latest = latest_readings(gpu);
-        let index_label = format!("GPU {index}");
+        let index_label = index_label(index);
         let name = short_gpu_name(&gpu.name).to_owned();
         let identity = gpu.bus_id.as_deref().map(short_bus_id).unwrap_or_default();
         SidebarGpu {
@@ -189,12 +195,13 @@ impl Core {
             utilization: Readout::percent(latest.utilization_percent),
             power_draw: Readout::watts(latest.power_draw_watts),
             fan_speed: Readout::percent(latest.fan_speed_percent),
+            unknown_reason: unknown_reason(gpu, &Metric::ALL),
             selected: self.selection == Some(Selection::Gpu(gpu.id.clone())),
         }
     }
 
     fn workspace(&self, index: usize, gpu: &Gpu) -> GpuWorkspace {
-        let index_label = format!("GPU {index}");
+        let index_label = index_label(index);
         let subtitle = [
             Some(index_label.as_str()),
             gpu.bus_id.as_deref().map(short_bus_id),
@@ -223,17 +230,45 @@ impl Core {
         let celsius = latest_readings(gpu).temperature_c;
         TemperatureTrack {
             readout: Readout::celsius(celsius),
-            unknown_reason: match (&gpu.latest, celsius) {
-                (Latest::Waiting, _) => Some("Waiting for the first reading".into()),
-                (Latest::Missing { reason }, _) => Some(reason.clone()),
-                (Latest::Read(_), None) => Some("Not reported by this GPU".into()),
-                (Latest::Read(_), Some(_)) => None,
-            },
+            unknown_reason: unknown_reason(gpu, &[metric]),
             range: self.range.label(),
             max: Readout::celsius(stats.map(|stats| stats.max)),
             avg: Readout::celsius(stats.map(|stats| stats.avg.round() as u32)),
             min: Readout::celsius(stats.map(|stats| stats.min)),
             chart: gpu.history.chart(metric, self.range, now),
+        }
+    }
+}
+
+/// A GPU's position in the inventory, such as "GPU 0".
+fn index_label(index: usize) -> String {
+    format!("GPU {index}")
+}
+
+/// Why any of `metrics` is unknown in the GPU's latest reading. A track names no metric, since it
+/// shows one; the sidebar names the ones it lacks.
+fn unknown_reason(gpu: &Gpu, metrics: &[Metric]) -> Option<String> {
+    let readings = match &gpu.latest {
+        Latest::Waiting => return Some("Waiting for the first reading".into()),
+        Latest::Missing { reason } => return Some(reason.clone()),
+        Latest::Read(readings) => readings,
+    };
+    let unknown: Vec<_> = metrics
+        .iter()
+        .filter(|metric| readings.get(**metric).is_none())
+        .map(|metric| metric.name())
+        .collect();
+    match unknown.as_slice() {
+        [] => None,
+        [_] if metrics.len() == 1 => Some("Not reported by this GPU".into()),
+        names => {
+            let names = names.join(", ");
+            let mut first = names.chars();
+            let capitalized = first
+                .next()
+                .map(|letter| letter.to_uppercase().chain(first).collect::<String>())
+                .unwrap_or_default();
+            Some(format!("{capitalized}: not reported by this GPU"))
         }
     }
 }

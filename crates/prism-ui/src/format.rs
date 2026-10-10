@@ -1,4 +1,4 @@
-//! How Prism words and formats what it shows, so the view and its tests agree on every string.
+//! How Prism words and formats readings and states, so the view and its tests agree on them.
 
 /// What Prism shows in place of a reading it doesn't have.
 pub const UNKNOWN: &str = "—";
