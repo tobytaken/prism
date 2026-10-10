@@ -87,7 +87,7 @@ jobs:
       - run: bash scripts/package-prismd-deb.sh
       - run: bash scripts/package-prismd-rpm.sh
 
-  prism-release-binary:
+  build-prism-release:
     runs-on: ubuntu-latest
     # The old-glibc baseline (2.28): the GUI's deb, rpm and AppImage all repackage this one binary.
     # Keep BASELINE_GLIBC in scripts/check-prism-package.sh in step with this image.
@@ -106,7 +106,7 @@ jobs:
           if-no-files-found: error
 
   package-prism:
-    needs: prism-release-binary
+    needs: build-prism-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

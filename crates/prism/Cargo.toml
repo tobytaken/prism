@@ -42,9 +42,10 @@ workspace = true
 name = "prism-gpu"
 maintainer = "Tobias Steinhaeusler"
 license-file = ["../../LICENSE", "0"]
-# Spelled out, since dpkg-shlibdeps on a newer build host asks for its own glibc. Keep in step with
-# the libraries scripts/check-prism-package.sh allows the binary to link.
-depends = "libc6 (>= 2.28), libgcc-s1 | libgcc1, libfontconfig1 (>= 2.12.6)"
+# Spelled out, since dpkg-shlibdeps on a newer build host asks for its own glibc and can't see the
+# windowing and GL libraries Slint loads at runtime. scripts/check-prism-package.sh and
+# scripts/check-prism-install.sh check these cover what the binary links and loads.
+depends = "libc6 (>= 2.28), libgcc-s1 | libgcc1, libfontconfig1 (>= 2.12.6), libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, libegl1, libgl1, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrender1"
 recommends = "prismd"
 section = "utils"
 priority = "optional"
@@ -59,8 +60,8 @@ assets = [
 [package.metadata.generate-rpm]
 name = "prism-gpu"
 summary = "Prism, a Linux GPU control center for NVIDIA GPUs"
-# Spelled out, since the builtin discovery lists the build host's indirect libraries. Keep in step
-# with the libraries scripts/check-prism-package.sh allows the binary to link.
+# Spelled out, since the builtin discovery lists the build host's indirect libraries and can't see
+# what Slint loads at runtime. Keep in step with the deb's depends above.
 auto-req = "no"
 assets = [
   { source = "target/release/prism", dest = "/usr/bin/prism", mode = "755" },
@@ -75,6 +76,18 @@ assets = [
 "libc.so.6(GLIBC_2.28)(64bit)" = "*"
 "libgcc_s.so.1()(64bit)" = "*"
 "libfontconfig.so.1()(64bit)" = "*"
+"libxkbcommon.so.0()(64bit)" = "*"
+"libxkbcommon-x11.so.0()(64bit)" = "*"
+"libwayland-client.so.0()(64bit)" = "*"
+"libwayland-egl.so.1()(64bit)" = "*"
+"libEGL.so.1()(64bit)" = "*"
+"libGL.so.1()(64bit)" = "*"
+"libX11.so.6()(64bit)" = "*"
+"libX11-xcb.so.1()(64bit)" = "*"
+"libxcb.so.1()(64bit)" = "*"
+"libXcursor.so.1()(64bit)" = "*"
+"libXi.so.6()(64bit)" = "*"
+"libXrender.so.1()(64bit)" = "*"
 
 [package.metadata.generate-rpm.recommends]
 prismd = "*"

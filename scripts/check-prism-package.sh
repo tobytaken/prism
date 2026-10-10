@@ -14,7 +14,7 @@ BASELINE_GLIBC="2.28"
 ALLOWED_LIBRARIES="ld-linux-x86-64.so.2 libc.so.6 libdl.so.2 libgcc_s.so.1 libm.so.6 libpthread.so.0 librt.so.1 libfontconfig.so.1"
 
 if [[ $# -ne 2 ]]; then
-  echo "usage: $0 deb|rpm|appimage|flatpak <package>" >&2
+  echo "usage: $0 deb|rpm|appimage <package> | flatpak <build directory>" >&2
   exit 2
 fi
 kind="$1"
@@ -22,7 +22,7 @@ package="$(realpath "$2")"
 failures=0
 
 fail() {
-  echo "$2: $1" >&2
+  echo "$package: $1" >&2
   failures=$((failures + 1))
 }
 
@@ -31,12 +31,12 @@ expect_files() {
   local files
   files="$(cat)"
   for path in "$@"; do
-    grep -qxF "$path" <<<"$files" || fail "doesn't install $path" "$package"
+    grep -qxF "$path" <<<"$files" || fail "doesn't install $path"
   done
 }
 
 expect_equal() {
-  [[ "$2" == "$3" ]] || fail "$1 is '$2', expected '$3'" "$package"
+  [[ "$2" == "$3" ]] || fail "$1 is '$2', expected '$3'"
 }
 
 # Fails when the packaged binary needs a newer glibc than the baseline or links a library the
@@ -45,10 +45,10 @@ check_binary() {
   local newest library
   newest="$(objdump -T "$1" | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)"
   [[ "$(printf '%s\n' "$newest" "$BASELINE_GLIBC" | sort -V | tail -n 1)" == "$BASELINE_GLIBC" ]] \
-    || fail "prism needs glibc $newest, newer than the $BASELINE_GLIBC baseline" "$package"
+    || fail "prism needs glibc $newest, newer than the $BASELINE_GLIBC baseline"
   for library in $(objdump -p "$1" | awk '$1 == "NEEDED" { print $2 }'); do
     [[ " $ALLOWED_LIBRARIES " == *" $library "* ]] \
-      || fail "prism links $library, which the packages don't depend on" "$package"
+      || fail "prism links $library, which the packages don't depend on"
   done
 }
 
@@ -60,7 +60,7 @@ case "$kind" in
     expect_equal "Package" "$(dpkg-deb --field "$package" Package)" "prism-gpu"
     expect_equal "Recommends" "$(dpkg-deb --field "$package" Recommends)" "prismd"
     [[ "$(dpkg-deb --field "$package" Depends)" == *"libc6 (>= $BASELINE_GLIBC)"* ]] \
-      || fail "Depends doesn't ask for glibc $BASELINE_GLIBC" "$package"
+      || fail "Depends doesn't ask for glibc $BASELINE_GLIBC"
     dpkg-deb --extract "$package" "$extracted"
     check_binary "$extracted/usr/bin/prism"
     dpkg-deb --fsys-tarfile "$package" | tar -t | sed 's|^\./|/|' | expect_files \
@@ -71,7 +71,7 @@ case "$kind" in
       /usr/share/doc/prism-gpu/THIRD-PARTY-LICENSES
     # Debian keeps the license in the copyright file.
     dpkg-deb --fsys-tarfile "$package" | tar -xO ./usr/share/doc/prism-gpu/copyright 2>/dev/null \
-      | grep -qF "GNU GENERAL PUBLIC LICENSE" || fail "copyright doesn't hold the GPL" "$package"
+      | grep -qF "GNU GENERAL PUBLIC LICENSE" || fail "copyright doesn't hold the GPL"
     ;;
   rpm)
     expect_equal "Name" "$(rpm -qp --queryformat '%{NAME}' "$package")" "prism-gpu"
@@ -106,7 +106,7 @@ case "$kind" in
       -o -name 'ld-linux*' -o -name 'libc.so*' -o -name 'libc-*' -o -name 'libm.so*' \
       -o -name 'libdl.so*' -o -name 'libpthread.so*' -o -name 'librt.so*' \
       -o -name 'libresolv.so*' -o -name 'libutil.so*' \) -printf '%P\n')"
-    [[ -z "$bundled" ]] || fail "bundles libraries the host must provide: $bundled" "$package"
+    [[ -z "$bundled" ]] || fail "bundles libraries the host must provide: $bundled"
     ;;
   flatpak)
     (cd "$package/files" && find . -mindepth 1 | sed 's|^\./|/app/|') | expect_files \
@@ -135,7 +135,7 @@ case "$kind" in
 EOF
 )"
     [[ "$permissions" == "$expected" ]] \
-      || fail "has the permissions"$'\n'"$permissions"$'\n'"expected"$'\n'"$expected" "$package"
+      || fail "has the permissions"$'\n'"$permissions"$'\n'"expected"$'\n'"$expected"
     ;;
   *)
     echo "unknown package kind: $kind" >&2
