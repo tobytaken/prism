@@ -171,13 +171,18 @@ impl DaemonCore {
             return;
         }
         let performance = self.observed_performance(None);
-        let ids = gpu_ids(&performance.gpus, |gpu| &gpu.id);
-        let changed = *self.inventory_ids.lock().unwrap() != ids;
-        if changed {
+        // The readings only hint at a change; the inventory itself decides, so a reading that
+        // briefly misses a GPU pushes nothing.
+        if *self.inventory_ids.lock().unwrap() != gpu_ids(&performance.gpus, |gpu| &gpu.id) {
             let inventory = self.dependencies.backend.inventory();
-            *self.inventory_ids.lock().unwrap() = ids;
-            self.tuning_store
-                .publish(DaemonEvent::InventoryChanged(inventory));
+            let ids = gpu_ids(&inventory.gpus, |gpu| &gpu.id);
+            let mut known = self.inventory_ids.lock().unwrap();
+            if *known != ids {
+                *known = ids;
+                drop(known);
+                self.tuning_store
+                    .publish(DaemonEvent::InventoryChanged(inventory));
+            }
         }
         self.tuning_store
             .publish_telemetry(DaemonEvent::TelemetrySampled(performance));

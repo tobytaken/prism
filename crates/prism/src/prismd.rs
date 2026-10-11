@@ -84,8 +84,8 @@ impl PrismdConnector for SocketConnector {
     }
 }
 
-/// Opens one session after another until `report` returns false: each attempt that fails waits
-/// as the backoff says, and a session that ends is followed at once by a new attempt.
+/// Opens one session after another until `report` returns false, waiting as the backoff says
+/// after each attempt that fails and each session that ends.
 fn run_sessions(
     socket: &std::path::Path,
     current: &Mutex<Option<SessionSender>>,
@@ -127,6 +127,8 @@ fn run_sessions(
                 if !report(PrismdReport::NotConnected(reason)) {
                     return;
                 }
+                // Waits too, so a prismd that keeps ending sessions isn't reconnected in a loop.
+                thread::sleep(backoff.next_wait());
                 continue;
             }
             Err(ConnectError::Unavailable(error)) => NotConnected::Unavailable {
