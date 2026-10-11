@@ -142,7 +142,15 @@ fn a_gpu_arriving_or_departing_changes_the_inventory_before_its_telemetry() {
 
     let events = alice.pushed_events();
     let kinds: Vec<_> = events.iter().map(|event| &event["type"]).collect();
-    assert_eq!(kinds, ["inventory_changed", "telemetry_sampled"]);
+    assert_eq!(
+        kinds,
+        [
+            "inventory_changed",
+            "tuning_state_changed",
+            "telemetry_sampled"
+        ]
+    );
+    assert_eq!(events[1]["payload"]["gpu_id"], "GPU-456");
     let ids: Vec<_> = events[0]["payload"]["gpus"]
         .as_array()
         .unwrap()
@@ -189,7 +197,14 @@ fn a_read_only_session_gets_the_snapshot_events_telemetry_and_every_read() {
         .into_iter()
         .map(|event| event["type"].clone())
         .collect();
-    assert_eq!(kinds, ["inventory_changed", "telemetry_sampled"]);
+    assert_eq!(
+        kinds,
+        [
+            "inventory_changed",
+            "tuning_state_changed",
+            "telemetry_sampled"
+        ]
+    );
 
     for request in [
         json!({ "type": "get_inventory" }),
@@ -236,22 +251,9 @@ fn every_write_from_a_read_only_session_is_refused_naming_the_user_and_group() {
     for request in [
         json!({ "type": "set_edit_holds", "payload": { "gpu_ids": ["GPU-123"] } }),
         json!({ "type": "apply_profile", "payload": {
-            "gpu_id": "GPU-123", "settings": { "power_limit_watts": { "kind": "default" } }
+            "gpu_id": "GPU-123", "settings": { "power_limit_watts": { "kind": "default" } },
+            "expected_revision": revision
         } }),
-        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 300 } }),
-        json!({ "type": "reset_power_limit", "payload": { "gpu_id": "GPU-123" } }),
-        json!({ "type": "set_fan_speed", "payload": {
-            "gpu_id": "GPU-123", "fan_index": 0, "speed_percent": 60
-        } }),
-        json!({ "type": "set_fan_mode_auto", "payload": { "gpu_id": "GPU-123", "fan_index": 0 } }),
-        json!({ "type": "apply_cooling", "payload": {
-            "gpu_id": "GPU-123",
-            "configuration": { "arrangement": "shared", "setting": { "mode": "automatic" } }
-        } }),
-        json!({ "type": "set_clock_offsets", "payload": {
-            "gpu_id": "GPU-123", "graphics_offset_mhz": 30, "memory_offset_mhz": 40
-        } }),
-        json!({ "type": "reset_clock_offsets", "payload": { "gpu_id": "GPU-123" } }),
         json!({ "type": "set_startup_behavior", "payload": { "behavior": "startup_profiles" } }),
         json!({ "type": "set_startup_profile", "payload": {
             "gpu_id": "GPU-123", "profile_id": "quiet"

@@ -304,6 +304,8 @@ pub enum GpuCommandErrorCode {
     Io,
     Internal,
     NotFound,
+    /// The request was made against tuning state that has changed since; review it and try again.
+    StaleRevision,
 }
 
 #[allow(dead_code)]

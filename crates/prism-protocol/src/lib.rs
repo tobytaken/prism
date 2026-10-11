@@ -8,12 +8,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use prism_drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
-use prism_gpu::cooling::{ApplyCoolingRequest, CoolingApplication};
 use prism_gpu::fan_curve::{FanCurvePreview, PreviewFanCurveRequest};
-use prism_gpu::{
-    GpuCommandError, GpuInventoryResponse, GpuPerformanceResponse, GpuTargetRequest,
-    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest, TuningOutcome,
-};
+use prism_gpu::{GpuCommandError, GpuInventoryResponse, GpuPerformanceResponse, TuningOutcome};
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/prism/prismd.sock";
 
@@ -216,12 +212,6 @@ pub enum TuningStoreProblem {
     NewerVersion,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ClockOffsetResponse {
-    pub graphics: Option<TuningOutcome>,
-    pub memory: Option<TuningOutcome>,
-}
-
 /// A desired tuning instruction: a fixed number, or the default resolved at application time.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -298,11 +288,19 @@ fn included_setting<'de, D: serde::Deserializer<'de>>(
     ProfileSetting::deserialize(deserializer).map(Some)
 }
 
+/// A staged Apply: one manual write of a GPU's unapplied tuning changes, recorded as its last
+/// applied tuning values without making any profile current.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ApplyGpuProfileRequest {
     pub gpu_id: String,
     pub settings: ProfileSettings,
+    /// The GPU's tuning-state revision the changes were made against. When the GPU's tuning state
+    /// has changed since, the Apply is refused for review and nothing is written.
+    pub expected_revision: String,
+    /// The fans reviewed for the cooling change; when the GPU's fans differ, cooling isn't written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fan_indexes: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -388,32 +386,6 @@ pub struct NumericRangeCorrection {
     pub saved_value: i64,
     pub proposed_value: i64,
     pub bound: RangeBound,
-}
-
-/// A live clock offset instruction: a number of MHz, or an explicit request for the default.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
-pub enum OffsetInstruction {
-    Value(i32),
-    Default(DefaultKeyword),
-}
-
-/// The literal `"default"`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum DefaultKeyword {
-    #[serde(rename = "default")]
-    Default,
-}
-
-/// A live clock offset change. Omitted offsets are left unchanged.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct LiveClockOffsetsRequest {
-    pub gpu_id: String,
-    #[serde(default)]
-    pub graphics_offset_mhz: Option<OffsetInstruction>,
-    #[serde(default)]
-    pub memory_offset_mhz: Option<OffsetInstruction>,
 }
 
 /// A GPU tuning profile, owned by the user who saved or imported it.
@@ -789,18 +761,10 @@ pub enum DaemonRequest {
     SubscribeTelemetry,
     GetInventory,
     GetDaemonStatus,
+    /// Applies a GPU's staged changes.
     ApplyProfile(ApplyGpuProfileRequest),
-    SetPowerLimit(SetGpuPowerLimitRequest),
-    ResetPowerLimit(GpuTargetRequest),
-    SetFanSpeed(SetGpuFanSpeedRequest),
-    SetFanModeAuto(SetGpuFanModeAutoRequest),
     /// Checks a draft shared fan curve without changing any GPU setting.
     PreviewFanCurve(PreviewFanCurveRequest),
-    /// Validates a cooling configuration against fresh readings, then makes it the GPU's applied
-    /// cooling, replacing any curve its fans followed.
-    ApplyCooling(ApplyCoolingRequest),
-    SetClockOffsets(LiveClockOffsetsRequest),
-    ResetClockOffsets(GpuTargetRequest),
     GetStartupState,
     SetStartupBehavior(SetStartupBehaviorRequest),
     SetStartupProfile(SetStartupProfileRequest),
@@ -858,9 +822,7 @@ pub enum DaemonResponse {
     Inventory(GpuInventoryResponse),
     DaemonStatus(GpuDaemonStatus),
     Command(DaemonCommandResponse),
-    ClockOffsets(ClockOffsetResponse),
     FanCurvePreview(FanCurvePreview),
-    CoolingApplication(CoolingApplication),
     ProfileApplication(ProfileApplicationResponse),
     StartupState(StartupState),
     Profiles(Vec<GpuTuningProfile>),
@@ -1382,32 +1344,49 @@ mod session_tests {
     }
 
     #[test]
-    fn live_clock_offsets_accept_numbers_default_requests_and_null_for_unchanged() {
-        let request: LiveClockOffsetsRequest = serde_json::from_value(serde_json::json!({
-            "gpu_id": "GPU-123", "graphics_offset_mhz": "default", "memory_offset_mhz": null
-        }))
-        .unwrap();
+    fn an_apply_carries_the_revision_it_was_made_against_and_the_reviewed_fans() {
+        let request = serde_json::json!({ "type": "apply_profile", "payload": {
+            "gpu_id": "GPU-123",
+            "settings": { "power_limit_watts": { "kind": "value", "value": 450 } },
+            "expected_revision": "4f1c2b9d0e8a7c35",
+            "fan_indexes": [0, 1]
+        } });
+        let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
         assert_eq!(
-            request.graphics_offset_mhz,
-            Some(OffsetInstruction::Default(DefaultKeyword::Default))
+            typed,
+            DaemonRequest::ApplyProfile(ApplyGpuProfileRequest {
+                gpu_id: "GPU-123".into(),
+                settings: ProfileSettings {
+                    power_limit_watts: Some(ProfileSetting::Value { value: 450 }),
+                    ..ProfileSettings::default()
+                },
+                expected_revision: "4f1c2b9d0e8a7c35".into(),
+                fan_indexes: Some(vec![0, 1]),
+            })
         );
-        assert_eq!(request.memory_offset_mhz, None);
-        let request: LiveClockOffsetsRequest = serde_json::from_value(serde_json::json!({
-            "gpu_id": "GPU-123", "memory_offset_mhz": -80
-        }))
-        .unwrap();
-        assert_eq!(
-            request.memory_offset_mhz,
-            Some(OffsetInstruction::Value(-80))
-        );
-        for malformed in [
-            serde_json::json!({"gpu_id": "GPU-123", "graphics_offset_mhz": "reset"}),
-            serde_json::json!({"gpu_id": "GPU-123", "graphics_offset_mhz": 1.5}),
-            serde_json::json!({"gpu_id": "GPU-123", "graphicsOffsetMHz": 100}),
+        assert_eq!(serde_json::to_value(typed).unwrap(), request);
+        let mut unreviewed = request;
+        unreviewed["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("expected_revision");
+        assert!(serde_json::from_value::<DaemonRequest>(unreviewed).is_err());
+    }
+
+    #[test]
+    fn the_per_control_live_requests_are_no_longer_requests() {
+        for removed in [
+            serde_json::json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 300 } }),
+            serde_json::json!({ "type": "reset_power_limit", "payload": { "gpu_id": "GPU-123" } }),
+            serde_json::json!({ "type": "set_fan_speed", "payload": { "gpu_id": "GPU-123", "fan_index": 0, "speed_percent": 50 } }),
+            serde_json::json!({ "type": "set_fan_mode_auto", "payload": { "gpu_id": "GPU-123", "fan_index": 0 } }),
+            serde_json::json!({ "type": "set_clock_offsets", "payload": { "gpu_id": "GPU-123", "graphics_offset_mhz": 100 } }),
+            serde_json::json!({ "type": "reset_clock_offsets", "payload": { "gpu_id": "GPU-123" } }),
+            serde_json::json!({ "type": "apply_cooling", "payload": { "gpu_id": "GPU-123", "configuration": { "arrangement": "shared", "setting": { "mode": "automatic" } } } }),
         ] {
             assert!(
-                serde_json::from_value::<LiveClockOffsetsRequest>(malformed.clone()).is_err(),
-                "{malformed}"
+                serde_json::from_value::<DaemonRequest>(removed.clone()).is_err(),
+                "{removed}"
             );
         }
     }

@@ -12,10 +12,7 @@ fn curve() -> Value {
 }
 
 fn apply(session: &FakeSession, configuration: Value) -> Value {
-    session.send_json(json!({"type": "apply_cooling", "payload": {
-        "gpu_id": "GPU-123", "configuration": configuration
-    }}))["payload"]
-        .clone()
+    session.apply("GPU-123", json!({ "cooling": configuration }))["payload"]["cooling"].clone()
 }
 
 fn remembered(session: &FakeSession) -> Value {

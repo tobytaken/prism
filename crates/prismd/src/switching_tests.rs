@@ -155,11 +155,10 @@ fn resuming_a_manual_override_still_waits_for_edit_holds() {
     set_switching(&daemon, &alice, true);
     daemon.run_steam_game(123, 1000, 420, DOTA);
     daemon.scan();
-    ok(
-        alice.send_json(json!({ "type": "set_power_limit", "payload": {
-        "gpu_id": LINKED, "limit_watts": 380
-    } })),
-    );
+    ok(alice.apply(
+        LINKED,
+        json!({ "power_limit_watts": { "kind": "value", "value": 380 } }),
+    ));
     ok(alice.send_json(json!({ "type": "set_edit_holds", "payload": { "gpu_ids": [LINKED] } })));
     pause(&daemon, &alice, false);
     assert_eq!(values(&daemon).0, Some(380));
@@ -199,11 +198,10 @@ fn resume_applies_the_running_game_then_restores_the_manual_numeric_and_cooling_
     daemon.run_steam_game(123, 1000, 420, DOTA);
     daemon.scan();
     pause(&daemon, &alice, true);
-    ok(
-        alice.send_json(json!({ "type": "set_power_limit", "payload": {
-        "gpu_id": LINKED, "limit_watts": 380
-    } })),
-    );
+    ok(alice.apply(
+        LINKED,
+        json!({ "power_limit_watts": { "kind": "value", "value": 380 } }),
+    ));
     apply_cooling(&alice, separate_cooling());
     pause(&daemon, &alice, false);
     assert_eq!(values(&daemon).0, Some(330));
@@ -284,8 +282,10 @@ fn linked_dota() -> (Harness, FakeSession) {
     ]));
     ok(alice
         .send_json(json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "daily" } })));
-    ok(alice.send_json(json!({ "type": "set_power_limit",
-        "payload": { "gpu_id": LINKED, "limit_watts": 450 } })));
+    ok(alice.apply(
+        LINKED,
+        json!({ "power_limit_watts": { "kind": "value", "value": 450 } }),
+    ));
     ok(alice.send_json(json!({ "type": "add_steam_game", "payload": { "app_id": DOTA } })));
     link(&alice, LINKED, Some("gaming"));
     (daemon, alice)
@@ -490,14 +490,18 @@ fn saving_a_linked_profile_mid_activation_takes_effect_at_its_next_application()
     assert_eq!(values(&daemon), GAMING);
 
     // Gaming is current, so its owner can save the GPU's values over it.
-    ok(alice.send_json(json!({ "type": "set_power_limit",
-        "payload": { "gpu_id": LINKED, "limit_watts": 380 } })));
+    ok(alice.apply(
+        LINKED,
+        json!({ "power_limit_watts": { "kind": "value", "value": 380 } }),
+    ));
     let revision =
         ok(alice.send_json(json!({ "type": "get_tuning_states" })))[0]["revision"].clone();
     ok(alice.send_json(json!({ "type": "save_to_current_profile",
         "payload": { "gpu_id": LINKED, "revision": revision } })));
-    ok(alice.send_json(json!({ "type": "set_power_limit",
-        "payload": { "gpu_id": LINKED, "limit_watts": 340 } })));
+    ok(alice.apply(
+        LINKED,
+        json!({ "power_limit_watts": { "kind": "value", "value": 340 } }),
+    ));
     let before = writes_to(&daemon, LINKED);
     daemon.scan();
     assert_eq!(writes_to(&daemon, LINKED), before);
@@ -698,12 +702,11 @@ fn separate_cooling() -> Value {
 }
 
 fn apply_cooling(session: &FakeSession, configuration: Value) {
-    let result = ok(
-        session.send_json(json!({ "type": "apply_cooling", "payload": {
-        "gpu_id": LINKED, "configuration": configuration
-    } })),
+    let result = ok(session.apply(LINKED, json!({ "cooling": configuration })));
+    assert_eq!(
+        result["cooling"]["outcome"]["status"], "succeeded",
+        "{result}"
     );
-    assert_eq!(result["outcome"]["status"], "succeeded", "{result}");
 }
 
 fn cooling(session: &FakeSession) -> Value {
@@ -943,8 +946,10 @@ fn a_manual_attempt_overrides_only_its_gpu_and_keeps_its_values_after_the_game_e
     set_switching(&daemon, &alice, true);
     daemon.run_steam_game(123, 1000, 420, DOTA);
     daemon.scan();
-    ok(alice.send_json(json!({ "type": "set_power_limit",
-        "payload": { "gpu_id": LINKED, "limit_watts": 380 } })));
+    ok(alice.apply(
+        LINKED,
+        json!({ "power_limit_watts": { "kind": "value", "value": 380 } }),
+    ));
     assert_eq!(
         status(&alice)["gpus"][0]["state"],
         json!({ "status": "manual_override", "changed_outside_prism": false })
@@ -979,20 +984,24 @@ fn a_manual_request_during_an_automatic_write_finishes_its_setters_but_drops_que
     gate.wait_until_entered();
     // Queue another automatic application while the first is inside its setter.
     link(&alice, LINKED, Some("cool"));
-    let mut manual = daemon.send_in_background(
-        serde_json::from_value(json!({
-            "type": "set_power_limit", "payload": { "gpu_id": LINKED, "limit_watts": 380 }
-        }))
-        .unwrap(),
-    );
-    assert!(manual.is_pending());
+    // A saved profile, since a staged Apply made before the automatic write would be stale.
+    alice.seed_profiles(json!([{ "id": "manual", "name": "Manual", "gpu_id": LINKED,
+        "settings": { "power_limit_watts": value(380) } }]));
+    let session = daemon.user(1000, "alice");
+    let manual = std::thread::spawn(move || {
+        session.send_json(
+            json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "manual" } }),
+        )
+    });
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(!manual.is_finished());
     assert_ne!(
         status(&alice)["gpus"][0]["state"]["status"],
         "manual_override",
         "the override is recorded when the manual write starts"
     );
     gate.release();
-    manual.response();
+    ok(manual.join().unwrap());
     daemon.settle();
     assert_eq!(
         &writes_to(&daemon, LINKED)[before..],
@@ -1108,19 +1117,22 @@ fn automatic_switching_rejects_a_save_using_the_apps_old_values() {
 
 #[test]
 fn manual_profile_cooling_and_failed_attempts_all_override_and_survive_a_daemon_restart() {
-    for request in [
-        json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "cool" } }),
-        json!({ "type": "apply_cooling", "payload": { "gpu_id": LINKED, "configuration": separate_cooling() } }),
-        json!({ "type": "set_power_limit", "payload": { "gpu_id": LINKED, "limit_watts": 9999 } }),
-    ] {
+    for request in ["profile", "cooling", "out of range power"] {
         let (mut daemon, alice) = cooled_dota();
         set_switching(&daemon, &alice, true);
         daemon.run_steam_game(123, 1000, 420, DOTA);
         daemon.scan();
-        alice.send_json(request);
+        match request {
+            "profile" => alice.send_json(
+                json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "cool" } }),
+            ),
+            "cooling" => alice.apply(LINKED, json!({ "cooling": separate_cooling() })),
+            _ => alice.apply(LINKED, json!({ "power_limit_watts": value(9999) })),
+        };
         assert_eq!(
             status(&alice)["gpus"][0]["state"]["status"],
-            "manual_override"
+            "manual_override",
+            "{request}"
         );
         let values_after = values(&daemon);
         let cooling_after = cooling(&alice)["applied"].clone();
@@ -1184,8 +1196,10 @@ fn an_override_waits_for_all_linked_games_even_when_switching_is_disabled() {
     daemon.run_steam_game(123, 1000, 420, DOTA);
     daemon.run_steam_game(124, 1000, 500, 730);
     daemon.scan();
-    ok(alice.send_json(json!({ "type": "set_power_limit",
-        "payload": { "gpu_id": LINKED, "limit_watts": 380 } })));
+    ok(alice.apply(
+        LINKED,
+        json!({ "power_limit_watts": { "kind": "value", "value": 380 } }),
+    ));
     set_switching(&daemon, &alice, false);
     daemon.end_process(124);
     daemon.scan();
@@ -1804,8 +1818,10 @@ fn a_returning_gpu_keeps_manual_and_external_overrides_even_if_the_game_ended_wh
                 link(&alice, LINKED, Some("cool"));
                 daemon.settle();
             } else {
-                ok(alice.send_json(json!({ "type": "set_power_limit",
-                    "payload": { "gpu_id": LINKED, "limit_watts": 380 } })));
+                ok(alice.apply(
+                    LINKED,
+                    json!({ "power_limit_watts": { "kind": "value", "value": 380 } }),
+                ));
             }
             assert_eq!(
                 status(&alice)["gpus"][0]["state"]["status"],
@@ -1850,8 +1866,10 @@ fn applying_manual_tuning_while_a_profile_waits_keeps_the_override_after_edit_ho
         "waiting_for_edits"
     );
 
-    ok(alice.send_json(json!({ "type": "set_power_limit",
-        "payload": { "gpu_id": LINKED, "limit_watts": 380 } })));
+    ok(alice.apply(
+        LINKED,
+        json!({ "power_limit_watts": { "kind": "value", "value": 380 } }),
+    ));
     daemon.settle();
     assert_eq!(
         status(&alice)["gpus"][0]["state"],

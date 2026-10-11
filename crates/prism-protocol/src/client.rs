@@ -8,20 +8,16 @@ use crate::{
     SetGameProfileRequest, SteamApp,
 };
 use crate::{
-    ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
-    CorrectedProfileApplication, DaemonCommandResponse, DaemonRequest, DaemonResponse,
-    GpuTuningProfile, GpuTuningState, LiveClockOffsetsRequest, ProfileApplicationResponse,
-    ProfileIdRequest, RenameProfileRequest, SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
-    SetStartupBehaviorRequest, SetStartupProfileRequest, StartupGpuRequest, StartupState,
+    ApplyGpuProfileRequest, CorrectAndApplyProfileRequest, CorrectedProfileApplication,
+    DaemonCommandResponse, DaemonRequest, DaemonResponse, GpuTuningProfile, GpuTuningState,
+    ProfileApplicationResponse, ProfileIdRequest, RenameProfileRequest, SaveProfileAsNewRequest,
+    SaveToCurrentProfileRequest, SetStartupBehaviorRequest, SetStartupProfileRequest,
+    StartupGpuRequest, StartupState,
 };
 use crate::{DEFAULT_SOCKET_PATH, GpuDaemonStatus};
 use prism_drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
-use prism_gpu::cooling::{ApplyCoolingRequest, CoolingApplication};
 use prism_gpu::fan_curve::{FanCurvePreview, PreviewFanCurveRequest};
-use prism_gpu::{
-    GpuCommandError, GpuCommandErrorCode, GpuInventoryResponse, GpuTargetRequest,
-    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
-};
+use prism_gpu::{GpuCommandError, GpuCommandErrorCode, GpuInventoryResponse};
 
 mod session;
 pub use session::{ConnectError, Connected, Session, SessionSender, connect};
@@ -260,56 +256,12 @@ pub fn get_daemon_status() -> GpuDaemonStatus {
     }
 }
 
-pub fn set_gpu_power_limit(
-    request: SetGpuPowerLimitRequest,
-) -> Result<DaemonCommandResponse, RequestError> {
-    send_gpu_command(DaemonRequest::SetPowerLimit(request))
-}
-
-pub fn reset_gpu_power_limit(
-    request: GpuTargetRequest,
-) -> Result<DaemonCommandResponse, RequestError> {
-    send_gpu_command(DaemonRequest::ResetPowerLimit(request))
-}
-
-pub fn set_gpu_fan_speed(
-    request: SetGpuFanSpeedRequest,
-) -> Result<DaemonCommandResponse, RequestError> {
-    send_gpu_command(DaemonRequest::SetFanSpeed(request))
-}
-
-pub fn set_gpu_fan_mode_auto(
-    request: SetGpuFanModeAutoRequest,
-) -> Result<DaemonCommandResponse, RequestError> {
-    send_gpu_command(DaemonRequest::SetFanModeAuto(request))
-}
-
 pub fn preview_fan_curve(request: PreviewFanCurveRequest) -> Result<FanCurvePreview, RequestError> {
     match send_request(DaemonRequest::PreviewFanCurve(request))? {
         DaemonResponse::FanCurvePreview(preview) => Ok(preview),
         DaemonResponse::Error(error) => Err(error.into()),
         _ => Err(unexpected_response_error("fan curve preview")),
     }
-}
-
-pub fn apply_cooling(request: ApplyCoolingRequest) -> Result<CoolingApplication, RequestError> {
-    match send_request(DaemonRequest::ApplyCooling(request))? {
-        DaemonResponse::CoolingApplication(application) => Ok(application),
-        DaemonResponse::Error(error) => Err(error.into()),
-        _ => Err(unexpected_response_error("cooling application")),
-    }
-}
-
-pub fn set_gpu_clock_offsets(
-    request: LiveClockOffsetsRequest,
-) -> Result<ClockOffsetResponse, RequestError> {
-    send_offset_request(DaemonRequest::SetClockOffsets(request))
-}
-
-pub fn reset_gpu_clock_offsets(
-    request: GpuTargetRequest,
-) -> Result<ClockOffsetResponse, RequestError> {
-    send_offset_request(DaemonRequest::ResetClockOffsets(request))
 }
 
 pub fn get_driver_status() -> Result<DriverStatusResponse, RequestError> {
@@ -354,12 +306,6 @@ fn request_timeout(request: &DaemonRequest) -> Duration {
     if matches!(
         request,
         DaemonRequest::ApplyProfile(_)
-            | DaemonRequest::SetPowerLimit(_)
-            | DaemonRequest::ResetPowerLimit(_)
-            | DaemonRequest::SetFanSpeed(_)
-            | DaemonRequest::SetFanModeAuto(_)
-            | DaemonRequest::SetClockOffsets(_)
-            | DaemonRequest::ResetClockOffsets(_)
             | DaemonRequest::SaveProfileAsNew(_)
             | DaemonRequest::SaveToCurrentProfile(_)
             | DaemonRequest::RenameProfile(_)
@@ -445,14 +391,6 @@ fn unexpected_response_error(expected: &str) -> RequestError {
         GpuCommandErrorCode::Internal,
         format!("Prism daemon returned an unexpected response for {expected}"),
     )
-}
-
-fn send_offset_request(request: DaemonRequest) -> Result<ClockOffsetResponse, RequestError> {
-    match send_request(request)? {
-        DaemonResponse::ClockOffsets(response) => Ok(response),
-        DaemonResponse::Error(error) => Err(error.into()),
-        _ => Err(unexpected_response_error("clock offsets")),
-    }
 }
 
 fn send_gpu_command(request: DaemonRequest) -> Result<DaemonCommandResponse, RequestError> {

@@ -1,6 +1,7 @@
 //! Host-wide startup choices. Designations keep profile ids, so profile edits follow the link.
 
 use super::session::SessionPeer;
+use super::tuning::TuningRequest;
 use super::tuning_store::TuningDocument;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode, TuningOutcomeStatus};
 use prism_protocol::{CurrentProfile, SetStartupProfileRequest, StartupProfile, StartupState};
@@ -72,10 +73,7 @@ use super::host::Clock;
 use super::profiles::verified_gpu;
 use super::switching::Switching;
 use super::tuning_store::{RestoreAttempt, TuningStore};
-use prism_protocol::{
-    ApplyGpuProfileRequest, DaemonEvent, ProfileSettings, StartupBehavior, StartupOutcome,
-    StartupOutcomeStatus,
-};
+use prism_protocol::{ProfileSettings, StartupBehavior, StartupOutcome, StartupOutcomeStatus};
 
 const RESTORE_SKIPPED: &str = "Restoring last applied tuning values was skipped once because the \
     host didn't shut down cleanly after the previous boot restored them. They will be restored \
@@ -279,9 +277,12 @@ impl DaemonCore {
                     }
                     _ => {}
                 }
-                if let Some(state) = tuning_state(backend.as_ref(), &store, &cooling, &gpu_id) {
-                    store.publish(DaemonEvent::TuningStateChanged(state));
-                }
+                store.push_tuning(|pushes| {
+                    if let Some(state) = tuning_state(backend.as_ref(), &store, &cooling, &gpu_id)
+                    {
+                        pushes.push(state, None);
+                    }
+                });
                 if let Err(error) = boot.record(outcome) {
                     eprintln!("{}", error.message);
                 }
@@ -325,14 +326,8 @@ fn apply_target(
         outcome.reason = Some("Startup was skipped because the tuning store is unhealthy.".into());
         return Some(false);
     }
-    let (application, before) = apply_with_baseline(
-        backend,
-        Some(cooling),
-        ApplyGpuProfileRequest {
-            gpu_id: gpu_id.into(),
-            settings,
-        },
-    );
+    let (application, before) =
+        apply_with_baseline(backend, Some(cooling), TuningRequest::new(gpu_id, settings));
     let results: Vec<_> = [
         &application.power,
         &application.graphics,

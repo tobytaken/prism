@@ -49,16 +49,6 @@ pub(super) fn verified_gpu<'a>(
     }
 }
 
-/// The UUID of the GPU a live write addressed, if it reports one.
-pub(super) fn uuid_of(performance: &GpuPerformanceResponse, gpu_id: &str) -> Option<String> {
-    performance
-        .gpus
-        .iter()
-        .find(|gpu| gpu.id == gpu_id)
-        .and_then(|gpu| gpu.stable_id.clone())
-        .filter(|uuid| !uuid.trim().is_empty())
-}
-
 /// A profile setting's control as the GPU reports it.
 pub(super) struct Reading<'a> {
     pub label: &'static str,
@@ -445,6 +435,10 @@ impl TuningDocument {
 
     /// Records successfully applied manual instructions as the GPU's last applied tuning values.
     pub fn record_applied(&mut self, uuid: &str, applied: &[(ProfileSettingKey, ProfileSetting)]) {
+        // Nothing applied changes nothing, not even the GPU's tuning-state revision.
+        if applied.is_empty() {
+            return;
+        }
         let settings = self.last_applied.entry(uuid.to_string()).or_default();
         for (key, setting) in applied {
             settings.set(*key, *setting);

@@ -54,9 +54,6 @@ pub struct ApplyCoolingRequest {
     /// The GPU's UUID.
     pub gpu_id: String,
     pub configuration: CoolingConfiguration,
-    /// Draft revision, checked on the GPU queue before any write. Omitted by legacy callers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
 }
 
 /// What an application did: succeeded only when every targeted fan took its setting.
