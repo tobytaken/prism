@@ -240,6 +240,7 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
         max_label,
         avg_label,
         min_label,
+        fan_curve: track.fan_curve,
     }
 }
 

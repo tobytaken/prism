@@ -39,6 +39,48 @@ mod screenshot {
         workspace(AppearanceMode::Dark, "workspace-dark");
     }
 
+    /// Half of a 1080p screen, as when Prism is snapped beside another window, and Prism's
+    /// minimum window size.
+    const HALF_1080P: (u32, u32) = (960, 1080);
+    const MINIMUM: (u32, u32) = (960, 600);
+
+    #[test]
+    fn the_workspace_at_half_a_1080p_screen_in_light() {
+        narrow_workspace(
+            AppearanceMode::Light,
+            "workspace-half-1080p-light",
+            HALF_1080P,
+        );
+    }
+
+    #[test]
+    fn the_workspace_at_half_a_1080p_screen_in_dark() {
+        narrow_workspace(
+            AppearanceMode::Dark,
+            "workspace-half-1080p-dark",
+            HALF_1080P,
+        );
+    }
+
+    #[test]
+    fn the_workspace_at_the_minimum_size_in_light() {
+        narrow_workspace(AppearanceMode::Light, "workspace-minimum-light", MINIMUM);
+    }
+
+    #[test]
+    fn the_workspace_at_the_minimum_size_in_dark() {
+        narrow_workspace(AppearanceMode::Dark, "workspace-minimum-dark", MINIMUM);
+    }
+
+    /// The narrow workspace: no max/avg/min, and the fan curve's place in the Fans track.
+    fn narrow_workspace(appearance: AppearanceMode, name: &str, size: (u32, u32)) {
+        init_rendering_backend();
+        let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);
+        harness.ticks(30);
+
+        assert_screenshot(name, harness.app.window().window(), size);
+    }
+
     /// The workspace over the last minute, scrolled down to its open hardware details.
     fn hardware_details(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();

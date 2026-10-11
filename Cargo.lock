@@ -3497,6 +3497,7 @@ name = "prism"
 version = "0.1.0"
 dependencies = [
  "i-slint-backend-testing",
+ "i-slint-core",
  "png",
  "prism-gpu",
  "prism-protocol",

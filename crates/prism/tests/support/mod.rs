@@ -568,3 +568,17 @@ pub fn ensure_element_tree(component: &impl ElementRoot) {
          enables it outside release builds; SLINT_EMIT_DEBUG_INFO=1 forces it)"
     );
 }
+
+/// The smallest size the window lets the desktop resize it to, as Slint hands it to winit.
+pub fn minimum_size(window: &slint::Window) -> slint::LogicalSize {
+    use i_slint_core::item_tree::ItemTreeRc;
+    use i_slint_core::layout::{Orientation, min_max_size_for_layout_constraints};
+
+    let component = i_slint_core::window::WindowInner::from_pub(window).component();
+    let component = ItemTreeRc::borrow_pin(&component);
+    let (minimum, _) = min_max_size_for_layout_constraints(
+        component.as_ref().layout_info(Orientation::Horizontal),
+        component.as_ref().layout_info(Orientation::Vertical),
+    );
+    minimum.expect("the window has a minimum size")
+}

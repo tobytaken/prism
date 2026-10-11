@@ -111,10 +111,16 @@ export struct Sizes {
     header: length,
     notice: length,
     track: length,
-    // The shortest a track gets before the workspace scrolls.
+    // The shortest a track gets before the workspace scrolls, and in a short workspace.
     track-min: length,
+    track-min-short: length,
     track-head: length,
     stats: length,
+    // Narrower than this, as when the window is snapped to half a 1080p screen, the workspace
+    // drops its tracks' max/avg/min and the fan curve takes the fan speed history's place.
+    narrow-workspace: length,
+    // Shorter than this, as at the minimum window size, tracks get shorter so they all fit.
+    short-workspace: length,
     // A range picker's segment, and the key next to a detail that says how its line is drawn.
     segment: length,
     swatch: length,
@@ -249,8 +255,11 @@ export global Theme {
         notice: 30px,
         track: 104px,
         track-min: 80px,
+        track-min-short: 64px,
         track-head: 224px,
         stats: 96px,
+        narrow-workspace: 900px,
+        short-workspace: 600px,
         segment: 22px,
         swatch: 12px,
         disclosure-icon: 8px,
