@@ -33,6 +33,12 @@ use prism_ui::{AppearanceMode, Notification, NotificationId, PrismdInstall, Unit
 use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
 
+/// Prism's default window size, half of a 1080p screen, as when snapped beside another window,
+/// and its minimum, in pixels.
+pub const DEFAULT_SIZE: (u32, u32) = (1280, 800);
+pub const HALF_1080P: (u32, u32) = (960, 1080);
+pub const MINIMUM_SIZE: (u32, u32) = (960, 600);
+
 /// A clock that only moves when the test advances it.
 #[derive(Default)]
 pub struct ManualClock(AtomicU64);
@@ -360,6 +366,14 @@ impl Harness {
         }
     }
 
+    /// Resizes the window to `(width, height)` pixels, as the desktop would.
+    pub fn resize(&self, (width, height): (u32, u32)) {
+        self.app
+            .window()
+            .window()
+            .set_size(slint::PhysicalSize::new(width, height));
+    }
+
     /// Lets a second pass, running Slint's timers, then takes in what was posted and, while
     /// Prism samples in-process, reads every GPU once.
     pub fn tick(&self) {
@@ -569,7 +583,8 @@ pub fn ensure_element_tree(component: &impl ElementRoot) {
     );
 }
 
-/// The smallest size the window lets the desktop resize it to, as Slint hands it to winit.
+/// The smallest size the window lets the desktop resize it to, as Slint hands it to winit. The
+/// testing backend resizes to any size, so this reads what the desktop is asked to enforce.
 pub fn minimum_size(window: &slint::Window) -> slint::LogicalSize {
     use i_slint_core::item_tree::ItemTreeRc;
     use i_slint_core::layout::{Orientation, min_max_size_for_layout_constraints};

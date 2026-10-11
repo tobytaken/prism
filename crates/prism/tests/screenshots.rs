@@ -13,11 +13,8 @@ mod screenshot {
     use prism_ui::{AppearanceMode, PrismdInstall, UnitState};
     use slint::ComponentHandle;
 
-    use crate::support::Harness;
     use crate::support::screenshot::{assert_screenshot, init_rendering_backend};
-
-    /// Prism's default window size.
-    const WINDOW: (u32, u32) = (1280, 800);
+    use crate::support::{DEFAULT_SIZE, HALF_1080P, Harness, MINIMUM_SIZE};
 
     /// The GPU workspace with its five tracks.
     fn workspace(appearance: AppearanceMode, name: &str) {
@@ -26,7 +23,7 @@ mod screenshot {
         // Half a minute of readings, so every chart draws its series.
         harness.ticks(30);
 
-        assert_screenshot(name, harness.app.window().window(), WINDOW);
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
     }
 
     #[test]
@@ -38,11 +35,6 @@ mod screenshot {
     fn the_workspace_in_dark() {
         workspace(AppearanceMode::Dark, "workspace-dark");
     }
-
-    /// Half of a 1080p screen, as when Prism is snapped beside another window, and Prism's
-    /// minimum window size.
-    const HALF_1080P: (u32, u32) = (960, 1080);
-    const MINIMUM: (u32, u32) = (960, 600);
 
     #[test]
     fn the_workspace_at_half_a_1080p_screen_in_light() {
@@ -64,12 +56,16 @@ mod screenshot {
 
     #[test]
     fn the_workspace_at_the_minimum_size_in_light() {
-        narrow_workspace(AppearanceMode::Light, "workspace-minimum-light", MINIMUM);
+        narrow_workspace(
+            AppearanceMode::Light,
+            "workspace-minimum-light",
+            MINIMUM_SIZE,
+        );
     }
 
     #[test]
     fn the_workspace_at_the_minimum_size_in_dark() {
-        narrow_workspace(AppearanceMode::Dark, "workspace-minimum-dark", MINIMUM);
+        narrow_workspace(AppearanceMode::Dark, "workspace-minimum-dark", MINIMUM_SIZE);
     }
 
     /// The narrow workspace: no max/avg/min, and the fan curve's place in the Fans track.
@@ -100,14 +96,14 @@ mod screenshot {
             )
             .invoke_accessible_default_action();
         let window = harness.app.window().window();
-        window.set_size(slint::PhysicalSize::new(WINDOW.0, WINDOW.1));
+        window.set_size(slint::PhysicalSize::new(DEFAULT_SIZE.0, DEFAULT_SIZE.1));
         window.dispatch_event(slint::platform::WindowEvent::PointerScrolled {
             position: slint::LogicalPosition::new(700.0, 400.0),
             delta_x: 0.0,
             delta_y: -2000.0,
         });
 
-        assert_screenshot(name, window, WINDOW);
+        assert_screenshot(name, window, DEFAULT_SIZE);
     }
 
     #[test]
@@ -127,7 +123,7 @@ mod screenshot {
         harness.ticks(30);
         harness.ctrl("k");
 
-        assert_screenshot(name, harness.app.window().window(), WINDOW);
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
     }
 
     #[test]
@@ -157,7 +153,7 @@ mod screenshot {
             .invoke_accessible_default_action();
         harness.tick();
 
-        assert_screenshot(name, harness.app.window().window(), WINDOW);
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
     }
 
     #[test]
@@ -188,7 +184,7 @@ mod screenshot {
             .invoke_accessible_default_action();
         harness.tick();
 
-        assert_screenshot(name, harness.app.window().window(), WINDOW);
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
     }
 
     #[test]

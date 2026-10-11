@@ -119,7 +119,8 @@ export struct Sizes {
     // Narrower than this, as when the window is snapped to half a 1080p screen, the workspace
     // drops its tracks' max/avg/min and the fan curve takes the fan speed history's place.
     narrow-workspace: length,
-    // Shorter than this, as at the minimum window size, tracks get shorter so they all fit.
+    // Shorter than this, as at the minimum window size, tracks get shorter so they all fit. It's
+    // the workspace's height, under the title bar and above the status bar, not the window's.
     short-workspace: length,
     // A range picker's segment, and the key next to a detail that says how its line is drawn.
     segment: length,

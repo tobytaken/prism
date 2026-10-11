@@ -244,7 +244,7 @@ fn only_the_fans_track_holds_the_fan_curve() {
 
     for kind in TrackKind::ALL {
         assert_eq!(
-            track(&core, kind).fan_curve,
+            track(&core, kind).holds_fan_curve,
             kind == TrackKind::Fans,
             "{kind:?}"
         );

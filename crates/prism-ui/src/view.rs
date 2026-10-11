@@ -167,9 +167,8 @@ pub struct Track {
     pub min: Readout,
     /// Side by side, left to right.
     pub charts: Vec<TrackChart>,
-    /// Whether the fan curve goes in this track: in a narrow workspace, it takes the charts'
-    /// place.
-    pub fan_curve: bool,
+    /// Whether the fan curve belongs to this track.
+    pub holds_fan_curve: bool,
 }
 
 impl Track {
@@ -540,7 +539,7 @@ impl Core {
             avg: value(stats.map(|stats| stats.avg.round() as u32)),
             min: value(stats.map(|stats| stats.min)),
             charts,
-            fan_curve: kind == TrackKind::Fans,
+            holds_fan_curve: kind == TrackKind::Fans,
         }
     }
 }

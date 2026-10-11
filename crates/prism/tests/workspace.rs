@@ -10,8 +10,8 @@ use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuPerformanceResponse, GpuTelemetryProvider};
 use slint::ComponentHandle;
 
-use support::Harness;
 use support::prismd::DaemonState;
+use support::{DEFAULT_SIZE, HALF_1080P, Harness, MINIMUM_SIZE};
 
 use AccessibleRole::{Button, Groupbox, Text};
 
@@ -221,28 +221,14 @@ fn every_track_shows_unknown_readings_as_unknown() {
     assert!(!harness.shows("0 W"));
 }
 
-/// Prism's default window size, half of a 1080p screen, as when snapped beside another window,
-/// and its minimum.
-const DEFAULT: (u32, u32) = (1280, 800);
-const HALF_1080P: (u32, u32) = (960, 1080);
-const MINIMUM: (u32, u32) = (960, 600);
-
-fn resize(harness: &Harness, (width, height): (u32, u32)) {
-    harness
-        .app
-        .window()
-        .window()
-        .set_size(slint::PhysicalSize::new(width, height));
-}
-
 #[test]
 fn a_narrow_window_drops_max_avg_min_and_reserves_the_fan_curve_in_place_of_fan_speed() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     harness.ticks(2);
     assert_eq!(harness.count(Groupbox, "Fan curve"), 0);
 
-    for size in [HALF_1080P, MINIMUM] {
-        resize(&harness, size);
+    for size in [HALF_1080P, MINIMUM_SIZE] {
+        harness.resize(size);
 
         for (track, reading, metric) in TRACKS {
             harness.find(Groupbox, track);
@@ -258,7 +244,7 @@ fn a_narrow_window_drops_max_avg_min_and_reserves_the_fan_curve_in_place_of_fan_
         assert_eq!(value(&harness, "Fan 0 speed"), "31%");
     }
 
-    resize(&harness, DEFAULT);
+    harness.resize(DEFAULT_SIZE);
     assert_tracks_filled(&harness);
     assert_eq!(harness.count(Groupbox, "Fan curve"), 0);
 }
@@ -269,7 +255,7 @@ fn at_the_minimum_size_every_track_fits_without_scrolling() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     harness.ticks(2);
 
-    resize(&harness, MINIMUM);
+    harness.resize(MINIMUM_SIZE);
 
     let status_bar = harness.find(Button, "PRISMD · NOT RUNNING");
     let details = harness.find(Button, "Hardware details");
@@ -281,15 +267,15 @@ fn at_the_minimum_size_every_track_fits_without_scrolling() {
 }
 
 #[test]
-fn the_window_cannot_be_resized_below_its_minimum() {
+fn the_window_asks_the_desktop_not_to_resize_it_below_its_minimum() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     harness.ticks(2);
 
-    for size in [DEFAULT, HALF_1080P, MINIMUM] {
-        resize(&harness, size);
+    for size in [DEFAULT_SIZE, HALF_1080P, MINIMUM_SIZE] {
+        harness.resize(size);
         assert_eq!(
             support::minimum_size(harness.app.window().window()),
-            slint::LogicalSize::new(MINIMUM.0 as f32, MINIMUM.1 as f32),
+            slint::LogicalSize::new(MINIMUM_SIZE.0 as f32, MINIMUM_SIZE.1 as f32),
             "at {size:?}"
         );
     }
