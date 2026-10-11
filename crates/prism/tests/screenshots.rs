@@ -9,10 +9,15 @@
 mod support;
 
 mod screenshot {
-    use prism_gpu::simulated::SimulatedFixture;
+    use std::time::Duration;
+
+    use i_slint_backend_testing::AccessibleRole;
+    use prism_gpu::GpuTelemetryProvider;
+    use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
     use prism_ui::{AppearanceMode, PrismdInstall, UnitState};
     use slint::ComponentHandle;
 
+    use crate::support::prismd::DaemonState;
     use crate::support::screenshot::{assert_screenshot, init_rendering_backend};
     use crate::support::{DEFAULT_SIZE, HALF_1080P, Harness, MINIMUM_SIZE};
 
@@ -66,6 +71,40 @@ mod screenshot {
     #[test]
     fn the_workspace_at_the_minimum_size_in_dark() {
         narrow_workspace(AppearanceMode::Dark, "workspace-minimum-dark", MINIMUM_SIZE);
+    }
+
+    /// The workspace with tuning access and a pending power limit: the change strip with Discard
+    /// and Apply, the pending limit's line and EDIT HOLD.
+    fn pending_workspace(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = Harness::with_daemon_in(
+            SimulatedFixture::TunableGpu,
+            appearance,
+            DaemonState::Running,
+        );
+        for second in 0..30 {
+            harness.prismd_tick(
+                SimulatedGpus::new(SimulatedFixture::TunableGpu, move || {
+                    Duration::from_secs(second)
+                })
+                .performance(),
+            );
+        }
+        harness
+            .find(AccessibleRole::Spinbox, "Power limit")
+            .set_accessible_value("450");
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn the_workspace_with_a_pending_power_limit_in_light() {
+        pending_workspace(AppearanceMode::Light, "workspace-pending-light");
+    }
+
+    #[test]
+    fn the_workspace_with_a_pending_power_limit_in_dark() {
+        pending_workspace(AppearanceMode::Dark, "workspace-pending-dark");
     }
 
     /// The narrow workspace: no max/avg/min, and the fan curve's place in the Fans track.

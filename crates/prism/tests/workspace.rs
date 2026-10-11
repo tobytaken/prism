@@ -13,7 +13,7 @@ use slint::ComponentHandle;
 use support::prismd::DaemonState;
 use support::{DEFAULT_SIZE, HALF_1080P, Harness, MINIMUM_SIZE};
 
-use AccessibleRole::{Button, Groupbox, Text};
+use AccessibleRole::{Button, Groupbox, Spinbox, Text};
 
 /// Each track, with the label of its readout and the metric its statistics name.
 const TRACKS: [(&str, &str, &str); 5] = [
@@ -27,6 +27,15 @@ const TRACKS: [(&str, &str, &str); 5] = [
 fn value(harness: &Harness, label: &str) -> String {
     harness
         .find(Text, label)
+        .accessible_value()
+        .map(String::from)
+        .unwrap_or_default()
+}
+
+/// What the power limit's stepper says its value is.
+fn power_limit(harness: &Harness) -> String {
+    harness
+        .find(Spinbox, "Power limit")
         .accessible_value()
         .map(String::from)
         .unwrap_or_default()
@@ -78,7 +87,7 @@ fn the_five_tracks_fill_from_in_process_telemetry() {
 
     assert_tracks_filled(&harness);
     assert_eq!(value(&harness, "Power draw reading"), "38 W");
-    assert_eq!(value(&harness, "Power limit"), "575 W");
+    assert_eq!(power_limit(&harness), "575 W");
     assert_eq!(value(&harness, "Enforced power limit"), "575 W");
     assert_eq!(value(&harness, "Graphics clock reading"), "287 MHz");
     assert_eq!(value(&harness, "Memory clock"), "812 MHz");
@@ -155,6 +164,8 @@ fn the_palette_shows_a_range() {
 #[test]
 fn hardware_details_are_collapsed_until_opened_and_list_inventory_and_capabilities() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
+    // Tall enough to show every fact without scrolling.
+    harness.resize((1280, 1100));
     harness.tick();
     let details = harness.find(Button, "Hardware details");
     assert_eq!(details.accessible_expandable(), Some(true));
@@ -162,7 +173,6 @@ fn hardware_details_are_collapsed_until_opened_and_list_inventory_and_capabiliti
     assert_eq!(harness.count(Text, "VBIOS"), 0);
 
     details.invoke_accessible_default_action();
-
     assert_eq!(details.accessible_expanded(), Some(true));
     for (fact, expected) in [
         ("Model", "NVIDIA GeForce RTX 5090"),
@@ -199,8 +209,8 @@ fn every_track_shows_unknown_readings_as_unknown() {
             assert_eq!(value(&harness, &label), "unknown", "{label}");
         }
     }
+    assert_eq!(power_limit(&harness), "unknown");
     for detail in [
-        "Power limit",
         "Enforced power limit",
         "Memory clock",
         "Graphics clock offset",

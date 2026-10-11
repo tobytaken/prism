@@ -51,16 +51,38 @@ export struct DetailView {
 export enum ChartId { temperature, utilization, power-draw, graphics-clock, memory-clock, fan-speed }
 
 // The parts of a chart Rust draws as path commands.
-export enum ChartPart { series, area, limit, enforced-limit }
+export enum ChartPart { series, area, limit, enforced-limit, pending-limit }
 
 // One of a track's charts: what tells it apart from the track's other chart, if anything, whether
 // it fills the area under its series, and which limits it draws.
+// `draggable` says whether the limit's line can be dragged to stage a new limit, which then draws
+// as `pending-limit`; `handle-y` is where its line is, from the top (0) to the bottom (1).
 export struct ChartView {
     id: ChartId,
     label: string,
     area: bool,
     limit: bool,
     enforced-limit: bool,
+    pending-limit: bool,
+    draggable: bool,
+    handle-y: float,
+}
+
+// A tuning value's stepper: `label` as a screen reader says it, `value` the one it steps from and
+// `value-text` how it's said,
+// `text` the value in effect as shown, `pending` such as "→ 450 W" while one is staged, and
+// `reason` why it's read-only, when it is.
+export struct StepperView {
+    label: string,
+    value: int,
+    value-text: string,
+    minimum: int,
+    maximum: int,
+    step: int,
+    text: string,
+    pending: string,
+    read-only: bool,
+    reason: string,
 }
 
 // A track: its name, readout and details, its charts, and the max/avg/min of its metric over the
@@ -82,6 +104,20 @@ export struct TrackView {
     avg-label: string,
     min-label: string,
     holds-fan-curve: bool,
+    has-stepper: bool,
+    stepper: StepperView,
+}
+
+// The fixed change strip under the workspace's header: its summary, whether there are unapplied
+// changes, why the last Apply left some, and whether Apply and Discard can run and why not.
+export struct ChangeStripView {
+    summary: string,
+    pending: bool,
+    problem: string,
+    can-apply: bool,
+    apply-reason: string,
+    can-discard: bool,
+    discard-reason: string,
 }
 
 // `no-tuning-access` is why there's no tuning access, and empty with it.
@@ -89,6 +125,7 @@ export struct WorkspaceView {
     id: string,
     title: string,
     subtitle: string,
+    changes: ChangeStripView,
     no-tuning-access: string,
     hardware-open: bool,
 }
@@ -154,6 +191,8 @@ export global AppState {
     in property <string> connection;
     in property <bool> connected;
     in property <string> telemetry;
+    // Whether any GPU has unapplied tuning changes, which hold automatic changes.
+    in property <bool> edit-hold;
     in property <SettingsSection> settings-section;
     // The open section's name, such as "Appearance".
     in property <string> settings-section-name;
@@ -194,6 +233,13 @@ export global Intents {
     // Shows the range at this index among the range picker's segments.
     callback show-range(index: int);
     callback toggle-hardware-details();
+    // Stages this power limit, in watts, for the selected GPU.
+    callback stage-power-limit(watts: int);
+    // Stages the power limit drawn at `y` on the power chart, from the top (0) to the bottom (1).
+    callback drag-power-limit(y: float);
+    // Applies or discards the selected GPU's unapplied tuning changes.
+    callback apply-changes();
+    callback discard-changes();
     // Runs the global shortcut `key` presses, if any, and says whether the key was spoken for. While
     // a text field has focus, a shortcut that clashes with text editing is spoken for but doesn't
     // run.

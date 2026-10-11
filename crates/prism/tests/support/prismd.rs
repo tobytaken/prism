@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use prism::{PrismdConnector, PrismdReport, PrismdService};
 use prism_gpu::GpuPerformanceResponse;
-use prism_protocol::{DaemonEvent, DaemonRequest, DaemonSnapshot, SessionMessage};
+use prism_protocol::{DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, SessionMessage};
 use prism_ui::{
-    Distro, PrismdHost, PrismdInstall, ServiceAction, ServiceOutcome, SessionFailure, UnitState,
+    CommandId, Distro, PrismdHost, PrismdInstall, ServiceAction, ServiceOutcome, SessionFailure,
+    UnitState,
 };
 
 /// What the fake daemon is doing.
@@ -33,6 +34,8 @@ struct Fake {
     /// Where reports go once Prism has started connecting.
     report: Option<Report>,
     requests: Vec<DaemonRequest>,
+    /// The commands Prism sent that the test hasn't answered yet, oldest first.
+    unanswered: Vec<CommandId>,
 }
 
 impl FakePrismd {
@@ -41,6 +44,7 @@ impl FakePrismd {
             state,
             report: None,
             requests: Vec::new(),
+            unanswered: Vec::new(),
         })))
     }
 
@@ -82,6 +86,20 @@ impl FakePrismd {
         self.push(DaemonEvent::TelemetrySampled(gpus));
     }
 
+    /// Answers the oldest command Prism sent that isn't answered yet with `response`.
+    ///
+    /// # Panics
+    ///
+    /// When there's no command to answer.
+    pub fn answer(&self, response: DaemonResponse) {
+        let mut fake = self.0.lock().unwrap();
+        assert!(!fake.unanswered.is_empty(), "no command to answer");
+        let id = fake.unanswered.remove(0);
+        let report = fake.report.clone().expect("Prism hasn't connected");
+        drop(fake);
+        report(PrismdReport::Answered { id, response });
+    }
+
     /// Every request Prism sent on a session, oldest first.
     pub fn requests(&self) -> Vec<DaemonRequest> {
         self.0.lock().unwrap().requests.clone()
@@ -90,6 +108,8 @@ impl FakePrismd {
     fn set_state(&self, state: DaemonState) {
         let mut fake = self.0.lock().unwrap();
         fake.state = state;
+        // A session that ends leaves its commands unanswered.
+        fake.unanswered.clear();
         let report = fake.report.clone();
         drop(fake);
         if let Some(report) = report {
@@ -112,6 +132,14 @@ impl PrismdConnector for FakePrismd {
         let mut fake = self.0.lock().unwrap();
         if fake.state.welcomes() {
             fake.requests.push(request);
+        }
+    }
+
+    fn command(&self, id: CommandId, request: DaemonRequest) {
+        let mut fake = self.0.lock().unwrap();
+        if fake.state.welcomes() {
+            fake.requests.push(request);
+            fake.unanswered.push(id);
         }
     }
 }

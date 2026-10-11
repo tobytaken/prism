@@ -1,0 +1,55 @@
+import { Theme } from "../theme.slint";
+import { PressArea } from "press-area.slint";
+import { StyledText } from "styled-text.slint";
+
+// How a button stands out: `plain` is bordered, for an action of its own such as "Enable
+// prismd"; `accent` is filled in the accent, for the one action a pending state waits for, such
+// as Apply; `quiet` has no border, for an action next to one, such as Discard.
+export enum ButtonKind { plain, accent, quiet }
+
+// A button. While it can't be pressed it's dimmed and does nothing, and `description` can say why.
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <ButtonKind> kind: ButtonKind.plain;
+    in property <bool> enabled: true;
+    // What a screen reader adds to the label, such as the shortcut or why it can't be pressed.
+    in property <string> description;
+    callback activated();
+    property <color> ink: !root.enabled ? Theme.color.ink-muted
+        : root.kind == ButtonKind.accent ? Theme.color.on-accent : Theme.color.ink;
+
+    accessible-role: button;
+    accessible-label: text;
+    accessible-description: description;
+    accessible-enabled: enabled;
+    accessible-action-default => {
+        if root.enabled {
+            root.activated();
+        }
+    }
+    forward-focus: press;
+    height: Theme.size.button;
+    width: label.preferred-width + 2 * Theme.space.xl;
+    background: root.kind == ButtonKind.accent
+        ? (root.enabled ? Theme.color.accent : Theme.color.rule)
+        : root.kind == ButtonKind.quiet
+        ? (root.enabled && press.has-hover ? Theme.color.hover : transparent)
+        : (root.enabled && press.has-hover ? Theme.color.hover : Theme.color.raised);
+    border-width: root.kind == ButtonKind.plain ? Theme.stroke.hairline : 0;
+    border-color: root.enabled ? Theme.color.ink : Theme.color.rule;
+
+    press := PressArea {
+        enabled: root.enabled;
+        activated => {
+            root.activated();
+        }
+    }
+
+    label := StyledText {
+        text: root.text;
+        style: Theme.text.name;
+        color: root.ink;
+        horizontal-alignment: center;
+        accessible-role: none;
+    }
+}

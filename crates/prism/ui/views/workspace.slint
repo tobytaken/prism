@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
-import { Divider, LinkButton, Segmented, StyledText } from "../widgets.slint";
-import { AppState, Intents, SettingsSection, WorkspaceView } from "../state.slint";
+import { Button, ButtonKind, Divider, LinkButton, Segmented, StyledText } from "../widgets.slint";
+import { AppState, ChangeStripView, Intents, SettingsSection, WorkspaceView } from "../state.slint";
 import { HardwareDetails } from "hardware-details.slint";
 import { Track } from "track.slint";
 
@@ -53,15 +53,93 @@ component TuningNeedsPrismd inherits Rectangle {
     }
 }
 
+// The fixed strip under the header: "No unapplied changes", or, marked in the accent, how many
+// there are with Discard and Apply. It's always there and never changes height, so nothing moves
+// under a drag.
+component ChangeStrip inherits Rectangle {
+    in property <ChangeStripView> changes;
+
+    accessible-role: groupbox;
+    accessible-label: "Unapplied changes";
+    accessible-description: changes.problem;
+    height: Theme.size.notice;
+
+    if root.changes.pending: Rectangle {
+        x: 0;
+        width: Theme.stroke.selection;
+        background: Theme.color.accent;
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space.xxl;
+        padding-right: Theme.space.xxl;
+        spacing: Theme.space.s;
+
+        StyledText {
+            text: root.changes.summary;
+            style: Theme.text.body;
+            color: root.changes.pending ? Theme.color.accent : Theme.color.ink-muted;
+            vertical-alignment: center;
+        }
+
+        // Why the last Apply left changes unapplied.
+        StyledText {
+            horizontal-stretch: 1;
+            text: root.changes.problem;
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            vertical-alignment: center;
+            overflow: elide;
+            accessible-role: none;
+        }
+
+        if root.changes.pending: VerticalLayout {
+            alignment: center;
+
+            Button {
+                text: "Discard";
+                height: Theme.size.segment;
+                kind: ButtonKind.quiet;
+                enabled: root.changes.can-discard;
+                description: root.changes.can-discard ? "Ctrl+Shift+Backspace" : root.changes.discard-reason;
+                activated => {
+                    Intents.discard-changes();
+                }
+            }
+        }
+
+        if root.changes.pending: VerticalLayout {
+            alignment: center;
+
+            Button {
+                text: "Apply";
+                height: Theme.size.segment;
+                kind: ButtonKind.accent;
+                enabled: root.changes.can-apply;
+                description: root.changes.can-apply ? "Ctrl+Enter" : root.changes.apply-reason;
+                activated => {
+                    Intents.apply-changes();
+                }
+            }
+        }
+    }
+
+    Divider {
+        y: parent.height - self.height;
+    }
+}
+
 // The selected GPU's workspace: its header with the range picker, then one full-width track per
 // metric and the hardware details. When they don't fit, they scroll under the header. Narrower
 // than `narrow-workspace`, the tracks are narrow, and shorter than `short-workspace`, short.
 export component Workspace inherits Rectangle {
     in property <WorkspaceView> workspace;
 
+    property <bool> short: root.height < Theme.size.short-workspace;
+
     VerticalLayout {
         Rectangle {
-            height: Theme.size.header;
+            height: root.short ? Theme.size.header-short : Theme.size.header;
 
             HorizontalLayout {
                 padding-left: Theme.space.xxl;
@@ -103,7 +181,10 @@ export component Workspace inherits Rectangle {
             }
         }
 
-        // The change strip lands above this line.
+        ChangeStrip {
+            changes: root.workspace.changes;
+        }
+
         if root.workspace.no-tuning-access != "": TuningNeedsPrismd {
             reason: root.workspace.no-tuning-access;
         }
@@ -118,7 +199,7 @@ export component Workspace inherits Rectangle {
                 for track in AppState.tracks: Track {
                     track: track;
                     narrow: root.width < Theme.size.narrow-workspace;
-                    short: root.height < Theme.size.short-workspace;
+                    short: root.short;
                 }
 
                 HardwareDetails {

@@ -10,9 +10,10 @@ use prism_ui::{
 };
 
 use crate::{
-    AppState, AppearanceMode, ChartId, ChartView, ContentKind, DaemonView, DetailView,
-    ExplainedStateView, FactView, LimitMark, MainWindow, PaletteEntryView, ReadoutView,
-    SegmentView, ServiceAction, SettingsSection, SidebarGpuView, Theme, TrackView, WorkspaceView,
+    AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, DaemonView,
+    DetailView, ExplainedStateView, FactView, LimitMark, MainWindow, PaletteEntryView, ReadoutView,
+    SegmentView, ServiceAction, SettingsSection, SidebarGpuView, StepperView, Theme, TrackView,
+    WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -56,10 +57,28 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         Content::Searching => ContentKind::Searching,
         Content::NoGpus(_) => ContentKind::NoGpus,
         Content::Gpu(workspace) => {
+            let changes = &workspace.changes;
             state.set_workspace(WorkspaceView {
                 id: workspace.id.as_str().into(),
                 title: workspace.title.as_str().into(),
                 subtitle: workspace.subtitle.as_str().into(),
+                changes: ChangeStripView {
+                    summary: changes.summary.as_str().into(),
+                    pending: changes.pending,
+                    problem: changes.problem.as_deref().unwrap_or_default().into(),
+                    can_apply: changes.apply_unavailable.is_none(),
+                    apply_reason: changes
+                        .apply_unavailable
+                        .as_deref()
+                        .unwrap_or_default()
+                        .into(),
+                    can_discard: changes.discard_unavailable.is_none(),
+                    discard_reason: changes
+                        .discard_unavailable
+                        .as_deref()
+                        .unwrap_or_default()
+                        .into(),
+                },
                 no_tuning_access: workspace
                     .no_tuning_access
                     .as_deref()
@@ -185,6 +204,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     state.set_connection(status.connection.into());
     state.set_connected(status.connected);
     state.set_telemetry(status.telemetry.into());
+    state.set_edit_hold(status.edit_hold);
     // Slint's int is 32 bits; wrapping still changes the value on every input.
     state.set_revision(core.revision() as i32);
 }
@@ -202,25 +222,50 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
             unknown_reason: detail.unknown_reason.as_deref().unwrap_or_default().into(),
             mark: match detail.limit {
                 None => LimitMark::None,
-                Some(LimitKind::Configured) => LimitMark::Solid,
+                Some(LimitKind::Configured | LimitKind::Pending) => LimitMark::Solid,
                 Some(LimitKind::Enforced) => LimitMark::Dashed,
             },
         })
         .collect();
+    // The power limit's line can be dragged while its stepper can be changed.
+    let editable = track
+        .stepper
+        .as_ref()
+        .is_some_and(|stepper| stepper.read_only.is_none());
     let charts = track
         .charts
         .iter()
         .map(|chart| {
-            let draws = |kind| chart.limits.iter().any(|limit| limit.kind == kind);
+            let line = |kind| chart.limits.iter().find(|limit| limit.kind == kind);
+            let handle = line(LimitKind::Pending).or(line(LimitKind::Configured));
             ChartView {
                 id: chart_id(chart.metric),
                 label: chart.label.unwrap_or_default().into(),
                 area: chart.area,
-                limit: draws(LimitKind::Configured),
-                enforced_limit: draws(LimitKind::Enforced),
+                limit: line(LimitKind::Configured).is_some(),
+                enforced_limit: line(LimitKind::Enforced).is_some(),
+                pending_limit: line(LimitKind::Pending).is_some(),
+                draggable: editable && chart.metric == Metric::PowerDraw && handle.is_some(),
+                handle_y: handle.map_or(0.0, |limit| limit.y),
             }
         })
         .collect();
+    let stepper = track
+        .stepper
+        .as_ref()
+        .map(|stepper| StepperView {
+            label: stepper.name.as_str().into(),
+            value: clamped(stepper.value),
+            value_text: stepper.value_text.as_str().into(),
+            minimum: clamped(stepper.min),
+            maximum: clamped(stepper.max),
+            step: clamped(stepper.step),
+            text: stepper.readout.text().into(),
+            pending: stepper.pending.as_deref().unwrap_or_default().into(),
+            read_only: stepper.read_only.is_some(),
+            reason: stepper.read_only.as_deref().unwrap_or_default().into(),
+        })
+        .unwrap_or_default();
     let [max_label, avg_label, min_label] = track.statistic_labels().map(SharedString::from);
     TrackView {
         name: track.kind.name().into(),
@@ -241,7 +286,14 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
         avg_label,
         min_label,
         holds_fan_curve: track.holds_fan_curve,
+        has_stepper: track.stepper.is_some(),
+        stepper,
     }
+}
+
+/// `value` within Slint's 32-bit int.
+fn clamped(value: i64) -> i32 {
+    value.clamp(i32::MIN.into(), i32::MAX.into()) as i32
 }
 
 /// The chart the view asks to draw `metric` in.

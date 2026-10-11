@@ -213,6 +213,8 @@ pub struct Stepper {
     pub name: String,
     /// The value it steps from: the pending one, or else the one in effect.
     pub value: i64,
+    /// That value as a screen reader says it, such as "450 W".
+    pub value_text: String,
     pub min: i64,
     pub max: i64,
     pub step: i64,
@@ -653,9 +655,11 @@ impl Core {
         let (min, max) = range.unwrap_or_default();
         let watts =
             |value: Option<i64>| Readout::watts(value.and_then(|value| value.try_into().ok()));
+        let value = staged.map(i64::from).or(in_effect);
         Stepper {
             name: "Power limit".into(),
-            value: staged.map(i64::from).or(in_effect).unwrap_or(min),
+            value: value.unwrap_or(min),
+            value_text: watts(value).spoken(),
             min,
             max,
             step: 1,
