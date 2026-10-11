@@ -8,6 +8,7 @@ use prism_gpu::GpuProviders;
 
 use crate::activation::DesktopActivation;
 use crate::prismd::{PrismdConnector, SocketConnector};
+use crate::prismd_host::{HostPrismdService, PrismdService};
 use crate::settings::{SettingsFile, SettingsStore};
 
 /// Everything [`App`](crate::App) reaches outside itself through.
@@ -39,6 +40,8 @@ impl Environment {
 /// The host's desktop services, such as the systemctl probe, notifications and the
 /// single-instance bus. Each arrives with the screen or behavior that needs it.
 pub struct HostServices {
+    /// What the host says about prismd, and systemd enabling or restarting it.
+    pub prismd: Box<dyn PrismdService>,
     /// Where later launches of Prism hand over to this one.
     pub launches: Box<dyn Launches>,
     /// How the window is raised and focused.
@@ -46,9 +49,11 @@ pub struct HostServices {
 }
 
 impl Default for HostServices {
-    /// No later launch reaches this Prism, and the window is raised through the desktop.
+    /// The host's systemd and os-release, no later launch reaches this Prism, and the window is
+    /// raised through the desktop.
     fn default() -> Self {
         Self {
+            prismd: Box::new(HostPrismdService::production()),
             launches: Box::new(NoLaunches),
             activation: Box::new(DesktopActivation),
         }

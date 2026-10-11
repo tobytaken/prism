@@ -1,0 +1,221 @@
+import { Theme } from "../theme.slint";
+import { LinkButton, ListRow, PressArea, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, FactView, Intents, SettingsSection } from "../state.slint";
+import { ExplainedState } from "explained-state.slint";
+
+// A bordered button for an action of its own, such as "Enable prismd". While it can't be pressed
+// it's dimmed and does nothing. It stays here until a second screen needs one (ADR 0009).
+component Button inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback activated();
+
+    accessible-role: button;
+    accessible-label: text;
+    accessible-enabled: enabled;
+    accessible-action-default => {
+        if root.enabled {
+            root.activated();
+        }
+    }
+    forward-focus: press;
+    height: Theme.size.button;
+    width: label.preferred-width + 2 * Theme.space.xl;
+    background: enabled && press.has-hover ? Theme.color.hover : Theme.color.raised;
+    border-width: Theme.stroke.hairline;
+    border-color: enabled ? Theme.color.ink : Theme.color.rule;
+
+    press := PressArea {
+        enabled: root.enabled;
+        activated => {
+            root.activated();
+        }
+    }
+
+    label := StyledText {
+        text: root.text;
+        style: Theme.text.name;
+        color: root.enabled ? Theme.color.ink : Theme.color.ink-muted;
+        horizontal-alignment: center;
+        accessible-role: none;
+    }
+}
+
+component SectionRow inherits ListRow {
+    in property <string> text;
+
+    height: Theme.size.nav-row;
+
+    StyledText {
+        x: Theme.space.xl;
+        text: root.text;
+        style: Theme.text.body;
+        color: root.selected || root.has-hover ? Theme.color.ink : Theme.color.ink-muted;
+        accessible-role: none;
+    }
+}
+
+// A fact about the connection: its label, then its value in mono.
+component Fact inherits Rectangle {
+    in property <FactView> fact;
+
+    accessible-role: text;
+    accessible-label: fact.label;
+    accessible-value: fact.value;
+    height: line.preferred-height;
+
+    line := HorizontalLayout {
+        spacing: Theme.space.m;
+
+        StyledText {
+            width: Theme.size.fact-label;
+            text: root.fact.label;
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        StyledText {
+            horizontal-stretch: 1;
+            text: root.fact.value;
+            style: Theme.text.value;
+            wrap: word-wrap;
+            accessible-role: none;
+        }
+    }
+}
+
+// A command to run on the host, in mono, with a button that copies it.
+component CommandLine inherits Rectangle {
+    in property <string> command;
+
+    height: Theme.size.text-field;
+    background: Theme.color.raised;
+    border-width: Theme.stroke.hairline;
+    border-color: Theme.color.rule;
+
+    HorizontalLayout {
+        padding-left: Theme.space.l;
+        padding-right: Theme.space.xs;
+        padding-top: Theme.space.xs;
+        padding-bottom: Theme.space.xs;
+        spacing: Theme.space.m;
+
+        StyledText {
+            horizontal-stretch: 1;
+            text: root.command;
+            style: Theme.text.value;
+            overflow: elide;
+        }
+
+        LinkButton {
+            text: "Copy";
+            label: "Copy " + root.command;
+            activated => {
+                Intents.copy(root.command);
+            }
+        }
+    }
+}
+
+// Settings → Daemon: what the prismd connection is and, without tuning access, why and how to fix
+// it.
+component Daemon inherits Rectangle {
+    VerticalLayout {
+        padding: Theme.space.xxl;
+        alignment: start;
+
+        VerticalLayout {
+            width: min(Theme.size.settings-content, parent.width - 2 * Theme.space.xxl);
+            spacing: Theme.space.l;
+
+            StyledText {
+                text: AppState.daemon.title;
+                style: Theme.text.heading;
+            }
+
+            for paragraph in AppState.daemon-paragraphs: StyledText {
+                text: paragraph;
+                style: Theme.text.body;
+                wrap: word-wrap;
+            }
+
+            for command in AppState.daemon-commands: CommandLine {
+                command: command;
+            }
+
+            if AppState.daemon.has-action: HorizontalLayout {
+                alignment: start;
+
+                Button {
+                    text: AppState.daemon.action-title;
+                    enabled: !AppState.daemon.action-busy;
+                    activated => {
+                        Intents.run-service(AppState.daemon.action);
+                    }
+                }
+            }
+
+            if AppState.daemon.error != "": StyledText {
+                text: AppState.daemon.error;
+                style: Theme.text.body;
+                color: Theme.color.danger;
+                wrap: word-wrap;
+            }
+
+            for fact in AppState.daemon-facts: Fact {
+                fact: fact;
+            }
+        }
+    }
+}
+
+// Settings: its sections, then the open one. Only Daemon is built so far.
+export component Settings inherits Rectangle {
+    HorizontalLayout {
+        Rectangle {
+            width: Theme.size.settings-nav;
+
+            VerticalLayout {
+                alignment: start;
+
+                Rectangle {
+                    accessible-role: list;
+                    accessible-label: "Settings sections";
+                    height: sections.preferred-height;
+
+                    sections := VerticalLayout {
+                        for section in [
+                            { section: SettingsSection.appearance, text: "Appearance" },
+                            { section: SettingsSection.startup, text: "Startup" },
+                            { section: SettingsSection.notifications, text: "Notifications" },
+                            { section: SettingsSection.daemon, text: "Daemon" },
+                            { section: SettingsSection.about, text: "About" },
+                        ]: SectionRow {
+                            text: section.text;
+                            label: section.text;
+                            selected: AppState.settings-section == section.section;
+                            activated => {
+                                Intents.go-to-settings(section.section);
+                            }
+                        }
+                    }
+                }
+            }
+
+            VerticalDivider {
+                x: parent.width - self.width;
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+
+            if AppState.settings-section == SettingsSection.daemon: Daemon { }
+            if AppState.settings-section != SettingsSection.daemon: ExplainedState {
+                title: AppState.settings-section-name;
+                reason: "This section isn't built yet.";
+            }
+        }
+    }
+}

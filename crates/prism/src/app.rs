@@ -8,16 +8,21 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use slint::{CloseRequestResponse, ComponentHandle, PlatformError};
 
 use prism_ui::{
-    Content, Core, Effect, Input, Intent, Key, Section as CoreSection, Shortcut, TelemetrySource,
+    Content, Core, Effect, Input, Intent, Key, PrismdHost, Section as CoreSection,
+    ServiceAction as CoreServiceAction, ServiceOutcome, SettingsSection as CoreSettingsSection,
+    Shortcut, TelemetrySource,
 };
 
 use crate::chart::series_commands;
 use crate::environment::{Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
 use crate::prismd::{PrismdConnector, PrismdReport};
+use crate::prismd_host::PrismdService;
 use crate::sampler::{Sampler, SamplerReading, SamplerSwitch};
 use crate::single_instance::APP_ID;
 use crate::sync::sync;
-use crate::{AppState, Inbox, Intents, KeyPress, MainWindow, Section};
+use crate::{
+    AppState, Inbox, Intents, KeyPress, MainWindow, Section, ServiceAction, SettingsSection,
+};
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
 pub struct App {
@@ -34,6 +39,8 @@ struct Inner {
     /// Whether the core has the sampler reading.
     sampler_switch: SamplerSwitch,
     prismd: Box<dyn PrismdConnector>,
+    /// What the host says about prismd, and systemd enabling or restarting it.
+    prismd_service: Box<dyn PrismdService>,
     /// Kept while Prism runs, since it holds the single-instance name.
     launches: Box<dyn Launches>,
     activation: Box<dyn WindowActivation>,
@@ -49,6 +56,10 @@ enum Posted {
     Prismd(Box<PrismdReport>),
     /// Prism was launched again, with this activation token.
     LaunchedAgain(Option<String>),
+    /// The host said this about prismd.
+    PrismdHost(PrismdHost),
+    /// A service action ended.
+    ServiceDone(CoreServiceAction, ServiceOutcome),
 }
 
 impl App {
@@ -58,10 +69,12 @@ impl App {
         let Environment {
             gpus,
             prismd,
-            host: HostServices {
-                launches,
-                activation,
-            },
+            host:
+                HostServices {
+                    prismd: prismd_service,
+                    launches,
+                    activation,
+                },
             settings,
             clock,
             sampling,
@@ -78,6 +91,7 @@ impl App {
             sampler: RefCell::new(Some(Sampler::new(gpus))),
             sampler_switch: SamplerSwitch::default(),
             prismd,
+            prismd_service,
             launches,
             activation,
             inbox,
@@ -177,6 +191,35 @@ impl Inner {
             };
             with_inner(&inner, |inner| {
                 inner.handle(Input::Intent(Intent::GoTo(section)))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_go_to_settings(move |section| {
+            let section = match section {
+                SettingsSection::Appearance => CoreSettingsSection::Appearance,
+                SettingsSection::Startup => CoreSettingsSection::Startup,
+                SettingsSection::Notifications => CoreSettingsSection::Notifications,
+                SettingsSection::Daemon => CoreSettingsSection::Daemon,
+                SettingsSection::About => CoreSettingsSection::About,
+            };
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::GoToSettings(section)))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_run_service(move |action| {
+            let action = match action {
+                ServiceAction::Enable => CoreServiceAction::Enable,
+                ServiceAction::Restart => CoreServiceAction::Restart,
+            };
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::RunService(action)))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_copy(move |text| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::Copy(text.into())))
             });
         });
         // A callback that hands the core `intent`.
@@ -293,9 +336,15 @@ impl Inner {
                 received_at: self.clock.now(),
             },
             Posted::Prismd(report) => match *report {
-                PrismdReport::Connected { welcome, snapshot } => {
-                    Input::PrismdConnected { welcome, snapshot }
-                }
+                PrismdReport::Connected {
+                    welcome,
+                    snapshot,
+                    socket,
+                } => Input::PrismdConnected {
+                    welcome,
+                    snapshot,
+                    socket,
+                },
                 PrismdReport::NotConnected(reason) => Input::PrismdNotConnected(reason),
                 PrismdReport::Event(event) => Input::PrismdEvent {
                     event,
@@ -303,6 +352,8 @@ impl Inner {
                 },
             },
             Posted::LaunchedAgain(activation_token) => Input::LaunchedAgain { activation_token },
+            Posted::PrismdHost(host) => Input::PrismdHostChecked(host),
+            Posted::ServiceDone(action, outcome) => Input::PrismdServiceDone { action, outcome },
         });
     }
 
@@ -316,6 +367,19 @@ impl Inner {
                 }));
             }
             Effect::SendToPrismd(request) => self.prismd.send(request),
+            Effect::CheckPrismdHost => {
+                let post = self.poster();
+                self.prismd_service
+                    .check(Box::new(move |host| post(Posted::PrismdHost(host))));
+            }
+            Effect::RunService(action) => {
+                let post = self.poster();
+                self.prismd_service.run(
+                    action,
+                    Box::new(move |outcome| post(Posted::ServiceDone(action, outcome))),
+                );
+            }
+            Effect::Copy(text) => self.window.invoke_copy_to_clipboard(text.into()),
             Effect::StartSampler => self.start_sampler(),
             Effect::StopSampler => self.sampler_switch.set(false),
             Effect::RaiseWindow { activation_token } => {
@@ -331,6 +395,17 @@ impl Inner {
                 let _ = self.window.hide();
                 // There is no event loop to quit when the window never ran, as in tests.
                 let _ = slint::quit_event_loop();
+            }
+        }
+    }
+
+    /// Posts for the UI thread from any thread, and wakes it to take in what was posted.
+    fn poster(&self) -> impl Fn(Posted) + Send + 'static {
+        let outbox = self.outbox.clone();
+        let window = self.window.as_weak();
+        move |posted| {
+            if outbox.send(posted).is_ok() {
+                wake(&window);
             }
         }
     }

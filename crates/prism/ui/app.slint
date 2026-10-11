@@ -1,13 +1,14 @@
 import { Theme, AppearanceMode } from "theme.slint";
-import { AppState, ContentKind, ExplainedStateView, Inbox, Intents, KeyPress, PaletteEntryView, ReadoutView, Section, SidebarGpuView, TemperatureTrackView, WorkspaceView } from "state.slint";
+import { AppState, ContentKind, DaemonView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, PaletteEntryView, ReadoutView, Section, ServiceAction, SettingsSection, SidebarGpuView, TemperatureTrackView, WorkspaceView } from "state.slint";
 import { TitleBar } from "views/title-bar.slint";
 import { Sidebar } from "views/sidebar.slint";
 import { Workspace } from "views/workspace.slint";
 import { ExplainedState } from "views/explained-state.slint";
 import { StatusBar } from "views/status-bar.slint";
 import { CommandPalette } from "views/command-palette.slint";
+import { Settings } from "views/settings.slint";
 
-export { Theme, AppearanceMode, AppState, ContentKind, ExplainedStateView, Inbox, Intents, KeyPress, PaletteEntryView, ReadoutView, Section, SidebarGpuView, TemperatureTrackView, WorkspaceView }
+export { Theme, AppearanceMode, AppState, ContentKind, DaemonView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, PaletteEntryView, ReadoutView, Section, ServiceAction, SettingsSection, SidebarGpuView, TemperatureTrackView, WorkspaceView }
 
 // Prism's one window: frameless, with its own title bar, the sidebar, the content and the status
 // bar, and the command palette over them when it's open.
@@ -27,6 +28,22 @@ export component MainWindow inherits Window {
     // away, such as the palette's field when the palette closes.
     public function focus-window() {
         keys.focus();
+    }
+
+    // Puts `text` on the clipboard, through a text field no one sees: Slint copies only from one.
+    public function copy-to-clipboard(text: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+        clipboard.clear-selection();
+    }
+
+    clipboard := TextInput {
+        visible: false;
+        read-only: true;
+        width: 0;
+        height: 0;
+        accessible-role: none;
     }
 
     // Keys no focused element used reach the global shortcuts here.
@@ -74,10 +91,7 @@ export component MainWindow inherits Window {
                         title: "Drivers";
                         reason: "This section isn't built yet.";
                     }
-                    if AppState.content == ContentKind.settings: ExplainedState {
-                        title: "Settings";
-                        reason: "This section isn't built yet.";
-                    }
+                    if AppState.content == ContentKind.settings: Settings { }
                 }
             }
 

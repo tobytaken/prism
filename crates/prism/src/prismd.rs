@@ -10,7 +10,7 @@ use prism_protocol::client::{self, ConnectError, Connected, SessionSender};
 use prism_protocol::{
     DaemonEvent, DaemonRequest, DaemonSnapshot, HelloRequest, SessionMessage, Welcome,
 };
-use prism_ui::NotConnected;
+use prism_ui::SessionFailure;
 
 /// How Prism reaches prismd. Production connects to its socket; tests and the simulator wire
 /// fakes.
@@ -26,13 +26,14 @@ pub trait PrismdConnector {
 /// What the connection to prismd brought.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PrismdReport {
-    /// A session opened, starting from `snapshot`.
+    /// A session opened on `socket`, starting from `snapshot`.
     Connected {
         welcome: Welcome,
         snapshot: DaemonSnapshot,
+        socket: String,
     },
     /// There is no session: an attempt failed, or the session ended.
-    NotConnected(NotConnected),
+    NotConnected(SessionFailure),
     /// prismd pushed an event to the session.
     Event(DaemonEvent),
 }
@@ -69,7 +70,7 @@ impl PrismdConnector for SocketConnector {
             .spawn(move || run_sessions(&socket, &current, &*reporting));
         if let Err(error) = started {
             eprintln!("prism: can't start the prismd connection: {error}");
-            report(PrismdReport::NotConnected(NotConnected::Unavailable {
+            report(PrismdReport::NotConnected(SessionFailure::Unavailable {
                 message: format!("Prism couldn't start its prismd connection: {error}"),
             }));
         }
@@ -94,7 +95,7 @@ fn run_sessions(
     let hello = HelloRequest::current(env!("CARGO_PKG_VERSION"));
     let mut backoff = Backoff::default();
     // Reported once until the reason changes, so retries don't wake the UI thread.
-    let mut reported: Option<NotConnected> = None;
+    let mut reported: Option<SessionFailure> = None;
     loop {
         let reason = match client::connect(socket, hello.clone()) {
             Ok(Connected {
@@ -104,7 +105,11 @@ fn run_sessions(
             }) => {
                 backoff.reset();
                 *current.lock().unwrap() = Some(session.sender());
-                let mut open = report(PrismdReport::Connected { welcome, snapshot });
+                let mut open = report(PrismdReport::Connected {
+                    welcome,
+                    snapshot,
+                    socket: socket.display().to_string(),
+                });
                 while open {
                     open = match session.next_message() {
                         Ok(Some(SessionMessage::Event { event })) => {
@@ -120,7 +125,7 @@ fn run_sessions(
                 if !open {
                     return;
                 }
-                let reason = NotConnected::Unavailable {
+                let reason = SessionFailure::Unavailable {
                     message: "The session with prismd ended".into(),
                 };
                 reported = Some(reason.clone());
@@ -131,11 +136,11 @@ fn run_sessions(
                 thread::sleep(backoff.next_wait());
                 continue;
             }
-            Err(ConnectError::Unavailable(error)) => NotConnected::Unavailable {
+            Err(ConnectError::Unavailable(error)) => SessionFailure::Unavailable {
                 message: error.message,
             },
             Err(ConnectError::Incompatible(incompatible)) => {
-                NotConnected::Incompatible(incompatible)
+                SessionFailure::Incompatible(incompatible)
             }
         };
         if reported.as_ref() != Some(&reason) {
@@ -183,7 +188,7 @@ pub struct NoPrismd;
 
 impl PrismdConnector for NoPrismd {
     fn start(&self, report: Box<dyn Fn(PrismdReport) -> bool + Send + Sync>) {
-        report(PrismdReport::NotConnected(NotConnected::Unavailable {
+        report(PrismdReport::NotConnected(SessionFailure::Unavailable {
             message: "Prism runs on simulated GPUs, without prismd".into(),
         }));
     }

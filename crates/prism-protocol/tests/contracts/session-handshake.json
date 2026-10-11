@@ -17,7 +17,12 @@
       "payload": {
         "protocol": "0.1",
         "prismd_version": "0.1.0",
-        "can_tune": true
+        "can_tune": true,
+        "authorization": {
+          "kind": "admin_group",
+          "user": "alice",
+          "group": "wheel"
+        }
       }
     }
   },
@@ -30,7 +35,12 @@
         "protocol": "0.1",
         "prismd_version": "0.1.0",
         "can_tune": false,
-        "reason": "bob isn't in group wheel"
+        "reason": "bob isn't in group wheel",
+        "authorization": {
+          "kind": "not_in_admin_group",
+          "user": "bob",
+          "group": "wheel"
+        }
       }
     }
   },

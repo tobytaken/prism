@@ -67,7 +67,7 @@ fn selected_gpu(core: &Core) -> Option<String> {
 }
 
 #[test]
-fn the_palette_lists_a_command_per_gpu_then_the_sections_and_quit() {
+fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_and_quit() {
     let mut core = launched(SimulatedFixture::TwoIdenticalGpus);
     assert!(core.palette().is_none());
 
@@ -83,6 +83,11 @@ fn the_palette_lists_a_command_per_gpu_then_the_sections_and_quit() {
             "Go to Games",
             "Go to Drivers",
             "Go to Settings",
+            "Go to Settings: Appearance",
+            "Go to Settings: Startup",
+            "Go to Settings: Notifications",
+            "Go to Settings: Daemon",
+            "Go to Settings: About",
             "Quit Prism",
         ]
     );
@@ -106,6 +111,11 @@ fn each_command_shows_its_shortcut() {
             "Ctrl+Shift+G",
             "Ctrl+Shift+D",
             "Ctrl+,",
+            "",
+            "",
+            "",
+            "",
+            "",
             "Ctrl+Q"
         ]
     );
@@ -119,7 +129,18 @@ fn typing_fuzzy_matches_command_titles_regardless_of_case() {
     for (query, expected) in [
         ("drv", &["Go to Drivers"][..]),
         ("GTDRIV", &["Go to Drivers"]),
-        ("go set", &["Go to Settings"]),
+        (
+            "go set",
+            &[
+                "Go to Settings",
+                "Go to Settings: Appearance",
+                "Go to Settings: Startup",
+                "Go to Settings: Notifications",
+                "Go to Settings: Daemon",
+                "Go to Settings: About",
+            ],
+        ),
+        ("set dae", &["Go to Settings: Daemon"]),
         ("02:00", &[SECOND_GPU]),
         ("4090", &[FIRST_GPU, SECOND_GPU]),
         ("quit", &["Quit Prism"]),
@@ -161,7 +182,7 @@ fn up_and_down_move_the_highlight_and_wrap_around() {
     assert_eq!(highlighted(&core), FIRST_GPU);
 
     intent(&mut core, Intent::HighlightPrevious);
-    assert_eq!(highlighted(&core), "Go to Settings");
+    assert_eq!(highlighted(&core), "Go to Settings: About");
 
     intent(&mut core, Intent::HighlightNext);
     assert_eq!(highlighted(&core), FIRST_GPU);
@@ -243,6 +264,11 @@ fn recently_run_commands_come_first() {
             FIRST_GPU,
             SECOND_GPU,
             "Go to Drivers",
+            "Go to Settings: Appearance",
+            "Go to Settings: Startup",
+            "Go to Settings: Notifications",
+            "Go to Settings: Daemon",
+            "Go to Settings: About",
             "Quit Prism",
         ]
     );
@@ -250,7 +276,16 @@ fn recently_run_commands_come_first() {
     intent(&mut core, Intent::FilterPalette("go to s".into()));
     assert_eq!(
         titles(&core),
-        ["Go to Games", "Go to Settings", "Go to Drivers"]
+        [
+            "Go to Games",
+            "Go to Settings",
+            "Go to Drivers",
+            "Go to Settings: Appearance",
+            "Go to Settings: Startup",
+            "Go to Settings: Notifications",
+            "Go to Settings: Daemon",
+            "Go to Settings: About",
+        ]
     );
 }
 
@@ -266,6 +301,11 @@ fn gpu_commands_are_left_out_when_the_host_has_no_gpus() {
             "Go to Games",
             "Go to Drivers",
             "Go to Settings",
+            "Go to Settings: Appearance",
+            "Go to Settings: Startup",
+            "Go to Settings: Notifications",
+            "Go to Settings: Daemon",
+            "Go to Settings: About",
             "Quit Prism"
         ]
     );
@@ -282,7 +322,7 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 6);
+    assert_eq!(titles(&core).len(), 11);
 }
 
 fn key(text: &str) -> Key {

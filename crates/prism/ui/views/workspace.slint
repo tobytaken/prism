@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Divider, LinkButton, StyledText } from "../widgets.slint";
-import { Intents, Section, WorkspaceView } from "../state.slint";
+import { Intents, SettingsSection, WorkspaceView } from "../state.slint";
 import { TemperatureTrack } from "temperature-track.slint";
 
 // Why every control is read-only, and where to fix it: "Tuning needs prismd · reason · Set up".
@@ -39,11 +39,10 @@ component TuningNeedsPrismd inherits Rectangle {
             }
         }
 
-        // Settings → Daemon lands with the connection reasons (#132).
         LinkButton {
             text: "Set up";
             activated => {
-                Intents.go-to(Section.settings);
+                Intents.go-to-settings(SettingsSection.daemon);
             }
         }
     }

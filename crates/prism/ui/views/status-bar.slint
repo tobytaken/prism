@@ -1,6 +1,48 @@
 import { Theme } from "../theme.slint";
-import { StyledText } from "../widgets.slint";
-import { AppState } from "../state.slint";
+import { PressArea, StyledText } from "../widgets.slint";
+import { AppState, Intents, SettingsSection } from "../state.slint";
+
+// The prismd connection, such as "PRISMD · NOT RUNNING", which opens Settings → Daemon.
+component ConnectionItem inherits Rectangle {
+    accessible-role: button;
+    accessible-label: AppState.connection;
+    accessible-description: "Opens Settings → Daemon";
+    accessible-action-default => {
+        Intents.go-to-settings(SettingsSection.daemon);
+    }
+    forward-focus: press;
+    width: item.preferred-width + 2 * Theme.space.xs;
+    background: press.has-hover ? Theme.color.chrome-hover : transparent;
+
+    press := PressArea {
+        ring-color: Theme.color.chrome-ink;
+        activated => {
+            Intents.go-to-settings(SettingsSection.daemon);
+        }
+    }
+
+    item := HorizontalLayout {
+        x: Theme.space.xs;
+        spacing: Theme.space.s;
+
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: Theme.size.status-dot;
+                height: Theme.size.status-dot;
+                background: AppState.connected ? Theme.color.ok : Theme.color.chrome-ink-muted;
+            }
+        }
+
+        StyledText {
+            text: AppState.connection;
+            style: Theme.text.status;
+            color: press.has-hover ? Theme.color.chrome-ink : Theme.color.chrome-ink-muted;
+            accessible-role: none;
+        }
+    }
+}
 
 // The status bar: the prismd connection, then where telemetry comes from.
 export component StatusBar inherits Rectangle {
@@ -8,29 +50,12 @@ export component StatusBar inherits Rectangle {
     background: Theme.color.chrome;
 
     HorizontalLayout {
-        padding-left: Theme.space.xl;
+        padding-left: Theme.space.xl - Theme.space.xs;
         padding-right: Theme.space.xl;
         spacing: Theme.space.xxl;
 
-        HorizontalLayout {
-            spacing: Theme.space.s;
+        ConnectionItem {
             horizontal-stretch: 0;
-
-            VerticalLayout {
-                alignment: center;
-
-                Rectangle {
-                    width: Theme.size.status-dot;
-                    height: Theme.size.status-dot;
-                    background: AppState.connected ? Theme.color.ok : Theme.color.chrome-ink-muted;
-                }
-            }
-
-            StyledText {
-                text: AppState.connection;
-                style: Theme.text.status;
-                color: Theme.color.chrome-ink-muted;
-            }
         }
 
         StyledText {

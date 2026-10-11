@@ -3,10 +3,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use prism::{PrismdConnector, PrismdReport};
+use prism::{PrismdConnector, PrismdReport, PrismdService};
 use prism_gpu::GpuPerformanceResponse;
 use prism_protocol::{DaemonEvent, DaemonRequest, DaemonSnapshot, SessionMessage};
-use prism_ui::NotConnected;
+use prism_ui::{
+    Distro, PrismdHost, PrismdInstall, ServiceAction, ServiceOutcome, SessionFailure, UnitState,
+};
 
 /// What the fake daemon is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +129,7 @@ fn report_for(state: DaemonState) -> PrismdReport {
         "../../../prism-protocol/tests/contracts/session-handshake.json"
     ));
     match state {
-        DaemonState::NotRunning => PrismdReport::NotConnected(NotConnected::Unavailable {
+        DaemonState::NotRunning => PrismdReport::NotConnected(SessionFailure::Unavailable {
             message: "No such file or directory (os error 2)".into(),
         }),
         DaemonState::Running | DaemonState::ReadOnly => {
@@ -146,6 +148,7 @@ fn report_for(state: DaemonState) -> PrismdReport {
             PrismdReport::Connected {
                 welcome,
                 snapshot: snapshot(),
+                socket: "/run/prism/prismd.sock".into(),
             }
         }
         DaemonState::Incompatible => {
@@ -156,7 +159,7 @@ fn report_for(state: DaemonState) -> PrismdReport {
             else {
                 panic!("the handshake contract holds an incompatible answer")
             };
-            PrismdReport::NotConnected(NotConnected::Incompatible(incompatible))
+            PrismdReport::NotConnected(SessionFailure::Incompatible(incompatible))
         }
     }
 }
@@ -175,4 +178,72 @@ pub fn snapshot() -> DaemonSnapshot {
 
 fn contract(json: &str) -> serde_json::Value {
     serde_json::from_str(json).unwrap()
+}
+
+/// The host as Prism asks it about prismd: systemd natively, or the Flatpak sandbox, on Ubuntu.
+/// Enabling or restarting prismd starts the fake daemon. Clones share the same host.
+#[derive(Clone)]
+pub struct FakeHost(Arc<Mutex<Host>>);
+
+struct Host {
+    install: PrismdInstall,
+    daemon: FakePrismd,
+    /// How the next service action ends, then done.
+    next_outcome: Option<ServiceOutcome>,
+    runs: Vec<ServiceAction>,
+}
+
+impl FakeHost {
+    pub fn new(install: PrismdInstall, daemon: FakePrismd) -> Self {
+        Self(Arc::new(Mutex::new(Host {
+            install,
+            daemon,
+            next_outcome: None,
+            runs: Vec::new(),
+        })))
+    }
+
+    /// The side Prism holds.
+    pub fn service(&self) -> Box<dyn PrismdService> {
+        Box::new(self.clone())
+    }
+
+    /// Makes the next service action end with `outcome`, rather than done.
+    pub fn answer_next_run(&self, outcome: ServiceOutcome) {
+        self.0.lock().unwrap().next_outcome = Some(outcome);
+    }
+
+    /// Every service action Prism ran, oldest first.
+    pub fn runs(&self) -> Vec<ServiceAction> {
+        self.0.lock().unwrap().runs.clone()
+    }
+}
+
+impl PrismdService for FakeHost {
+    fn check(&self, checked: Box<dyn FnOnce(PrismdHost) + Send>) {
+        let install = self.0.lock().unwrap().install.clone();
+        checked(PrismdHost {
+            install,
+            distro: Distro {
+                id: "ubuntu".into(),
+                id_like: vec!["debian".into()],
+                name: "Ubuntu 24.04 LTS".into(),
+            },
+        });
+    }
+
+    fn run(&self, action: ServiceAction, done: Box<dyn FnOnce(ServiceOutcome) + Send>) {
+        let mut host = self.0.lock().unwrap();
+        host.runs.push(action);
+        let outcome = host.next_outcome.take().unwrap_or(ServiceOutcome::Done);
+        let daemon = host.daemon.clone();
+        if outcome == ServiceOutcome::Done {
+            host.install = PrismdInstall::Native(UnitState::Active);
+        }
+        drop(host);
+        done(outcome.clone());
+        if outcome == ServiceOutcome::Done {
+            daemon.start_daemon();
+        }
+    }
 }

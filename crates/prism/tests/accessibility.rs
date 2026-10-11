@@ -10,6 +10,7 @@ use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use prism_gpu::simulated::SimulatedFixture;
 use slint::ComponentHandle;
 
+use prism_ui::{PrismdInstall, ServiceAction, SettingsSection, UnitState};
 use support::Harness;
 use support::audit::{
     Element, TuningAccess, assert_accessible, elements, is_interactive, problems,
@@ -82,22 +83,80 @@ fn every_fixture_state_is_accessible() {
     harness.tick();
     audit("tunable, temperature unknown", &harness);
 
-    for (daemon, state) in [
-        (DaemonState::Running, "connected to prismd"),
+    let not_running = PrismdInstall::Native(UnitState::Inactive { enabled: false });
+    for (daemon, install, state) in [
+        (
+            DaemonState::Running,
+            not_running.clone(),
+            "connected to prismd",
+        ),
         (
             DaemonState::ReadOnly,
+            not_running.clone(),
             "connected to prismd without tuning access",
         ),
-        (DaemonState::Incompatible, "with an incompatible prismd"),
+        (
+            DaemonState::Incompatible,
+            not_running.clone(),
+            "with an incompatible prismd",
+        ),
+        (
+            DaemonState::NotRunning,
+            not_running,
+            "with prismd not running",
+        ),
+        (
+            DaemonState::NotRunning,
+            PrismdInstall::Native(UnitState::NotFound),
+            "with prismd not installed",
+        ),
+        (
+            DaemonState::NotRunning,
+            PrismdInstall::Native(UnitState::Failed {
+                result: "exit-code".into(),
+            }),
+            "with prismd failed",
+        ),
+        (
+            DaemonState::NotRunning,
+            PrismdInstall::Flatpak {
+                run_dir_visible: false,
+            },
+            "in Flatpak with prismd not installed",
+        ),
+        (
+            DaemonState::NotRunning,
+            PrismdInstall::Flatpak {
+                run_dir_visible: true,
+            },
+            "in Flatpak with prismd not running",
+        ),
     ] {
-        let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, daemon);
+        let harness = Harness::with_install(SimulatedFixture::TunableGpu, daemon, install);
         harness.tick();
         audit(&format!("tunable, {state}"), &harness);
+
+        let item = harness.app.core().status_bar().connection;
+        harness
+            .find(AccessibleRole::Button, &item)
+            .invoke_accessible_default_action();
+        harness.tick();
+        audit(&format!("tunable, {state}, Settings → Daemon"), &harness);
     }
 }
 
 /// Every `accessible-action-*` a widget or view declares, and the test below that invokes it.
 const ACTION_TESTS: &[(&str, &str, &str)] = &[
+    (
+        "Button",
+        "default",
+        "a_button_s_default_action_activates_it_unless_it_s_disabled",
+    ),
+    (
+        "ConnectionItem",
+        "default",
+        "the_connection_item_s_default_action_opens_settings_daemon",
+    ),
     (
         "LinkButton",
         "default",
@@ -213,6 +272,48 @@ fn a_palette_row_s_default_action_runs_its_command() {
 }
 
 #[test]
+fn a_button_s_default_action_activates_it_unless_it_s_disabled() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+    harness.ctrl(",");
+    harness
+        .find(AccessibleRole::ListItem, "Daemon")
+        .invoke_accessible_default_action();
+    harness.tick();
+
+    harness
+        .find(AccessibleRole::Button, "Enable prismd")
+        .invoke_accessible_default_action();
+    // Until Prism takes in how it ended, it's still running, and the button is disabled.
+    let enabling = harness.find(AccessibleRole::Button, "Enabling prismd…");
+    assert_eq!(enabling.accessible_enabled(), Some(false));
+    enabling.invoke_accessible_default_action();
+
+    assert_eq!(harness.host.runs(), [ServiceAction::Enable]);
+}
+
+#[test]
+fn the_connection_item_s_default_action_opens_settings_daemon() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+
+    harness
+        .find(AccessibleRole::Button, "PRISMD · NOT RUNNING")
+        .invoke_accessible_default_action();
+
+    assert_eq!(
+        harness.app.core().settings_section(),
+        SettingsSection::Daemon
+    );
+    assert_eq!(
+        harness
+            .find(AccessibleRole::ListItem, "Daemon")
+            .accessible_item_selected(),
+        Some(true)
+    );
+}
+
+#[test]
 fn a_link_button_s_default_action_activates_it() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     harness.tick();
@@ -280,6 +381,7 @@ fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
             "Drivers",
             "Settings",
             "Set up",
+            "PRISMD · NOT RUNNING",
         ]
     );
     assert_eq!(

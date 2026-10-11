@@ -113,6 +113,7 @@ impl DaemonCore {
             }));
         }
         let tuning = policy.allow_tuning(&peer);
+        let authorization = policy.authorization(&peer);
         self.switching.opened(&peer);
         // Subscribed before the snapshot is read, so no change between the two is lost: one
         // already in the snapshot arrives again as an event with the same full value.
@@ -123,6 +124,7 @@ impl DaemonCore {
                 prismd_version,
                 can_tune: tuning.is_ok(),
                 reason: tuning.err().map(|refused| refused.message),
+                authorization: Some(authorization),
             },
             snapshot: self.snapshot(session.peer()),
             session,

@@ -24,8 +24,8 @@ use prism_gpu::{
     GpuTelemetryProvider,
 };
 
-use self::prismd::{DaemonState, FakePrismd};
-use prism_ui::AppearanceMode;
+use self::prismd::{DaemonState, FakeHost, FakePrismd};
+use prism_ui::{AppearanceMode, PrismdInstall, UnitState};
 use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
 
@@ -111,6 +111,7 @@ pub struct Harness {
     pub launches: FakeLaunches,
     pub activation: RecordedActivation,
     pub prismd: FakePrismd,
+    pub host: FakeHost,
     clock: Arc<ManualClock>,
     /// How often Prism read the GPUs in-process.
     in_process_reads: Arc<AtomicUsize>,
@@ -126,6 +127,40 @@ impl Harness {
     /// Prism on `fixture` in Light, with prismd in `daemon` from the start.
     pub fn with_daemon(fixture: SimulatedFixture, daemon: DaemonState) -> Self {
         Self::build(AppearanceMode::Light, daemon, simulated(fixture))
+    }
+
+    /// Prism on `fixture` in Light, with prismd in `daemon` from the start, on a host whose
+    /// prismd is as `install` says.
+    pub fn with_install(
+        fixture: SimulatedFixture,
+        daemon: DaemonState,
+        install: PrismdInstall,
+    ) -> Self {
+        Self::build_on(AppearanceMode::Light, daemon, install, simulated(fixture))
+    }
+
+    /// Prism on `fixture` in `appearance`, with prismd in `daemon` from the start.
+    pub fn with_daemon_in(
+        fixture: SimulatedFixture,
+        appearance: AppearanceMode,
+        daemon: DaemonState,
+    ) -> Self {
+        Self::build(appearance, daemon, simulated(fixture))
+    }
+
+    /// Prism on `fixture` in `appearance`, with prismd not running, on a host whose prismd is as
+    /// `install` says.
+    pub fn on_host(
+        fixture: SimulatedFixture,
+        appearance: AppearanceMode,
+        install: PrismdInstall,
+    ) -> Self {
+        Self::build_on(
+            appearance,
+            DaemonState::NotRunning,
+            install,
+            simulated(fixture),
+        )
     }
 
     pub fn with_appearance(fixture: SimulatedFixture, appearance: AppearanceMode) -> Self {
@@ -153,9 +188,20 @@ impl Harness {
         Self::build(appearance, DaemonState::NotRunning, gpus)
     }
 
+    /// With systemd saying prismd is installed but not running.
     fn build(
         appearance: AppearanceMode,
         daemon: DaemonState,
+        gpus: impl FnOnce(Arc<ManualClock>) -> GpuProviders,
+    ) -> Self {
+        let install = PrismdInstall::Native(UnitState::Inactive { enabled: false });
+        Self::build_on(appearance, daemon, install, gpus)
+    }
+
+    fn build_on(
+        appearance: AppearanceMode,
+        daemon: DaemonState,
+        install: PrismdInstall,
         gpus: impl FnOnce(Arc<ManualClock>) -> GpuProviders,
     ) -> Self {
         init_testing_backend();
@@ -163,6 +209,7 @@ impl Harness {
         let launches = FakeLaunches::default();
         let activation = RecordedActivation::default();
         let prismd = FakePrismd::new(daemon);
+        let host = FakeHost::new(install, prismd.clone());
         let in_process_reads = Arc::default();
         let counted = Arc::new(Counted {
             gpus: gpus(clock.clone()),
@@ -174,6 +221,7 @@ impl Harness {
                 .with_telemetry(counted),
             prismd: prismd.connector(),
             host: HostServices {
+                prismd: host.service(),
                 launches: launches.name(),
                 activation: Box::new(activation.clone()),
             },
@@ -191,6 +239,7 @@ impl Harness {
             launches,
             activation,
             prismd,
+            host,
             clock,
             in_process_reads,
         }
@@ -308,6 +357,21 @@ impl Harness {
         ElementHandle::find_by_accessible_label(self.app.window(), label)
             .filter(|element| element.accessible_role() == Some(role))
             .count()
+    }
+
+    /// What's on the clipboard, as pasting it into the palette's field shows; the palette closes
+    /// again.
+    pub fn clipboard(&self) -> String {
+        self.ctrl("k");
+        self.ctrl("v");
+        let query = self
+            .app
+            .core()
+            .palette()
+            .expect("the palette is open")
+            .query;
+        self.press(&[], Key::Escape);
+        query
     }
 
     /// Whether some text reads `text`.

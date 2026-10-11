@@ -5,15 +5,19 @@
 //! resulting state through the core's view models.
 
 mod core;
+mod daemon;
 pub mod format;
+mod host;
 mod palette;
 pub mod telemetry;
 mod view;
 
 pub use crate::core::{
     AppearanceMode, Core, Effect, Input, Intent, NotConnected, PrismdConnection, Section,
-    TelemetrySource, TuningAccess, TuningControl,
+    SessionFailure, SettingsSection, TelemetrySource, TuningAccess, TuningControl,
 };
+pub use crate::daemon::{DaemonAction, DaemonSettings, Fact, ServiceAction, ServiceOutcome};
+pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
     Content, ExplainedState, GpuWorkspace, Sidebar, SidebarGpu, StatusBar, TemperatureTrack,

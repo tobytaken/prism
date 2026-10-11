@@ -108,6 +108,24 @@ pub struct Welcome {
     /// Why it may not, when it may not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// How prismd decided, for the GUI to explain; `can_tune` alone decides what the session may
+    /// do, so another authorization model can leave this out (ADR 0011).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<Authorization>,
+}
+
+/// How prismd's group model decided whether a session's user may tune.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Authorization {
+    /// The user is root.
+    Root {},
+    /// prismd's config names the user as `admin_user`.
+    AdminUser { user: String },
+    /// The user is in prismd's admin group.
+    AdminGroup { user: String, group: String },
+    /// The user is neither, so the session is read-only.
+    NotInAdminGroup { user: String, group: String },
 }
 
 /// prismd's answer to a [`HelloRequest`] whose protocol it can't speak; the connection closes.
