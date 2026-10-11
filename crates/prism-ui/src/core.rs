@@ -913,6 +913,10 @@ impl Core {
         let effects = match command {
             Command::GoToGpu(id) => {
                 if self.gpus().iter().any(|gpu| gpu.id == id) {
+                    // Another GPU's controls start with every fan.
+                    if self.selection.as_ref() != Some(&Selection::Gpu(id.clone())) {
+                        self.picked_fan = None;
+                    }
                     self.selection = Some(Selection::Gpu(id));
                 }
                 Vec::new()

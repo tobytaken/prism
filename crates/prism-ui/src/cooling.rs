@@ -136,17 +136,17 @@ pub(crate) fn shared(setting: FanSetting) -> CoolingConfiguration {
 }
 
 /// `configuration` with `fans` set to `setting`: shared by every fan, or one fan's own with the
-/// other fans of `indexes` keeping theirs.
-pub(crate) fn with_setting(
+/// GPU's other fans keeping theirs.
+fn with_setting(
     configuration: Option<&CoolingConfiguration>,
     fans: Fans,
     setting: FanSetting,
-    indexes: &[u32],
+    cooling: &CoolingInfo,
 ) -> CoolingConfiguration {
     let Fans::One(index) = fans else {
         return shared(setting);
     };
-    let mut fans = per_fan(configuration, indexes);
+    let mut fans = per_fan(configuration, &Fans::Every.indexes(cooling));
     match fans.iter_mut().find(|fan| fan.fan_index == index) {
         Some(fan) => fan.setting = setting,
         None => fans.push(FanConfiguration {
@@ -159,10 +159,7 @@ pub(crate) fn with_setting(
 
 /// `configuration` as a setting for each fan of `indexes`: what they share, or automatic cooling
 /// when it's unknown.
-pub(crate) fn per_fan(
-    configuration: Option<&CoolingConfiguration>,
-    indexes: &[u32],
-) -> Vec<FanConfiguration> {
+fn per_fan(configuration: Option<&CoolingConfiguration>, indexes: &[u32]) -> Vec<FanConfiguration> {
     let setting = match configuration {
         Some(CoolingConfiguration::PerFan { fans }) => return fans.clone(),
         Some(CoolingConfiguration::Shared { setting }) => setting.clone(),
@@ -175,6 +172,21 @@ pub(crate) fn per_fan(
             setting: setting.clone(),
         })
         .collect()
+}
+
+/// Whether `a` and `b` give each of the GPU's fans the same setting, whether they share it or
+/// not.
+fn same_for_each_fan(
+    a: &CoolingConfiguration,
+    b: &CoolingConfiguration,
+    cooling: &CoolingInfo,
+) -> bool {
+    let each = |configuration| {
+        let mut fans = per_fan(Some(configuration), &Fans::Every.indexes(cooling));
+        fans.sort_by_key(|fan| fan.fan_index);
+        fans
+    };
+    each(a) == each(b)
 }
 
 /// A cooling configuration as a review says it, such as "fixed 55%" or "fan 0 automatic · fan 1
@@ -296,51 +308,54 @@ impl Core {
     /// one staged or in effect, or else from their speed now, and a fan curve from the starter fan
     /// curve. Picking the mode in effect puts back the setting in effect.
     pub(crate) fn stage_fan_mode(&mut self, mode: FanMode) -> Vec<Effect> {
-        let Some(gpu) = self.stageable(TuningControl::Cooling) else {
-            return Vec::new();
-        };
-        let Some(cooling) = cooling_read(gpu) else {
-            return Vec::new();
-        };
-        let fans = self.controlled_fans(gpu);
-        let shown = self.shown_cooling(gpu);
-        let in_effect = self
-            .cooling_in_effect(gpu)
-            .and_then(|in_effect| setting_of(&in_effect, fans).cloned())
-            .filter(|setting| FanMode::of(setting) == mode);
-        let setting = match (in_effect, mode) {
-            (Some(setting), _) => setting,
-            (None, FanMode::Automatic) => FanSetting::Automatic {},
-            (None, FanMode::Fixed) => {
-                let Ok((min, max)) = fixed_speed_range(cooling, fans) else {
-                    return Vec::new();
-                };
-                let staged = self
-                    .staged_cooling(&gpu.id)
-                    .and_then(|staged| fixed_speed_of(staged, fans));
-                FanSetting::Fixed {
-                    speed_percent: staged
-                        .or(speed_now(gpu, fans))
-                        .unwrap_or(min)
-                        .clamp(min, max),
+        self.stage_fan_setting(|core, gpu, cooling, fans| {
+            let in_effect = core
+                .cooling_in_effect(gpu)
+                .and_then(|in_effect| setting_of(&in_effect, fans).cloned())
+                .filter(|setting| FanMode::of(setting) == mode);
+            Some(match (in_effect, mode) {
+                (Some(setting), _) => setting,
+                (None, FanMode::Automatic) => FanSetting::Automatic {},
+                (None, FanMode::Fixed) => {
+                    let (min, max) = fixed_speed_range(cooling, fans).ok()?;
+                    let staged = core
+                        .staged_cooling(&gpu.id)
+                        .and_then(|staged| fixed_speed_of(staged, fans));
+                    FanSetting::Fixed {
+                        speed_percent: staged
+                            .or(speed_now(gpu, fans))
+                            .unwrap_or(min)
+                            .clamp(min, max),
+                    }
                 }
-            }
-            (None, FanMode::Curve) => match self.curve_support(gpu, fans) {
-                Some(FanCurveSupport::Available { starter, .. }) => {
-                    FanSetting::Curve { points: starter }
-                }
-                Some(FanCurveSupport::Unavailable { .. }) | None => return Vec::new(),
-            },
-        };
-        let configuration =
-            with_setting(shown.as_ref(), fans, setting, &Fans::Every.indexes(cooling));
-        let id = gpu.id.clone();
-        self.stage_cooling(id, configuration)
+                (None, FanMode::Curve) => match core.curve_support(gpu, fans)? {
+                    FanCurveSupport::Available { starter, .. } => {
+                        FanSetting::Curve { points: starter }
+                    }
+                    FanCurveSupport::Unavailable { .. } => return None,
+                },
+            })
+        })
     }
 
     /// Stages `speed_percent` as the fixed speed of the fans the selected GPU's controls set,
     /// kept within the range they all support.
     pub(crate) fn stage_fan_speed(&mut self, speed_percent: i64) -> Vec<Effect> {
+        self.stage_fan_setting(|_, _, cooling, fans| {
+            let (min, max) = fixed_speed_range(cooling, fans).ok()?;
+            Some(FanSetting::Fixed {
+                speed_percent: speed_percent.clamp(min, max),
+            })
+        })
+    }
+
+    /// Stages the setting `choose` makes for the fans the selected GPU's controls set, in the
+    /// cooling shown, while its cooling can be staged and its fans have been read; none leaves
+    /// cooling as it is.
+    pub(crate) fn stage_fan_setting(
+        &mut self,
+        choose: impl FnOnce(&Self, &Gpu, &CoolingInfo, Fans) -> Option<FanSetting>,
+    ) -> Vec<Effect> {
         let Some(gpu) = self.stageable(TuningControl::Cooling) else {
             return Vec::new();
         };
@@ -348,18 +363,10 @@ impl Core {
             return Vec::new();
         };
         let fans = self.controlled_fans(gpu);
-        let Ok((min, max)) = fixed_speed_range(cooling, fans) else {
+        let Some(setting) = choose(self, gpu, cooling, fans) else {
             return Vec::new();
         };
-        let setting = FanSetting::Fixed {
-            speed_percent: speed_percent.clamp(min, max),
-        };
-        let configuration = with_setting(
-            self.shown_cooling(gpu).as_ref(),
-            fans,
-            setting,
-            &Fans::Every.indexes(cooling),
-        );
+        let configuration = with_setting(self.shown_cooling(gpu).as_ref(), fans, setting, cooling);
         let id = gpu.id.clone();
         self.stage_cooling(id, configuration)
     }
@@ -461,18 +468,23 @@ impl Core {
         self.stage_cooling(id, remembered)
     }
 
-    /// Stages `configuration` for the GPU's fans, unless it's the one in effect.
+    /// Stages `configuration` for the GPU's fans, unless it gives each fan the setting in effect.
     pub(crate) fn stage_cooling(
         &mut self,
         id: String,
         configuration: CoolingConfiguration,
     ) -> Vec<Effect> {
-        let in_effect = self
-            .gpus()
-            .iter()
-            .find(|gpu| gpu.id == id)
-            .and_then(|gpu| self.cooling_in_effect(gpu));
-        let staged = (in_effect.as_ref() != Some(&configuration)).then_some(configuration);
+        let gpu = self.gpus().iter().find(|gpu| gpu.id == id);
+        let unchanged = match (
+            gpu.and_then(|gpu| self.cooling_in_effect(gpu)),
+            gpu.and_then(cooling_read),
+        ) {
+            (Some(in_effect), Some(cooling)) => {
+                same_for_each_fan(&in_effect, &configuration, cooling)
+            }
+            (in_effect, _) => in_effect.as_ref() == Some(&configuration),
+        };
+        let staged = (!unchanged).then_some(configuration);
         self.put_cooling(id, staged)
     }
 }

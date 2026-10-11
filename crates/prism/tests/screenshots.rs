@@ -151,6 +151,16 @@ mod screenshot {
     fn per_fan_review(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();
         let harness = tunable_workspace(appearance);
+        let mut state = crate::support::prismd::snapshot().tuning_states[0].clone();
+        state.reported.cooling = Some(prism_gpu::cooling::CoolingConfiguration::Shared {
+            setting: prism_gpu::cooling::FanSetting::Automatic {},
+        });
+        harness
+            .prismd
+            .push(prism_protocol::DaemonEvent::TuningStateChanged(
+                state.clone(),
+            ));
+        harness.app.receive_posted();
         harness
             .find(AccessibleRole::Button, "Fan 1")
             .invoke_accessible_default_action();
@@ -160,7 +170,6 @@ mod screenshot {
         harness
             .find(AccessibleRole::Spinbox, "Fan 1 fixed speed")
             .set_accessible_value("55");
-        let mut state = crate::support::prismd::snapshot().tuning_states[0].clone();
         state.revision = "elsewhere".into();
         state.reported.cooling = Some(prism_gpu::cooling::CoolingConfiguration::Shared {
             setting: prism_gpu::cooling::FanSetting::Fixed { speed_percent: 70 },

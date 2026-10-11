@@ -1283,3 +1283,47 @@ fn the_state_an_own_apply_pushed_isnt_a_competing_change() {
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].1.expected_revision, "own");
 }
+
+#[test]
+fn putting_a_fans_own_setting_back_leaves_cooling_unchanged() {
+    let mut core = connected();
+    pick(&mut core, Some(1));
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+    assert_eq!(changes(&core), "1 unapplied change");
+
+    intent(&mut core, Intent::StageFanMode(FanMode::Automatic));
+
+    assert_eq!(changes(&core), "No unapplied changes");
+    assert_eq!(arrangement(&core).pending, None);
+}
+
+#[test]
+fn a_cooling_change_seen_before_cooling_was_staged_needs_no_review() {
+    let mut snapshot = snapshot();
+    snapshot.tuning_states[0].reported.cooling = Some(shared(FanSetting::Automatic {}));
+    let mut core = connected_with(snapshot, reading(SimulatedFixture::TunableGpu), true);
+    intent(
+        &mut core,
+        Intent::Stage(prism_protocol::ProfileSettingKey::PowerLimitWatts, 450),
+    );
+    cooling_changed(&mut core, "elsewhere", Some(fixed(70)));
+
+    // The change shows in the fan control mode before cooling is staged over it.
+    intent(&mut core, Intent::StageFanSpeed(55));
+
+    assert_eq!(workspace(&core).changes.review, None);
+}
+
+#[test]
+fn cooling_that_becomes_known_or_unknown_isnt_a_competing_change() {
+    let mut core = connected();
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+
+    // prismd couldn't report the configured cooling before, and then can.
+    cooling_changed(&mut core, "known", Some(shared(FanSetting::Automatic {})));
+    assert_eq!(workspace(&core).changes.review, None);
+
+    // A cooling fault leaves it unknown again.
+    cooling_changed(&mut core, "fault", None);
+    assert_eq!(workspace(&core).changes.review, None);
+}

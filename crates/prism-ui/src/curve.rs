@@ -6,8 +6,8 @@
 use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
 use prism_gpu::fan_curve::{self, FanCurvePoint, FanCurveProblem, FanCurveSupport};
 
-use crate::cooling::{Fans, cooling_read, setting_of, speed_now, with_setting};
-use crate::core::{Core, Effect, Gpu, Latest, TuningControl};
+use crate::cooling::{Fans, cooling_read, setting_of, speed_now};
+use crate::core::{Core, Effect, Gpu, Latest};
 use crate::format::Readout;
 use crate::telemetry::ChartPoint;
 use crate::view::{CurveMarker, CurvePoint, FanCurveEditor};
@@ -304,50 +304,32 @@ impl Core {
         index: usize,
         to: impl FnOnce(FanCurvePoint, Axis) -> FanCurvePoint,
     ) -> Vec<Effect> {
-        let Some(gpu) = self.stageable(TuningControl::Cooling) else {
-            return Vec::new();
-        };
-        let Some(cooling) = cooling_read(gpu) else {
-            return Vec::new();
-        };
-        let fans = self.controlled_fans(gpu);
-        let Some(limits) = Limits::of(self.curve_support(gpu, fans)) else {
-            return Vec::new();
-        };
-        let Some(mut points) = self.shown_curve(gpu) else {
-            return Vec::new();
-        };
-        let Some(&point) = points.get(index) else {
-            return Vec::new();
-        };
-        let wanted = to(point, self.curve_axis(gpu));
-        let coolest = index
-            .checked_sub(1)
-            .map_or(0, |previous| points[previous].temperature_c + 1);
-        let hottest = points
-            .get(index + 1)
-            .map_or(limits.max_operating_temperature_c, |next| {
-                next.temperature_c - 1
-            })
-            .min(limits.max_operating_temperature_c);
-        points[index] = FanCurvePoint::new(
-            if coolest <= hottest {
-                wanted.temperature_c.clamp(coolest, hottest)
-            } else {
-                point.temperature_c
-            },
-            wanted
-                .speed_percent
-                .clamp(limits.min_speed_percent, limits.max_speed_percent),
-        );
-        let configuration = with_setting(
-            self.shown_cooling(gpu).as_ref(),
-            fans,
-            FanSetting::Curve { points },
-            &Fans::Every.indexes(cooling),
-        );
-        let id = gpu.id.clone();
-        self.stage_cooling(id, configuration)
+        self.stage_fan_setting(|core, gpu, _, fans| {
+            let limits = Limits::of(core.curve_support(gpu, fans))?;
+            let mut points = core.shown_curve(gpu)?;
+            let point = *points.get(index)?;
+            let wanted = to(point, core.curve_axis(gpu));
+            let coolest = index
+                .checked_sub(1)
+                .map_or(0, |previous| points[previous].temperature_c + 1);
+            let hottest = points
+                .get(index + 1)
+                .map_or(limits.max_operating_temperature_c, |next| {
+                    next.temperature_c - 1
+                })
+                .min(limits.max_operating_temperature_c);
+            points[index] = FanCurvePoint::new(
+                if coolest <= hottest {
+                    wanted.temperature_c.clamp(coolest, hottest)
+                } else {
+                    point.temperature_c
+                },
+                wanted
+                    .speed_percent
+                    .clamp(limits.min_speed_percent, limits.max_speed_percent),
+            );
+            Some(FanSetting::Curve { points })
+        })
     }
 
     /// Collapses the fan curve editor, or opens it again.

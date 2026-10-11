@@ -537,12 +537,19 @@ fn recalling_the_remembered_curve_creates_a_draft_that_reaches_prismd_only_with_
 #[test]
 fn a_cooling_change_from_another_session_needs_review_before_apply_replaces_it() {
     let harness = connected();
+    let mut state = support::prismd::snapshot().tuning_states[0].clone();
+    state.reported.cooling = Some(CoolingConfiguration::Shared {
+        setting: FanSetting::Automatic {},
+    });
+    harness
+        .prismd
+        .push(DaemonEvent::TuningStateChanged(state.clone()));
+    harness.prismd_tick(reading());
     segment(&harness, "Fixed speed").invoke_accessible_default_action();
     harness
         .find(Spinbox, "Fixed fan speed")
         .set_accessible_value("55");
 
-    let mut state = support::prismd::snapshot().tuning_states[0].clone();
     state.revision = "elsewhere".into();
     state.reported.cooling = Some(CoolingConfiguration::Shared {
         setting: FanSetting::Fixed { speed_percent: 70 },
@@ -568,7 +575,7 @@ fn a_cooling_change_from_another_session_needs_review_before_apply_replaces_it()
     let change = harness.find(Text, "Cooling");
     assert_eq!(
         change.accessible_value().as_deref(),
-        Some("unknown → fixed 70%")
+        Some("automatic → fixed 70%")
     );
     assert_eq!(
         change.accessible_description().as_deref(),

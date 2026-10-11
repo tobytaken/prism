@@ -27,6 +27,9 @@ pub(crate) struct Draft {
     /// The GPU's fans as the user saw them when staging cooling, which prismd checks before it
     /// writes the cooling setting.
     fan_indexes: Vec<u32>,
+    /// The cooling in effect as prismd reported it when the draft started staging cooling, or
+    /// last moved onto a tuning state: a change from it is one the user hasn't reviewed.
+    cooling_seen: Option<CoolingConfiguration>,
     /// Each staged setting the last Apply didn't put into effect, with why if prismd said, until
     /// it's staged again.
     pub(crate) failed: BTreeMap<Staged, Option<String>>,
@@ -258,7 +261,14 @@ impl Core {
             .and_then(cooling_read)
             .map(|cooling| cooling.fans.iter().map(|fan| fan.index).collect())
             .unwrap_or_default();
+        let reported = self
+            .tuning
+            .get(&id)
+            .and_then(|state| state.reported.cooling.clone());
         self.edit_draft(id, Staged::Cooling, |draft| {
+            if draft.settings.cooling.is_none() {
+                draft.cooling_seen = reported;
+            }
             draft.settings.cooling = configuration;
             draft.fan_indexes = fan_indexes;
         })
@@ -281,6 +291,7 @@ impl Core {
             base,
             settings: ProfileSettings::default(),
             fan_indexes: Vec::new(),
+            cooling_seen: None,
             failed: BTreeMap::new(),
             outcome: None,
             follow: None,
@@ -562,11 +573,11 @@ impl Core {
         self.drafts.applying.contains_key(gpu_id)
     }
 
-    /// Whether the cooling in effect on the GPU changed since its draft was made, through another
-    /// session, automatic switching or outside Prism, while the draft stages cooling of its own:
-    /// the draft replaces that change only once the user reviewed it (ADR 0006). A curve's
-    /// changing output isn't a change to the cooling in effect, and while an Apply waits for
-    /// prismd's answer, any change is its own write.
+    /// Whether the cooling in effect on the GPU changed under the cooling its draft stages, such as
+    /// in another session: the draft replaces that change only once the user reviewed it (ADR
+    /// 0006). A curve's changing output isn't a change to the cooling in effect, cooling prismd
+    /// can't report, such as after a cooling fault, can't be compared, and while an Apply waits
+    /// for prismd's answer, any change is its own write.
     pub(crate) fn cooling_changed_under(&self, gpu_id: &str) -> bool {
         let Some(draft) = self.drafts.by_gpu.get(gpu_id) else {
             return false;
@@ -574,8 +585,12 @@ impl Core {
         if draft.settings.cooling.is_none() || draft.follow.is_some() || self.applying(gpu_id) {
             return false;
         }
-        match (&draft.base, self.tuning.get(gpu_id)) {
-            (Some(base), Some(state)) => base.cooling != state.reported.cooling,
+        let now = self
+            .tuning
+            .get(gpu_id)
+            .and_then(|state| state.reported.cooling.as_ref());
+        match (&draft.cooling_seen, now) {
+            (Some(seen), Some(now)) => seen != now,
             _ => false,
         }
     }
@@ -591,6 +606,7 @@ fn follow(draft: &mut Draft, state: &GpuTuningState) -> Vec<ReviewChange> {
     let changes = review_changes(draft.base.as_ref(), Some(&state.reported), &draft.settings);
     draft.revision = state.revision.clone();
     draft.base = Some(state.reported.clone());
+    draft.cooling_seen = state.reported.cooling.clone();
     draft.follow = None;
     changes
 }
