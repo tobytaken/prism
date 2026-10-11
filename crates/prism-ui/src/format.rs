@@ -52,10 +52,20 @@ impl Readout {
 
     /// The reading in running text, such as "71 °C", "96%" or "—".
     pub fn text(&self) -> String {
+        if self.known {
+            format!("{}{}", self.value, self.suffix())
+        } else {
+            UNKNOWN.into()
+        }
+    }
+
+    /// What follows the number, such as " °C" or "%": a percent sign follows it without a space.
+    /// Nothing follows an unknown reading.
+    pub fn suffix(&self) -> String {
         match (self.known, self.unit) {
-            (false, _) => UNKNOWN.into(),
-            (true, "%") => format!("{}%", self.value),
-            (true, unit) => format!("{} {unit}", self.value),
+            (false, _) => String::new(),
+            (true, "%") => "%".into(),
+            (true, unit) => format!(" {unit}"),
         }
     }
 
@@ -103,6 +113,13 @@ mod tests {
         assert_eq!(Readout::watts(Some(312)).text(), "312 W");
         assert_eq!(Readout::celsius(Some(0)).text(), "0 °C");
         assert_eq!(Readout::megahertz(Some(2_790)).text(), "2790 MHz");
+    }
+
+    #[test]
+    fn a_unit_follows_its_number_with_a_space_except_a_percent_sign() {
+        assert_eq!(Readout::celsius(Some(71)).suffix(), " °C");
+        assert_eq!(Readout::percent(Some(96)).suffix(), "%");
+        assert_eq!(Readout::percent(None).suffix(), "");
     }
 
     #[test]

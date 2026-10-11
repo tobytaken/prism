@@ -3,11 +3,12 @@
 
 import { SegmentView } from "widgets/segmented.slint";
 
-// A reading as shown. `value` is the number or "—", `text` the value with its unit, and `spoken`
-// what a screen reader says.
+// A reading as shown. `value` is the number or "—", `suffix` what follows it, such as " °C" or "%",
+// `text` both together, and `spoken` what a screen reader says.
 export struct ReadoutView {
     value: string,
     unit: string,
+    suffix: string,
     known: bool,
     text: string,
     spoken: string,

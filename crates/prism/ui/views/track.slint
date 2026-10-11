@@ -183,9 +183,8 @@ export component Track inherits Rectangle {
                                 accessible-role: none;
                             }
 
-                            // A percent sign follows its number without a space, as in "5%".
                             if root.track.readout.known: StyledText {
-                                text: (root.track.readout.unit == "%" ? "" : " ") + root.track.readout.unit;
+                                text: root.track.readout.suffix;
                                 style: Theme.text.readout-unit;
                                 color: Theme.color.ink-muted;
                                 vertical-alignment: bottom;

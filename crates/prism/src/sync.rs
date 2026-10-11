@@ -215,7 +215,7 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
             ChartView {
                 id: chart_id(chart.metric),
                 label: chart.label.unwrap_or_default().into(),
-                area: chart.metric == Metric::Utilization,
+                area: chart.area,
                 limit: draws(LimitKind::Configured),
                 enforced_limit: draws(LimitKind::Enforced),
             }
@@ -312,6 +312,7 @@ fn readout(readout: &Readout) -> ReadoutView {
     ReadoutView {
         value: readout.value.as_str().into(),
         unit: readout.unit.into(),
+        suffix: readout.suffix().into(),
         known: readout.is_known(),
         text: readout.text().into(),
         spoken: readout.spoken().into(),

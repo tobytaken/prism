@@ -44,7 +44,7 @@ component Segment inherits Rectangle {
     // The picked segment is underlined in the accent.
     if root.segment.selected: Rectangle {
         y: parent.height - self.height;
-        height: Theme.stroke.selection - 1px;
+        height: Theme.stroke.segment-selection;
         background: Theme.color.accent;
     }
 }

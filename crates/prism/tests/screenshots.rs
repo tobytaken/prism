@@ -39,11 +39,12 @@ mod screenshot {
         workspace(AppearanceMode::Dark, "workspace-dark");
     }
 
-    /// The workspace with its hardware details open, over the last minute.
+    /// The workspace over the last minute, scrolled down to its open hardware details.
     fn hardware_details(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();
         let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);
-        harness.ticks(30);
+        // A minute and a half of readings, so the last minute leaves some out.
+        harness.ticks(90);
         harness
             .find(
                 i_slint_backend_testing::AccessibleRole::Button,
@@ -56,8 +57,15 @@ mod screenshot {
                 "Hardware details",
             )
             .invoke_accessible_default_action();
+        let window = harness.app.window().window();
+        window.set_size(slint::PhysicalSize::new(WINDOW.0, WINDOW.1));
+        window.dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(700.0, 400.0),
+            delta_x: 0.0,
+            delta_y: -2000.0,
+        });
 
-        assert_screenshot(name, harness.app.window().window(), WINDOW);
+        assert_screenshot(name, window, WINDOW);
     }
 
     #[test]

@@ -84,8 +84,9 @@ export struct Strokes {
     dash-gap: length,
     focus: length,
     focus-offset: length,
-    // The accent bar marking the selected sidebar row.
+    // The accent bar marking the selected sidebar row, and the one under a picked segment.
     selection: length,
+    segment-selection: length,
 }
 
 export struct Radii {
@@ -224,6 +225,7 @@ export global Theme {
         focus: 1px,
         focus-offset: 2px,
         selection: 3px,
+        segment-selection: 2px,
     };
     out property <Radii> radius: { none: 0px, small: 3px };
     // C's hard pop-up shadow, drawn as an offset Rectangle so every renderer shows it (see

@@ -202,6 +202,8 @@ pub struct TrackChart {
     pub metric: Metric,
     /// What tells it apart from the track's other chart, such as "MEMORY".
     pub label: Option<&'static str>,
+    /// Whether the area under the series is filled, as utilization's is.
+    pub area: bool,
     pub chart: Chart,
     pub limits: Vec<LimitLine>,
 }
@@ -387,6 +389,7 @@ impl Core {
         let chart = |metric, label, also_fit: &[Option<u32>]| TrackChart {
             metric,
             label,
+            area: metric == Metric::Utilization,
             chart: gpu.history.chart(
                 metric,
                 self.range,
@@ -422,10 +425,10 @@ impl Core {
                 })
                 .collect();
                 let said = power.and_then(|power| {
-                    power
-                        .current_value_error
-                        .as_deref()
-                        .or(power.reason.as_deref())
+                    gpu_said(
+                        power.current_value_error.as_deref(),
+                        power.reason.as_deref(),
+                    )
                 });
                 let limit = |kind, label: &str, name: &str, watts| Detail {
                     label: label.into(),
@@ -454,10 +457,10 @@ impl Core {
                     |label: &str, name: &str, offset: Option<&prism_gpu::ClockOffsetInfo>| {
                         let mhz = offset.and_then(|offset| offset.current_offset_mhz);
                         let said = offset.and_then(|offset| {
-                            offset
-                                .current_value_error
-                                .as_deref()
-                                .or(offset.reason.as_deref())
+                            gpu_said(
+                                offset.current_value_error.as_deref(),
+                                offset.reason.as_deref(),
+                            )
                         });
                         Detail {
                             label: label.into(),
@@ -548,6 +551,12 @@ fn readout(metric: Metric, value: Option<u32>) -> Readout {
     }
 }
 
+/// What the GPU said about a current tuning value it didn't report: the error reading it, or why
+/// the control is unavailable.
+fn gpu_said<'a>(value_error: Option<&'a str>, control_reason: Option<&'a str>) -> Option<&'a str> {
+    value_error.or(control_reason)
+}
+
 /// Why a value the latest reading carries is unknown: why there's no reading, or what the GPU
 /// said about the value, if anything.
 fn value_reason(gpu: &Gpu, known: bool, said: Option<&str>) -> Option<String> {
@@ -579,14 +588,12 @@ fn joined(parts: impl IntoIterator<Item = Option<String>>) -> String {
 /// What the GPU inventory says about the GPU.
 fn inventory_facts(device: &GpuDevice) -> Vec<Fact> {
     let known = |value: &Option<String>| value.clone().unwrap_or_else(|| UNKNOWN.into());
-    let pcie = joined([
-        device
-            .pcie
-            .gen_max
-            .map(|generation| format!("Gen {generation}")),
-        device.pcie.width_max.map(|width| format!("×{width}")),
-    ])
-    .replace(" · ×", " ×");
+    let pcie = match (device.pcie.gen_max, device.pcie.width_max) {
+        (Some(generation), Some(width)) => format!("Gen {generation} ×{width}"),
+        (Some(generation), None) => format!("Gen {generation}"),
+        (None, Some(width)) => format!("×{width}"),
+        (None, None) => UNKNOWN.into(),
+    };
     let compute = &device.compute;
     let api = compute.api.map(|api| {
         let name = match api {
@@ -642,12 +649,13 @@ fn inventory_facts(device: &GpuDevice) -> Vec<Fact> {
 
 const SUPPORTED: &str = "Supported";
 const NOT_SUPPORTED: &str = "Not supported";
+const RANGE_UNKNOWN: &str = "Supported · range unknown";
 
 /// A supported control's allowed range, such as "400–600 W".
 fn range(min: Option<u32>, max: Option<u32>, unit: &str) -> String {
     match (min, max) {
         (Some(min), Some(max)) => format!("{min}–{max} {unit}"),
-        _ => format!("{SUPPORTED} · range unknown"),
+        _ => RANGE_UNKNOWN.into(),
     }
 }
 
@@ -655,7 +663,7 @@ fn range(min: Option<u32>, max: Option<u32>, unit: &str) -> String {
 fn offset_range(min: Option<i32>, max: Option<i32>) -> String {
     match (min, max) {
         (Some(min), Some(max)) => format!("{} to {} MHz", signed(min), signed(max)),
-        _ => format!("{SUPPORTED} · range unknown"),
+        _ => RANGE_UNKNOWN.into(),
     }
 }
 
@@ -745,11 +753,7 @@ fn capability_facts(gpu: &Gpu) -> Vec<Fact> {
         fact("Maximum operating temperature", max_temperature),
         fact(
             "Reset to defaults",
-            if features.reset {
-                SUPPORTED
-            } else {
-                NOT_SUPPORTED
-            },
+            supported(features.reset, || SUPPORTED.into()),
         ),
     ]
 }
