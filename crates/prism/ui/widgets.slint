@@ -11,13 +11,15 @@
 // - `Dialog` and `Popover` are a `groupbox` labeled by their title.
 // - `Tooltip` isn't a node of its own: its text goes into the owning widget's
 //   `accessible-description`.
-// - Chart parts (`Grid`, `Series`, …) are `accessible-role: none`; the track's readout carries the
-//   value.
+// - Chart parts (`Grid`, `Series`, `Area`, `LimitLine`) are `accessible-role: none`; the track's
+//   readout carries the value.
 
 export { StyledText } from "widgets/styled-text.slint";
 export { Divider, VerticalDivider } from "widgets/divider.slint";
 export { PressArea } from "widgets/press-area.slint";
 export { ListRow } from "widgets/list-row.slint";
 export { LinkButton } from "widgets/link-button.slint";
-export { Grid, Series } from "widgets/chart.slint";
+export { Area, Grid, LimitLine, Series } from "widgets/chart.slint";
 export { PopupSurface } from "widgets/popup-surface.slint";
+export { Segmented, SegmentView } from "widgets/segmented.slint";
+export { Fact } from "widgets/fact.slint";

@@ -1,7 +1,8 @@
 import { Theme } from "../theme.slint";
-import { Divider, LinkButton, StyledText } from "../widgets.slint";
-import { Intents, SettingsSection, WorkspaceView } from "../state.slint";
-import { TemperatureTrack } from "temperature-track.slint";
+import { Divider, LinkButton, Segmented, StyledText } from "../widgets.slint";
+import { AppState, Intents, SettingsSection, WorkspaceView } from "../state.slint";
+import { HardwareDetails } from "hardware-details.slint";
+import { Track } from "track.slint";
 
 // Why every control is read-only, and where to fix it: "Tuning needs prismd · reason · Set up".
 component TuningNeedsPrismd inherits Rectangle {
@@ -52,7 +53,8 @@ component TuningNeedsPrismd inherits Rectangle {
     }
 }
 
-// The selected GPU's workspace: its header, then one full-width track per metric.
+// The selected GPU's workspace: its header with the range picker, then one full-width track per
+// metric and the hardware details. When they don't fit, they scroll under the header.
 export component Workspace inherits Rectangle {
     in property <WorkspaceView> workspace;
 
@@ -60,21 +62,38 @@ export component Workspace inherits Rectangle {
         Rectangle {
             height: Theme.size.header;
 
-            VerticalLayout {
+            HorizontalLayout {
                 padding-left: Theme.space.xxl;
                 padding-right: Theme.space.xxl;
-                alignment: center;
+                spacing: Theme.space.xxl;
 
-                StyledText {
-                    text: root.workspace.title;
-                    style: Theme.text.title;
-                    overflow: elide;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+
+                    StyledText {
+                        text: root.workspace.title;
+                        style: Theme.text.title;
+                        overflow: elide;
+                    }
+
+                    StyledText {
+                        text: root.workspace.subtitle;
+                        style: Theme.text.subtitle;
+                        color: Theme.color.ink-muted;
+                    }
                 }
 
-                StyledText {
-                    text: root.workspace.subtitle;
-                    style: Theme.text.subtitle;
-                    color: Theme.color.ink-muted;
+                VerticalLayout {
+                    alignment: center;
+
+                    Segmented {
+                        label: "Range";
+                        segments: AppState.ranges;
+                        chosen(index) => {
+                            Intents.show-range(index);
+                        }
+                    }
                 }
             }
 
@@ -88,12 +107,21 @@ export component Workspace inherits Rectangle {
             reason: root.workspace.no-tuning-access;
         }
 
-        TemperatureTrack {
-            track: root.workspace.temperature;
-        }
-
-        Rectangle {
+        tracks := Flickable {
             vertical-stretch: 1;
+            content-height: max(self.height, body.min-height);
+
+            body := VerticalLayout {
+                height: tracks.content-height;
+
+                for track in AppState.tracks: Track {
+                    track: track;
+                }
+
+                HardwareDetails {
+                    open: root.workspace.hardware-open;
+                }
+            }
         }
     }
 }

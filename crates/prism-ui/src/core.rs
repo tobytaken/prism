@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use prism_gpu::{
-    ControlSupport, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
+    ControlSupport, GpuDevice, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
 };
 use prism_protocol::{DaemonEvent, DaemonRequest, DaemonSnapshot, Incompatible, Welcome};
 
@@ -309,6 +309,10 @@ pub enum Intent {
     /// Close the topmost overlay.
     Dismiss,
     Press(Shortcut),
+    /// Show this range in every track's chart and statistics.
+    ShowRange(TelemetryRange),
+    /// Open the hardware details, or collapse them again.
+    ToggleHardwareDetails,
 }
 
 /// Something the core asks the caller to do.
@@ -359,6 +363,8 @@ pub struct Core {
     pub(crate) settings_section: SettingsSection,
     pub(crate) telemetry: Option<TelemetryState>,
     pub(crate) range: TelemetryRange,
+    /// Whether the workspace's hardware details are open.
+    pub(crate) hardware_open: bool,
     pub(crate) palette: Option<PaletteState>,
     /// Commands run lately, the latest first.
     pub(crate) recent: Vec<Command>,
@@ -406,9 +412,8 @@ pub(crate) struct TelemetryState {
 #[derive(Debug)]
 pub(crate) struct Gpu {
     pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) architecture: Option<String>,
-    pub(crate) bus_id: Option<String>,
+    /// What the inventory says about the GPU.
+    pub(crate) device: GpuDevice,
     pub(crate) history: TelemetryHistory,
     pub(crate) latest: Latest,
     /// The controls the latest reading said the GPU supports.
@@ -420,11 +425,10 @@ pub(crate) struct Gpu {
 pub(crate) enum Latest {
     #[default]
     Waiting,
-    Read(Readings),
+    /// The GPU's readings, current tuning values and GPU control capabilities.
+    Read(Box<GpuPerformanceDevice>),
     /// The sample had no readings for this GPU.
-    Missing {
-        reason: String,
-    },
+    Missing { reason: String },
 }
 
 impl Core {
@@ -614,10 +618,8 @@ impl Core {
                         None => (TelemetryHistory::default(), Latest::Waiting, Vec::new()),
                     };
                 Gpu {
-                    id: device.id,
-                    name: device.name,
-                    architecture: device.architecture,
-                    bus_id: device.bus_id,
+                    id: device.id.clone(),
+                    device,
                     history,
                     latest,
                     capabilities,
@@ -653,13 +655,13 @@ impl Core {
         for gpu in gpus {
             match sample.gpus.iter().find(|device| device.id == gpu.id) {
                 Some(device) => {
-                    let readings = Readings::from(&device.telemetry);
-                    gpu.history.record(received_at, readings);
-                    gpu.latest = Latest::Read(readings);
+                    gpu.history
+                        .record(received_at, Readings::from(&device.telemetry));
                     gpu.capabilities = TuningControl::ALL
                         .into_iter()
                         .filter(|control| control.supported_by(device))
                         .collect();
+                    gpu.latest = Latest::Read(Box::new(device.clone()));
                 }
                 None => {
                     gpu.history.record(received_at, Readings::default());
@@ -706,6 +708,11 @@ impl Core {
                 Vec::new()
             }
             Intent::Press(shortcut) => self.run(self.shortcut_command(shortcut)),
+            Intent::ShowRange(range) => self.perform(Command::ShowRange(range)),
+            Intent::ToggleHardwareDetails => {
+                self.hardware_open = !self.hardware_open;
+                Vec::new()
+            }
         }
     }
 
@@ -748,6 +755,10 @@ impl Core {
                 // nothing.
                 self.service = Some(action);
                 vec![Effect::RunService(action)]
+            }
+            Command::ShowRange(range) => {
+                self.range = range;
+                Vec::new()
             }
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()

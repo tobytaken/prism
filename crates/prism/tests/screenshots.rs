@@ -19,26 +19,66 @@ mod screenshot {
     /// Prism's default window size.
     const WINDOW: (u32, u32) = (1280, 800);
 
-    fn skeleton(appearance: AppearanceMode, name: &str) {
+    /// The GPU workspace with its five tracks.
+    fn workspace(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();
         let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);
-        // Half a minute of readings, so the chart draws a series.
+        // Half a minute of readings, so every chart draws its series.
         harness.ticks(30);
 
         assert_screenshot(name, harness.app.window().window(), WINDOW);
     }
 
     #[test]
-    fn the_skeleton_in_light() {
-        skeleton(AppearanceMode::Light, "skeleton-light");
+    fn the_workspace_in_light() {
+        workspace(AppearanceMode::Light, "workspace-light");
     }
 
     #[test]
-    fn the_skeleton_in_dark() {
-        skeleton(AppearanceMode::Dark, "skeleton-dark");
+    fn the_workspace_in_dark() {
+        workspace(AppearanceMode::Dark, "workspace-dark");
     }
 
-    /// The palette over the skeleton, with the open GPU's command dimmed.
+    /// The workspace over the last minute, scrolled down to its open hardware details.
+    fn hardware_details(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);
+        // A minute and a half of readings, so the last minute leaves some out.
+        harness.ticks(90);
+        harness
+            .find(
+                i_slint_backend_testing::AccessibleRole::Button,
+                "Show last 1 minute",
+            )
+            .invoke_accessible_default_action();
+        harness
+            .find(
+                i_slint_backend_testing::AccessibleRole::Button,
+                "Hardware details",
+            )
+            .invoke_accessible_default_action();
+        let window = harness.app.window().window();
+        window.set_size(slint::PhysicalSize::new(WINDOW.0, WINDOW.1));
+        window.dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(700.0, 400.0),
+            delta_x: 0.0,
+            delta_y: -2000.0,
+        });
+
+        assert_screenshot(name, window, WINDOW);
+    }
+
+    #[test]
+    fn the_hardware_details_in_light() {
+        hardware_details(AppearanceMode::Light, "hardware-details-light");
+    }
+
+    #[test]
+    fn the_hardware_details_in_dark() {
+        hardware_details(AppearanceMode::Dark, "hardware-details-dark");
+    }
+
+    /// The palette over the workspace, with the open GPU's command dimmed.
     fn command_palette(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();
         let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);

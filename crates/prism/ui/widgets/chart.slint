@@ -33,3 +33,30 @@ export component Series inherits Path {
     stroke-line-join: round;
     accessible-role: none;
 }
+
+// The area under a series, filled down to the chart's bottom. Rust supplies the path commands, in
+// the chart's own pixels.
+export component Area inherits Path {
+    width: 100%;
+    height: 100%;
+    viewbox-width: self.width / 1px;
+    viewbox-height: self.height / 1px;
+    fill: Theme.color.area;
+    // Slint fits a stroked path inside its box; an invisible stroke as wide as the series' keeps the
+    // area under its line.
+    stroke: transparent;
+    stroke-width: Theme.stroke.series;
+    accessible-role: none;
+}
+
+// A limit across a chart, solid or built from dashes. Rust supplies the path commands, in the
+// chart's own pixels.
+export component LimitLine inherits Path {
+    width: 100%;
+    height: 100%;
+    viewbox-width: self.width / 1px;
+    viewbox-height: self.height / 1px;
+    stroke: Theme.color.accent;
+    stroke-width: Theme.stroke.limit;
+    accessible-role: none;
+}

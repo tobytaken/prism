@@ -13,7 +13,7 @@ use slint::ComponentHandle;
 use prism_ui::{PrismdInstall, ServiceAction, SettingsSection, UnitState};
 use support::Harness;
 use support::audit::{
-    Element, TuningAccess, assert_accessible, elements, is_interactive, problems,
+    CHART_PARTS, Element, TuningAccess, assert_accessible, elements, is_interactive, problems,
 };
 use support::prismd::DaemonState;
 
@@ -62,6 +62,12 @@ fn every_fixture_state_is_accessible() {
                 .invoke_accessible_default_action();
             audit(&format!("{name}, {gpu} selected"), &harness);
         }
+        if harness.count(AccessibleRole::Button, "Hardware details") > 0 {
+            let details = harness.find(AccessibleRole::Button, "Hardware details");
+            details.invoke_accessible_default_action();
+            audit(&format!("{name}, hardware details open"), &harness);
+            details.invoke_accessible_default_action();
+        }
         for section in rows(&harness, "Sections") {
             harness
                 .find(AccessibleRole::ListItem, &section)
@@ -82,6 +88,10 @@ fn every_fixture_state_is_accessible() {
     let harness = Harness::without_temperature();
     harness.tick();
     audit("tunable, temperature unknown", &harness);
+
+    let harness = Harness::without_readings();
+    harness.tick();
+    audit("tunable, every reading unknown", &harness);
 
     let not_running = PrismdInstall::Native(UnitState::Inactive { enabled: false });
     for (daemon, install, state) in [
@@ -158,6 +168,11 @@ const ACTION_TESTS: &[(&str, &str, &str)] = &[
         "the_connection_item_s_default_action_opens_settings_daemon",
     ),
     (
+        "Disclosure",
+        "default",
+        "a_disclosure_s_default_action_opens_and_collapses_what_it_discloses",
+    ),
+    (
         "LinkButton",
         "default",
         "a_link_button_s_default_action_activates_it",
@@ -172,6 +187,7 @@ const ACTION_TESTS: &[(&str, &str, &str)] = &[
         "default",
         "a_palette_row_s_default_action_runs_its_command",
     ),
+    ("Segment", "default", "a_segment_s_default_action_picks_it"),
     (
         "WindowButton",
         "default",
@@ -331,6 +347,39 @@ fn a_link_button_s_default_action_activates_it() {
 }
 
 #[test]
+fn a_disclosure_s_default_action_opens_and_collapses_what_it_discloses() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+    let details = harness.find(AccessibleRole::Button, "Hardware details");
+
+    details.invoke_accessible_default_action();
+    assert_eq!(details.accessible_expanded(), Some(true));
+    assert_eq!(harness.count(AccessibleRole::Text, "Driver"), 1);
+
+    details.invoke_accessible_default_action();
+    assert_eq!(details.accessible_expanded(), Some(false));
+    assert_eq!(harness.count(AccessibleRole::Text, "Driver"), 0);
+}
+
+#[test]
+fn a_segment_s_default_action_picks_it() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+    let fifteen_minutes = harness.find(AccessibleRole::Button, "Show last 15 minutes");
+    assert_eq!(fifteen_minutes.accessible_checked(), Some(false));
+
+    fifteen_minutes.invoke_accessible_default_action();
+
+    assert_eq!(fifteen_minutes.accessible_checked(), Some(true));
+    assert_eq!(
+        harness
+            .find(AccessibleRole::Button, "Show last 5 minutes")
+            .accessible_checked(),
+        Some(false)
+    );
+}
+
+#[test]
 fn the_window_buttons_default_actions_minimize_maximize_and_close() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     let window = harness.app.window().window();
@@ -363,11 +412,13 @@ fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
         .filter(|element| is_interactive(element.role))
         .filter_map(|element| element.label)
         .collect();
-    let chart_parts: Vec<_> = elements(harness.app.window())
+    let mut chart_parts: Vec<_> = elements(harness.app.window())
         .into_iter()
-        .filter(|element| ["Grid", "Series"].contains(&element.type_name.as_str()))
+        .filter(|element| CHART_PARTS.contains(&element.type_name.as_str()))
         .map(|element| (element.type_name, element.role))
         .collect();
+    chart_parts.sort_by(|a, b| a.0.cmp(&b.0));
+    chart_parts.dedup();
 
     assert_eq!(
         interactive,
@@ -380,14 +431,22 @@ fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
             "Games",
             "Drivers",
             "Settings",
+            "Show last 1 minute",
+            "Show last 5 minutes",
+            "Show last 15 minutes",
+            "Show last 1 hour",
             "Set up",
+            "Hardware details",
             "PRISMD · NOT RUNNING",
         ]
     );
+    // Each part appears, with no role.
     assert_eq!(
         chart_parts,
         [
+            ("Area".to_owned(), AccessibleRole::None),
             ("Grid".to_owned(), AccessibleRole::None),
+            ("LimitLine".to_owned(), AccessibleRole::None),
             ("Series".to_owned(), AccessibleRole::None),
         ]
     );

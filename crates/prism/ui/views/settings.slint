@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
-import { LinkButton, ListRow, PressArea, StyledText, VerticalDivider } from "../widgets.slint";
-import { AppState, FactView, Intents, SettingsSection } from "../state.slint";
+import { Fact, LinkButton, ListRow, PressArea, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, Intents, SettingsSection } from "../state.slint";
 import { ExplainedState } from "explained-state.slint";
 
 // A bordered button for an action of its own, such as "Enable prismd". While it can't be pressed
@@ -52,36 +52,6 @@ component SectionRow inherits ListRow {
         style: Theme.text.body;
         color: root.selected || root.has-hover ? Theme.color.ink : Theme.color.ink-muted;
         accessible-role: none;
-    }
-}
-
-// A fact about the connection: its label, then its value in mono.
-component Fact inherits Rectangle {
-    in property <FactView> fact;
-
-    accessible-role: text;
-    accessible-label: fact.label;
-    accessible-value: fact.value;
-    height: line.preferred-height;
-
-    line := HorizontalLayout {
-        spacing: Theme.space.m;
-
-        StyledText {
-            width: Theme.size.fact-label;
-            text: root.fact.label;
-            style: Theme.text.body;
-            color: Theme.color.ink-muted;
-            accessible-role: none;
-        }
-
-        StyledText {
-            horizontal-stretch: 1;
-            text: root.fact.value;
-            style: Theme.text.value;
-            wrap: word-wrap;
-            accessible-role: none;
-        }
     }
 }
 
@@ -164,7 +134,8 @@ component Daemon inherits Rectangle {
             }
 
             for fact in AppState.daemon-facts: Fact {
-                fact: fact;
+                label: fact.label;
+                value: fact.value;
             }
         }
     }

@@ -1,0 +1,282 @@
+import { Theme } from "../theme.slint";
+import { Area, Divider, Grid, LimitLine, Series, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, ChartPart, ChartView, DetailView, LimitMark, ReadoutView, TrackView } from "../state.slint";
+
+component Statistic inherits Rectangle {
+    in property <string> name;
+    in property <string> label;
+    in property <ReadoutView> readout;
+
+    accessible-role: text;
+    accessible-label: label;
+    accessible-value: readout.spoken;
+    height: row.preferred-height;
+
+    row := HorizontalLayout {
+        alignment: start;
+        spacing: Theme.space.s;
+
+        StyledText {
+            text: root.name;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        StyledText {
+            text: root.readout.text;
+            style: Theme.text.value;
+            accessible-role: none;
+        }
+    }
+}
+
+// How a limit's line is drawn, next to its value: solid, or dashed. Muted while the limit is
+// unknown, since no line is drawn.
+component LimitKey inherits Rectangle {
+    in property <LimitMark> mark;
+    in property <bool> known;
+    property <color> ink: known ? Theme.color.accent : Theme.color.ink-muted;
+
+    width: Theme.size.swatch;
+
+    if root.mark == LimitMark.solid: Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: Theme.stroke.limit;
+        background: root.ink;
+    }
+    if root.mark == LimitMark.dashed: HorizontalLayout {
+        y: (parent.height - self.height) / 2;
+        height: Theme.stroke.limit;
+        spacing: Theme.stroke.dash-gap;
+        alignment: start;
+
+        for dash in 2: Rectangle {
+            width: Theme.stroke.dash;
+            background: root.ink;
+        }
+    }
+}
+
+// A current value under the readout, such as the power limit; a limit's value is in the accent,
+// next to how its line is drawn.
+component Detail inherits Rectangle {
+    in property <DetailView> detail;
+
+    accessible-role: text;
+    accessible-label: detail.name;
+    accessible-value: detail.readout.spoken;
+    accessible-description: detail.unknown-reason;
+    height: row.preferred-height;
+
+    row := HorizontalLayout {
+        alignment: start;
+        spacing: Theme.space.s;
+
+        if root.detail.mark != LimitMark.none: LimitKey {
+            mark: root.detail.mark;
+            known: root.detail.readout.known;
+        }
+
+        StyledText {
+            text: root.detail.label;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        StyledText {
+            text: root.detail.readout.text;
+            style: Theme.text.value;
+            color: root.detail.mark != LimitMark.none && root.detail.readout.known ? Theme.color.accent : Theme.color.ink;
+            accessible-role: none;
+        }
+    }
+}
+
+// One chart: the grid, the series (over its area, if it has one), its limits and its label.
+component ChartPane inherits Rectangle {
+    in property <ChartView> chart;
+
+    // The path commands for `part`, at this chart's size.
+    pure function path(part: ChartPart) -> string {
+        AppState.chart-path(root.chart.id, part, root.width / 1px, root.height / 1px, Theme.stroke.dash / 1px, Theme.stroke.dash-gap / 1px, AppState.revision)
+    }
+    property <string> series: path(ChartPart.series);
+    property <string> area: root.chart.area ? path(ChartPart.area) : "";
+    property <string> limit: root.chart.limit ? path(ChartPart.limit) : "";
+    property <string> enforced-limit: root.chart.enforced-limit ? path(ChartPart.enforced-limit) : "";
+
+    Grid { }
+
+    if root.area != "": Area {
+        commands: root.area;
+    }
+    if root.series != "": Series {
+        commands: root.series;
+    }
+    // The enforced limit's dashes go under the configured limit, which hides them where they meet.
+    if root.enforced-limit != "": LimitLine {
+        commands: root.enforced-limit;
+    }
+    if root.limit != "": LimitLine {
+        commands: root.limit;
+    }
+
+    if root.chart.label != "": StyledText {
+        x: Theme.space.xs;
+        y: Theme.space.xxs;
+        height: self.preferred-height;
+        text: root.chart.label;
+        style: Theme.text.label;
+        color: Theme.color.ink-muted;
+        accessible-role: none;
+    }
+}
+
+// A full-width track: the label, a large readout and its details on the left, the live charts in
+// the middle, and max/avg/min over the range on the right.
+export component Track inherits Rectangle {
+    in property <TrackView> track;
+
+    accessible-role: groupbox;
+    accessible-label: track.name;
+    min-height: max(Theme.size.track-min, head.min-height);
+    preferred-height: max(Theme.size.track, head.preferred-height);
+    vertical-stretch: 1;
+
+    HorizontalLayout {
+        Rectangle {
+            width: Theme.size.track-head;
+
+            head := VerticalLayout {
+                padding-top: Theme.space.m;
+                padding-bottom: Theme.space.m;
+                padding-left: Theme.space.xxl;
+                padding-right: Theme.space.xxl;
+                spacing: Theme.space.xs;
+                alignment: start;
+
+                StyledText {
+                    text: root.track.label;
+                    style: Theme.text.label;
+                    color: Theme.color.ink-muted;
+                    accessible-role: none;
+                }
+
+                Rectangle {
+                    accessible-role: text;
+                    accessible-label: root.track.readout-label;
+                    accessible-value: root.track.readout.spoken;
+                    accessible-description: root.track.unknown-reason;
+                    height: readout.preferred-height;
+
+                    readout := HorizontalLayout {
+                        alignment: start;
+                        spacing: Theme.space.m;
+
+                        HorizontalLayout {
+                            StyledText {
+                                text: root.track.readout.value;
+                                style: Theme.text.readout;
+                                vertical-alignment: bottom;
+                                accessible-role: none;
+                            }
+
+                            if root.track.readout.known: StyledText {
+                                text: root.track.readout.suffix;
+                                style: Theme.text.readout-unit;
+                                color: Theme.color.ink-muted;
+                                vertical-alignment: bottom;
+                                accessible-role: none;
+                            }
+                        }
+
+                        // Why the reading is unknown, beside its dash.
+                        if root.track.unknown-reason != "": StyledText {
+                            horizontal-stretch: 1;
+                            text: root.track.unknown-reason;
+                            style: Theme.text.value;
+                            color: Theme.color.ink-muted;
+                            wrap: word-wrap;
+                            overflow: elide;
+                            accessible-role: none;
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: Theme.space.xxs;
+
+                    for detail in root.track.details: Detail {
+                        detail: detail;
+                    }
+                }
+            }
+
+            VerticalDivider {
+                x: parent.width - self.width;
+            }
+        }
+
+        HorizontalLayout {
+            padding-top: Theme.space.s;
+            padding-bottom: Theme.space.s;
+            padding-left: Theme.space.m;
+            padding-right: Theme.space.m;
+            spacing: Theme.space.m;
+
+            for chart in root.track.charts: ChartPane {
+                horizontal-stretch: 1;
+                chart: chart;
+            }
+        }
+
+        Rectangle {
+            width: Theme.size.stats;
+
+            VerticalDivider {
+                x: 0;
+            }
+
+            VerticalLayout {
+                padding-top: Theme.space.m;
+                padding-bottom: Theme.space.m;
+                padding-left: Theme.space.l;
+                padding-right: Theme.space.m;
+                spacing: Theme.space.xxs;
+                alignment: start;
+
+                // The range the statistics cover; the range picker says it to a screen reader.
+                StyledText {
+                    text: root.track.range;
+                    style: Theme.text.value;
+                    color: Theme.color.ink-muted;
+                    accessible-role: none;
+                }
+
+                Statistic {
+                    name: "max";
+                    label: root.track.max-label;
+                    readout: root.track.max;
+                }
+
+                Statistic {
+                    name: "avg";
+                    label: root.track.avg-label;
+                    readout: root.track.avg;
+                }
+
+                Statistic {
+                    name: "min";
+                    label: root.track.min-label;
+                    readout: root.track.min;
+                }
+            }
+        }
+    }
+
+    Divider {
+        y: parent.height - self.height;
+    }
+}

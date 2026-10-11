@@ -22,7 +22,7 @@ pub struct DaemonSettings {
     pub error: Option<String>,
 }
 
-/// A labeled fact about the connection, such as the socket path.
+/// A labeled fact, such as prismd's socket path or a GPU's driver version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fact {
     pub label: String,

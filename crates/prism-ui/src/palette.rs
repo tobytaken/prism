@@ -3,6 +3,7 @@
 
 use crate::core::{Core, Section, Selection, SettingsSection};
 use crate::daemon::ServiceAction;
+use crate::telemetry::TelemetryRange;
 use crate::view::gpu_label;
 
 /// Something the palette or a shortcut runs.
@@ -12,6 +13,8 @@ pub(crate) enum Command {
     GoToGpu(String),
     GoTo(Section),
     GoToSettings(SettingsSection),
+    /// Show this range in every track.
+    ShowRange(TelemetryRange),
     RunService(ServiceAction),
     /// Copy the one command that sets prismd up from here.
     CopyPrismdSetup,
@@ -226,6 +229,9 @@ impl Core {
         if let Command::RunService(_) = command {
             return self.service.map(|running| running.running().to_owned());
         }
+        if let Command::ShowRange(range) = command {
+            return (self.range == *range).then(|| "Already shown".into());
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
@@ -233,7 +239,10 @@ impl Core {
                 self.selection == Some(Selection::Section(Section::Settings))
                     && self.settings_section == *section
             }
-            Command::RunService(_) | Command::CopyPrismdSetup | Command::Quit => false,
+            Command::ShowRange(_)
+            | Command::RunService(_)
+            | Command::CopyPrismdSetup
+            | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
     }
@@ -274,6 +283,11 @@ impl Core {
                 None,
             )
         });
+        // Telemetry ranges only matter while there are GPUs to chart.
+        let ranges = TelemetryRange::ALL
+            .into_iter()
+            .filter(|_| !self.gpus().is_empty())
+            .map(|range| (Command::ShowRange(range), range.command(), None));
         // Only those that fix the prismd connection from here.
         let prismd = self
             .service_action()
@@ -290,6 +304,7 @@ impl Core {
         navigation
             .chain(sections)
             .chain(settings)
+            .chain(ranges)
             .chain(prismd)
             .chain(app)
             .map(|(command, title, shortcut)| CatalogEntry {

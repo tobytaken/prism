@@ -22,5 +22,6 @@ pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
-    Content, ExplainedState, GpuWorkspace, Sidebar, SidebarGpu, StatusBar, TemperatureTrack,
+    Content, Detail, ExplainedState, GpuWorkspace, HardwareDetails, Sidebar, SidebarGpu, StatusBar,
+    Track, TrackChart, TrackKind,
 };

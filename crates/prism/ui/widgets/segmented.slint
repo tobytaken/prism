@@ -1,0 +1,72 @@
+import { Theme } from "../theme.slint";
+import { PressArea } from "press-area.slint";
+import { StyledText } from "styled-text.slint";
+
+// A segment as shown: `text` on it, `label` what a screen reader calls it, such as "Show last
+// 1 minute" for "1 m", and whether it's the one picked.
+export struct SegmentView {
+    text: string,
+    label: string,
+    selected: bool,
+}
+
+// One segment: a toggle button, checked while it's the one picked.
+component Segment inherits Rectangle {
+    in property <SegmentView> segment;
+    callback activated();
+
+    accessible-role: button;
+    accessible-label: segment.label;
+    accessible-checkable: true;
+    accessible-checked: segment.selected;
+    accessible-action-default => {
+        root.activated();
+    }
+    forward-focus: press;
+    height: Theme.size.segment;
+    width: caption.preferred-width + 2 * Theme.space.s;
+    background: press.has-hover ? Theme.color.hover : transparent;
+
+    press := PressArea {
+        activated => {
+            root.activated();
+        }
+    }
+
+    caption := StyledText {
+        text: root.segment.text;
+        style: Theme.text.value;
+        color: root.segment.selected || press.has-hover ? Theme.color.ink : Theme.color.ink-muted;
+        horizontal-alignment: center;
+        accessible-role: none;
+    }
+
+    // The picked segment is underlined in the accent.
+    if root.segment.selected: Rectangle {
+        y: parent.height - self.height;
+        height: Theme.stroke.segment-selection;
+        background: Theme.color.accent;
+    }
+}
+
+// A row of segments, exactly one of them picked, such as the range picker.
+export component Segmented inherits Rectangle {
+    in property <[SegmentView]> segments;
+    // What the row as a whole is, such as "Range".
+    in property <string> label;
+    callback chosen(index: int);
+
+    accessible-role: groupbox;
+    accessible-label: label;
+    width: row.preferred-width;
+    height: Theme.size.segment;
+
+    row := HorizontalLayout {
+        for segment[index] in root.segments: Segment {
+            segment: segment;
+            activated => {
+                root.chosen(index);
+            }
+        }
+    }
+}

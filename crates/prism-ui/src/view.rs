@@ -1,10 +1,26 @@
 //! What the view shows, derived from the core's state.
 
+use std::time::Duration;
+
+use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
+
 use crate::core::{
     Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
 };
-use crate::format::{Readout, short_bus_id, short_gpu_name};
-use crate::telemetry::{Chart, Metric, Readings};
+use crate::daemon::Fact;
+use crate::format::{Readout, UNKNOWN, short_bus_id, short_gpu_name, signed};
+use crate::telemetry::{Chart, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
+
+/// The readings the sidebar shows for each GPU.
+const VITALS: [Metric; 4] = [
+    Metric::Temperature,
+    Metric::Utilization,
+    Metric::PowerDraw,
+    Metric::FanSpeed,
+];
+
+const WAITING: &str = "Waiting for the first reading";
+const NOT_REPORTED: &str = "Not reported by this GPU";
 
 /// The sidebar: a block per GPU, then the section rows.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,21 +88,134 @@ pub struct GpuWorkspace {
     pub subtitle: String,
     /// Why there's no tuning access, for the inline "Tuning needs prismd" line; none with it.
     pub no_tuning_access: Option<String>,
-    pub temperature: TemperatureTrack,
+    /// The range the range picker has picked, which every track shows.
+    pub range: TelemetryRange,
+    /// One track per metric, top to bottom in [`TrackKind::ALL`]'s order.
+    pub tracks: Vec<Track>,
+    pub hardware: HardwareDetails,
 }
 
-/// The workspace's Temperature track: the current reading, its chart and range statistics.
+impl GpuWorkspace {
+    /// The track of this kind.
+    pub fn track(&self, kind: TrackKind) -> &Track {
+        self.tracks
+            .iter()
+            .find(|track| track.kind == kind)
+            .expect("the workspace has every track")
+    }
+}
+
+/// A full-width track of the workspace, one per metric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackKind {
+    Temperature,
+    Utilization,
+    /// Power draw, with the configured and enforced power limits.
+    Power,
+    /// The measured graphics and memory clocks, with the clock offsets.
+    Clocks,
+    /// Fan speed, with each fan's own speed.
+    Fans,
+}
+
+impl TrackKind {
+    /// Every track, top to bottom.
+    pub const ALL: [Self; 5] = [
+        Self::Temperature,
+        Self::Utilization,
+        Self::Power,
+        Self::Clocks,
+        Self::Fans,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Temperature => "Temperature",
+            Self::Utilization => "Utilization",
+            Self::Power => "Power",
+            Self::Clocks => "Clocks",
+            Self::Fans => "Fans",
+        }
+    }
+
+    /// The metric the track's readout and statistics show.
+    pub fn metric(self) -> Metric {
+        match self {
+            Self::Temperature => Metric::Temperature,
+            Self::Utilization => Metric::Utilization,
+            Self::Power => Metric::PowerDraw,
+            Self::Clocks => Metric::GraphicsClock,
+            Self::Fans => Metric::FanSpeed,
+        }
+    }
+}
+
+/// A track: its current reading and details on the left, its charts in the middle, and the
+/// max/avg/min of its metric over the range on the right.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TemperatureTrack {
+pub struct Track {
+    pub kind: TrackKind,
     pub readout: Readout,
     /// Why the reading is unknown, when it is.
     pub unknown_reason: Option<String>,
-    /// The range the chart and statistics cover, such as "5 m".
+    /// Further current values under the readout, such as the power limits.
+    pub details: Vec<Detail>,
+    /// The range the charts and statistics cover, such as "5 m".
     pub range: &'static str,
     pub max: Readout,
     pub avg: Readout,
     pub min: Readout,
+    /// Side by side, left to right.
+    pub charts: Vec<TrackChart>,
+}
+
+impl Track {
+    /// What a screen reader calls the readout, such as "Power draw reading".
+    pub fn readout_label(&self) -> String {
+        format!("{} reading", capitalized(self.kind.metric().name()))
+    }
+
+    /// What a screen reader calls the max, avg and min, such as "Maximum power draw".
+    pub fn statistic_labels(&self) -> [String; 3] {
+        let metric = self.kind.metric().name();
+        ["Maximum", "Average", "Minimum"].map(|statistic| format!("{statistic} {metric}"))
+    }
+}
+
+/// A current value a track shows under its readout, such as the power limit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Detail {
+    /// The label as shown, such as "limit".
+    pub label: String,
+    /// What a screen reader calls it, such as "Power limit".
+    pub name: String,
+    pub readout: Readout,
+    /// Why the value is unknown, when it is.
+    pub unknown_reason: Option<String>,
+    /// The limit it is, which is drawn across the chart, when it's one.
+    pub limit: Option<LimitKind>,
+}
+
+/// One of a track's charts: a metric's readings over the range, and any limits across it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackChart {
+    pub metric: Metric,
+    /// What tells it apart from the track's other chart, such as "MEMORY".
+    pub label: Option<&'static str>,
+    /// Whether the area under the series is filled, as utilization's is.
+    pub area: bool,
     pub chart: Chart,
+    pub limits: Vec<LimitLine>,
+}
+
+/// The workspace's hardware details: the GPU inventory's entry for the GPU and its GPU control
+/// capabilities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HardwareDetails {
+    /// Whether they're open; they start collapsed.
+    pub open: bool,
+    pub inventory: Vec<Fact>,
+    pub capabilities: Vec<Fact>,
 }
 
 /// A state with nothing to show, and why.
@@ -200,8 +329,9 @@ impl Core {
             id: gpu.id.clone(),
             label: gpu_label(index, gpu),
             index: index_label(index),
-            name: short_gpu_name(&gpu.name).to_owned(),
+            name: short_gpu_name(&gpu.device.name).to_owned(),
             identity: gpu
+                .device
                 .bus_id
                 .as_deref()
                 .map(short_bus_id)
@@ -211,7 +341,7 @@ impl Core {
             utilization: Readout::percent(latest.utilization_percent),
             power_draw: Readout::watts(latest.power_draw_watts),
             fan_speed: Readout::percent(latest.fan_speed_percent),
-            unknown_reason: unknown_reason(gpu, &Metric::ALL),
+            unknown_reason: unknown_reason(gpu, &VITALS),
             selected: self.selection == Some(Selection::Gpu(gpu.id.clone())),
         }
     }
@@ -220,8 +350,8 @@ impl Core {
         let index_label = index_label(index);
         let subtitle = [
             Some(index_label.as_str()),
-            gpu.bus_id.as_deref().map(short_bus_id),
-            gpu.architecture.as_deref(),
+            gpu.device.bus_id.as_deref().map(short_bus_id),
+            gpu.device.architecture.as_deref(),
         ]
         .into_iter()
         .flatten()
@@ -229,39 +359,415 @@ impl Core {
         .join(" · ");
         GpuWorkspace {
             id: gpu.id.clone(),
-            title: gpu.name.clone(),
+            title: gpu.device.name.clone(),
             subtitle,
             no_tuning_access: self.tuning_access().reason().map(str::to_owned),
-            temperature: self.temperature_track(gpu),
+            range: self.range,
+            tracks: TrackKind::ALL
+                .into_iter()
+                .map(|kind| self.track(gpu, kind))
+                .collect(),
+            hardware: HardwareDetails {
+                open: self.hardware_open,
+                inventory: inventory_facts(&gpu.device),
+                capabilities: capability_facts(gpu),
+            },
         }
     }
 
-    fn temperature_track(&self, gpu: &Gpu) -> TemperatureTrack {
-        let now = self
-            .telemetry
+    /// When the latest sample arrived, which the ranges look back from.
+    fn now(&self) -> Duration {
+        self.telemetry
             .as_ref()
             .map(|telemetry| telemetry.received_at)
-            .unwrap_or_default();
-        let metric = Metric::Temperature;
+            .unwrap_or_default()
+    }
+
+    fn track(&self, gpu: &Gpu, kind: TrackKind) -> Track {
+        let metric = kind.metric();
+        let now = self.now();
+        let chart = |metric, label, also_fit: &[Option<u32>]| TrackChart {
+            metric,
+            label,
+            area: metric == Metric::Utilization,
+            chart: gpu.history.chart(
+                metric,
+                self.range,
+                now,
+                &also_fit.iter().flatten().copied().collect::<Vec<_>>(),
+            ),
+            limits: Vec::new(),
+        };
+        let (details, charts) = match kind {
+            TrackKind::Temperature | TrackKind::Utilization => {
+                (Vec::new(), vec![chart(metric, None, &[])])
+            }
+            TrackKind::Power => {
+                let power = latest_device(gpu).map(|device| &device.power);
+                let configured = power.and_then(|power| power.current_limit_watts);
+                let enforced = power.and_then(|power| power.enforced_limit_watts);
+                let highest = power.and_then(|power| power.max_limit_watts).or(gpu
+                    .device
+                    .control
+                    .power_limit
+                    .max_watts);
+                let mut draw = chart(metric, None, &[configured, enforced, highest]);
+                draw.limits = [
+                    (LimitKind::Configured, configured),
+                    (LimitKind::Enforced, enforced),
+                ]
+                .into_iter()
+                .filter_map(|(kind, watts)| {
+                    watts.map(|watts| LimitLine {
+                        kind,
+                        y: draw.chart.y(watts),
+                    })
+                })
+                .collect();
+                let said = power.and_then(|power| {
+                    gpu_said(
+                        power.current_value_error.as_deref(),
+                        power.reason.as_deref(),
+                    )
+                });
+                let limit = |kind, label: &str, name: &str, watts| Detail {
+                    label: label.into(),
+                    name: name.into(),
+                    readout: Readout::watts(watts),
+                    unknown_reason: value_reason(gpu, watts.is_some(), said),
+                    limit: Some(kind),
+                };
+                (
+                    vec![
+                        limit(LimitKind::Configured, "limit", "Power limit", configured),
+                        limit(
+                            LimitKind::Enforced,
+                            "enforced",
+                            "Enforced power limit",
+                            enforced,
+                        ),
+                    ],
+                    vec![draw],
+                )
+            }
+            TrackKind::Clocks => {
+                let memory = latest_readings(gpu).memory_clock_mhz;
+                let clocks = latest_device(gpu).map(|device| &device.clocks);
+                let offset =
+                    |label: &str, name: &str, offset: Option<&prism_gpu::ClockOffsetInfo>| {
+                        let mhz = offset.and_then(|offset| offset.current_offset_mhz);
+                        let said = offset.and_then(|offset| {
+                            gpu_said(
+                                offset.current_value_error.as_deref(),
+                                offset.reason.as_deref(),
+                            )
+                        });
+                        Detail {
+                            label: label.into(),
+                            name: name.into(),
+                            readout: Readout::offset_megahertz(mhz),
+                            unknown_reason: value_reason(gpu, mhz.is_some(), said),
+                            limit: None,
+                        }
+                    };
+                (
+                    vec![
+                        Detail {
+                            label: "memory".into(),
+                            name: "Memory clock".into(),
+                            readout: Readout::megahertz(memory),
+                            unknown_reason: unknown_reason(gpu, &[Metric::MemoryClock]),
+                            limit: None,
+                        },
+                        offset(
+                            "graphics offset",
+                            "Graphics clock offset",
+                            clocks.map(|clocks| &clocks.graphics),
+                        ),
+                        offset(
+                            "memory offset",
+                            "Memory clock offset",
+                            clocks.map(|clocks| &clocks.memory),
+                        ),
+                    ],
+                    vec![
+                        chart(
+                            Metric::GraphicsClock,
+                            Some("GRAPHICS"),
+                            &[gpu.device.clocks.graphics_max_mhz],
+                        ),
+                        chart(
+                            Metric::MemoryClock,
+                            Some("MEMORY"),
+                            &[gpu.device.clocks.memory_max_mhz],
+                        ),
+                    ],
+                )
+            }
+            TrackKind::Fans => {
+                let fans = latest_device(gpu)
+                    .map(|device| device.cooling.fans.as_slice())
+                    .unwrap_or_default();
+                let details = fans
+                    .iter()
+                    .map(|fan| Detail {
+                        label: format!("fan {}", fan.index),
+                        name: format!("Fan {} speed", fan.index),
+                        readout: Readout::percent(fan.current_speed_percent),
+                        unknown_reason: value_reason(
+                            gpu,
+                            fan.current_speed_percent.is_some(),
+                            None,
+                        ),
+                        limit: None,
+                    })
+                    .collect();
+                (details, vec![chart(metric, None, &[])])
+            }
+        };
         let stats = gpu.history.stats(metric, self.range, now);
-        let celsius = latest_readings(gpu).temperature_c;
-        TemperatureTrack {
-            readout: Readout::celsius(celsius),
+        let value = |value: Option<u32>| readout(metric, value);
+        Track {
+            kind,
+            readout: value(latest_readings(gpu).get(metric)),
             unknown_reason: unknown_reason(gpu, &[metric]),
+            details,
             range: self.range.label(),
-            max: Readout::celsius(stats.map(|stats| stats.max)),
-            avg: Readout::celsius(stats.map(|stats| stats.avg.round() as u32)),
-            min: Readout::celsius(stats.map(|stats| stats.min)),
-            chart: gpu.history.chart(metric, self.range, now),
+            max: value(stats.map(|stats| stats.max)),
+            avg: value(stats.map(|stats| stats.avg.round() as u32)),
+            min: value(stats.map(|stats| stats.min)),
+            charts,
         }
     }
+}
+
+/// A reading of `metric` in its unit.
+fn readout(metric: Metric, value: Option<u32>) -> Readout {
+    match metric {
+        Metric::Temperature => Readout::celsius(value),
+        Metric::Utilization | Metric::FanSpeed => Readout::percent(value),
+        Metric::PowerDraw => Readout::watts(value),
+        Metric::GraphicsClock | Metric::MemoryClock => Readout::megahertz(value),
+    }
+}
+
+/// What the GPU said about a current tuning value it didn't report: the error reading it, or why
+/// the control is unavailable.
+fn gpu_said<'a>(value_error: Option<&'a str>, control_reason: Option<&'a str>) -> Option<&'a str> {
+    value_error.or(control_reason)
+}
+
+/// Why a value the latest reading carries is unknown: why there's no reading, or what the GPU
+/// said about the value, if anything.
+fn value_reason(gpu: &Gpu, known: bool, said: Option<&str>) -> Option<String> {
+    match &gpu.latest {
+        Latest::Waiting => Some(WAITING.into()),
+        Latest::Missing { reason } => Some(reason.clone()),
+        Latest::Read(_) if known => None,
+        Latest::Read(_) => Some(said.unwrap_or(NOT_REPORTED).into()),
+    }
+}
+
+fn fact(label: &str, value: impl Into<String>) -> Fact {
+    Fact {
+        label: label.into(),
+        value: value.into(),
+    }
+}
+
+/// The parts that are known, joined, such as "CUDA 13.2 · capability 12.0"; unknown with none.
+fn joined(parts: impl IntoIterator<Item = Option<String>>) -> String {
+    let parts: Vec<_> = parts.into_iter().flatten().collect();
+    if parts.is_empty() {
+        UNKNOWN.into()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+/// What the GPU inventory says about the GPU.
+fn inventory_facts(device: &GpuDevice) -> Vec<Fact> {
+    let known = |value: &Option<String>| value.clone().unwrap_or_else(|| UNKNOWN.into());
+    let pcie = match (device.pcie.gen_max, device.pcie.width_max) {
+        (Some(generation), Some(width)) => format!("Gen {generation} ×{width}"),
+        (Some(generation), None) => format!("Gen {generation}"),
+        (None, Some(width)) => format!("×{width}"),
+        (None, None) => UNKNOWN.into(),
+    };
+    let compute = &device.compute;
+    let api = compute.api.map(|api| {
+        let name = match api {
+            ComputeApi::Cuda => "CUDA",
+            ComputeApi::Rocm => "ROCm",
+        };
+        match &compute.api_version {
+            Some(version) => format!("{name} {version}"),
+            None => name.into(),
+        }
+    });
+    vec![
+        fact("Model", device.name.clone()),
+        fact("Architecture", known(&device.architecture)),
+        fact("UUID", device.id.clone()),
+        fact("Bus", known(&device.bus_id)),
+        fact("PCIe", pcie),
+        fact("Driver", known(&device.driver_version)),
+        fact("VBIOS", known(&device.firmware_version)),
+        fact(
+            "Memory",
+            device
+                .memory
+                .total_mib
+                .map_or_else(|| UNKNOWN.into(), |mib| format!("{mib} MiB")),
+        ),
+        fact(
+            "Compute",
+            joined([
+                api,
+                compute
+                    .capability
+                    .as_ref()
+                    .map(|capability| format!("capability {capability}")),
+                compute.core_count.map(|cores| format!("{cores} cores")),
+            ]),
+        ),
+        fact(
+            "Maximum clocks",
+            joined([
+                device
+                    .clocks
+                    .graphics_max_mhz
+                    .map(|mhz| format!("graphics {mhz} MHz")),
+                device
+                    .clocks
+                    .memory_max_mhz
+                    .map(|mhz| format!("memory {mhz} MHz")),
+            ]),
+        ),
+    ]
+}
+
+const SUPPORTED: &str = "Supported";
+const NOT_SUPPORTED: &str = "Not supported";
+const RANGE_UNKNOWN: &str = "Supported · range unknown";
+
+/// A supported control's allowed range, such as "400–600 W".
+fn range(min: Option<u32>, max: Option<u32>, unit: &str) -> String {
+    match (min, max) {
+        (Some(min), Some(max)) => format!("{min}–{max} {unit}"),
+        _ => RANGE_UNKNOWN.into(),
+    }
+}
+
+/// A supported offset's allowed range, such as "-1000 to +1000 MHz".
+fn offset_range(min: Option<i32>, max: Option<i32>) -> String {
+    match (min, max) {
+        (Some(min), Some(max)) => format!("{} to {} MHz", signed(min), signed(max)),
+        _ => RANGE_UNKNOWN.into(),
+    }
+}
+
+/// `allowed` when the GPU supports the control, or that it doesn't.
+fn supported(supported: bool, allowed: impl FnOnce() -> String) -> String {
+    if supported {
+        allowed()
+    } else {
+        NOT_SUPPORTED.into()
+    }
+}
+
+/// The GPU's control capabilities: what it lets Prism tune, and within which range.
+fn capability_facts(gpu: &Gpu) -> Vec<Fact> {
+    let control = &gpu.device.control;
+    let features = &control.supported_features;
+    let power = &control.power_limit;
+    let offsets = &control.offsets;
+    let lock = |lock: &prism_gpu::ClockLockControl| {
+        supported(lock.supported, || {
+            range(lock.min_allowed_mhz, lock.max_allowed_mhz, "MHz")
+        })
+    };
+    // Cooling is known only from a reading.
+    let cooling = match &gpu.latest {
+        Latest::Waiting => Err(WAITING.to_owned()),
+        Latest::Missing { reason } => Err(reason.clone()),
+        Latest::Read(device) => Ok(&device.cooling),
+    };
+    let fan_control = match &cooling {
+        Err(reason) => reason.clone(),
+        Ok(cooling) if cooling.is_supported => {
+            let count = match cooling.fan_count {
+                1 => "1 fan".to_owned(),
+                count => format!("{count} fans"),
+            };
+            let speeds = cooling.fans.first().and_then(|fan| {
+                Some(format!(
+                    "{}–{}%",
+                    fan.min_speed_percent?, fan.max_speed_percent?
+                ))
+            });
+            joined([Some(count), speeds])
+        }
+        Ok(cooling) => joined([
+            Some(NOT_SUPPORTED.into()),
+            cooling.unsupported_reason.clone(),
+        ]),
+    };
+    let max_temperature = match &cooling {
+        Err(reason) => reason.clone(),
+        Ok(cooling) => match cooling.max_operating_temperature_c {
+            Some(celsius) => Readout::celsius(Some(celsius)).text(),
+            None => cooling
+                .max_operating_temperature_reason
+                .clone()
+                .unwrap_or_else(|| UNKNOWN.into()),
+        },
+    };
+    vec![
+        fact(
+            "Power limit",
+            supported(features.power_limit, || {
+                joined([
+                    Some(range(power.min_watts, power.max_watts, "W")),
+                    power
+                        .default_watts
+                        .map(|watts| format!("default {watts} W")),
+                ])
+            }),
+        ),
+        fact(
+            "Graphics clock offset",
+            supported(features.graphics_offset, || {
+                offset_range(offsets.min_graphics_mhz, offsets.max_graphics_mhz)
+            }),
+        ),
+        fact(
+            "Memory clock offset",
+            supported(features.memory_offset, || {
+                offset_range(offsets.min_memory_mhz, offsets.max_memory_mhz)
+            }),
+        ),
+        fact("Graphics clock lock", lock(&control.gpu_clock_lock)),
+        fact("Memory clock lock", lock(&control.memory_clock_lock)),
+        fact("Fan control", fan_control),
+        fact("Maximum operating temperature", max_temperature),
+        fact(
+            "Reset to defaults",
+            supported(features.reset, || SUPPORTED.into()),
+        ),
+    ]
 }
 
 /// Index, name and identity together, such as "GPU 0 · RTX 5090 · 01:00.0".
 pub(crate) fn gpu_label(index: usize, gpu: &Gpu) -> String {
     let index = index_label(index);
-    let identity = gpu.bus_id.as_deref().map(short_bus_id).unwrap_or_default();
-    [index.as_str(), short_gpu_name(&gpu.name), identity]
+    let identity = gpu
+        .device
+        .bus_id
+        .as_deref()
+        .map(short_bus_id)
+        .unwrap_or_default();
+    [index.as_str(), short_gpu_name(&gpu.device.name), identity]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -277,9 +783,9 @@ fn index_label(index: usize) -> String {
 /// shows one; the sidebar names the ones it lacks.
 fn unknown_reason(gpu: &Gpu, metrics: &[Metric]) -> Option<String> {
     let readings = match &gpu.latest {
-        Latest::Waiting => return Some("Waiting for the first reading".into()),
+        Latest::Waiting => return Some(WAITING.into()),
         Latest::Missing { reason } => return Some(reason.clone()),
-        Latest::Read(readings) => readings,
+        Latest::Read(device) => Readings::from(&device.telemetry),
     };
     let unknown: Vec<_> = metrics
         .iter()
@@ -288,22 +794,33 @@ fn unknown_reason(gpu: &Gpu, metrics: &[Metric]) -> Option<String> {
         .collect();
     match unknown.as_slice() {
         [] => None,
-        [_] if metrics.len() == 1 => Some("Not reported by this GPU".into()),
-        names => {
-            let names = names.join(", ");
-            let mut first = names.chars();
-            let capitalized = first
-                .next()
-                .map(|letter| letter.to_uppercase().chain(first).collect::<String>())
-                .unwrap_or_default();
-            Some(format!("{capitalized}: not reported by this GPU"))
-        }
+        [_] if metrics.len() == 1 => Some(NOT_REPORTED.into()),
+        names => Some(format!(
+            "{}: not reported by this GPU",
+            capitalized(&names.join(", "))
+        )),
     }
 }
 
+/// `text` with its first letter in upper case, such as "Fan speed".
+fn capitalized(text: &str) -> String {
+    let mut letters = text.chars();
+    letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default()
+}
+
 fn latest_readings(gpu: &Gpu) -> Readings {
-    match gpu.latest {
-        Latest::Read(readings) => readings,
-        Latest::Waiting | Latest::Missing { .. } => Readings::default(),
+    latest_device(gpu)
+        .map(|device| Readings::from(&device.telemetry))
+        .unwrap_or_default()
+}
+
+/// The GPU as the latest sample read it, if it did.
+fn latest_device(gpu: &Gpu) -> Option<&GpuPerformanceDevice> {
+    match &gpu.latest {
+        Latest::Read(device) => Some(device),
+        Latest::Waiting | Latest::Missing { .. } => None,
     }
 }

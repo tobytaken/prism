@@ -10,7 +10,7 @@ use prism_protocol::{
 };
 use prism_ui::{
     AppearanceMode, Content, Core, Effect, GpuWorkspace, Input, PrismdConnection, SessionFailure,
-    TelemetrySource, Timer,
+    TelemetrySource, Timer, TrackKind,
 };
 
 fn tunable() -> SimulatedGpus {
@@ -157,10 +157,10 @@ fn connecting_stops_the_in_process_sampler_and_its_late_readings_are_ignored() {
     // Read before the sampler stopped, and arriving after the session's own sample.
     prismd_sample(&mut core, 64, 2);
     in_process_sample(&mut core, 99, 2);
-    let track = workspace(&core).temperature;
+    let track = workspace(&core).track(TrackKind::Temperature).clone();
     assert_eq!(track.readout.text(), "64 °C");
     assert_eq!(track.max.text(), "64 °C");
-    assert_eq!(track.chart.segments[0].len(), 2);
+    assert_eq!(track.charts[0].chart.segments[0].len(), 2);
 }
 
 #[test]
@@ -185,12 +185,12 @@ fn losing_the_session_samples_in_process_again_and_history_continues_as_one_seri
     core.handle(Input::InventoryRead(tunable().inventory()));
     in_process_sample(&mut core, 70, 3);
 
-    let track = workspace(&core).temperature;
+    let track = workspace(&core).track(TrackKind::Temperature).clone();
     assert_eq!(track.readout.text(), "70 °C");
     assert_eq!(track.min.text(), "50 °C");
     assert_eq!(track.avg.text(), "60 °C");
-    assert_eq!(track.chart.segments.len(), 1);
-    assert_eq!(track.chart.segments[0].len(), 3);
+    assert_eq!(track.charts[0].chart.segments.len(), 1);
+    assert_eq!(track.charts[0].chart.segments[0].len(), 3);
     assert_eq!(core.status_bar().telemetry, "MONITORING IN-PROCESS");
 
     // And back to prismd, still one series.
@@ -203,7 +203,13 @@ fn losing_the_session_samples_in_process_again_and_history_continues_as_one_seri
         ]
     );
     prismd_sample(&mut core, 80, 4);
-    assert_eq!(workspace(&core).temperature.chart.segments[0].len(), 4);
+    assert_eq!(
+        workspace(&core).track(TrackKind::Temperature).charts[0]
+            .chart
+            .segments[0]
+            .len(),
+        4
+    );
 }
 
 #[test]
