@@ -6,8 +6,8 @@ use prism_gpu::{
 use std::collections::BTreeMap;
 
 use prism_protocol::{
-    DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GpuTuningState, Incompatible,
-    ProfileSettingKey, Welcome,
+    DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GpuCoolingControl, GpuTuningState,
+    Incompatible, ProfileSettingKey, Welcome,
 };
 
 use crate::daemon::{ServiceAction, ServiceOutcome};
@@ -418,6 +418,9 @@ pub struct Core {
     notifications: Notifications,
     /// Each GPU's tuning state as prismd last pushed it, by GPU id, while there is a session.
     pub(crate) tuning: BTreeMap<String, GpuTuningState>,
+    /// Prism's control of each GPU's fans as prismd last pushed it, by GPU id, while there is a
+    /// session.
+    pub(crate) cooling: BTreeMap<String, GpuCoolingControl>,
     pub(crate) drafts: Drafts,
     /// The dialog over the window, while one is open.
     pub(crate) dialog: Option<DialogState>,
@@ -567,6 +570,11 @@ impl Core {
                     .into_iter()
                     .map(|state| (state.gpu_id.clone(), state))
                     .collect();
+                self.cooling = snapshot
+                    .cooling_controls
+                    .into_iter()
+                    .map(|control| (control.gpu_id.clone(), control))
+                    .collect();
                 let mut effects = vec![Effect::SendToPrismd(DaemonRequest::SubscribeTelemetry)];
                 // The new session holds edits only once told.
                 effects.extend(self.sync_edit_holds());
@@ -591,6 +599,7 @@ impl Core {
                 let lost = self.connected();
                 self.session = Session::Failed(failure);
                 self.tuning.clear();
+                self.cooling.clear();
                 self.drafts_lost_session();
                 let mut effects = Vec::new();
                 if !std::mem::replace(&mut self.sampling, true) {
@@ -642,6 +651,9 @@ impl Core {
                         let gpu_id = state.gpu_id.clone();
                         self.tuning.insert(gpu_id.clone(), state);
                         self.tuning_pushed(&gpu_id);
+                    }
+                    DaemonEvent::CoolingControlChanged(control) => {
+                        self.cooling.insert(control.gpu_id.clone(), control);
                     }
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)

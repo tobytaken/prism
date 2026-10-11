@@ -25,6 +25,7 @@ use prism_gpu::{
     FanControlMode, GpuPerformanceDevice, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
     TuningOutcome, TuningOutcomeStatus,
 };
+use prism_protocol::{DaemonEvent, GpuCoolingControl};
 
 /// How often the daemon follows each applied curve.
 pub const EVALUATION_INTERVAL_MS: u64 = 500;
@@ -307,6 +308,38 @@ impl CoolingController {
             .get(uuid)
             .map(GpuCooling::control)
             .unwrap_or_default()
+    }
+
+    /// The revision of Prism's control of the GPU's fans, which changes with it.
+    pub fn revision(&self, uuid: &str) -> u64 {
+        self.lock().get(uuid).map_or(0, |cooling| cooling.revision)
+    }
+
+    /// Pushes Prism's control of the GPU's fans to every session, each with its user's remembered
+    /// curve for the GPU.
+    pub fn publish(&self, uuid: &str) {
+        let control = self.control(uuid);
+        // Read before publishing, so no store lock is taken while the sessions' is held.
+        let remembered: HashMap<(u32, String), CoolingConfiguration> = self
+            .tuning_store
+            .read(|document| {
+                document
+                    .users
+                    .iter()
+                    .filter_map(|user| {
+                        let curve = user.remembered_curves.get(uuid)?.clone();
+                        Some(((user.uid, user.username.clone()), curve))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.tuning_store.publish_for_users(|peer| {
+            let mut control = control.clone();
+            control.remembered_curve = remembered.get(&(peer.uid, peer.username.clone())).cloned();
+            Some(DaemonEvent::CoolingControlChanged(GpuCoolingControl::of(
+                uuid, control,
+            )))
+        });
     }
 
     /// Validates the configuration against fresh readings, then applies it. A curve starts at the

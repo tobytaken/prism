@@ -147,6 +147,7 @@ pub struct DaemonSnapshot {
     pub inventory: GpuInventoryResponse,
     pub store_health: TuningStoreHealth,
     pub tuning_states: Vec<GpuTuningState>,
+    pub cooling_controls: Vec<GpuCoolingControl>,
     pub running_games: RunningGamesState,
     pub automatic_switching: AutomaticSwitchingStatus,
 }
@@ -460,6 +461,47 @@ pub struct ReportedTuningValues {
     pub power_limit_watts: Option<i64>,
     pub graphics_offset_mhz: Option<i64>,
     pub memory_offset_mhz: Option<i64>,
+}
+
+/// Prism's control of a GPU's fans as one caller sees it: the cooling configuration prismd
+/// applied, whether its curve control stopped and how the fans fell back, what became of the
+/// curves when prismd restarted, and the caller's remembered fan curve. What a running curve
+/// requests from moment to moment comes with telemetry instead.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GpuCoolingControl {
+    /// The GPU's UUID.
+    pub gpu_id: String,
+    /// Changes whenever the applied configuration or Prism's control of the fans changes, never
+    /// as a curve follows the temperature.
+    pub revision: u64,
+    /// The configuration Prism last applied, or none when it hasn't applied cooling to this GPU.
+    /// A suspended curve stays applied until another configuration replaces it.
+    pub applied: Option<prism_gpu::cooling::CoolingConfiguration>,
+    /// Why curve control stopped, with each fan's fallback to automatic cooling, until an
+    /// application brings the curve back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspension: Option<prism_gpu::cooling::CurveSuspension>,
+    /// Whether the applied curves resumed after prismd restarted within this host boot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<prism_gpu::cooling::CoolingRecovery>,
+    /// The caller's last manually applied custom curve for the GPU, whatever is applied now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remembered_curve: Option<prism_gpu::cooling::CoolingConfiguration>,
+}
+
+impl GpuCoolingControl {
+    /// The GPU's cooling control without the output of its running curves.
+    pub fn of(gpu_id: impl Into<String>, control: prism_gpu::cooling::CoolingControl) -> Self {
+        Self {
+            gpu_id: gpu_id.into(),
+            revision: control.revision,
+            applied: control.applied,
+            suspension: control.suspension,
+            recovery: control.recovery,
+            remembered_curve: control.remembered_curve,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -888,6 +930,9 @@ pub enum DaemonEvent {
     /// what its curve requests now; only for sessions that subscribed to telemetry.
     TelemetrySampled(GpuPerformanceResponse),
     TuningStateChanged(GpuTuningState),
+    /// Prism's control of a GPU's fans changed, such as when cooling was applied, a curve
+    /// faulted or yielded to another tool, or the caller's remembered curve changed.
+    CoolingControlChanged(GpuCoolingControl),
     RunningGamesChanged(RunningGamesState),
     AutomaticSwitchingChanged(AutomaticSwitchingStatus),
 }
@@ -1181,6 +1226,21 @@ mod session_tests {
             serde_json::from_value::<SessionMessage>(json).unwrap(),
             event
         );
+    }
+
+    #[test]
+    fn cooling_control_round_trips_the_shared_contract_as_a_pushed_event() {
+        let control: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/cooling-control.json")).unwrap();
+        let event = serde_json::json!({
+            "type": "event", "event": { "type": "cooling_control_changed", "payload": control }
+        });
+        let typed: SessionMessage = serde_json::from_value(event.clone()).unwrap();
+        assert_eq!(serde_json::to_value(typed).unwrap(), event);
+        // What a running curve requests now comes with telemetry, not with its control.
+        let mut with_output = control;
+        with_output["requested"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<GpuCoolingControl>(with_output).is_err());
     }
 
     #[test]

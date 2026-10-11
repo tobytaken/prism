@@ -11,8 +11,8 @@ use prism_gpu::{
 use prism_protocol::{
     ApplyGpuProfileRequest, CorrectAndApplyProfileRequest, CorrectedProfileApplication,
     DaemonCommandResponse, DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot,
-    GpuDaemonStatus, GpuTuningProfile, GpuTuningState, HelloRequest, Incompatible,
-    ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings,
+    GpuCoolingControl, GpuDaemonStatus, GpuTuningProfile, GpuTuningState, HelloRequest,
+    Incompatible, ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings,
     ProtocolVersion, SaveProfileAsNewRequest, SaveToCurrentProfileRequest, Welcome,
 };
 
@@ -135,13 +135,15 @@ impl DaemonCore {
         // Each read on its own, so no lock is held into the next: switching reads recognition.
         let running_games = self.recognition.lock().unwrap().for_uid(peer.uid);
         let automatic_switching = self.switching.status_for(peer);
-        let tuning_states = self.tuning_states(peer);
+        let performance = self.observed_performance(Some(peer));
+        let tuning_states = self.tuning_states_of(&performance);
         // The session knows these now; the tick pushes them only once they change.
         self.tuning_store.known_tuning(&tuning_states);
         DaemonSnapshot {
             inventory,
             store_health: self.tuning_store.health(),
             tuning_states,
+            cooling_controls: cooling_controls(performance),
             running_games,
             automatic_switching,
         }
@@ -242,12 +244,16 @@ impl DaemonCore {
 
     /// The caller's view of each identified GPU's tuning state.
     fn tuning_states(&self, peer: &SessionPeer) -> Vec<GpuTuningState> {
-        let performance = self.observed_performance(Some(peer));
+        self.tuning_states_of(&self.observed_performance(Some(peer)))
+    }
+
+    /// The tuning state of each GPU the readings identify.
+    fn tuning_states_of(&self, performance: &GpuPerformanceResponse) -> Vec<GpuTuningState> {
         self.tuning_store.read_for_tuning(|document| {
             performance
                 .gpus
                 .iter()
-                .filter_map(|gpu| verified_gpu(&performance, gpu.stable_id.as_deref()?).ok())
+                .filter_map(|gpu| verified_gpu(performance, gpu.stable_id.as_deref()?).ok())
                 .map(|gpu| document.tuning_state(gpu))
                 .collect()
         })
@@ -983,15 +989,25 @@ impl DaemonCore {
         }
     }
 
-    /// Queues a tuning write on the GPU's operation queue.
+    /// Queues a tuning write on the GPU's operation queue. Every operation on a GPU's fans runs
+    /// there, so when one changed Prism's control of them, it pushes the new control to every
+    /// session.
     fn submit_write<T: Send + 'static>(
         &self,
         gpu_id: &str,
         operation: impl FnOnce(&dyn DaemonBackend) -> T + Send + 'static,
     ) -> PendingOperation<T> {
         let backend = Arc::clone(&self.dependencies.backend);
-        self.queues
-            .submit(gpu_id, move || operation(backend.as_ref()))
+        let cooling = Arc::clone(&self.cooling);
+        let uuid = gpu_id.to_string();
+        self.queues.submit(gpu_id, move || {
+            let before = cooling.revision(&uuid);
+            let result = operation(backend.as_ref());
+            if cooling.revision(&uuid) != before {
+                cooling.publish(&uuid);
+            }
+            result
+        })
     }
 }
 
@@ -1152,6 +1168,15 @@ pub(super) fn tuning_state(
     let mut gpu = verified_gpu(&performance, uuid).ok()?.clone();
     gpu.cooling.control = Some(cooling.control(uuid));
     Some(store.read_for_tuning(|document| document.tuning_state(&gpu)))
+}
+
+/// Prism's control of the fans of each GPU the readings identify, as the readings' caller sees it.
+fn cooling_controls(performance: GpuPerformanceResponse) -> Vec<GpuCoolingControl> {
+    performance
+        .gpus
+        .into_iter()
+        .filter_map(|gpu| Some(GpuCoolingControl::of(gpu.stable_id?, gpu.cooling.control?)))
+        .collect()
 }
 
 /// Each GPU's id, in order.
