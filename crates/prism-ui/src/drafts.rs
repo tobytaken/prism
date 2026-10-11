@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use prism_gpu::cooling::CoolingConfiguration;
 use prism_gpu::{GpuCommandErrorCode, TuningOutcome, TuningOutcomeStatus};
 use prism_protocol::{
     ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, GpuTuningState,
@@ -11,6 +12,7 @@ use prism_protocol::{
     ReportedTuningValues, SetEditHoldsRequest,
 };
 
+use crate::cooling::cooling_read;
 use crate::core::{CommandId, Core, Effect, Gpu, Latest, Selection, TuningControl};
 use crate::format::Readout;
 
@@ -22,14 +24,24 @@ pub(crate) struct Draft {
     /// The current tuning values at that revision, which a review compares with.
     base: Option<ReportedTuningValues>,
     pub(crate) settings: ProfileSettings,
+    /// The GPU's fans as the user saw them when staging cooling, which prismd checks before it
+    /// writes the cooling setting.
+    fan_indexes: Vec<u32>,
     /// Each staged setting the last Apply didn't put into effect, with why if prismd said, until
     /// it's staged again.
-    pub(crate) failed: BTreeMap<ProfileSettingKey, Option<String>>,
+    pub(crate) failed: BTreeMap<Staged, Option<String>>,
     /// What the last Apply put into effect and what it didn't, and why, until the next edit.
     pub(crate) outcome: Option<String>,
     /// How the draft moves onto the next tuning state prismd pushes for its GPU, while it waits
     /// for one.
     follow: Option<Follow>,
+}
+
+/// Something a draft stages: a profile setting, or the cooling configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Staged {
+    Setting(ProfileSettingKey),
+    Cooling,
 }
 
 /// Why a draft waits for the next tuning state prismd pushes for its GPU.
@@ -188,7 +200,7 @@ impl Core {
     /// Stages `value` for the selected GPU's setting, kept within its allowed range. Staging the
     /// value in effect leaves the setting unchanged.
     pub(crate) fn stage(&mut self, key: ProfileSettingKey, value: i64) -> Vec<Effect> {
-        let Some(gpu) = self.stageable(key) else {
+        let Some(gpu) = self.stageable(control_of(key)) else {
             return Vec::new();
         };
         let Some((min, max)) = gpu.range(key) else {
@@ -204,20 +216,19 @@ impl Core {
     /// Stages an explicit request for the selected GPU's setting's default, which keeps its
     /// meaning even when the value in effect is the default already.
     pub(crate) fn use_default(&mut self, key: ProfileSettingKey) -> Vec<Effect> {
-        let Some(gpu) = self.stageable(key) else {
+        let Some(gpu) = self.stageable(control_of(key)) else {
             return Vec::new();
         };
         let id = gpu.id.clone();
         self.put(id, key, Some(ProfileSetting::Default {}))
     }
 
-    /// The selected GPU, while its setting can be staged: with tuning access, the GPU control
+    /// The selected GPU, while its control can be staged: with tuning access, the GPU control
     /// capability for it and no Apply on its way.
-    fn stageable(&self, key: ProfileSettingKey) -> Option<&Gpu> {
+    pub(crate) fn stageable(&self, control: TuningControl) -> Option<&Gpu> {
         let id = self.selected_gpu()?;
         let gpu = self.gpus().iter().find(|gpu| gpu.id == id)?;
-        (self.editable(&id, control_of(key)) && !self.drafts.applying.contains_key(&id))
-            .then_some(gpu)
+        (self.editable(&id, control) && !self.drafts.applying.contains_key(&id)).then_some(gpu)
     }
 
     /// Stages `setting` for the GPU's `key`, or none to leave it unchanged.
@@ -227,6 +238,40 @@ impl Core {
         key: ProfileSettingKey,
         setting: Option<ProfileSetting>,
     ) -> Vec<Effect> {
+        self.edit_draft(id, Staged::Setting(key), |draft| match setting {
+            Some(setting) => draft.settings.set(key, setting),
+            None => draft.settings.clear(key),
+        })
+    }
+
+    /// Stages `configuration` for the GPU's fans as they are now, or none to leave cooling
+    /// unchanged.
+    pub(crate) fn put_cooling(
+        &mut self,
+        id: String,
+        configuration: Option<CoolingConfiguration>,
+    ) -> Vec<Effect> {
+        let fan_indexes = self
+            .gpus()
+            .iter()
+            .find(|gpu| gpu.id == id)
+            .and_then(cooling_read)
+            .map(|cooling| cooling.fans.iter().map(|fan| fan.index).collect())
+            .unwrap_or_default();
+        self.edit_draft(id, Staged::Cooling, |draft| {
+            draft.settings.cooling = configuration;
+            draft.fan_indexes = fan_indexes;
+        })
+    }
+
+    /// Changes what the GPU's draft stages for `staged` with `edit`, starting a draft against the
+    /// GPU's tuning state if it has none, and dropping it once it stages nothing.
+    fn edit_draft(
+        &mut self,
+        id: String,
+        staged: Staged,
+        edit: impl FnOnce(&mut Draft),
+    ) -> Vec<Effect> {
         let (revision, base) = match self.tuning.get(&id) {
             Some(state) => (state.revision.clone(), Some(state.reported.clone())),
             None => (String::new(), None),
@@ -235,15 +280,13 @@ impl Core {
             revision,
             base,
             settings: ProfileSettings::default(),
+            fan_indexes: Vec::new(),
             failed: BTreeMap::new(),
             outcome: None,
             follow: None,
         });
-        match setting {
-            Some(setting) => draft.settings.set(key, setting),
-            None => draft.settings.clear(key),
-        }
-        draft.failed.remove(&key);
+        edit(draft);
+        draft.failed.remove(&staged);
         draft.outcome = None;
         if draft.len() == 0 {
             self.drafts.by_gpu.remove(&id);
@@ -282,7 +325,11 @@ impl Core {
             gpu_id: id.clone(),
             settings: draft.settings.clone(),
             expected_revision: draft.revision.clone(),
-            fan_indexes: None,
+            fan_indexes: draft
+                .settings
+                .cooling
+                .is_some()
+                .then(|| draft.fan_indexes.clone()),
         });
         let seen = self.revision_of(&id);
         self.drafts.applying.insert(id, Applying { command, seen });
@@ -509,7 +556,7 @@ fn settle(draft: &mut Draft, application: &ProfileApplicationResponse) -> bool {
         }
         let why = result.as_ref().and_then(|result| result.error.clone());
         outcome.push(not_applied(&format!("{name} not applied"), why.as_deref()));
-        draft.failed.insert(key, why);
+        draft.failed.insert(Staged::Setting(key), why);
     }
     if let Some(cooling) = &application.cooling
         && draft.settings.cooling.is_some()
@@ -519,10 +566,15 @@ fn settle(draft: &mut Draft, application: &ProfileApplicationResponse) -> bool {
             outcome.push("Cooling applied".into());
             applied = true;
         } else {
-            outcome.push(not_applied(
-                "Cooling not applied",
-                cooling.outcome.error.as_deref(),
-            ));
+            // A fan's own error says why when the whole application doesn't.
+            let why = cooling.outcome.error.clone().or_else(|| {
+                cooling
+                    .fans
+                    .iter()
+                    .find_map(|fan| fan.outcome.error.clone())
+            });
+            outcome.push(not_applied("Cooling not applied", why.as_deref()));
+            draft.failed.insert(Staged::Cooling, why);
         }
     }
     // Only a partial Apply leaves a draft to say this on.

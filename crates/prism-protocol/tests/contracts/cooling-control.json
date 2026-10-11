@@ -1,0 +1,32 @@
+{
+  "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+  "revision": 3,
+  "applied": {
+    "arrangement": "shared",
+    "setting": {
+      "mode": "curve",
+      "points": [
+        { "temperature_c": 45, "speed_percent": 30 },
+        { "temperature_c": 85, "speed_percent": 100 }
+      ]
+    }
+  },
+  "suspension": {
+    "kind": "fault",
+    "reason": "The GPU's temperature is unavailable, so Prism stopped following its curve.",
+    "restoration": [
+      { "fan_index": 0, "status": "restored", "detail": null },
+      { "fan_index": 1, "status": "failed", "detail": "Insufficient permissions" }
+    ]
+  },
+  "remembered_curve": {
+    "arrangement": "shared",
+    "setting": {
+      "mode": "curve",
+      "points": [
+        { "temperature_c": 45, "speed_percent": 30 },
+        { "temperature_c": 85, "speed_percent": 100 }
+      ]
+    }
+  }
+}

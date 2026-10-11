@@ -242,7 +242,7 @@ impl DaemonCore {
             let stopping = Arc::clone(&self.stopping);
             // Reserve every target GPU's queue now. Manual writes wait behind startup; reads and
             // unrelated GPUs remain available while a target GPU is absent.
-            let pending = self.queues.submit(&gpu_id.clone(), move || {
+            let pending = self.submit_write(&gpu_id.clone(), move |_| {
                 let Some(full) = apply_target(
                     backend.as_ref(),
                     &cooling,

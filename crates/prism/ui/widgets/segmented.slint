@@ -3,31 +3,40 @@ import { PressArea } from "press-area.slint";
 import { StyledText } from "styled-text.slint";
 
 // A segment as shown: `text` on it, `label` what a screen reader calls it, such as "Show last
-// 1 minute" for "1 m", and whether it's the one picked.
+// 1 minute" for "1 m", whether it's the one picked, and why it can't be picked, when it can't.
 export struct SegmentView {
     text: string,
     label: string,
     selected: bool,
+    unavailable-reason: string,
 }
 
-// One segment: a toggle button, checked while it's the one picked.
+// One segment: a toggle button, checked while it's the one picked. One that can't be picked is
+// dimmed and does nothing, and says why.
 component Segment inherits Rectangle {
     in property <SegmentView> segment;
+    in property <length> segment-height;
+    property <bool> available: segment.unavailable-reason == "";
     callback activated();
 
     accessible-role: button;
     accessible-label: segment.label;
+    accessible-description: segment.unavailable-reason;
+    accessible-enabled: available;
     accessible-checkable: true;
     accessible-checked: segment.selected;
     accessible-action-default => {
-        root.activated();
+        if root.available {
+            root.activated();
+        }
     }
     forward-focus: press;
-    height: Theme.size.segment;
+    height: root.segment-height;
     width: caption.preferred-width + 2 * Theme.space.s;
-    background: press.has-hover ? Theme.color.hover : transparent;
+    background: root.available && press.has-hover ? Theme.color.hover : transparent;
 
     press := PressArea {
+        enabled: root.available;
         activated => {
             root.activated();
         }
@@ -36,7 +45,8 @@ component Segment inherits Rectangle {
     caption := StyledText {
         text: root.segment.text;
         style: Theme.text.value;
-        color: root.segment.selected || press.has-hover ? Theme.color.ink : Theme.color.ink-muted;
+        color: !root.available ? Theme.color.rule
+            : root.segment.selected || press.has-hover ? Theme.color.ink : Theme.color.ink-muted;
         horizontal-alignment: center;
         accessible-role: none;
     }
@@ -49,24 +59,75 @@ component Segment inherits Rectangle {
     }
 }
 
-// A row of segments, exactly one of them picked, such as the range picker.
+// A row of segments, at most one of them picked, such as the range picker. A tuning value's row
+// draws `pending`, such as "→ fixed", next to it, in the danger color with `failure` when the last
+// Apply didn't put it into effect. Read-only, it shows only `value`, the picked segment, with no
+// affordances, still takes focus, and says why in its description.
 export component Segmented inherits Rectangle {
     in property <[SegmentView]> segments;
     // What the row as a whole is, such as "Range".
     in property <string> label;
+    in property <string> pending;
+    in property <string> failure;
+    in property <bool> read-only;
+    // Why it's read-only, when it is.
+    in property <string> reason;
+    // Read-only, the picked segment as shown, such as "Auto", and as a screen reader says it, such
+    // as "Automatic".
+    in property <string> value;
+    in property <string> value-text;
+    // As tall as a stepper, where lines close up.
+    in property <bool> compact;
+    property <length> segment-height: root.compact ? Theme.size.stepper : Theme.size.segment;
     callback chosen(index: int);
+
+    property <string> pending-description: failure != "" ? "\{pending}. \{failure}" : pending;
 
     accessible-role: groupbox;
     accessible-label: label;
+    accessible-read-only: read-only;
+    accessible-description: !read-only ? pending-description
+        : pending != "" ? "\{reason}. \{pending-description}"
+        : reason;
     width: row.preferred-width;
-    height: Theme.size.segment;
+    height: root.read-only ? row.preferred-height : root.segment-height;
 
     row := HorizontalLayout {
-        for segment[index] in root.segments: Segment {
-            segment: segment;
-            activated => {
-                root.chosen(index);
+        spacing: Theme.space.s;
+
+        if !root.read-only: HorizontalLayout {
+            for segment[index] in root.segments: Segment {
+                segment: segment;
+                segment-height: root.segment-height;
+                activated => {
+                    root.chosen(index);
+                }
             }
+        }
+
+        // Read-only, it still takes focus, so the keyboard reaches it and why it's read-only.
+        if root.read-only: FocusScope {
+            accessible-role: text;
+            accessible-label: root.label;
+            accessible-value: root.value-text;
+            accessible-description: root.reason;
+            accessible-read-only: true;
+            width: shown.preferred-width;
+
+            shown := StyledText {
+                text: root.value;
+                style: Theme.text.value;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+
+        if root.pending != "": StyledText {
+            text: root.pending;
+            style: Theme.text.value;
+            color: root.failure != "" ? Theme.color.danger : Theme.color.accent;
+            vertical-alignment: center;
+            accessible-role: none;
         }
     }
 }

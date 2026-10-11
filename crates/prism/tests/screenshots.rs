@@ -120,6 +120,31 @@ mod screenshot {
         pending_workspace(AppearanceMode::Dark, "workspace-pending-dark");
     }
 
+    /// The workspace with fixed fan speed pending: the Fans track's fan control mode with the mode
+    /// pending, and the fixed speed's stepper with the speed pending.
+    fn pending_cooling(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        harness
+            .find(AccessibleRole::Button, "Fixed speed")
+            .invoke_accessible_default_action();
+        harness
+            .find(AccessibleRole::Spinbox, "Fixed fan speed")
+            .set_accessible_value("55");
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn the_workspace_with_a_pending_fixed_fan_speed_in_light() {
+        pending_cooling(AppearanceMode::Light, "workspace-cooling-pending-light");
+    }
+
+    #[test]
+    fn the_workspace_with_a_pending_fixed_fan_speed_in_dark() {
+        pending_cooling(AppearanceMode::Dark, "workspace-cooling-pending-dark");
+    }
+
     /// The review a stale Apply opens: the power limit changed outside Prism under a pending one.
     fn review(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();

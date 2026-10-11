@@ -295,6 +295,10 @@ fn at_the_minimum_size_every_track_fits_with_tuning_access_and_pending_changes()
     harness
         .find(Spinbox, "Graphics clock offset")
         .set_accessible_value("150");
+    // A fixed fan speed takes a stepper of its own under the fan control mode.
+    harness
+        .find(Button, "Fixed speed")
+        .invoke_accessible_default_action();
 
     harness.resize(MINIMUM_SIZE);
 

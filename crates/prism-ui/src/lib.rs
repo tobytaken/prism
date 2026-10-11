@@ -4,6 +4,7 @@
 //! [`Core::handle`], which returns the [`Effect`]s the caller performs. The view reads the
 //! resulting state through the core's view models.
 
+mod cooling;
 mod core;
 mod daemon;
 mod drafts;
@@ -14,6 +15,7 @@ mod palette;
 pub mod telemetry;
 mod view;
 
+pub use crate::cooling::FanMode;
 pub use crate::core::{
     AppearanceMode, CommandId, Core, Effect, Input, Intent, NotConnected, PrismdConnection,
     Section, SessionFailure, SettingsSection, TelemetrySource, Timer, TuningAccess, TuningControl,
@@ -24,6 +26,7 @@ pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
-    ChangeStrip, ConfirmClose, Content, Detail, Dialog, ExplainedState, GpuWorkspace,
-    HardwareDetails, Review, Sidebar, SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind,
+    ChangeStrip, ConfirmClose, Content, Detail, Dialog, ExplainedState, FanModeChoice,
+    FanModeControl, GpuWorkspace, HardwareDetails, Review, Sidebar, SidebarGpu, StatusBar, Stepper,
+    Track, TrackChart, TrackKind, Tunable,
 };

@@ -92,6 +92,13 @@
         "current_profile": null
       }
     ],
+    "cooling_controls": [
+      {
+        "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+        "revision": 0,
+        "applied": null
+      }
+    ],
     "running_games": {
       "status": "available",
       "games": []

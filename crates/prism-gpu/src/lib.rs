@@ -162,6 +162,17 @@ pub struct FanControlInfo {
     pub mode: Option<FanControlMode>,
 }
 
+impl FanControlInfo {
+    /// The fixed speeds the fan accepts, in percent, taking a bound it doesn't report as 0% or
+    /// 100%.
+    pub fn speed_range(&self) -> (i64, i64) {
+        (
+            self.min_speed_percent.map_or(0, i64::from),
+            self.max_speed_percent.map_or(100, i64::from),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FanControlMode {
