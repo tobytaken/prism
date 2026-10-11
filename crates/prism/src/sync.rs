@@ -6,16 +6,17 @@ use prism_protocol::ProfileSettingKey;
 use prism_ui::format::{Readout, UNKNOWN};
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanModeControl,
+    AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanCurveEditor, FanModeControl,
     Section as CoreSection, ServiceAction as CoreServiceAction,
     SettingsSection as CoreSettingsSection, Stepper, Track, Tunable,
 };
 
 use crate::{
-    AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, DaemonView,
-    DetailView, DialogKind, DialogView, ExplainedStateView, FactView, FanModeView, LimitMark,
-    MainWindow, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction,
-    SettingsSection, SidebarGpuView, StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
+    AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, CurvePointView,
+    DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, FanCurveView,
+    FanModeView, LimitMark, MainWindow, PaletteEntryView, ReadoutView, ReviewChangeView,
+    SegmentView, ServiceAction, SettingsSection, SidebarGpuView, StepperView, Theme, TrackView,
+    TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -307,6 +308,9 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
         .collect();
     let [max_label, avg_label, min_label] = track.statistic_labels().map(SharedString::from);
     let current_fan_mode = current.as_ref().map(|current| current.fan_mode.clone());
+    let current_points = current
+        .as_ref()
+        .map(|current| current.fan_curve.points.clone());
     TrackView {
         name: track.kind.name().into(),
         label: track.kind.name().to_uppercase().into(),
@@ -325,13 +329,61 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
         max_label,
         avg_label,
         min_label,
-        holds_fan_curve: track.holds_fan_curve,
         has_fan_mode: track.fan_mode.is_some(),
         fan_mode: track
             .fan_mode
             .as_ref()
             .map(|fan_mode| fan_mode_view(current_fan_mode, fan_mode, track))
             .unwrap_or_default(),
+        has_fan_curve: track.fan_curve.is_some(),
+        fan_curve: track
+            .fan_curve
+            .as_ref()
+            .map(|curve| fan_curve_view(current_points, curve))
+            .unwrap_or_default(),
+    }
+}
+
+/// The fan curve editor as the view shows it, its points in the model `current` has, if any, so
+/// Slint keeps the point being dragged or with focus.
+fn fan_curve_view(
+    current: Option<ModelRc<CurvePointView>>,
+    curve: &FanCurveEditor,
+) -> FanCurveView {
+    let points = curve
+        .points
+        .iter()
+        .map(|point| CurvePointView {
+            label: point.name.as_str().into(),
+            value_text: point.value_text.as_str().into(),
+            x: point.at.x,
+            y: point.at.y,
+            faulty: point.faulty,
+        })
+        .collect();
+    FanCurveView {
+        open: curve.open,
+        points: reuse(current, points),
+        pending: curve.pending,
+        in_effect: curve.in_effect_line.is_some(),
+        temperature_from: curve.temperature_labels[0].as_str().into(),
+        temperature_to: curve.temperature_labels[1].as_str().into(),
+        has_full_speed: curve.full_speed_x.is_some(),
+        full_speed_x: curve.full_speed_x.unwrap_or_default(),
+        has_marker: curve.marker.is_some(),
+        marker_x: curve.marker.as_ref().map_or(0.0, |marker| marker.at.x),
+        marker_y: curve.marker.as_ref().map_or(0.0, |marker| marker.at.y),
+        marker_text: curve
+            .marker
+            .as_ref()
+            .map(|marker| marker.text.as_str())
+            .unwrap_or_default()
+            .into(),
+        problems: curve.problems_text().into(),
+        read_only: curve.read_only.is_some(),
+        reason: curve.read_only.as_deref().unwrap_or_default().into(),
+        speed_minimum: clamped(curve.speeds.0),
+        speed_maximum: clamped(curve.speeds.1),
     }
 }
 

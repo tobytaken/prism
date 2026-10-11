@@ -341,6 +341,22 @@ pub enum Intent {
     StageFanMode(FanMode),
     /// Stage this fixed speed, in percent, for every fan of the selected GPU.
     StageFanSpeed(i64),
+    /// Stage the selected GPU's fan curve with this point moved to where it's drawn at `x` across
+    /// and `y` down the fan curve editor, from 0 to 1, as dragging it does.
+    DragCurvePoint {
+        point: usize,
+        x: f32,
+        y: f32,
+    },
+    /// Stage the selected GPU's fan curve with this point moved by this many °C and %, as the
+    /// arrow keys do.
+    MoveCurvePoint {
+        point: usize,
+        temperature_by: i64,
+        speed_by: i64,
+    },
+    /// Collapse the fan curve editor, or open it again.
+    ToggleFanCurve,
     /// Send the selected GPU's unapplied tuning changes to prismd as one Apply.
     ApplyChanges,
     /// Drop the selected GPU's unapplied tuning changes.
@@ -406,6 +422,8 @@ pub struct Core {
     pub(crate) range: TelemetryRange,
     /// Whether the workspace's hardware details are open.
     pub(crate) hardware_open: bool,
+    /// Whether the user collapsed the fan curve editor; it starts open.
+    pub(crate) fan_curve_collapsed: bool,
     pub(crate) palette: Option<PaletteState>,
     /// Commands run lately, the latest first.
     pub(crate) recent: Vec<Command>,
@@ -852,6 +870,13 @@ impl Core {
             Intent::DragPowerLimit(y) => self.drag_power_limit(y),
             Intent::StageFanMode(mode) => self.stage_fan_mode(mode),
             Intent::StageFanSpeed(speed_percent) => self.stage_fan_speed(speed_percent),
+            Intent::DragCurvePoint { point, x, y } => self.drag_curve_point(point, x, y),
+            Intent::MoveCurvePoint {
+                point,
+                temperature_by,
+                speed_by,
+            } => self.move_curve_point(point, temperature_by, speed_by),
+            Intent::ToggleFanCurve => self.toggle_fan_curve(),
             Intent::ApplyChanges => self.perform(Command::ApplyChanges),
             Intent::DiscardChanges => self.perform(Command::DiscardChanges),
             Intent::DiscardAndClose => self.quit(),

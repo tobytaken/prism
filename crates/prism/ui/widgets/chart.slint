@@ -49,6 +49,20 @@ export component Area inherits Path {
     accessible-role: none;
 }
 
+// A fan curve across its editor, in the series' ink or in another, such as the accent while it's
+// pending. Rust supplies the path commands, in the editor's own pixels.
+export component CurveLine inherits Path {
+    in property <color> ink: Theme.color.series;
+    width: 100%;
+    height: 100%;
+    viewbox-width: self.width / 1px;
+    viewbox-height: self.height / 1px;
+    stroke: ink;
+    stroke-width: Theme.stroke.limit;
+    stroke-line-join: round;
+    accessible-role: none;
+}
+
 // A limit across a chart, solid or built from dashes. Rust supplies the path commands, in the
 // chart's own pixels.
 export component LimitLine inherits Path {

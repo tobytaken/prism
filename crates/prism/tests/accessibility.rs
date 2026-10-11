@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
+use prism_gpu::fan_curve::FanCurvePoint;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode, GpuTelemetryProvider};
 use prism_protocol::{DaemonEvent, DaemonResponse};
@@ -184,6 +186,38 @@ fn a_pending_power_limit_is_accessible() {
 }
 
 #[test]
+fn a_fan_curve_is_accessible_pending_and_read_only() {
+    let harness = tunable();
+    harness
+        .find(AccessibleRole::Button, "Fan curve")
+        .invoke_accessible_default_action();
+    audit("tunable, pending starter fan curve", &harness);
+    harness.find(AccessibleRole::Button, "Fan curve editor");
+
+    // Short of full speed at T, the curve has a problem to explain.
+    harness
+        .find(AccessibleRole::Slider, "Fan curve point 4")
+        .invoke_accessible_decrement_action();
+    audit("tunable, fan curve with a problem", &harness);
+    harness.find(AccessibleRole::Text, "Fan curve problems");
+
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::ReadOnly);
+    let mut state = support::prismd::snapshot().tuning_states[0].clone();
+    state.revision = "curve".into();
+    state.reported.cooling = Some(CoolingConfiguration::Shared {
+        setting: FanSetting::Curve {
+            points: vec![FanCurvePoint::new(45, 30), FanCurvePoint::new(85, 100)],
+        },
+    });
+    harness.prismd.push(DaemonEvent::TuningStateChanged(state));
+    harness.prismd_tick(
+        SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
+    );
+    audit("tunable, read-only fan curve in effect", &harness);
+    harness.find(AccessibleRole::Slider, "Fan curve point 1");
+}
+
+#[test]
 fn the_review_and_the_close_confirmation_are_accessible() {
     let (harness, stepper) = power_limit();
     stepper.set_accessible_value("450");
@@ -223,6 +257,21 @@ const ACTION_TESTS: &[(&str, &str, &str)] = &[
         "ConnectionItem",
         "default",
         "the_connection_item_s_default_action_opens_settings_daemon",
+    ),
+    (
+        "CurveHandle",
+        "decrement",
+        "a_curve_point_s_increment_and_decrement_actions_raise_and_lower_its_speed",
+    ),
+    (
+        "CurveHandle",
+        "increment",
+        "a_curve_point_s_increment_and_decrement_actions_raise_and_lower_its_speed",
+    ),
+    (
+        "CurveToggle",
+        "default",
+        "the_curve_toggle_s_default_action_collapses_and_opens_the_fan_curve_editor",
     ),
     (
         "Disclosure",
@@ -453,13 +502,57 @@ fn a_segment_s_default_action_picks_it() {
     );
 }
 
-/// Prism with tuning access to the tunable GPU, whose power limit is 575 W in a 400–600 W range,
-/// and its power limit's stepper.
-fn power_limit() -> (Harness, ElementHandle) {
+/// Prism with tuning access to the tunable GPU and the starter fan curve pending, and the
+/// editor's point `number`.
+fn starter_curve_point(number: usize) -> (Harness, ElementHandle) {
+    let harness = tunable();
+    harness
+        .find(AccessibleRole::Button, "Fan curve")
+        .invoke_accessible_default_action();
+    let point = harness.find(AccessibleRole::Slider, &format!("Fan curve point {number}"));
+    (harness, point)
+}
+
+#[test]
+fn a_curve_point_s_increment_and_decrement_actions_raise_and_lower_its_speed() {
+    let (_harness, point) = starter_curve_point(2);
+    assert_eq!(point.accessible_value().as_deref(), Some("65% at 65 °C"));
+
+    point.invoke_accessible_increment_action();
+    assert_eq!(point.accessible_value().as_deref(), Some("66% at 65 °C"));
+
+    point.invoke_accessible_decrement_action();
+    point.invoke_accessible_decrement_action();
+    assert_eq!(point.accessible_value().as_deref(), Some("64% at 65 °C"));
+}
+
+#[test]
+fn the_curve_toggle_s_default_action_collapses_and_opens_the_fan_curve_editor() {
+    let (harness, _) = starter_curve_point(1);
+    let toggle = harness.find(AccessibleRole::Button, "Fan curve editor");
+
+    toggle.invoke_accessible_default_action();
+    assert_eq!(toggle.accessible_expanded(), Some(false));
+    assert_eq!(harness.count(AccessibleRole::Groupbox, "Fan curve"), 0);
+
+    toggle.invoke_accessible_default_action();
+    assert_eq!(toggle.accessible_expanded(), Some(true));
+    assert_eq!(harness.count(AccessibleRole::Groupbox, "Fan curve"), 1);
+}
+
+/// Prism with tuning access to the tunable GPU.
+fn tunable() -> Harness {
     let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::Running);
     harness.prismd_tick(
         SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
     );
+    harness
+}
+
+/// Prism with tuning access to the tunable GPU, whose power limit is 575 W in a 400–600 W range,
+/// and its power limit's stepper.
+fn power_limit() -> (Harness, ElementHandle) {
+    let harness = tunable();
     let stepper = harness.find(AccessibleRole::Spinbox, "Power limit");
     (harness, stepper)
 }

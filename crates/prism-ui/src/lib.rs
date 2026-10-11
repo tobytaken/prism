@@ -6,6 +6,7 @@
 
 mod cooling;
 mod core;
+mod curve;
 mod daemon;
 mod drafts;
 pub mod format;
@@ -26,7 +27,7 @@ pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
-    ChangeStrip, ConfirmClose, Content, Detail, Dialog, ExplainedState, FanModeChoice,
-    FanModeControl, GpuWorkspace, HardwareDetails, Review, Sidebar, SidebarGpu, StatusBar, Stepper,
-    Track, TrackChart, TrackKind, Tunable,
+    ChangeStrip, ConfirmClose, Content, CurveMarker, CurvePoint, Detail, Dialog, ExplainedState,
+    FanCurveEditor, FanModeChoice, FanModeControl, GpuWorkspace, HardwareDetails, Review, Sidebar,
+    SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind, Tunable,
 };

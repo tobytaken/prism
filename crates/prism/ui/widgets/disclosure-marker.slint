@@ -1,0 +1,15 @@
+import { Theme } from "../theme.slint";
+
+// The marker that says whether a collapsible part is open: it points right while the part is
+// collapsed and down while it's open. The control it's in carries the expanded state.
+export component DisclosureMarker inherits Path {
+    in property <bool> open;
+
+    width: Theme.size.disclosure-icon;
+    height: Theme.size.disclosure-icon;
+    viewbox-width: 8;
+    viewbox-height: 8;
+    commands: root.open ? "M0 2 L8 2 L4 7 Z" : "M2 0 L7 4 L2 8 Z";
+    fill: Theme.color.ink-muted;
+    accessible-role: none;
+}

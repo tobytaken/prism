@@ -114,6 +114,8 @@ export struct Sizes {
     // A line across the workspace under the header, such as the change strip.
     notice: length,
     track: length,
+    // The Fans track while it shows the fan curve editor.
+    track-curve: length,
     // The shortest a track gets before the workspace scrolls, and in a short workspace.
     track-min: length,
     track-min-short: length,
@@ -141,6 +143,11 @@ export struct Sizes {
     stepper: length,
     // How far from a draggable limit's line the pointer can grab it.
     limit-grab: length,
+    // A fan curve point as drawn, and the square around it the pointer can grab it in.
+    curve-point: length,
+    curve-grab: length,
+    // The live marker on the fan curve.
+    curve-marker: length,
     text-field: length,
     kbd: length,
     palette-width: length,
@@ -264,6 +271,7 @@ export global Theme {
         header-short: 44px,
         notice: 28px,
         track: 104px,
+        track-curve: 168px,
         track-min: 80px,
         track-min-short: 64px,
         track-head: 224px,
@@ -281,6 +289,9 @@ export global Theme {
         button: 28px,
         stepper: 16px,
         limit-grab: 12px,
+        curve-point: 8px,
+        curve-grab: 16px,
+        curve-marker: 7px,
         text-field: 34px,
         kbd: 16px,
         palette-width: 520px,

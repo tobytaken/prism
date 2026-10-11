@@ -84,7 +84,7 @@ pub(crate) fn staged_cooling_text(configuration: &CoolingConfiguration) -> Strin
 }
 
 /// `setting` for every fan.
-fn shared(setting: FanSetting) -> CoolingConfiguration {
+pub(crate) fn shared(setting: FanSetting) -> CoolingConfiguration {
     CoolingConfiguration::Shared { setting }
 }
 
@@ -204,7 +204,11 @@ impl Core {
     }
 
     /// Stages `configuration` for the GPU's fans, unless it's the one in effect.
-    fn stage_cooling(&mut self, id: String, configuration: CoolingConfiguration) -> Vec<Effect> {
+    pub(crate) fn stage_cooling(
+        &mut self,
+        id: String,
+        configuration: CoolingConfiguration,
+    ) -> Vec<Effect> {
         let in_effect = self
             .gpus()
             .iter()

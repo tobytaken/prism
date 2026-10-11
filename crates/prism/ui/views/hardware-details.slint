@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { Divider, Fact, PressArea, StyledText } from "../widgets.slint";
+import { DisclosureMarker, Divider, Fact, PressArea, StyledText } from "../widgets.slint";
 import { AppState, FactView, Intents } from "../state.slint";
 
 // The row that opens and collapses the hardware details: a marker that points right while they're
@@ -32,15 +32,9 @@ component Disclosure inherits Rectangle {
         spacing: Theme.space.m;
         alignment: start;
 
-        Path {
-            width: Theme.size.disclosure-icon;
-            height: Theme.size.disclosure-icon;
+        DisclosureMarker {
             y: (parent.height - self.height) / 2;
-            viewbox-width: 8;
-            viewbox-height: 8;
-            commands: root.open ? "M0 2 L8 2 L4 7 Z" : "M2 0 L7 4 L2 8 Z";
-            fill: Theme.color.ink-muted;
-            accessible-role: none;
+            open: root.open;
         }
 
         StyledText {

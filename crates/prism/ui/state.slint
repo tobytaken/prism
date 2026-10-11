@@ -115,9 +115,52 @@ export struct FanModeView {
     note: string,
 }
 
+// One of the fan curve's points: where it's drawn, from the left (0) to the right (1) and from the
+// top (0) to the bottom (1), what a screen reader calls it and says of it, such as "65% at
+// 65 °C", and whether one of the pending curve's problems is with it.
+export struct CurvePointView {
+    label: string,
+    value-text: string,
+    x: float,
+    y: float,
+    faulty: bool,
+}
+
+// The parts of the fan curve editor Rust draws as path commands: the curve in effect, and the
+// pending one over it.
+export enum CurvePart { in-effect, pending }
+
+// The fan curve editor: whether it's open, its points and whether they're a pending curve's, and
+// whether a curve in effect is drawn. The temperature axis runs from `temperature-from` on the
+// left to `temperature-to` on the right, and speeds from 0% at the bottom to 100% at the top;
+// `full-speed-x` is where across a curve must reach full speed by, when `has-full-speed`.
+// `marker-x` and `marker-y` are where the GPU's temperature and fan speed are now, which
+// `marker-text` says, when `has-marker`. `problems` says what keeps the pending curve from being
+// applied, and `reason` why the points can't be moved, when `read-only`. A point's speed is
+// between `speed-minimum` and `speed-maximum`.
+export struct FanCurveView {
+    open: bool,
+    points: [CurvePointView],
+    pending: bool,
+    in-effect: bool,
+    temperature-from: string,
+    temperature-to: string,
+    has-full-speed: bool,
+    full-speed-x: float,
+    has-marker: bool,
+    marker-x: float,
+    marker-y: float,
+    marker-text: string,
+    problems: string,
+    read-only: bool,
+    reason: string,
+    speed-minimum: int,
+    speed-maximum: int,
+}
+
 // A track: its name, readout and details, its charts, and the max/avg/min of its metric over the
-// range, each with what a screen reader calls it. `holds-fan-curve` says whether the fan curve
-// belongs to it, and `has-fan-mode` whether it has the fan control mode.
+// range, each with what a screen reader calls it. `has-fan-mode` says whether it has the fan
+// control mode, and `has-fan-curve` whether it has the fan curve editor.
 export struct TrackView {
     name: string,
     label: string,
@@ -133,9 +176,10 @@ export struct TrackView {
     max-label: string,
     avg-label: string,
     min-label: string,
-    holds-fan-curve: bool,
     has-fan-mode: bool,
     fan-mode: FanModeView,
+    has-fan-curve: bool,
+    fan-curve: FanCurveView,
 }
 
 // The fixed change strip under the workspace's header: its summary, whether there are unapplied
@@ -267,6 +311,8 @@ export global AppState {
     // A part of one of the selected GPU's charts as path commands for a chart of this size, with
     // dashes and gaps this long where the part is dashed.
     pure callback chart-path(chart: ChartId, part: ChartPart, width: float, height: float, dash: float, gap: float, revision: int) -> string;
+    // A part of the selected GPU's fan curve editor as path commands for an editor of this size.
+    pure callback curve-path(part: CurvePart, width: float, height: float, revision: int) -> string;
 }
 
 export global Intents {
@@ -297,6 +343,12 @@ export global Intents {
     callback stage-fan-mode(index: int);
     // Stages the power limit drawn at `y` on the power chart, from the top (0) to the bottom (1).
     callback drag-power-limit(y: float);
+    // Stages the fan curve with this point moved to where it's drawn at `x` across and `y` down
+    // the editor, from 0 to 1, or moved by this many °C and %.
+    callback drag-curve-point(point: int, x: float, y: float);
+    callback move-curve-point(point: int, temperature-by: int, speed-by: int);
+    // Collapses the fan curve editor, or opens it again.
+    callback toggle-fan-curve();
     // Applies or discards the selected GPU's unapplied tuning changes.
     callback apply-changes();
     callback discard-changes();

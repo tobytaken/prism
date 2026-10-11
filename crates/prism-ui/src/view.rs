@@ -20,7 +20,7 @@ use crate::drafts::{
 };
 use crate::format::{Readout, UNKNOWN, pending, short_bus_id, short_gpu_name, signed};
 use crate::palette::Command;
-use crate::telemetry::{Chart, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
+use crate::telemetry::{Chart, ChartPoint, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
 
 /// The readings the sidebar shows for each GPU.
 const VITALS: [Metric; 4] = [
@@ -139,6 +139,13 @@ impl GpuWorkspace {
     pub fn fan_mode(&self) -> Option<&FanModeControl> {
         self.tracks.iter().find_map(|track| track.fan_mode.as_ref())
     }
+
+    /// The Fans track's fan curve editor, while it shows a curve.
+    pub fn fan_curve(&self) -> Option<&FanCurveEditor> {
+        self.tracks
+            .iter()
+            .find_map(|track| track.fan_curve.as_ref())
+    }
 }
 
 /// The fixed strip under the workspace's header: "No unapplied changes", or how many there are,
@@ -220,10 +227,10 @@ pub struct Track {
     pub min: Readout,
     /// Side by side, left to right.
     pub charts: Vec<TrackChart>,
-    /// Whether the fan curve belongs to this track.
-    pub holds_fan_curve: bool,
     /// The fan control mode, in the Fans track.
     pub fan_mode: Option<FanModeControl>,
+    /// The fan curve editor, in the Fans track while the fans follow a curve or one is pending.
+    pub fan_curve: Option<FanCurveEditor>,
 }
 
 /// The fan control mode every fan of a GPU shares: the GPU's default automatic cooling, a fixed
@@ -256,6 +263,70 @@ pub struct FanModeChoice {
     pub selected: bool,
     /// Why it can't be picked, when it can't.
     pub unavailable: Option<String>,
+}
+
+/// The fan curve editor: the curve the GPU's fans follow, or the one pending in its place, drawn
+/// with temperature across and requested fan speed up, its points moved by dragging or with the
+/// keyboard.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FanCurveEditor {
+    /// Whether it's open; collapsed, the fan speed history shows in its place.
+    pub open: bool,
+    /// The points it edits: the pending curve's, or else the curve in effect's.
+    pub points: Vec<CurvePoint>,
+    /// Whether the points are a pending curve's.
+    pub pending: bool,
+    /// The curve in effect as a line across the editor, if the fans follow one.
+    pub in_effect_line: Option<Vec<ChartPoint>>,
+    /// The pending curve as a line across the editor, drawn over the one in effect.
+    pub pending_line: Option<Vec<ChartPoint>>,
+    /// The temperatures at its left and right edges, in °C; its speeds run from 0% at the bottom
+    /// to 100% at the top.
+    pub temperature_axis: (i64, i64),
+    /// Those temperatures as shown, such as "20 °C" and "100 °C".
+    pub temperature_labels: [String; 2],
+    /// The speeds a point can request, from the lowest every fan supports to the highest, in %;
+    /// 0–100% while they're unknown.
+    pub speeds: (i64, i64),
+    /// Where across it a curve must reach full speed by, 5 °C below the GPU's maximum operating
+    /// temperature, when that's known.
+    pub full_speed_x: Option<f32>,
+    /// Where the GPU's temperature and fan speed are now, while both are known.
+    pub marker: Option<CurveMarker>,
+    /// What keeps the pending curve from being applied, such as "Point 2: speed can't be lower
+    /// than point 1's 40%."
+    pub problems: Vec<String>,
+    /// Why its points can't be moved, when they can't.
+    pub read_only: Option<String>,
+}
+
+impl FanCurveEditor {
+    /// What keeps the pending curve from being applied, in one paragraph.
+    pub fn problems_text(&self) -> String {
+        self.problems.join(" ")
+    }
+}
+
+/// One of the fan curve's points, where it's drawn in the editor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurvePoint {
+    pub temperature_c: i64,
+    pub speed_percent: i64,
+    pub at: ChartPoint,
+    /// What a screen reader calls it, such as "Fan curve point 2".
+    pub name: String,
+    /// Its speed and temperature as a screen reader says them, such as "65% at 65 °C".
+    pub value_text: String,
+    /// Whether one of the pending curve's problems is with it.
+    pub faulty: bool,
+}
+
+/// The GPU's temperature and fan speed now, on the fan curve editor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurveMarker {
+    pub at: ChartPoint,
+    /// Such as "Now 60 °C, fans at 55%".
+    pub text: String,
 }
 
 impl Track {
@@ -760,8 +831,10 @@ impl Core {
             avg: value(stats.map(|stats| stats.avg.round() as u32)),
             min: value(stats.map(|stats| stats.min)),
             charts,
-            holds_fan_curve: kind == TrackKind::Fans,
             fan_mode: (kind == TrackKind::Fans).then(|| self.fan_mode(gpu)),
+            fan_curve: (kind == TrackKind::Fans)
+                .then(|| self.fan_curve(gpu))
+                .flatten(),
         }
     }
 }
@@ -865,7 +938,7 @@ impl Core {
     }
 
     /// Why the GPU's cooling can't be changed, if it can't.
-    fn cooling_read_only(&self, gpu: &Gpu) -> Option<String> {
+    pub(crate) fn cooling_read_only(&self, gpu: &Gpu) -> Option<String> {
         let unsupported = cooling_read(gpu)
             .and_then(|cooling| cooling.unsupported_reason.clone())
             .unwrap_or_else(|| "Fan control isn't supported by this GPU".into());

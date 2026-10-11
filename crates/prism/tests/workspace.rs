@@ -241,7 +241,7 @@ fn every_track_shows_unknown_readings_as_unknown() {
 }
 
 #[test]
-fn a_narrow_window_drops_max_avg_min_and_reserves_the_fan_curve_in_place_of_fan_speed() {
+fn a_narrow_window_drops_max_avg_min_and_keeps_the_fan_speed_history_without_a_curve() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     harness.ticks(2);
     assert_eq!(harness.count(Groupbox, "Fan curve"), 0);
@@ -257,15 +257,42 @@ fn a_narrow_window_drops_max_avg_min_and_reserves_the_fan_curve_in_place_of_fan_
                 assert_eq!(harness.count(Text, &label), 0, "{label} at {size:?}");
             }
         }
-        harness.find(Groupbox, "Fan curve");
-        // Every chart but fan speed's.
-        assert_eq!(chart_parts(&harness, "Series"), 5, "at {size:?}");
+        // The fans follow no curve, so there's none to show in the fan speed history's place.
+        assert_eq!(harness.count(Groupbox, "Fan curve"), 0, "at {size:?}");
+        assert_eq!(chart_parts(&harness, "Series"), 6, "at {size:?}");
         assert_eq!(value(&harness, "Fan 0 speed"), "31%");
     }
 
     harness.resize(DEFAULT_SIZE);
     assert_tracks_filled(&harness);
-    assert_eq!(harness.count(Groupbox, "Fan curve"), 0);
+}
+
+#[test]
+fn the_fan_curve_goes_beside_the_fan_speed_history_and_takes_its_place_in_a_narrow_window() {
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::Running);
+    harness.prismd_tick(prismd_reading(1));
+    harness.prismd_tick(prismd_reading(2));
+    harness
+        .find(Button, "Fan curve")
+        .invoke_accessible_default_action();
+
+    harness.find(Groupbox, "Fan curve");
+    assert_eq!(chart_parts(&harness, "Series"), 6);
+
+    for size in [HALF_1080P, MINIMUM_SIZE] {
+        harness.resize(size);
+
+        harness.find(Groupbox, "Fan curve");
+        // Every chart but fan speed's.
+        assert_eq!(chart_parts(&harness, "Series"), 5, "at {size:?}");
+
+        // Collapsing the curve brings the history back.
+        let toggle = harness.find(Button, "Fan curve editor");
+        toggle.invoke_accessible_default_action();
+        assert_eq!(harness.count(Groupbox, "Fan curve"), 0, "at {size:?}");
+        assert_eq!(chart_parts(&harness, "Series"), 6, "at {size:?}");
+        toggle.invoke_accessible_default_action();
+    }
 }
 
 #[test]
@@ -299,6 +326,30 @@ fn at_the_minimum_size_every_track_fits_with_tuning_access_and_pending_changes()
     harness
         .find(Button, "Fixed speed")
         .invoke_accessible_default_action();
+
+    harness.resize(MINIMUM_SIZE);
+
+    let status_bar = harness.find(Button, "PRISMD · CONNECTED");
+    let details = harness.find(Button, "Hardware details");
+    let bottom = details.absolute_position().y + details.size().height;
+    assert!(
+        bottom <= status_bar.absolute_position().y,
+        "the hardware details end at {bottom}, below the workspace"
+    );
+}
+
+#[test]
+fn at_the_minimum_size_every_track_fits_with_a_pending_fan_curve_and_its_problem() {
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::Running);
+    harness.prismd_tick(prismd_reading(1));
+    harness
+        .find(Button, "Fan curve")
+        .invoke_accessible_default_action();
+    // Short of full speed in time, the curve says why under it.
+    harness
+        .find(AccessibleRole::Slider, "Fan curve point 4")
+        .invoke_accessible_decrement_action();
+    harness.find(Text, "Fan curve problems");
 
     harness.resize(MINIMUM_SIZE);
 

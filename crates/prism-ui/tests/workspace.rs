@@ -238,16 +238,12 @@ fn the_fans_track_shows_each_fan_s_current_speed() {
 }
 
 #[test]
-fn only_the_fans_track_holds_the_fan_curve() {
+fn no_track_shows_a_fan_curve_while_the_fans_follow_none() {
     let mut core = launched(SimulatedFixture::TunableGpu);
     sampled(&mut core, tunable_sample(|_| {}), 1);
 
     for kind in TrackKind::ALL {
-        assert_eq!(
-            track(&core, kind).holds_fan_curve,
-            kind == TrackKind::Fans,
-            "{kind:?}"
-        );
+        assert_eq!(track(&core, kind).fan_curve, None, "{kind:?}");
     }
 }
 
