@@ -276,6 +276,7 @@ impl Inner {
         intents.on_discard_changes(to_core(Intent::DiscardChanges));
         intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
         intents.on_toggle_fan_curve(to_core(Intent::ToggleFanCurve));
+        intents.on_recall_remembered_curve(to_core(Intent::RecallRememberedCurve));
         let inner = Rc::downgrade(this);
         intents.on_drag_curve_point(move |point, x, y| {
             if let Ok(point) = usize::try_from(point) {
@@ -317,6 +318,22 @@ impl Inner {
                     inner.handle(Input::Intent(Intent::StageFanMode(mode)))
                 });
             }
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_pick_fans(move |index| {
+            with_inner(&inner, |inner| {
+                // The segments list the fan picker's choices in the order the core gives them.
+                let fans = match inner.core.borrow().content() {
+                    Content::Gpu(workspace) => usize::try_from(index).ok().and_then(|index| {
+                        let arrangement = workspace.fan_mode()?.arrangement.as_ref()?;
+                        Some(arrangement.choices.get(index)?.fan)
+                    }),
+                    _ => None,
+                };
+                if let Some(fans) = fans {
+                    inner.handle(Input::Intent(Intent::PickFans(fans)));
+                }
+            });
         });
         let inner = Rc::downgrade(this);
         intents.on_drag_power_limit(move |y| {

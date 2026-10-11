@@ -80,6 +80,7 @@ fn ctrl_k_opens_the_palette_with_its_field_focused() {
             "Go to Settings: About".into(),
             "Apply unapplied changes".into(),
             "Discard unapplied changes".into(),
+            "Recall remembered fan curve".into(),
             "Show last 1 minute".into(),
             "Show last 5 minutes".into(),
             "Show last 15 minutes".into(),
@@ -97,14 +98,14 @@ fn typing_filters_the_commands_and_enter_runs_the_highlighted_one() {
     let harness = harness();
     harness.ctrl("k");
 
-    harness.type_text("drv");
+    harness.type_text("drvrs");
 
     assert_eq!(
         harness
             .find(TextInput, "Command")
             .accessible_value()
             .as_deref(),
-        Some("drv")
+        Some("drvrs")
     );
     assert_eq!(commands(&harness), ["Go to Drivers"]);
     assert_eq!(highlighted(&harness), ["Go to Drivers"]);
@@ -183,7 +184,7 @@ fn escape_closes_the_palette_and_ctrl_k_opens_it_again() {
 
     harness.ctrl("k");
     assert!(palette_is_open(&harness));
-    assert_eq!(commands(&harness).len(), 19);
+    assert_eq!(commands(&harness).len(), 20);
 }
 
 #[test]

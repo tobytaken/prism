@@ -7,10 +7,12 @@ use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use prism_gpu::GpuTelemetryProvider;
-use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
+use prism_gpu::cooling::{CoolingConfiguration, FanConfiguration, FanSetting};
 use prism_gpu::fan_curve::FanCurvePoint;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
-use prism_protocol::{ApplyGpuProfileRequest, DaemonEvent, DaemonRequest, ProfileSettings};
+use prism_protocol::{
+    ApplyGpuProfileRequest, DaemonEvent, DaemonRequest, GpuCoolingControl, ProfileSettings,
+};
 use slint::platform::{Key, PointerEventButton};
 use slint::{ComponentHandle, LogicalPosition};
 
@@ -426,4 +428,164 @@ fn the_curve_editor_collapses_to_the_fan_speed_history_and_opens_again() {
 
     toggle().invoke_accessible_default_action();
     harness.find(Groupbox, "Fan curve");
+}
+
+/// The segment labeled `label` in the row of segments labeled `row`, such as "Per fan" in "Fan
+/// arrangement".
+fn segment_in(harness: &Harness, row: &str, label: &str) -> ElementHandle {
+    harness
+        .find(Groupbox, row)
+        .query_descendants()
+        .match_accessible_role(Button)
+        .find_all()
+        .into_iter()
+        .find(|segment| segment.accessible_label().as_deref() == Some(label))
+        .unwrap_or_else(|| panic!("no {label} segment in {row}"))
+}
+
+#[test]
+fn per_fan_settings_stage_and_apply_with_every_reviewed_fan() {
+    let harness = connected();
+    assert_eq!(
+        segment_in(&harness, "Fan arrangement", "Shared").accessible_checked(),
+        Some(true)
+    );
+
+    segment_in(&harness, "Fan arrangement", "Fan 1").invoke_accessible_default_action();
+    segment(&harness, "Fixed speed").invoke_accessible_default_action();
+    harness
+        .find(Spinbox, "Fan 1 fixed speed")
+        .set_accessible_value("60");
+
+    assert_eq!(
+        harness
+            .find(Groupbox, "Fan arrangement")
+            .accessible_description()
+            .as_deref(),
+        Some("→ per fan")
+    );
+    assert_eq!(changes(&harness), "1 unapplied change");
+    // Fan 0 keeps the automatic cooling they shared.
+    segment_in(&harness, "Fan arrangement", "Fan 0").invoke_accessible_default_action();
+    assert_eq!(
+        segment(&harness, "Automatic").accessible_checked(),
+        Some(true)
+    );
+
+    harness
+        .find(Button, "Apply")
+        .invoke_accessible_default_action();
+
+    assert_eq!(
+        applies(&harness),
+        [ApplyGpuProfileRequest {
+            gpu_id: GPU.into(),
+            settings: ProfileSettings {
+                cooling: Some(CoolingConfiguration::PerFan {
+                    fans: vec![
+                        FanConfiguration {
+                            fan_index: 0,
+                            setting: FanSetting::Automatic {},
+                        },
+                        FanConfiguration {
+                            fan_index: 1,
+                            setting: FanSetting::Fixed { speed_percent: 60 },
+                        },
+                    ],
+                }),
+                ..ProfileSettings::default()
+            },
+            expected_revision: REVISION.into(),
+            fan_indexes: Some(vec![0, 1]),
+        }]
+    );
+}
+
+#[test]
+fn recalling_the_remembered_curve_creates_a_draft_that_reaches_prismd_only_with_apply() {
+    let harness = connected();
+    assert_eq!(harness.count(Button, "Recall remembered fan curve"), 0);
+    let remembered = curve(&[(45, 30), (85, 100)]);
+    harness
+        .prismd
+        .push(DaemonEvent::CoolingControlChanged(GpuCoolingControl {
+            gpu_id: GPU.into(),
+            revision: 2,
+            remembered_curve: Some(remembered.clone()),
+            ..GpuCoolingControl::default()
+        }));
+    harness.prismd_tick(reading());
+
+    harness
+        .find(Button, "Recall remembered fan curve")
+        .invoke_accessible_default_action();
+
+    assert_eq!(curve_points(&harness), ["30% at 45 °C", "100% at 85 °C"]);
+    assert_eq!(fan_mode_says(&harness), "→ curve");
+    assert_eq!(changes(&harness), "1 unapplied change");
+    assert_eq!(applies(&harness), Vec::new());
+    assert_eq!(harness.count(Button, "Recall remembered fan curve"), 0);
+
+    harness
+        .find(Button, "Apply")
+        .invoke_accessible_default_action();
+    let sent = applies(&harness);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].settings.cooling, Some(remembered));
+}
+
+#[test]
+fn a_cooling_change_from_another_session_needs_review_before_apply_replaces_it() {
+    let harness = connected();
+    segment(&harness, "Fixed speed").invoke_accessible_default_action();
+    harness
+        .find(Spinbox, "Fixed fan speed")
+        .set_accessible_value("55");
+
+    let mut state = support::prismd::snapshot().tuning_states[0].clone();
+    state.revision = "elsewhere".into();
+    state.reported.cooling = Some(CoolingConfiguration::Shared {
+        setting: FanSetting::Fixed { speed_percent: 70 },
+    });
+    harness.prismd.push(DaemonEvent::TuningStateChanged(state));
+    harness.prismd_tick(reading());
+
+    // The draft stays, and Apply becomes Review.
+    assert_eq!(changes(&harness), "1 unapplied change");
+    assert_eq!(harness.count(Button, "Apply"), 0);
+    let strip = harness
+        .find(Groupbox, "Unapplied changes")
+        .accessible_description()
+        .map(String::from)
+        .unwrap_or_default();
+    assert!(strip.contains("cooling changed"), "{strip}");
+
+    harness
+        .find(Button, "Review")
+        .invoke_accessible_default_action();
+
+    assert_eq!(applies(&harness), Vec::new());
+    let change = harness.find(Text, "Cooling");
+    assert_eq!(
+        change.accessible_value().as_deref(),
+        Some("unknown → fixed 70%")
+    );
+    assert_eq!(
+        change.accessible_description().as_deref(),
+        Some("Yours: fixed 55%")
+    );
+
+    harness
+        .find(Button, "Apply")
+        .invoke_accessible_default_action();
+
+    let sent = applies(&harness);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].expected_revision, "elsewhere");
+    assert_eq!(
+        sent[0].settings.cooling,
+        Some(CoolingConfiguration::Shared {
+            setting: FanSetting::Fixed { speed_percent: 55 },
+        })
+    );
 }

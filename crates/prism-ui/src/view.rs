@@ -7,7 +7,8 @@ use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
 use prism_protocol::{ProfileSetting, ProfileSettingKey};
 
 use crate::cooling::{
-    FanMode, cooling_read, fixed_speed_of, fixed_speed_range, mode_of, staged_cooling_text,
+    FanArrangement, FanMode, Fans, cooling_read, fixed_speed_of, fixed_speed_range, mode_of,
+    setting_of, speed_now,
 };
 use crate::core::{
     Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
@@ -163,6 +164,9 @@ pub struct ChangeStrip {
     pub apply_unavailable: Option<String>,
     /// Why Discard can't run now, while there are changes it can't discard.
     pub discard_unavailable: Option<String>,
+    /// What changed under the changes that the user must review before they replace it, such as
+    /// cooling changed in another session; Apply opens the review.
+    pub review: Option<String>,
 }
 
 /// A full-width track of the workspace, one per metric.
@@ -233,14 +237,15 @@ pub struct Track {
     pub fan_curve: Option<FanCurveEditor>,
 }
 
-/// The fan control mode every fan of a GPU shares: the GPU's default automatic cooling, a fixed
-/// speed or a fan curve, with the mode picked and any pending one.
+/// The fan control mode of the fans the GPU's cooling controls set, every fan or the one picked:
+/// the GPU's default automatic cooling, a fixed speed or a fan curve, with the mode picked and any
+/// pending one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FanModeControl {
     /// Every mode, left to right.
     pub modes: Vec<FanModeChoice>,
-    /// The cooling staged, as shown next to the control, such as "→ fixed", while it's
-    /// pending.
+    /// The mode staged for those fans, as shown next to the control, such as "→ fixed", while
+    /// it's pending.
     pub pending: Option<String>,
     /// That the last Apply didn't put the pending cooling into effect, and why if prismd said,
     /// while it's still pending.
@@ -250,6 +255,39 @@ pub struct FanModeControl {
     /// What the user should know about the GPU's cooling, such as why Prism stopped following its
     /// curve or why fan curves are unavailable.
     pub note: Option<String>,
+    /// Which fans the controls set, while the GPU has more than one fan.
+    pub arrangement: Option<FanArrangementControl>,
+    /// Whether the remembered fan curve can be recalled into the draft now.
+    pub can_recall: bool,
+}
+
+/// Which of a GPU's fans the cooling controls set: every fan together, or one fan on its own, with
+/// whether the fans share one configuration and any pending change to that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FanArrangementControl {
+    /// Every fan together, then each fan, left to right.
+    pub choices: Vec<FanChoice>,
+    /// Whether the fans share one configuration or each has its own settings, as shown: the
+    /// pending arrangement, or else the one in effect.
+    pub arrangement: FanArrangement,
+    /// The arrangement staged, as shown next to the control, such as "→ per fan", while it's
+    /// pending.
+    pub pending: Option<String>,
+}
+
+/// One of the fan picker's choices: every fan together, or one fan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FanChoice {
+    /// The fan it picks, by index, or none for every fan.
+    pub fan: Option<u32>,
+    /// As shown, such as "all" or "1".
+    pub text: String,
+    /// As a screen reader says it, such as "Shared" or "Fan 1".
+    pub name: String,
+    /// Whether the controls set the fans it picks.
+    pub selected: bool,
+    /// Why it can't be picked, when it can't.
+    pub unavailable: Option<String>,
 }
 
 /// One of the fan control mode's choices.
@@ -444,6 +482,9 @@ pub struct Review {
     pub message: String,
     /// The current tuning values that changed, if any of them did.
     pub changes: Vec<ReviewChange>,
+    /// Apply's text: "Apply" over a change the draft hasn't been applied over yet, or else
+    /// "Apply again".
+    pub apply_text: &'static str,
     /// Why Apply can't run now, when it can't.
     pub apply_unavailable: Option<String>,
     /// Why Discard can't run now, when it can't.
@@ -497,6 +538,11 @@ impl Core {
                     }
                     .into(),
                     changes: changes.clone(),
+                    apply_text: if self.cooling_changed_under(gpu_id) {
+                        "Apply"
+                    } else {
+                        "Apply again"
+                    },
                     apply_unavailable: self.changes_unavailable(&Command::ApplyChanges),
                     discard_unavailable: self.changes_unavailable(&Command::DiscardChanges),
                 })
@@ -945,13 +991,18 @@ impl Core {
         self.read_only(gpu, TuningControl::Cooling, unsupported)
     }
 
-    /// The fan control mode every fan of the GPU shares: the one pending, or else the one in
-    /// effect.
+    /// The fan control mode of the fans the GPU's cooling controls set: the one pending, or else
+    /// the one in effect.
     fn fan_mode(&self, gpu: &Gpu) -> FanModeControl {
+        let fans = self.controlled_fans(gpu);
         let staged = self.staged_cooling(&gpu.id);
-        let shown = self.shown_cooling(gpu).as_ref().and_then(mode_of);
+        let in_effect = self.cooling_in_effect(gpu);
+        let shown = self
+            .shown_cooling(gpu)
+            .as_ref()
+            .and_then(|shown| mode_of(shown, fans));
         let cooling = cooling_read(gpu);
-        let curves_unavailable = match self.curve_support(gpu) {
+        let curves_unavailable = match self.curve_support(gpu, fans) {
             Some(FanCurveSupport::Unavailable { reason }) => Some(reason),
             Some(FanCurveSupport::Available { .. }) => None,
             None => {
@@ -967,7 +1018,7 @@ impl Core {
                 unavailable: match mode {
                     FanMode::Automatic => None,
                     FanMode::Fixed => match cooling {
-                        Some(cooling) => fixed_speed_range(cooling).err().map(Into::into),
+                        Some(cooling) => fixed_speed_range(cooling, fans).err().map(Into::into),
                         None => cooling_unknown(gpu),
                     },
                     FanMode::Curve => curves_unavailable.clone(),
@@ -984,9 +1035,19 @@ impl Core {
         let curves_unavailable =
             curves_unavailable.filter(|_| gpu.capabilities.contains(&TuningControl::Cooling));
         let note: Vec<_> = suspension.into_iter().chain(curves_unavailable).collect();
+        // A mode is pending while those fans' setting differs from the one in effect.
+        let staged_setting = staged.and_then(|staged| setting_of(staged, fans));
+        let pending_mode = staged_setting
+            .filter(|&setting| {
+                in_effect
+                    .as_ref()
+                    .and_then(|in_effect| setting_of(in_effect, fans))
+                    != Some(setting)
+            })
+            .map(|setting| pending(&FanMode::of(setting).short_name().to_lowercase()));
         FanModeControl {
             modes,
-            pending: staged.map(|staged| pending(&staged_cooling_text(staged))),
+            pending: pending_mode,
             failed: self
                 .drafts
                 .by_gpu
@@ -995,29 +1056,77 @@ impl Core {
                 .map(|why| not_applied("Not applied", why.as_deref())),
             read_only: self.cooling_read_only(gpu),
             note: (!note.is_empty()).then(|| note.join(" ")),
+            arrangement: self.fan_arrangement(gpu),
+            can_recall: self.selected_gpu().as_ref() == Some(&gpu.id)
+                && self.recall_unavailable().is_none(),
         }
     }
 
-    /// The stepper of the fixed speed every fan of the GPU shares, while fixed speed is the mode
-    /// pending, or else the one in effect.
+    /// Which of the GPU's fans the cooling controls set, while it has more than one fan. Read-only,
+    /// fans that share one configuration have nothing to pick, and the fans can't be made to share
+    /// one.
+    fn fan_arrangement(&self, gpu: &Gpu) -> Option<FanArrangementControl> {
+        let fans = &cooling_read(gpu)?.fans;
+        let arrangement = self.shown_arrangement(gpu);
+        let read_only = self.cooling_read_only(gpu);
+        if fans.len() < 2 || (read_only.is_some() && arrangement == FanArrangement::Shared) {
+            return None;
+        }
+        let controlled = self.controlled_fans(gpu);
+        let in_effect = self.cooling_in_effect(gpu).as_ref().map(FanArrangement::of);
+        let every = FanChoice {
+            fan: None,
+            text: "all".into(),
+            name: FanArrangement::Shared.name().into(),
+            selected: controlled == Fans::Every,
+            unavailable: read_only,
+        };
+        let each = fans.iter().map(|fan| FanChoice {
+            fan: Some(fan.index),
+            text: fan.index.to_string(),
+            name: format!("Fan {}", fan.index),
+            selected: controlled == Fans::One(fan.index),
+            unavailable: None,
+        });
+        Some(FanArrangementControl {
+            choices: std::iter::once(every).chain(each).collect(),
+            arrangement,
+            pending: self
+                .staged_cooling(&gpu.id)
+                .map(FanArrangement::of)
+                .filter(|&staged| Some(staged) != in_effect)
+                .map(|staged| pending(&staged.name().to_lowercase())),
+        })
+    }
+
+    /// The stepper of the fixed speed of the fans the GPU's cooling controls set, while fixed
+    /// speed is their mode pending, or else the one in effect.
     fn fixed_fan_speed(&self, gpu: &Gpu) -> Option<Stepper> {
-        if self.shown_cooling(gpu).as_ref().and_then(mode_of) != Some(FanMode::Fixed) {
+        let fans = self.controlled_fans(gpu);
+        let shown = self.shown_cooling(gpu)?;
+        if mode_of(&shown, fans) != Some(FanMode::Fixed) {
             return None;
         }
         let in_effect_speed = self
             .cooling_in_effect(gpu)
             .as_ref()
-            .and_then(fixed_speed_of);
-        let staged_speed = self.staged_cooling(&gpu.id).and_then(fixed_speed_of);
-        let (min, max) = fixed_speed_range(cooling_read(gpu)?).ok()?;
+            .and_then(|in_effect| fixed_speed_of(in_effect, fans));
+        let staged_speed = self
+            .staged_cooling(&gpu.id)
+            .and_then(|staged| fixed_speed_of(staged, fans))
+            .filter(|&speed| Some(speed) != in_effect_speed);
+        let (min, max) = fixed_speed_range(cooling_read(gpu)?, fans).ok()?;
         let value = staged_speed.or(in_effect_speed).unwrap_or(min);
         // Under another mode, the fans' speed now is what's in effect.
         let readout = in_effect_speed
-            .map(|speed| speed.try_into().ok())
-            .unwrap_or_else(|| latest_readings(gpu).fan_speed_percent);
+            .or_else(|| speed_now(gpu, fans))
+            .and_then(|speed| speed.try_into().ok());
         Some(Stepper {
             setting: Tunable::FixedFanSpeed,
-            name: "Fixed fan speed".into(),
+            name: match fans {
+                Fans::Every => "Fixed fan speed".into(),
+                Fans::One(index) => format!("Fan {index} fixed speed"),
+            },
             value,
             value_text: Readout::percent(value.try_into().ok()).spoken(),
             min,
@@ -1043,6 +1152,14 @@ impl Core {
             apply_unavailable: draft.and_then(|_| self.changes_unavailable(&Command::ApplyChanges)),
             discard_unavailable: draft
                 .and_then(|_| self.changes_unavailable(&Command::DiscardChanges)),
+            review: self
+                .selected_gpu()
+                .filter(|id| self.cooling_changed_under(id))
+                .map(|_| {
+                    "The GPU's cooling changed since these changes were made. Review the change \
+                     before applying over it."
+                        .into()
+                }),
         }
     }
 }

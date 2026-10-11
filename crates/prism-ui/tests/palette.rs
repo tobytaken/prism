@@ -91,6 +91,7 @@ fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_tuning_r
             "Go to Settings: About",
             "Apply unapplied changes",
             "Discard unapplied changes",
+            "Recall remembered fan curve",
             "Show last 1 minute",
             "Show last 5 minutes",
             "Show last 15 minutes",
@@ -129,6 +130,7 @@ fn each_command_shows_its_shortcut() {
             "",
             "",
             "",
+            "",
             "Ctrl+Q"
         ]
     );
@@ -140,7 +142,7 @@ fn typing_fuzzy_matches_command_titles_regardless_of_case() {
     intent(&mut core, Intent::OpenPalette);
 
     for (query, expected) in [
-        ("drv", &["Go to Drivers"][..]),
+        ("drvrs", &["Go to Drivers"][..]),
         ("GTDRIV", &["Go to Drivers"]),
         (
             "go set",
@@ -339,7 +341,7 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 17);
+    assert_eq!(titles(&core).len(), 18);
 }
 
 #[test]
