@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use prism_gpu::fan_curve::FanCurveSupport;
 use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
 use prism_protocol::{ProfileSetting, ProfileSettingKey};
 
@@ -20,7 +21,6 @@ use crate::drafts::{
 use crate::format::{Readout, UNKNOWN, pending, short_bus_id, short_gpu_name, signed};
 use crate::palette::Command;
 use crate::telemetry::{Chart, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
-use prism_gpu::fan_curve::FanCurveSupport;
 
 /// The readings the sidebar shows for each GPU.
 const VITALS: [Metric; 4] = [
@@ -232,7 +232,7 @@ pub struct Track {
 pub struct FanModeControl {
     /// Every mode, left to right.
     pub modes: Vec<FanModeChoice>,
-    /// The cooling staged, as shown next to the control, such as "→ fixed 55%", while it's
+    /// The cooling staged, as shown next to the control, such as "→ fixed", while it's
     /// pending.
     pub pending: Option<String>,
     /// That the last Apply didn't put the pending cooling into effect, and why if prismd said,
@@ -248,6 +248,7 @@ pub struct FanModeControl {
 /// One of the fan control mode's choices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FanModeChoice {
+    /// The mode it picks.
     pub mode: FanMode,
     /// As shown, such as "Fixed speed".
     pub name: &'static str,
@@ -721,7 +722,7 @@ impl Core {
                 let fans = latest_device(gpu)
                     .map(|device| device.cooling.fans.as_slice())
                     .unwrap_or_default();
-                let fixed = self.fixed_fan_speed(gpu).map(|stepper| Detail {
+                let fixed_speed = self.fixed_fan_speed(gpu).map(|stepper| Detail {
                     label: "fixed speed".into(),
                     name: stepper.name.clone(),
                     readout: stepper.readout.clone(),
@@ -729,7 +730,7 @@ impl Core {
                     limit: None,
                     stepper: Some(stepper),
                 });
-                let details = fixed
+                let details = fixed_speed
                     .into_iter()
                     .chain(fans.iter().map(|fan| Detail {
                         label: format!("fan {}", fan.index),
@@ -874,17 +875,10 @@ impl Core {
     /// The fan control mode every fan of the GPU shares: the one pending, or else the one in
     /// effect.
     fn fan_mode(&self, gpu: &Gpu) -> FanModeControl {
-        let staged = self
-            .drafts
-            .by_gpu
-            .get(&gpu.id)
-            .and_then(|draft| Some((draft, draft.settings.cooling.as_ref()?)));
-        let shown = match staged {
-            Some((_, staged)) => mode_of(staged),
-            None => self.cooling_in_effect(gpu).as_ref().and_then(mode_of),
-        };
+        let staged = self.staged_cooling(&gpu.id);
+        let shown = self.shown_cooling(gpu).as_ref().and_then(mode_of);
         let cooling = cooling_read(gpu);
-        let curves = match self.curve_support(gpu) {
+        let curves_unavailable = match self.curve_support(gpu) {
             Some(FanCurveSupport::Unavailable { reason }) => Some(reason),
             Some(FanCurveSupport::Available { .. }) => None,
             None => {
@@ -899,11 +893,11 @@ impl Core {
                 selected: shown == Some(mode),
                 unavailable: match mode {
                     FanMode::Automatic => None,
-                    FanMode::Fixed => cooling
-                        .and_then(fixed_speed_range)
-                        .is_none()
-                        .then(|| "This GPU reports no fans to set a fixed speed for".into()),
-                    FanMode::Curve => curves.clone(),
+                    FanMode::Fixed => match cooling {
+                        Some(cooling) => fixed_speed_range(cooling).err().map(Into::into),
+                        None => cooling_unknown(gpu),
+                    },
+                    FanMode::Curve => curves_unavailable.clone(),
                 },
             })
             .collect();
@@ -914,13 +908,17 @@ impl Core {
             .get(&gpu.id)
             .and_then(|control| control.suspension.as_ref())
             .map(|suspension| suspension.reason.clone());
-        let curves = curves.filter(|_| gpu.capabilities.contains(&TuningControl::Cooling));
-        let note: Vec<_> = suspension.into_iter().chain(curves).collect();
+        let curves_unavailable =
+            curves_unavailable.filter(|_| gpu.capabilities.contains(&TuningControl::Cooling));
+        let note: Vec<_> = suspension.into_iter().chain(curves_unavailable).collect();
         FanModeControl {
             modes,
-            pending: staged.map(|(_, staged)| pending(&staged_cooling_text(staged))),
-            failed: staged
-                .and_then(|(draft, _)| draft.failed.get(&Staged::Cooling))
+            pending: staged.map(|staged| pending(&staged_cooling_text(staged))),
+            failed: self
+                .drafts
+                .by_gpu
+                .get(&gpu.id)
+                .and_then(|draft| draft.failed.get(&Staged::Cooling))
                 .map(|why| not_applied("Not applied", why.as_deref())),
             read_only: self.cooling_read_only(gpu),
             note: (!note.is_empty()).then(|| note.join(" ")),
@@ -930,22 +928,15 @@ impl Core {
     /// The stepper of the fixed speed every fan of the GPU shares, while fixed speed is the mode
     /// pending, or else the one in effect.
     fn fixed_fan_speed(&self, gpu: &Gpu) -> Option<Stepper> {
-        let staged = self
-            .drafts
-            .by_gpu
-            .get(&gpu.id)
-            .and_then(|draft| draft.settings.cooling.as_ref());
-        let in_effect = self.cooling_in_effect(gpu);
-        let in_effect_speed = in_effect.as_ref().and_then(fixed_speed_of);
-        let staged_speed = staged.and_then(fixed_speed_of);
-        let fixed = match staged {
-            Some(staged) => mode_of(staged) == Some(FanMode::Fixed),
-            None => in_effect.as_ref().and_then(mode_of) == Some(FanMode::Fixed),
-        };
-        if !fixed {
+        if self.shown_cooling(gpu).as_ref().and_then(mode_of) != Some(FanMode::Fixed) {
             return None;
         }
-        let (min, max) = cooling_read(gpu).and_then(fixed_speed_range)?;
+        let in_effect_speed = self
+            .cooling_in_effect(gpu)
+            .as_ref()
+            .and_then(fixed_speed_of);
+        let staged_speed = self.staged_cooling(&gpu.id).and_then(fixed_speed_of);
+        let (min, max) = fixed_speed_range(cooling_read(gpu)?).ok()?;
         let value = staged_speed.or(in_effect_speed).unwrap_or(min);
         // Under another mode, the fans' speed now is what's in effect.
         let readout = in_effect_speed

@@ -100,11 +100,14 @@ export struct ChartView {
 // The fan control mode every fan of the GPU shares: automatic cooling, a fixed speed or a fan
 // curve as segments, with the cooling pending next to them, such as "→ fixed", `failure` when the
 // last Apply didn't put it into effect, and why it's read-only, when it is. `note` is what the user
-// should know about the GPU's cooling, such as why fan curves are unavailable, and `fixed-speed`
-// whether the track's details have the fixed speed's stepper.
+// should know about the GPU's cooling, such as why fan curves are unavailable, and
+// `has-fixed-speed` whether the track's details have the fixed speed's stepper.
+// `mode` is the mode picked as shown, such as "Auto", and `mode-text` as a screen reader says it.
 export struct FanModeView {
     modes: [SegmentView],
-    fixed-speed: bool,
+    mode: string,
+    mode-text: string,
+    has-fixed-speed: bool,
     pending: string,
     failure: string,
     read-only: bool,

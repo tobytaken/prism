@@ -11,7 +11,6 @@ use prism_protocol::{
 };
 
 use crate::cooling::FanMode;
-
 use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::drafts::{DialogState, Drafts};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};

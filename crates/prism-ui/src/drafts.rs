@@ -26,7 +26,7 @@ pub(crate) struct Draft {
     pub(crate) settings: ProfileSettings,
     /// The GPU's fans as the user saw them when staging cooling, which prismd checks before it
     /// writes the cooling setting.
-    fans: Vec<u32>,
+    fan_indexes: Vec<u32>,
     /// Each staged setting the last Apply didn't put into effect, with why if prismd said, until
     /// it's staged again.
     pub(crate) failed: BTreeMap<Staged, Option<String>>,
@@ -251,7 +251,7 @@ impl Core {
         id: String,
         configuration: Option<CoolingConfiguration>,
     ) -> Vec<Effect> {
-        let fans = self
+        let fan_indexes = self
             .gpus()
             .iter()
             .find(|gpu| gpu.id == id)
@@ -260,7 +260,7 @@ impl Core {
             .unwrap_or_default();
         self.edit_draft(id, Staged::Cooling, |draft| {
             draft.settings.cooling = configuration;
-            draft.fans = fans;
+            draft.fan_indexes = fan_indexes;
         })
     }
 
@@ -280,7 +280,7 @@ impl Core {
             revision,
             base,
             settings: ProfileSettings::default(),
-            fans: Vec::new(),
+            fan_indexes: Vec::new(),
             failed: BTreeMap::new(),
             outcome: None,
             follow: None,
@@ -325,7 +325,11 @@ impl Core {
             gpu_id: id.clone(),
             settings: draft.settings.clone(),
             expected_revision: draft.revision.clone(),
-            fan_indexes: draft.settings.cooling.is_some().then(|| draft.fans.clone()),
+            fan_indexes: draft
+                .settings
+                .cooling
+                .is_some()
+                .then(|| draft.fan_indexes.clone()),
         });
         let seen = self.revision_of(&id);
         self.drafts.applying.insert(id, Applying { command, seen });

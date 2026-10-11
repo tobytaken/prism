@@ -262,19 +262,13 @@ impl Inner {
         intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
         let inner = Rc::downgrade(this);
         intents.on_stage(move |setting, value| {
-            let intent = match setting_key(setting) {
-                Some(key) => Intent::Stage(key, value.into()),
-                None => Intent::StageFanSpeed(value.into()),
-            };
+            let intent = stage_intent(setting, value.into());
             with_inner(&inner, |inner| inner.handle(Input::Intent(intent)));
         });
         let inner = Rc::downgrade(this);
         intents.on_use_default(move |setting| {
-            // The fixed fan speed has no default to use.
-            if let Some(key) = setting_key(setting) {
-                with_inner(&inner, |inner| {
-                    inner.handle(Input::Intent(Intent::UseDefault(key)))
-                });
+            if let Some(intent) = use_default_intent(setting) {
+                with_inner(&inner, |inner| inner.handle(Input::Intent(intent)));
             }
         });
         let inner = Rc::downgrade(this);
@@ -604,13 +598,23 @@ fn with_inner<T>(inner: &Weak<Inner>, f: impl FnOnce(&Inner) -> T) -> Option<T> 
     inner.upgrade().map(|inner| f(&inner))
 }
 
-/// The setting a stepper stages.
-/// The profile setting a stepper stages, or none for the fixed fan speed.
-fn setting_key(setting: TuningSetting) -> Option<ProfileSettingKey> {
-    Some(match setting {
+/// What staging `value` with the stepper of `setting` asks for.
+fn stage_intent(setting: TuningSetting, value: i64) -> Intent {
+    match setting {
+        TuningSetting::PowerLimit => Intent::Stage(ProfileSettingKey::PowerLimitWatts, value),
+        TuningSetting::GraphicsOffset => Intent::Stage(ProfileSettingKey::GraphicsOffsetMhz, value),
+        TuningSetting::MemoryOffset => Intent::Stage(ProfileSettingKey::MemoryOffsetMhz, value),
+        TuningSetting::FanSpeed => Intent::StageFanSpeed(value),
+    }
+}
+
+/// What Use default on the stepper of `setting` asks for; the fixed fan speed has no default.
+fn use_default_intent(setting: TuningSetting) -> Option<Intent> {
+    let key = match setting {
         TuningSetting::PowerLimit => ProfileSettingKey::PowerLimitWatts,
         TuningSetting::GraphicsOffset => ProfileSettingKey::GraphicsOffsetMhz,
         TuningSetting::MemoryOffset => ProfileSettingKey::MemoryOffsetMhz,
         TuningSetting::FanSpeed => return None,
-    })
+    };
+    Some(Intent::UseDefault(key))
 }

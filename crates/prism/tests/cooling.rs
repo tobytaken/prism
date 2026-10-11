@@ -177,5 +177,13 @@ fn without_tuning_access_the_fan_control_mode_is_read_only_with_the_reason() {
             .len(),
         0
     );
-    assert_eq!(harness.count(Text, "Automatic"), 1);
+    assert_eq!(fan_mode(&harness).accessible_read_only(), Some(true));
+    // Read-only, the mode in effect still takes focus and says itself.
+    let mode = harness.find(Text, "Fan control mode");
+    assert_eq!(mode.accessible_value().as_deref(), Some("Automatic"));
+    assert_eq!(mode.accessible_read_only(), Some(true));
+    assert_eq!(
+        mode.accessible_description().as_deref(),
+        Some("bob isn't in group wheel")
+    );
 }

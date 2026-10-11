@@ -992,7 +992,7 @@ impl DaemonCore {
     /// Queues a tuning write on the GPU's operation queue. Every operation on a GPU's fans runs
     /// there, so when one changed Prism's control of them, it pushes the new control to every
     /// session.
-    fn submit_write<T: Send + 'static>(
+    pub(super) fn submit_write<T: Send + 'static>(
         &self,
         gpu_id: &str,
         operation: impl FnOnce(&dyn DaemonBackend) -> T + Send + 'static,

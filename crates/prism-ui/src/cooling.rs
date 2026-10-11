@@ -3,7 +3,7 @@
 
 use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
 use prism_gpu::fan_curve::{self, FanCurveSupport};
-use prism_gpu::{CoolingInfo, FanControlMode};
+use prism_gpu::{CoolingInfo, FanControlInfo, FanControlMode};
 
 use crate::core::{Core, Effect, Gpu, Latest, TuningControl};
 
@@ -20,6 +20,7 @@ impl FanMode {
     /// Every mode, as the fan control mode offers them, left to right.
     pub const ALL: [Self; 3] = [Self::Automatic, Self::Fixed, Self::Curve];
 
+    /// The name as a screen reader says it, such as "Fixed speed".
     pub fn name(self) -> &'static str {
         match self {
             Self::Automatic => "Automatic",
@@ -82,6 +83,7 @@ pub(crate) fn staged_cooling_text(configuration: &CoolingConfiguration) -> Strin
     }
 }
 
+/// `setting` for every fan.
 fn shared(setting: FanSetting) -> CoolingConfiguration {
     CoolingConfiguration::Shared { setting }
 }
@@ -94,23 +96,19 @@ pub(crate) fn cooling_read(gpu: &Gpu) -> Option<&CoolingInfo> {
     }
 }
 
-/// The fixed speeds every fan of the GPU supports: from the highest minimum to the lowest
-/// maximum, taking a bound a fan doesn't report as 0% or 100%, as prismd does.
-pub(crate) fn fixed_speed_range(cooling: &CoolingInfo) -> Option<(i64, i64)> {
-    if cooling.fans.is_empty() {
-        return None;
+/// The fixed speeds every fan of the GPU accepts, from the highest minimum to the lowest maximum,
+/// or why they can't share one.
+pub(crate) fn fixed_speed_range(cooling: &CoolingInfo) -> Result<(i64, i64), &'static str> {
+    let (min, max) = cooling
+        .fans
+        .iter()
+        .map(FanControlInfo::speed_range)
+        .reduce(|(min, max), (fan_min, fan_max)| (min.max(fan_min), max.min(fan_max)))
+        .ok_or("This GPU reports no fans to set a fixed speed for")?;
+    if min > max {
+        return Err("The fans' supported speeds don't overlap, so they can't share a fixed speed");
     }
-    let min = cooling
-        .fans
-        .iter()
-        .map(|fan| fan.min_speed_percent.map_or(0, i64::from))
-        .max()?;
-    let max = cooling
-        .fans
-        .iter()
-        .map(|fan| fan.max_speed_percent.map_or(100, i64::from))
-        .min()?;
-    (min <= max).then_some((min, max))
+    Ok((min, max))
 }
 
 impl Core {
@@ -130,6 +128,18 @@ impl Core {
                 .iter()
                 .all(|fan| fan.mode == Some(FanControlMode::Auto)))
         .then(|| shared(FanSetting::Automatic {}))
+    }
+
+    /// The cooling the GPU's draft stages, if it stages any.
+    pub(crate) fn staged_cooling(&self, gpu_id: &str) -> Option<&CoolingConfiguration> {
+        self.drafts.by_gpu.get(gpu_id)?.settings.cooling.as_ref()
+    }
+
+    /// The cooling the fan control mode shows: the one pending, or else the one in effect.
+    pub(crate) fn shown_cooling(&self, gpu: &Gpu) -> Option<CoolingConfiguration> {
+        self.staged_cooling(&gpu.id)
+            .cloned()
+            .or_else(|| self.cooling_in_effect(gpu))
     }
 
     /// Whether a custom fan curve can control the GPU's fans, as its latest reading says.
@@ -152,15 +162,10 @@ impl Core {
         let setting = match mode {
             FanMode::Automatic => FanSetting::Automatic {},
             FanMode::Fixed => {
-                let Some((min, max)) = cooling_read(gpu).and_then(fixed_speed_range) else {
+                let Some(Ok((min, max))) = cooling_read(gpu).map(fixed_speed_range) else {
                     return Vec::new();
                 };
-                let staged = self
-                    .drafts
-                    .by_gpu
-                    .get(&gpu.id)
-                    .and_then(|draft| draft.settings.cooling.as_ref())
-                    .and_then(fixed_speed_of);
+                let staged = self.staged_cooling(&gpu.id).and_then(fixed_speed_of);
                 let now = match &gpu.latest {
                     Latest::Read(device) => device.telemetry.fan_speed_percent.map(i64::from),
                     Latest::Waiting | Latest::Missing { .. } => None,
@@ -186,7 +191,7 @@ impl Core {
         let Some(gpu) = self.stageable(TuningControl::Cooling) else {
             return Vec::new();
         };
-        let Some((min, max)) = cooling_read(gpu).and_then(fixed_speed_range) else {
+        let Some(Ok((min, max))) = cooling_read(gpu).map(fixed_speed_range) else {
             return Vec::new();
         };
         let id = gpu.id.clone();

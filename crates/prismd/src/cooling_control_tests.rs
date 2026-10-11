@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 
-use super::harness::{FakeGpuBackend, FakeSession, Harness, cooled_gpu};
+use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, cooled_gpu};
 
 fn curve() -> Value {
     json!({"arrangement": "shared", "setting": {"mode": "curve", "points": [
@@ -120,4 +120,34 @@ fn a_curve_following_the_temperature_pushes_no_cooling_control_change() {
     daemon.tick_telemetry();
 
     assert_eq!(pushed_controls(&alice), Vec::<Value>::new());
+}
+
+#[test]
+fn cooling_restored_at_startup_pushes_its_control_to_a_session_that_connected_meanwhile() {
+    let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    alice.seed_profiles(json!([{
+        "id": "cool", "name": "Cool", "gpu_id": "GPU-123",
+        "settings": { "cooling": fixed(55) }
+    }]));
+    for request in [
+        json!({ "type": "set_startup_profile", "payload": { "gpu_id": "GPU-123", "profile_id": "cool" } }),
+        json!({ "type": "set_startup_behavior", "payload": { "behavior": "startup_profiles" } }),
+    ] {
+        let response = alice.send_json(request);
+        assert_ne!(response["type"], "error", "{response}");
+    }
+    drop(alice);
+    let gate = daemon.gpus.block("GPU-123", Setter::FanSpeed);
+
+    daemon.reboot();
+    gate.wait_until_entered();
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(snapshot_controls(&alice)[0]["applied"], Value::Null);
+    gate.release();
+    daemon.core().wait_for_startup();
+
+    let pushed = pushed_controls(&alice);
+    assert_eq!(pushed.len(), 1, "{pushed:?}");
+    assert_eq!(pushed[0]["applied"], fixed(55));
 }

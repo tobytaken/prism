@@ -427,3 +427,36 @@ fn prismd_pushes_the_gpus_cooling_control_and_a_suspended_curve_says_why() {
 
     assert_eq!(fan_mode(&core).note.as_deref(), Some(reason));
 }
+
+#[test]
+fn fans_whose_speed_ranges_dont_overlap_cant_share_a_fixed_speed_and_say_so() {
+    let mut core = connected_reading(|cooling| {
+        cooling.fans[0].max_speed_percent = Some(40);
+        cooling.fans[1].min_speed_percent = Some(50);
+    });
+
+    let reason = unavailable(&core, FanMode::Fixed).expect("fixed speed is unavailable");
+    assert!(reason.contains("don't overlap"), "{reason}");
+    assert_eq!(
+        intent(&mut core, Intent::StageFanMode(FanMode::Fixed)),
+        Vec::new()
+    );
+}
+
+#[test]
+fn no_mode_is_staged_before_the_gpus_fans_have_been_read() {
+    let mut core = Core::default();
+    core.handle(Input::Launched {
+        appearance: AppearanceMode::System,
+    });
+    core.handle(Input::PrismdConnected {
+        welcome: welcome(true),
+        snapshot: snapshot(),
+        socket: "/run/prism/prismd.sock".into(),
+    });
+
+    for mode in FanMode::ALL {
+        assert_eq!(intent(&mut core, Intent::StageFanMode(mode)), Vec::new());
+    }
+    assert_eq!(changes(&core), "No unapplied changes");
+}

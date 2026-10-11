@@ -194,6 +194,8 @@ component FanMode inherits VerticalLayout {
             failure: root.fan-mode.failure;
             read-only: root.fan-mode.read-only;
             reason: root.fan-mode.reason;
+            value: root.fan-mode.mode;
+            value-text: root.fan-mode.mode-text;
             compact: root.short;
             chosen(index) => {
                 Intents.stage-fan-mode(index);
@@ -385,7 +387,7 @@ export component Track inherits Rectangle {
                             detail: detail;
                             short: root.short;
                         }
-                        if !detail.has-stepper && !(root.short && root.track.fan-mode.fixed-speed): Detail {
+                        if !detail.has-stepper && !(root.short && root.track.fan-mode.has-fixed-speed): Detail {
                             detail: detail;
                         }
                     }

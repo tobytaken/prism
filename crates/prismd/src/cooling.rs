@@ -1181,8 +1181,7 @@ pub(super) fn application_problems(
                     .iter()
                     .find(|fan| fan.index == *fan_index)
                     .unwrap();
-                let min = fan.min_speed_percent.map(i64::from).unwrap_or(0);
-                let max = fan.max_speed_percent.map(i64::from).unwrap_or(100);
+                let (min, max) = fan.speed_range();
                 if !(min..=max).contains(speed_percent) {
                     problems.push(format!(
                         "Fan {}: speed must be between {min}% and {max}%.",

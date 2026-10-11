@@ -3,7 +3,7 @@
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use prism_protocol::ProfileSettingKey;
-use prism_ui::format::Readout;
+use prism_ui::format::{Readout, UNKNOWN};
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
     AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanModeControl,
@@ -351,9 +351,14 @@ fn fan_mode_view(
             unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
         })
         .collect();
+    let picked = fan_mode.modes.iter().find(|choice| choice.selected);
     FanModeView {
         modes: reuse(current.map(|current| current.modes), modes),
-        fixed_speed: track
+        mode: picked
+            .map_or(UNKNOWN, |choice| choice.mode.short_name())
+            .into(),
+        mode_text: picked.map_or("unknown", |choice| choice.name).into(),
+        has_fixed_speed: track
             .details
             .iter()
             .filter_map(|detail| detail.stepper.as_ref())

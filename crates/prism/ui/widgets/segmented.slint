@@ -61,8 +61,8 @@ component Segment inherits Rectangle {
 
 // A row of segments, at most one of them picked, such as the range picker. A tuning value's row
 // draws `pending`, such as "→ fixed", next to it, in the danger color with `failure` when the last
-// Apply didn't put it into effect. Read-only, it shows only the picked segment, with no
-// affordances, and says why in its description.
+// Apply didn't put it into effect. Read-only, it shows only `value`, the picked segment, with no
+// affordances, still takes focus, and says why in its description.
 export component Segmented inherits Rectangle {
     in property <[SegmentView]> segments;
     // What the row as a whole is, such as "Range".
@@ -72,16 +72,23 @@ export component Segmented inherits Rectangle {
     in property <bool> read-only;
     // Why it's read-only, when it is.
     in property <string> reason;
+    // Read-only, the picked segment as shown, such as "Auto", and as a screen reader says it, such
+    // as "Automatic".
+    in property <string> value;
+    in property <string> value-text;
     // As tall as a stepper, where lines close up.
     in property <bool> compact;
     property <length> segment-height: root.compact ? Theme.size.stepper : Theme.size.segment;
     callback chosen(index: int);
 
+    property <string> pending-description: failure != "" ? "\{pending}. \{failure}" : pending;
+
     accessible-role: groupbox;
     accessible-label: label;
-    accessible-description: read-only ? reason
-        : failure != "" ? "\{pending}. \{failure}"
-        : pending;
+    accessible-read-only: read-only;
+    accessible-description: !read-only ? pending-description
+        : pending != "" ? "\{reason}. \{pending-description}"
+        : reason;
     width: row.preferred-width;
     height: root.read-only ? row.preferred-height : root.segment-height;
 
@@ -98,15 +105,20 @@ export component Segmented inherits Rectangle {
             }
         }
 
-        if root.read-only: HorizontalLayout {
-            for segment in root.segments: HorizontalLayout {
-                if segment.selected: StyledText {
-                    text: segment.text;
-                    style: Theme.text.value;
-                    vertical-alignment: center;
-                    accessible-role: text;
-                    accessible-label: segment.label;
-                }
+        // Read-only, it still takes focus, so the keyboard reaches it and why it's read-only.
+        if root.read-only: FocusScope {
+            accessible-role: text;
+            accessible-label: root.label;
+            accessible-value: root.value-text;
+            accessible-description: root.reason;
+            accessible-read-only: true;
+            width: shown.preferred-width;
+
+            shown := StyledText {
+                text: root.value;
+                style: Theme.text.value;
+                vertical-alignment: center;
+                accessible-role: none;
             }
         }
 
