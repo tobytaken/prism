@@ -180,6 +180,8 @@ pub enum LimitKind {
     Configured,
     /// The power limit the GPU enforces, which other constraints can hold below the configured one.
     Enforced,
+    /// The power limit staged to replace the configured one, until it's applied or discarded.
+    Pending,
 }
 
 /// A limit drawn across a chart at `y`, which runs from the top (0) to the bottom (1).

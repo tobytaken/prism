@@ -68,7 +68,7 @@ fn selected_gpu(core: &Core) -> Option<String> {
 }
 
 #[test]
-fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_ranges_and_quit() {
+fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_tuning_ranges_and_quit() {
     let mut core = launched(SimulatedFixture::TwoIdenticalGpus);
     assert!(core.palette().is_none());
 
@@ -89,6 +89,8 @@ fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_ranges_a
             "Go to Settings: Notifications",
             "Go to Settings: Daemon",
             "Go to Settings: About",
+            "Apply unapplied changes",
+            "Discard unapplied changes",
             "Show last 1 minute",
             "Show last 5 minutes",
             "Show last 15 minutes",
@@ -121,6 +123,8 @@ fn each_command_shows_its_shortcut() {
             "",
             "",
             "",
+            "Ctrl+Enter",
+            "Ctrl+Shift+Backspace",
             "",
             "",
             "",
@@ -335,7 +339,7 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 15);
+    assert_eq!(titles(&core).len(), 17);
 }
 
 #[test]
