@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use prism_gpu::{GpuInventoryResponse, GpuPerformanceResponse};
+use prism_gpu::{
+    ControlSupport, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
+};
 use prism_protocol::{DaemonEvent, DaemonRequest, DaemonSnapshot, Incompatible, Welcome};
 
 use crate::palette::{Command, PaletteState, Shortcut};
@@ -42,6 +44,64 @@ pub enum NotConnected {
     Unavailable { message: String },
     /// prismd speaks a protocol this Prism can't.
     Incompatible(Incompatible),
+}
+
+/// Whether this Prism can change GPU tuning at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TuningAccess {
+    Granted,
+    /// Every control is read-only, for this short reason, such as "not connected".
+    ReadOnly {
+        reason: String,
+    },
+}
+
+impl TuningAccess {
+    /// What the prismd connection allows. Tuning goes only through a session whose user prismd
+    /// lets tune: there is no other write path, even for a Prism run as root (ADR 0010).
+    pub fn of(connection: &PrismdConnection) -> Self {
+        let reason = match connection {
+            PrismdConnection::Connected(welcome) if welcome.can_tune => return Self::Granted,
+            PrismdConnection::Connected(welcome) => {
+                welcome.reason.as_deref().unwrap_or("not allowed")
+            }
+            PrismdConnection::Connecting => "connecting",
+            // Why not, in detail, comes with the connection reasons (#132).
+            PrismdConnection::NotConnected(NotConnected::Unavailable { .. }) => "not connected",
+            PrismdConnection::NotConnected(NotConnected::Incompatible(_)) => "incompatible version",
+        };
+        Self::ReadOnly {
+            reason: reason.to_owned(),
+        }
+    }
+}
+
+/// A tuning control a GPU can offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuningControl {
+    PowerLimit,
+    GraphicsClockOffset,
+    MemoryClockOffset,
+    Cooling,
+}
+
+impl TuningControl {
+    pub const ALL: [Self; 4] = [
+        Self::PowerLimit,
+        Self::GraphicsClockOffset,
+        Self::MemoryClockOffset,
+        Self::Cooling,
+    ];
+
+    /// Whether the GPU, as read, has the GPU control capability for this control.
+    fn supported_by(self, gpu: &GpuPerformanceDevice) -> bool {
+        match self {
+            Self::PowerLimit => gpu.power.support == ControlSupport::Supported,
+            Self::GraphicsClockOffset => gpu.clocks.graphics.support == ControlSupport::Supported,
+            Self::MemoryClockOffset => gpu.clocks.memory.support == ControlSupport::Supported,
+            Self::Cooling => gpu.cooling.is_supported,
+        }
+    }
 }
 
 /// A part of Prism the sidebar leads to, other than a GPU.
@@ -177,6 +237,8 @@ pub(crate) struct Gpu {
     pub(crate) bus_id: Option<String>,
     pub(crate) history: TelemetryHistory,
     pub(crate) latest: Latest,
+    /// The controls the latest reading said the GPU supports.
+    pub(crate) capabilities: Vec<TuningControl>,
 }
 
 /// What the latest telemetry sample said about a GPU.
@@ -273,13 +335,14 @@ impl Core {
             .gpus
             .into_iter()
             .map(|device| {
-                let (history, latest) = match known.iter().position(|gpu| gpu.id == device.id) {
-                    Some(index) => {
-                        let gpu = known.swap_remove(index);
-                        (gpu.history, gpu.latest)
-                    }
-                    None => (TelemetryHistory::default(), Latest::Waiting),
-                };
+                let (history, latest, capabilities) =
+                    match known.iter().position(|gpu| gpu.id == device.id) {
+                        Some(index) => {
+                            let gpu = known.swap_remove(index);
+                            (gpu.history, gpu.latest, gpu.capabilities)
+                        }
+                        None => (TelemetryHistory::default(), Latest::Waiting, Vec::new()),
+                    };
                 Gpu {
                     id: device.id,
                     name: device.name,
@@ -287,6 +350,7 @@ impl Core {
                     bus_id: device.bus_id,
                     history,
                     latest,
+                    capabilities,
                 }
             })
             .collect();
@@ -322,6 +386,10 @@ impl Core {
                     let readings = Readings::from(&device.telemetry);
                     gpu.history.record(received_at, readings);
                     gpu.latest = Latest::Read(readings);
+                    gpu.capabilities = TuningControl::ALL
+                        .into_iter()
+                        .filter(|control| control.supported_by(device))
+                        .collect();
                 }
                 None => {
                     gpu.history.record(received_at, Readings::default());
@@ -331,6 +399,7 @@ impl Core {
                         sample.warnings.join(" ")
                     };
                     gpu.latest = Latest::Missing { reason };
+                    gpu.capabilities.clear();
                 }
             }
         }
@@ -398,6 +467,20 @@ impl Core {
 
     pub fn prismd(&self) -> &PrismdConnection {
         &self.prismd
+    }
+
+    pub fn tuning_access(&self) -> TuningAccess {
+        TuningAccess::of(&self.prismd)
+    }
+
+    /// Whether the GPU's control can be changed: only with tuning access and the GPU control
+    /// capability for it.
+    pub fn editable(&self, gpu_id: &str, control: TuningControl) -> bool {
+        self.tuning_access() == TuningAccess::Granted
+            && self
+                .gpus()
+                .iter()
+                .any(|gpu| gpu.id == gpu_id && gpu.capabilities.contains(&control))
     }
 
     pub fn appearance(&self) -> AppearanceMode {

@@ -1,7 +1,57 @@
 import { Theme } from "../theme.slint";
-import { Divider, StyledText } from "../widgets.slint";
-import { WorkspaceView } from "../state.slint";
+import { Divider, LinkButton, StyledText } from "../widgets.slint";
+import { Intents, Section, WorkspaceView } from "../state.slint";
 import { TemperatureTrack } from "temperature-track.slint";
+
+// Why every control is read-only, and where to fix it: "Tuning needs prismd · reason · Set up".
+component TuningNeedsPrismd inherits Rectangle {
+    in property <string> reason;
+
+    height: Theme.size.notice;
+
+    HorizontalLayout {
+        padding-left: Theme.space.xxl;
+        padding-right: Theme.space.xxl;
+        spacing: Theme.space.s;
+        alignment: start;
+
+        Rectangle {
+            accessible-role: text;
+            accessible-label: "Tuning needs prismd";
+            accessible-value: root.reason;
+            width: line.preferred-width;
+
+            line := HorizontalLayout {
+                spacing: Theme.space.s;
+
+                StyledText {
+                    text: "Tuning needs prismd";
+                    style: Theme.text.body;
+                    accessible-role: none;
+                }
+
+                for part in ["·", root.reason, "·"]: StyledText {
+                    text: part;
+                    style: Theme.text.body;
+                    color: Theme.color.ink-muted;
+                    accessible-role: none;
+                }
+            }
+        }
+
+        // Settings → Daemon lands with the connection reasons (#132).
+        LinkButton {
+            text: "Set up";
+            activated => {
+                Intents.go-to(Section.settings);
+            }
+        }
+    }
+
+    Divider {
+        y: parent.height - self.height;
+    }
+}
 
 // The selected GPU's workspace: its header, then one full-width track per metric.
 export component Workspace inherits Rectangle {
@@ -32,6 +82,11 @@ export component Workspace inherits Rectangle {
             Divider {
                 y: parent.height - self.height;
             }
+        }
+
+        // The change strip lands above this line.
+        if root.workspace.no-tuning-access != "": TuningNeedsPrismd {
+            reason: root.workspace.no-tuning-access;
         }
 
         TemperatureTrack {

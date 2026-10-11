@@ -2,6 +2,7 @@
 
 use crate::core::{
     Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
+    TuningAccess,
 };
 use crate::format::{Readout, short_bus_id, short_gpu_name};
 use crate::telemetry::{Chart, Metric, Readings};
@@ -70,6 +71,8 @@ pub struct GpuWorkspace {
     pub title: String,
     /// Index, bus id and architecture, such as "GPU 0 · 01:00.0 · Blackwell".
     pub subtitle: String,
+    /// Why there's no tuning access, for the inline "Tuning needs prismd" line; none with it.
+    pub no_tuning_access: Option<String>,
     pub temperature: TemperatureTrack,
 }
 
@@ -226,6 +229,10 @@ impl Core {
             id: gpu.id.clone(),
             title: gpu.name.clone(),
             subtitle,
+            no_tuning_access: match self.tuning_access() {
+                TuningAccess::Granted => None,
+                TuningAccess::ReadOnly { reason } => Some(reason),
+            },
             temperature: self.temperature_track(gpu),
         }
     }

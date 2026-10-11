@@ -8,12 +8,12 @@ use i_slint_backend_testing::AccessibleRole;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuPerformanceResponse, GpuTelemetryProvider};
 use prism_protocol::DaemonRequest;
-use prism_ui::Content;
+use prism_ui::{Content, Section};
 
 use support::prismd::DaemonState;
 use support::{Harness, texts};
 
-use AccessibleRole::{ListItem, Text};
+use AccessibleRole::{Button, ListItem, Text};
 
 const TUNABLE_GPU: &str = "GPU 0 · RTX 5090 · 01:00.0";
 
@@ -130,4 +130,50 @@ fn an_incompatible_daemon_counts_as_no_connection_and_monitoring_continues_in_pr
     assert_eq!(temperature_samples(&harness), [2]);
     harness.find(Text, "PRISMD NOT CONNECTED");
     harness.find(Text, "MONITORING IN-PROCESS");
+}
+
+#[test]
+fn without_prismd_the_workspace_says_tuning_needs_it_and_set_up_opens_settings() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+
+    let line = harness.find(Text, "Tuning needs prismd");
+    assert_eq!(line.accessible_value().as_deref(), Some("not connected"));
+
+    // Settings → Daemon lands with the connection reasons (#132).
+    harness
+        .find(Button, "Set up")
+        .invoke_accessible_default_action();
+    assert_eq!(
+        harness.app.core().content(),
+        Content::Section(Section::Settings)
+    );
+}
+
+#[test]
+fn a_user_prismd_wont_let_tune_is_told_which_group_they_lack_and_monitors_through_prismd() {
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::ReadOnly);
+
+    harness.prismd_tick(reading(64));
+
+    assert_eq!(
+        harness
+            .find(Text, "Tuning needs prismd")
+            .accessible_value()
+            .as_deref(),
+        Some("bob isn't in group wheel")
+    );
+    assert_eq!(harness.in_process_reads(), 0);
+    harness.find(Text, "PRISMD CONNECTED");
+    harness.find(Text, "MONITORING THROUGH PRISMD");
+}
+
+#[test]
+fn with_tuning_access_the_workspace_has_no_tuning_needs_prismd_line() {
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::Running);
+
+    harness.prismd_tick(reading(64));
+
+    assert_eq!(harness.count(Text, "Tuning needs prismd"), 0);
+    assert_eq!(harness.count(Button, "Set up"), 0);
 }

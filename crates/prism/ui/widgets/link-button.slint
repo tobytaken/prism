@@ -1,0 +1,30 @@
+import { Theme } from "../theme.slint";
+import { PressArea } from "press-area.slint";
+import { StyledText } from "styled-text.slint";
+
+// A button that reads as a word in a line of text, such as the "Set up" that ends an explanation.
+export component LinkButton inherits Rectangle {
+    in property <string> text;
+    callback activated();
+
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => {
+        root.activated();
+    }
+    forward-focus: press;
+    width: label.preferred-width + 2 * Theme.space.xs;
+    background: press.has-hover ? Theme.color.hover : transparent;
+
+    press := PressArea {
+        activated => {
+            root.activated();
+        }
+    }
+
+    label := StyledText {
+        text: root.text;
+        style: Theme.text.name;
+        accessible-role: none;
+    }
+}

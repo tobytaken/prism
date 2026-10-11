@@ -16,10 +16,14 @@ use support::audit::{
 };
 use support::prismd::DaemonState;
 
-/// Audits the window in `state`. Until the GUI connects to prismd (#120, step 7) no state has
-/// tuning access, so every control must be read-only.
+/// Audits the window in `state`, with the tuning access its prismd connection gives: without it,
+/// every control must be read-only.
 fn audit(state: &str, harness: &Harness) {
-    assert_accessible(state, harness.app.window(), TuningAccess::Denied);
+    let access = match harness.app.core().tuning_access() {
+        prism_ui::TuningAccess::Granted => TuningAccess::Granted,
+        prism_ui::TuningAccess::ReadOnly { .. } => TuningAccess::Denied,
+    };
+    assert_accessible(state, harness.app.window(), access);
 }
 
 /// The rows of the sidebar list labeled `list`, by label.
@@ -80,6 +84,10 @@ fn every_fixture_state_is_accessible() {
 
     for (daemon, state) in [
         (DaemonState::Running, "connected to prismd"),
+        (
+            DaemonState::ReadOnly,
+            "connected to prismd without tuning access",
+        ),
         (DaemonState::Incompatible, "with an incompatible prismd"),
     ] {
         let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, daemon);
@@ -90,6 +98,11 @@ fn every_fixture_state_is_accessible() {
 
 /// Every `accessible-action-*` a widget or view declares, and the test below that invokes it.
 const ACTION_TESTS: &[(&str, &str, &str)] = &[
+    (
+        "LinkButton",
+        "default",
+        "a_link_button_s_default_action_activates_it",
+    ),
     (
         "ListRow",
         "default",
@@ -200,6 +213,23 @@ fn a_palette_row_s_default_action_runs_its_command() {
 }
 
 #[test]
+fn a_link_button_s_default_action_activates_it() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+
+    harness
+        .find(AccessibleRole::Button, "Set up")
+        .invoke_accessible_default_action();
+
+    assert_eq!(
+        harness
+            .find(AccessibleRole::ListItem, "Settings")
+            .accessible_item_selected(),
+        Some(true)
+    );
+}
+
+#[test]
 fn the_window_buttons_default_actions_minimize_maximize_and_close() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     let window = harness.app.window().window();
@@ -249,6 +279,7 @@ fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
             "Games",
             "Drivers",
             "Settings",
+            "Set up",
         ]
     );
     assert_eq!(
