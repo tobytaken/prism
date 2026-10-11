@@ -1,0 +1,116 @@
+import { Theme } from "../theme.slint";
+import { Button, ButtonKind, Dialog, StyledText } from "../widgets.slint";
+import { AppState, Intents, ReviewChangeView } from "../state.slint";
+
+// A current tuning value that changed under the draft: the setting, from what to what, and what
+// the draft stages for it.
+component Change inherits Rectangle {
+    in property <ReviewChangeView> change;
+
+    accessible-role: text;
+    accessible-label: change.name;
+    accessible-value: change.change;
+    accessible-description: change.yours;
+    height: row.preferred-height;
+
+    row := HorizontalLayout {
+        spacing: Theme.space.m;
+
+        StyledText {
+            width: Theme.size.fact-label;
+            text: root.change.name;
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        StyledText {
+            horizontal-stretch: 1;
+            text: root.change.change;
+            style: Theme.text.value;
+            accessible-role: none;
+        }
+
+        if root.change.yours != "": StyledText {
+            text: root.change.yours;
+            style: Theme.text.value;
+            color: Theme.color.accent;
+            accessible-role: none;
+        }
+    }
+}
+
+// The actions along a dialog's bottom edge, at its end.
+component Actions inherits HorizontalLayout {
+    alignment: end;
+    spacing: Theme.space.s;
+    padding-top: Theme.space.s;
+}
+
+// prismd refused an Apply because the GPU's tuning state changed since the draft was made: what
+// changed, then Discard, or Apply again over the new state. Escape keeps editing.
+export component ReviewDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    VerticalLayout {
+        spacing: Theme.space.xs;
+
+        for change in AppState.review-changes: Change {
+            change: change;
+        }
+    }
+
+    Actions {
+        Button {
+            text: "Discard";
+            kind: ButtonKind.quiet;
+            enabled: AppState.dialog.can-discard;
+            description: AppState.dialog.can-discard ? "Ctrl+Shift+Backspace" : AppState.dialog.discard-reason;
+            activated => {
+                Intents.discard-changes();
+            }
+        }
+
+        apply := Button {
+            text: "Apply again";
+            kind: ButtonKind.accent;
+            enabled: AppState.dialog.can-apply;
+            description: AppState.dialog.can-apply ? "Ctrl+Enter" : AppState.dialog.apply-reason;
+            init => {
+                self.focus();
+            }
+            activated => {
+                Intents.apply-changes();
+            }
+        }
+    }
+}
+
+// Closing with unapplied tuning changes: "N unapplied changes", then Discard and close, or Keep
+// editing, which Escape also does. There's no Apply here.
+export component CloseDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    Actions {
+        Button {
+            text: "Discard and close";
+            kind: ButtonKind.quiet;
+            activated => {
+                Intents.discard-and-close();
+            }
+        }
+
+        Button {
+            text: "Keep editing";
+            kind: ButtonKind.accent;
+            init => {
+                self.focus();
+            }
+            activated => {
+                Intents.dismiss();
+            }
+        }
+    }
+}

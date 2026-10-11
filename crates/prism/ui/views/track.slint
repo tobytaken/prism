@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { Area, Divider, Grid, LimitLine, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
+import { Area, Divider, Grid, LimitLine, LinkButton, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
 import { AppState, ChartPart, ChartView, DetailView, Intents, LimitMark, ReadoutView, StepperView, TrackView } from "../state.slint";
 
 component Statistic inherits Rectangle {
@@ -94,19 +94,41 @@ component Detail inherits Rectangle {
     }
 }
 
-// The configured limit's stepper, in its detail's place: how its line is drawn, its label, then
-// the stepper.
-component LimitStepper inherits Rectangle {
-    in property <DetailView> detail;
+// A tuning value's stepper, staging what it's changed to.
+component TuningStepper inherits Stepper {
     in property <StepperView> stepper;
 
-    height: row.preferred-height;
+    label: stepper.label;
+    value: stepper.value;
+    value-text: stepper.value-text;
+    minimum: stepper.minimum;
+    maximum: stepper.maximum;
+    step: stepper.step;
+    text: stepper.text;
+    pending: stepper.pending;
+    read-only: stepper.read-only;
+    reason: stepper.reason;
+    failure: stepper.failure;
+    changed(value) => {
+        Intents.stage(stepper.setting, value);
+    }
+}
 
-    row := HorizontalLayout {
-        alignment: start;
+// A tuning value tuned in place, such as the power limit or a clock offset: how its line is drawn
+// if it's a limit, its label and Use default, then its stepper with any pending value on a line of
+// its own. Read-only, it's one line like any other detail, with its value after its label.
+component TuningDetail inherits VerticalLayout {
+    in property <DetailView> detail;
+    // In a short track, its lines close up.
+    in property <bool> short;
+    property <StepperView> stepper: detail.stepper;
+
+    spacing: root.short ? 0 : Theme.space.xxs;
+
+    HorizontalLayout {
         spacing: Theme.space.s;
 
-        LimitKey {
+        if root.detail.mark != LimitMark.none: LimitKey {
             mark: root.detail.mark;
             known: root.detail.readout.known;
         }
@@ -119,21 +141,26 @@ component LimitStepper inherits Rectangle {
             accessible-role: none;
         }
 
-        Stepper {
-            label: root.stepper.label;
-            value: root.stepper.value;
-            value-text: root.stepper.value-text;
-            minimum: root.stepper.minimum;
-            maximum: root.stepper.maximum;
-            step: root.stepper.step;
-            text: root.stepper.text;
-            pending: root.stepper.pending;
-            read-only: root.stepper.read-only;
-            reason: root.stepper.reason;
-            changed(watts) => {
-                Intents.stage-power-limit(watts);
+        if root.stepper.read-only: TuningStepper {
+            stepper: root.stepper;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+
+        if root.stepper.can-use-default: LinkButton {
+            text: "default";
+            label: root.stepper.default-label;
+            style: Theme.text.value;
+            activated => {
+                Intents.use-default(root.stepper.setting);
             }
         }
+    }
+
+    if !root.stepper.read-only: TuningStepper {
+        stepper: root.stepper;
     }
 }
 
@@ -243,7 +270,7 @@ export component Track inherits Rectangle {
                 padding-bottom: root.head-padding;
                 padding-left: Theme.space.xxl;
                 padding-right: Theme.space.xxl;
-                spacing: Theme.space.xs;
+                spacing: root.short ? Theme.space.xxs : Theme.space.xs;
                 alignment: start;
 
                 StyledText {
@@ -295,15 +322,15 @@ export component Track inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    spacing: Theme.space.xxs;
+                    spacing: root.short ? 0 : Theme.space.xxs;
 
-                    // The configured limit is tuned in place with its stepper.
+                    // Tuning values are tuned in place with their steppers.
                     for detail in root.track.details: VerticalLayout {
-                        if root.track.has-stepper && detail.mark == LimitMark.solid: LimitStepper {
+                        if detail.has-stepper: TuningDetail {
                             detail: detail;
-                            stepper: root.track.stepper;
+                            short: root.short;
                         }
-                        if !(root.track.has-stepper && detail.mark == LimitMark.solid): Detail {
+                        if !detail.has-stepper: Detail {
                             detail: detail;
                         }
                     }

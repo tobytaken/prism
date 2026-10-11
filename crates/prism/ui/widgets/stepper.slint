@@ -28,8 +28,9 @@ component StepButton inherits Rectangle {
 
 // A whole number stepped through its allowed range: − and + step it, and so do ↑ and ↓ (×10 with
 // Shift) while it has focus, with Home and End for the ends. It shows `text`, the value in effect,
-// and draws `pending`, such as "→ 450 W", next to it. Read-only, it shows the value with no
-// affordances and says why in its description.
+// and draws `pending`, such as "→ 450 W", next to it, in the danger color with `failure` when the
+// last Apply didn't put it into effect. Read-only, it shows the value with no affordances and says
+// why in its description.
 export component Stepper inherits Rectangle {
     in property <string> label;
     // The value it steps from: the pending one, or else the one in effect, and as a screen reader
@@ -44,6 +45,9 @@ export component Stepper inherits Rectangle {
     in property <bool> read-only;
     // Why it's read-only, when it is.
     in property <string> reason;
+    // That the last Apply didn't put the pending value into effect, and why, such as "Not applied:
+    // Insufficient permissions", when it didn't.
+    in property <string> failure;
     callback changed(value: int);
     property <bool> keyboard-focus;
 
@@ -61,7 +65,10 @@ export component Stepper inherits Rectangle {
     accessible-value-maximum: maximum;
     accessible-value-step: step;
     accessible-read-only: read-only;
-    accessible-description: read-only ? reason : pending != "" ? "In effect \{text}, \{pending}" : "";
+    accessible-description: read-only ? reason
+        : pending == "" ? ""
+        : failure != "" ? "In effect \{text}, \{pending}. \{failure}"
+        : "In effect \{text}, \{pending}";
     accessible-action-increment => {
         set(value + step);
     }
@@ -72,7 +79,8 @@ export component Stepper inherits Rectangle {
         set(text.to-float().round());
     }
     forward-focus: keys;
-    height: Theme.size.stepper;
+    // Read-only, it's only its value, as tall as a line of text.
+    height: root.read-only ? row.preferred-height : Theme.size.stepper;
     width: row.preferred-width;
 
     // Read-only, it still takes focus, so the keyboard reaches it and why it's read-only.
@@ -135,7 +143,7 @@ export component Stepper inherits Rectangle {
         if root.pending != "": StyledText {
             text: root.pending;
             style: Theme.text.value;
-            color: Theme.color.accent;
+            color: root.failure != "" ? Theme.color.danger : Theme.color.accent;
             vertical-alignment: center;
             accessible-role: none;
         }

@@ -1,4 +1,4 @@
-import { Theme } from "../theme.slint";
+import { Theme, TextStyle } from "../theme.slint";
 import { PressArea } from "press-area.slint";
 import { StyledText } from "styled-text.slint";
 
@@ -8,6 +8,8 @@ export component LinkButton inherits Rectangle {
     // What a screen reader calls it, when `text` alone doesn't say, such as "Copy" next to one of
     // several commands.
     in property <string> label: text;
+    // Its text's style, such as the values' style next to a value.
+    in property <TextStyle> style: Theme.text.name;
     callback activated();
 
     accessible-role: button;
@@ -27,7 +29,7 @@ export component LinkButton inherits Rectangle {
 
     caption := StyledText {
         text: root.text;
-        style: Theme.text.name;
+        style: root.style;
         accessible-role: none;
     }
 }

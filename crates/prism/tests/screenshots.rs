@@ -73,10 +73,8 @@ mod screenshot {
         narrow_workspace(AppearanceMode::Dark, "workspace-minimum-dark", MINIMUM_SIZE);
     }
 
-    /// The workspace with tuning access and a pending power limit: the change strip with Discard
-    /// and Apply, the pending limit's line and EDIT HOLD.
-    fn pending_workspace(appearance: AppearanceMode, name: &str) {
-        init_rendering_backend();
+    /// The workspace with tuning access, connected `30` seconds into the tunable GPU's simulation.
+    fn tunable_workspace(appearance: AppearanceMode) -> Harness {
         let harness = Harness::with_daemon_in(
             SimulatedFixture::TunableGpu,
             appearance,
@@ -91,8 +89,23 @@ mod screenshot {
             );
         }
         harness
+    }
+
+    /// The workspace with tuning access and pending changes: a power limit, a graphics clock
+    /// offset and the memory clock offset's default. The change strip with Discard and Apply, the
+    /// pending limit's line and EDIT HOLD.
+    fn pending_workspace(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        harness
             .find(AccessibleRole::Spinbox, "Power limit")
             .set_accessible_value("450");
+        harness
+            .find(AccessibleRole::Spinbox, "Graphics clock offset")
+            .set_accessible_value("150");
+        harness
+            .find(AccessibleRole::Button, "Use default memory clock offset")
+            .invoke_accessible_default_action();
 
         assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
     }
@@ -105,6 +118,69 @@ mod screenshot {
     #[test]
     fn the_workspace_with_a_pending_power_limit_in_dark() {
         pending_workspace(AppearanceMode::Dark, "workspace-pending-dark");
+    }
+
+    /// The review a stale Apply opens: the power limit changed outside Prism under a pending one.
+    fn review(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        harness
+            .find(AccessibleRole::Spinbox, "Power limit")
+            .set_accessible_value("450");
+        harness
+            .find(AccessibleRole::Button, "Apply")
+            .invoke_accessible_default_action();
+        let mut state = prism_protocol::GpuTuningState {
+            revision: "changed".into(),
+            ..crate::support::prismd::snapshot().tuning_states[0].clone()
+        };
+        state.reported.power_limit_watts = Some(500);
+        harness
+            .prismd
+            .push(prism_protocol::DaemonEvent::TuningStateChanged(state));
+        harness.prismd.answer(prism_protocol::DaemonResponse::Error(
+            prism_gpu::GpuCommandError::new(
+                prism_gpu::GpuCommandErrorCode::StaleRevision,
+                "The GPU's tuning values changed since these changes were made.",
+            ),
+        ));
+        harness.app.receive_posted();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn the_review_of_a_stale_apply_in_light() {
+        review(AppearanceMode::Light, "review-light");
+    }
+
+    #[test]
+    fn the_review_of_a_stale_apply_in_dark() {
+        review(AppearanceMode::Dark, "review-dark");
+    }
+
+    /// Closing with unapplied changes: "1 unapplied change", Discard and close, Keep editing.
+    fn close_confirmation(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        harness
+            .find(AccessibleRole::Spinbox, "Power limit")
+            .set_accessible_value("450");
+        harness
+            .find(AccessibleRole::Button, "Close")
+            .invoke_accessible_default_action();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn the_close_confirmation_in_light() {
+        close_confirmation(AppearanceMode::Light, "close-confirmation-light");
+    }
+
+    #[test]
+    fn the_close_confirmation_in_dark() {
+        close_confirmation(AppearanceMode::Dark, "close-confirmation-dark");
     }
 
     /// The narrow workspace: no max/avg/min, and the fan curve's place in the Fans track.

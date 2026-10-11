@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
-use prism_gpu::GpuTelemetryProvider;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
+use prism_gpu::{GpuCommandError, GpuCommandErrorCode, GpuTelemetryProvider};
+use prism_protocol::DaemonResponse;
 use slint::ComponentHandle;
 
 use prism_ui::{PrismdInstall, ServiceAction, SettingsSection, UnitState};
@@ -172,6 +173,38 @@ fn a_pending_power_limit_is_accessible() {
     audit("tunable, pending power limit", &harness);
     harness.find(AccessibleRole::Button, "Apply");
     harness.find(AccessibleRole::Button, "Discard");
+
+    harness
+        .find(AccessibleRole::Spinbox, "Graphics clock offset")
+        .set_accessible_value("150");
+    harness
+        .find(AccessibleRole::Button, "Use default memory clock offset")
+        .invoke_accessible_default_action();
+    audit("tunable, pending offsets and a default", &harness);
+}
+
+#[test]
+fn the_review_and_the_close_confirmation_are_accessible() {
+    let (harness, stepper) = power_limit();
+    stepper.set_accessible_value("450");
+    harness
+        .find(AccessibleRole::Button, "Apply")
+        .invoke_accessible_default_action();
+    harness
+        .prismd
+        .answer(DaemonResponse::Error(GpuCommandError::new(
+            GpuCommandErrorCode::StaleRevision,
+            "The GPU's tuning values changed since these changes were made.",
+        )));
+    harness.app.receive_posted();
+    audit("tunable, review", &harness);
+    harness.find(AccessibleRole::Button, "Apply again");
+
+    harness.press(&[], slint::platform::Key::Escape);
+    harness.ctrl("q");
+    audit("tunable, close confirmation", &harness);
+    harness.find(AccessibleRole::Button, "Keep editing");
+    harness.find(AccessibleRole::Button, "Discard and close");
 }
 
 /// Every `accessible-action-*` a widget or view declares, and the test below that invokes it.
@@ -519,6 +552,8 @@ fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
             "Show last 1 hour",
             "Set up",
             "Power limit",
+            "Graphics clock offset",
+            "Memory clock offset",
             "Hardware details",
             "PRISMD · NOT RUNNING",
         ]
