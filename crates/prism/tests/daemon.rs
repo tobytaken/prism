@@ -59,7 +59,7 @@ fn fact(harness: &Harness, label: &str) -> String {
 
 #[test]
 fn the_status_bar_item_shows_the_reason_and_opens_settings_daemon() {
-    let harness = native(UnitState::Inactive);
+    let harness = native(UnitState::Inactive { enabled: false });
 
     open_daemon(&harness, "PRISMD · NOT RUNNING");
 
@@ -68,7 +68,7 @@ fn the_status_bar_item_shows_the_reason_and_opens_settings_daemon() {
         Some(true)
     );
     assert!(harness.shows("prismd isn't running"));
-    assert!(harness.shows("prismd is installed, but isn't enabled or has stopped."));
+    assert!(harness.shows("prismd is installed, but isn't enabled."));
     harness.find(Button, "Enable prismd");
 }
 
@@ -94,7 +94,7 @@ fn set_up_opens_settings_daemon() {
 
 #[test]
 fn settings_has_its_sections_and_only_daemon_is_built() {
-    let harness = native(UnitState::Inactive);
+    let harness = native(UnitState::Inactive { enabled: false });
     harness
         .find(ListItem, "Settings")
         .invoke_accessible_default_action();
@@ -139,7 +139,7 @@ fn not_installed_gives_the_install_commands_with_copy_buttons() {
 
 #[test]
 fn enable_starts_prismd_and_prism_connects() {
-    let harness = native(UnitState::Inactive);
+    let harness = native(UnitState::Inactive { enabled: false });
     open_daemon(&harness, "PRISMD · NOT RUNNING");
 
     press(&harness, "Enable prismd");
@@ -160,7 +160,7 @@ fn enable_starts_prismd_and_prism_connects() {
 
 #[test]
 fn canceling_the_polkit_prompt_leaves_settings_as_they_were() {
-    let harness = native(UnitState::Inactive);
+    let harness = native(UnitState::Inactive { enabled: false });
     harness.host.answer_next_run(ServiceOutcome::Canceled);
     open_daemon(&harness, "PRISMD · NOT RUNNING");
 

@@ -24,8 +24,8 @@ pub enum PrismdInstall {
 pub enum UnitState {
     /// systemd has no prismd.service: prismd isn't installed.
     NotFound,
-    /// Installed, but not enabled or stopped.
-    Inactive,
+    /// Installed, but not running: not enabled, or enabled and stopped.
+    Inactive { enabled: bool },
     /// Running, or starting.
     Active,
     /// systemd gave up on it, with its `Result`, such as "exit-code" or "watchdog".
@@ -46,21 +46,21 @@ pub struct Distro {
 }
 
 impl UnitState {
-    /// Reads `systemctl show prismd.service --property=LoadState,ActiveState,Result`.
+    /// Reads `systemctl show prismd.service
+    /// --property=LoadState,ActiveState,Result,UnitFileState`.
     pub fn from_systemctl_show(output: &str) -> Self {
         let properties = properties(output);
-        let property = |name: &str| {
-            properties
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| value.as_str())
-        };
+        let property = |name| property(&properties, name);
         if property("LoadState") == Some("not-found") {
             return Self::NotFound;
         }
         match property("ActiveState") {
             Some("active" | "activating" | "reloading" | "refreshing") => Self::Active,
-            Some("inactive" | "deactivating" | "maintenance") => Self::Inactive,
+            Some("inactive" | "deactivating" | "maintenance") => Self::Inactive {
+                // Also "enabled-runtime", enabled until the next boot.
+                enabled: property("UnitFileState")
+                    .is_some_and(|state| state.starts_with("enabled")),
+            },
             Some("failed") => Self::Failed {
                 result: property("Result").unwrap_or_default().to_owned(),
             },
@@ -78,12 +78,10 @@ impl Distro {
     /// Reads an os-release file, with its defaults for what it leaves out.
     pub fn from_os_release(contents: &str) -> Self {
         let properties = properties(contents);
-        let property = |name: &str| {
-            properties
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| value.clone())
+        let property = |name| {
+            property(&properties, name)
                 .filter(|value| !value.is_empty())
+                .map(str::to_owned)
         };
         Self {
             id: property("ID").unwrap_or_else(|| "linux".into()),
@@ -95,6 +93,14 @@ impl Distro {
                 .unwrap_or_else(|| "Linux".into()),
         }
     }
+}
+
+/// The value of the property `name` among `properties`, if it's there.
+fn property<'a>(properties: &'a [(&str, String)], name: &str) -> Option<&'a str> {
+    properties
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value.as_str())
 }
 
 /// The `KEY=value` lines of `text`, with any quotes around a value taken off and comments left

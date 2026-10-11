@@ -194,7 +194,7 @@ impl Harness {
         daemon: DaemonState,
         gpus: impl FnOnce(Arc<ManualClock>) -> GpuProviders,
     ) -> Self {
-        let install = PrismdInstall::Native(UnitState::Inactive);
+        let install = PrismdInstall::Native(UnitState::Inactive { enabled: false });
         Self::build_on(appearance, daemon, install, gpus)
     }
 

@@ -26,4 +26,4 @@ pub use crate::environment::{
     Clock, Environment, HostServices, Launches, NoLaunches, Sampling, SystemClock, WindowActivation,
 };
 pub use crate::prismd::{NoPrismd, PrismdConnector, PrismdReport, SocketConnector};
-pub use crate::prismd_host::{HostPrismd, PrismdService};
+pub use crate::prismd_host::{HostPrismdService, PrismdService};

@@ -46,7 +46,7 @@ fn native(unit: UnitState) -> Core {
 }
 
 fn not_running() -> Core {
-    native(UnitState::Inactive)
+    native(UnitState::Inactive { enabled: false })
 }
 
 fn intent(core: &mut Core, intent: Intent) -> Vec<Effect> {
@@ -122,7 +122,7 @@ fn canceling_polkit_s_prompt_leaves_everything_as_it_was() {
 }
 
 #[test]
-fn a_failed_service_action_says_why_until_the_next_attempt() {
+fn a_failed_service_action_says_why_until_another_one_ends() {
     let mut core = native(UnitState::Failed {
         result: "exit-code".into(),
     });
@@ -141,7 +141,15 @@ fn a_failed_service_action_says_why_until_the_next_attempt() {
         core.daemon_settings().error.as_deref(),
         Some("Couldn't restart prismd: Job for prismd.service failed.")
     );
+    // Canceling the next attempt's prompt changes nothing, the error included.
     intent(&mut core, Intent::RunService(ServiceAction::Restart));
+    done(&mut core, ServiceAction::Restart, ServiceOutcome::Canceled);
+    assert_eq!(
+        core.daemon_settings().error.as_deref(),
+        Some("Couldn't restart prismd: Job for prismd.service failed.")
+    );
+    intent(&mut core, Intent::RunService(ServiceAction::Restart));
+    done(&mut core, ServiceAction::Restart, ServiceOutcome::Done);
     assert_eq!(core.daemon_settings().error, None);
 }
 
@@ -226,7 +234,7 @@ fn copy_prismd_setup_command_copies_what_fixes_the_reason() {
             native(UnitState::Failed {
                 result: "exit-code".into(),
             }),
-            "sudo systemctl restart prismd",
+            "sudo systemctl reset-failed prismd && sudo systemctl restart prismd",
         ),
     ] {
         assert_eq!(

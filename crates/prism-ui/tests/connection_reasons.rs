@@ -109,7 +109,10 @@ fn every_combination_of_handshake_and_host_decides_the_reason() {
     let hosts = [
         ("not checked yet", None),
         ("unit not found", Some(native(UnitState::NotFound))),
-        ("unit inactive", Some(native(UnitState::Inactive))),
+        (
+            "unit inactive",
+            Some(native(UnitState::Inactive { enabled: false })),
+        ),
         ("unit active", Some(native(UnitState::Active))),
         ("unit failed", Some(native(failed()))),
         (
@@ -163,7 +166,9 @@ fn losing_the_session_checks_the_host_but_failed_reconnects_dont() {
         core.handle(unavailable()),
         [Effect::StartSampler, Effect::CheckPrismdHost]
     );
-    core.handle(Input::PrismdHostChecked(native(UnitState::Inactive)));
+    core.handle(Input::PrismdHostChecked(native(UnitState::Inactive {
+        enabled: false,
+    })));
     // The connector reports a reason once until it changes; the same one again checks nothing.
     assert_eq!(core.handle(unavailable()), []);
 
@@ -226,7 +231,10 @@ fn tuning_access_gives_each_reason_in_short() {
     };
     for (host, reason) in [
         (native(UnitState::NotFound), "not installed"),
-        (native(UnitState::Inactive), "not running"),
+        (
+            native(UnitState::Inactive { enabled: false }),
+            "not running",
+        ),
         (
             native(UnitState::Failed {
                 result: "exit-code".into(),

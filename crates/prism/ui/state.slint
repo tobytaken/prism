@@ -105,6 +105,8 @@ export global AppState {
     in property <bool> connected;
     in property <string> telemetry;
     in property <SettingsSection> settings-section;
+    // The open section's name, such as "Appearance".
+    in property <string> settings-section-name;
     in property <DaemonView> daemon;
     // Settings → Daemon's paragraphs, commands to copy and facts, in order.
     in property <[string]> daemon-paragraphs;

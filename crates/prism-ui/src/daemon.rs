@@ -4,7 +4,7 @@
 use prism_protocol::{Authorization, ProtocolVersion, Welcome};
 
 use crate::core::{Core, NotConnected, PrismdConnection, Session};
-use crate::host::{Distro, PrismdHost, PrismdInstall};
+use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 
 /// What Settings → Daemon shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,12 +63,13 @@ impl ServiceAction {
         }
     }
 
-    /// The verb for a failure, as in "Couldn't enable prismd".
-    fn verb(self) -> &'static str {
-        match self {
+    /// Why it failed, as `message` from systemctl says, for Settings → Daemon.
+    pub(crate) fn failure(self, message: &str) -> String {
+        let verb = match self {
             Self::Enable => "enable",
             Self::Restart => "restart",
-        }
+        };
+        format!("Couldn't {verb} prismd: {message}")
     }
 }
 
@@ -84,7 +85,8 @@ pub enum ServiceOutcome {
 }
 
 const ENABLE: &str = "sudo systemctl enable --now prismd";
-const RESTART: &str = "sudo systemctl restart prismd";
+// Resetting first also clears systemd's start limit, which a plain restart can't get past.
+const RESTART: &str = "sudo systemctl reset-failed prismd && sudo systemctl restart prismd";
 const JOURNAL: &str = "journalctl -u prismd -b";
 const WHY_PRISMD: &str = "Tuning, fan curves and game switching need prismd, Prism's host daemon. \
                           Monitoring works without it.";
@@ -116,9 +118,13 @@ impl Core {
                 settings.paragraphs.push(WHY_PRISMD.into());
                 match install_command(&distro) {
                     Some(install) => {
+                        let source = match install {
+                            AUR_INSTALL => "from the AUR, such as with yay".to_owned(),
+                            _ => format!("on {}", distro.name),
+                        };
                         settings
                             .paragraphs
-                            .push(format!("Install it on {}, then start it:", distro.name));
+                            .push(format!("Install it {source}, then start it:"));
                         settings.commands = vec![install.into(), ENABLE.into()];
                     }
                     None => {
@@ -138,13 +144,31 @@ impl Core {
             }
             PrismdConnection::NotConnected(NotConnected::NotRunning) => {
                 settings.title = "prismd isn't running".into();
-                let stopped = "prismd is installed, but isn't enabled or has stopped.";
-                if flatpak {
-                    settings.paragraphs = vec![format!("{stopped} Start it on the host:")];
-                    settings.commands = text(&[ENABLE]);
-                } else {
-                    settings.paragraphs = text(&[stopped]);
-                }
+                let unit = match self.host.as_ref().map(|host| &host.install) {
+                    Some(PrismdInstall::Native(unit)) => Some(unit),
+                    _ => None,
+                };
+                settings.paragraphs = match unit {
+                    Some(UnitState::Inactive { enabled: true }) => {
+                        text(&["prismd is enabled, but has stopped."])
+                    }
+                    Some(UnitState::Inactive { enabled: false }) => {
+                        text(&["prismd is installed, but isn't enabled."])
+                    }
+                    // As right after Enable, until the next attempt to connect.
+                    Some(UnitState::Active) => text(&[
+                        "systemd says prismd is running, but it isn't answering yet. Prism \
+                         connects as soon as it does.",
+                    ]),
+                    _ if flatpak => {
+                        settings.commands = text(&[ENABLE]);
+                        text(&[
+                            "prismd is installed, but isn't enabled or has stopped. Start it on \
+                             the host:",
+                        ])
+                    }
+                    _ => text(&["prismd is installed, but isn't enabled or has stopped."]),
+                };
             }
             PrismdConnection::NotConnected(NotConnected::Failed { result }) => {
                 settings.title = "prismd failed".into();
@@ -229,7 +253,7 @@ impl Core {
                     ),
                     format!("Add {user} to the group, then log out and back in so it applies:"),
                 ];
-                settings.commands = vec![format!("sudo usermod -aG {group} {user}")];
+                settings.commands = vec![usermod(user, group)];
             }
             None if !welcome.can_tune => settings.paragraphs = vec![format!("{reason}.")],
             _ => {}
@@ -249,17 +273,22 @@ impl Core {
     }
 
     /// The service action that fixes the connection natively, if any: Enable when prismd isn't
-    /// running, Restart when it failed. In Flatpak, Prism can't talk to systemd.
+    /// running and systemd doesn't say it is, Restart when it failed. In Flatpak, Prism can't talk
+    /// to systemd.
     pub(crate) fn service_action(&self) -> Option<ServiceAction> {
         let Some(PrismdHost {
-            install: PrismdInstall::Native(_),
+            install: PrismdInstall::Native(unit),
             ..
         }) = &self.host
         else {
             return None;
         };
         match self.prismd() {
-            PrismdConnection::NotConnected(NotConnected::NotRunning) => Some(ServiceAction::Enable),
+            PrismdConnection::NotConnected(NotConnected::NotRunning)
+                if *unit != UnitState::Active =>
+            {
+                Some(ServiceAction::Enable)
+            }
             PrismdConnection::NotConnected(NotConnected::Failed { .. }) => {
                 Some(ServiceAction::Restart)
             }
@@ -279,15 +308,17 @@ impl Core {
             PrismdConnection::Connected(Welcome {
                 authorization: Some(Authorization::NotInAdminGroup { user, group }),
                 ..
-            }) => format!("sudo usermod -aG {group} {user}"),
+            }) => usermod(&user, &group),
             _ => return None,
         })
     }
+}
 
-    /// Why a service action failed, for Settings → Daemon.
-    pub(crate) fn service_failed(action: ServiceAction, message: &str) -> String {
-        format!("Couldn't {} prismd: {message}", action.verb())
-    }
+const AUR_INSTALL: &str = "yay -S prismd";
+
+/// The command that adds `user` to `group`, which takes effect at their next login.
+fn usermod(user: &str, group: &str) -> String {
+    format!("sudo usermod -aG {group} {user}")
 }
 
 /// The command that installs prismd on `distro`, if Prism knows its package manager.
@@ -304,7 +335,7 @@ fn install_command(distro: &Distro) -> Option<&'static str> {
     } else if is(&["suse", "opensuse"]) {
         "sudo zypper install prismd"
     } else if is(&["arch"]) {
-        "yay -S prismd"
+        AUR_INSTALL
     } else {
         return None;
     })

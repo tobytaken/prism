@@ -88,6 +88,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         CoreSettingsSection::Daemon => SettingsSection::Daemon,
         CoreSettingsSection::About => SettingsSection::About,
     });
+    state.set_settings_section_name(core.settings_section().name().into());
     let daemon = core.daemon_settings();
     let action = daemon.action.as_ref();
     state.set_daemon(DaemonView {

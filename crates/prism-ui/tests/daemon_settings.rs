@@ -125,8 +125,6 @@ fn not_installed_gives_the_install_commands_for_the_host_s_distribution() {
             ),
             "sudo zypper install prismd",
         ),
-        (distro("arch", &[], "Arch Linux"), "yay -S prismd"),
-        (distro("cachyos", &["arch"], "CachyOS"), "yay -S prismd"),
     ] {
         let name = distro.name.clone();
         let core = unavailable(PrismdInstall::Native(UnitState::NotFound), distro);
@@ -144,6 +142,27 @@ fn not_installed_gives_the_install_commands_for_the_host_s_distribution() {
         );
         assert_eq!(settings.commands, strings(&[install, ENABLE]), "{name}");
         assert_eq!(settings.action, None, "{name}");
+    }
+}
+
+#[test]
+fn not_installed_on_arch_installs_from_the_aur() {
+    for distro in [
+        distro("arch", &[], "Arch Linux"),
+        distro("cachyos", &["arch"], "CachyOS"),
+    ] {
+        let core = unavailable(PrismdInstall::Native(UnitState::NotFound), distro);
+
+        let settings = core.daemon_settings();
+
+        assert_eq!(
+            settings.paragraphs,
+            strings(&[
+                WHY_PRISMD,
+                "Install it from the AUR, such as with yay, then start it:"
+            ])
+        );
+        assert_eq!(settings.commands, strings(&["yay -S prismd", ENABLE]));
     }
 }
 
@@ -188,14 +207,35 @@ fn not_installed_in_flatpak_says_to_restart_prism_after_installing() {
 #[test]
 fn not_running_natively_offers_to_enable_prismd() {
     assert_eq!(
-        native(UnitState::Inactive).daemon_settings(),
+        native(UnitState::Inactive { enabled: true })
+            .daemon_settings()
+            .paragraphs,
+        strings(&["prismd is enabled, but has stopped."])
+    );
+    assert_eq!(
+        native(UnitState::Inactive { enabled: false }).daemon_settings(),
         DaemonSettings {
-            paragraphs: strings(&["prismd is installed, but isn't enabled or has stopped."]),
+            paragraphs: strings(&["prismd is installed, but isn't enabled."]),
             action: Some(DaemonAction {
                 action: ServiceAction::Enable,
                 title: "Enable prismd".into(),
                 busy: false,
             }),
+            ..titled("prismd isn't running")
+        }
+    );
+}
+
+#[test]
+fn a_prismd_systemd_says_is_running_but_doesnt_answer_yet_needs_no_enabling() {
+    // As right after Enable, until Prism's next attempt to connect.
+    assert_eq!(
+        native(UnitState::Active).daemon_settings(),
+        DaemonSettings {
+            paragraphs: strings(&[
+                "systemd says prismd is running, but it isn't answering yet. Prism connects as \
+                 soon as it does."
+            ]),
             ..titled("prismd isn't running")
         }
     );

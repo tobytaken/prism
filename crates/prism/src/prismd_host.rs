@@ -22,12 +22,12 @@ pub trait PrismdService {
 
 /// The host Prism runs on, natively or in a Flatpak sandbox.
 #[derive(Debug, Clone)]
-pub struct HostPrismd {
+pub struct HostPrismdService {
     /// prismd's runtime directory, which holds its socket.
     run_dir: PathBuf,
 }
 
-impl HostPrismd {
+impl HostPrismdService {
     pub fn new(run_dir: impl Into<PathBuf>) -> Self {
         Self {
             run_dir: run_dir.into(),
@@ -64,7 +64,7 @@ impl HostPrismd {
     }
 }
 
-impl PrismdService for HostPrismd {
+impl PrismdService for HostPrismdService {
     fn check(&self, checked: Box<dyn FnOnce(PrismdHost) + Send>) {
         let host = self.clone();
         let started = thread::Builder::new()
@@ -79,20 +79,37 @@ impl PrismdService for HostPrismd {
         let started = thread::Builder::new()
             .name("prism-systemctl".into())
             .spawn(move || {
-                let arguments: &[&str] = match action {
-                    ServiceAction::Enable => &["enable", "--now", "prismd.service"],
-                    ServiceAction::Restart => &["restart", "prismd.service"],
-                };
-                done(match Command::new("systemctl").args(arguments).output() {
-                    Ok(output) => outcome(&output),
-                    Err(error) => ServiceOutcome::Failed {
-                        message: format!("can't run systemctl: {error}"),
-                    },
-                });
+                let mut ended = ServiceOutcome::Done;
+                for &arguments in systemctl_runs(action) {
+                    ended = match Command::new("systemctl").args(arguments).output() {
+                        Ok(output) => outcome(&output),
+                        Err(error) => ServiceOutcome::Failed {
+                            message: format!("can't run systemctl: {error}"),
+                        },
+                    };
+                    if ended != ServiceOutcome::Done {
+                        break;
+                    }
+                }
+                done(ended);
             });
         if let Err(error) = started {
             eprintln!("prism: can't run systemctl: {error}");
         }
+    }
+}
+
+/// The systemctl runs that do `action`, in order. polkit keeps the first run's authorization for
+/// the second, so it asks once.
+fn systemctl_runs(action: ServiceAction) -> &'static [&'static [&'static str]] {
+    match action {
+        ServiceAction::Enable => &[&["enable", "--now", "prismd.service"]],
+        // Resetting first also clears systemd's start limit, which a plain restart can't get
+        // past.
+        ServiceAction::Restart => &[
+            &["reset-failed", "prismd.service"],
+            &["restart", "prismd.service"],
+        ],
     }
 }
 
@@ -102,7 +119,7 @@ fn unit_state() -> UnitState {
         .args([
             "show",
             "prismd.service",
-            "--property=LoadState,ActiveState,Result",
+            "--property=LoadState,ActiveState,Result,UnitFileState",
         ])
         .output();
     match shown {
@@ -154,6 +171,21 @@ mod tests {
             stdout: Vec::new(),
             stderr: stderr.into(),
         }
+    }
+
+    #[test]
+    fn enable_enables_and_starts_prismd_and_restart_resets_it_first() {
+        assert_eq!(
+            systemctl_runs(ServiceAction::Enable),
+            [["enable", "--now", "prismd.service"].as_slice()]
+        );
+        assert_eq!(
+            systemctl_runs(ServiceAction::Restart),
+            [
+                ["reset-failed", "prismd.service"].as_slice(),
+                ["restart", "prismd.service"].as_slice()
+            ]
+        );
     }
 
     #[test]

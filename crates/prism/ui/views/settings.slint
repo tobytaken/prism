@@ -1,7 +1,45 @@
 import { Theme } from "../theme.slint";
-import { Button, LinkButton, ListRow, StyledText, VerticalDivider } from "../widgets.slint";
+import { LinkButton, ListRow, PressArea, StyledText, VerticalDivider } from "../widgets.slint";
 import { AppState, FactView, Intents, SettingsSection } from "../state.slint";
 import { ExplainedState } from "explained-state.slint";
+
+// A bordered button for an action of its own, such as "Enable prismd". While it can't be pressed
+// it's dimmed and does nothing. It stays here until a second screen needs one (ADR 0009).
+component Button inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback activated();
+
+    accessible-role: button;
+    accessible-label: text;
+    accessible-enabled: enabled;
+    accessible-action-default => {
+        if root.enabled {
+            root.activated();
+        }
+    }
+    forward-focus: press;
+    height: Theme.size.button;
+    width: label.preferred-width + 2 * Theme.space.xl;
+    background: enabled && press.has-hover ? Theme.color.hover : Theme.color.raised;
+    border-width: Theme.stroke.hairline;
+    border-color: enabled ? Theme.color.ink : Theme.color.rule;
+
+    press := PressArea {
+        enabled: root.enabled;
+        activated => {
+            root.activated();
+        }
+    }
+
+    label := StyledText {
+        text: root.text;
+        style: Theme.text.name;
+        color: root.enabled ? Theme.color.ink : Theme.color.ink-muted;
+        horizontal-alignment: center;
+        accessible-role: none;
+    }
+}
 
 component SectionRow inherits ListRow {
     in property <string> text;
@@ -175,10 +213,7 @@ export component Settings inherits Rectangle {
 
             if AppState.settings-section == SettingsSection.daemon: Daemon { }
             if AppState.settings-section != SettingsSection.daemon: ExplainedState {
-                title: AppState.settings-section == SettingsSection.appearance ? "Appearance"
-                    : AppState.settings-section == SettingsSection.startup ? "Startup"
-                    : AppState.settings-section == SettingsSection.notifications ? "Notifications"
-                    : "About";
+                title: AppState.settings-section-name;
                 reason: "This section isn't built yet.";
             }
         }

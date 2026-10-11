@@ -13,8 +13,12 @@ fn systemctl_show_tells_the_unit_states_apart() {
         UnitState::NotFound
     );
     assert_eq!(
-        unit("LoadState=loaded\nActiveState=inactive\nResult=success\n"),
-        UnitState::Inactive
+        unit("LoadState=loaded\nActiveState=inactive\nResult=success\nUnitFileState=disabled\n"),
+        UnitState::Inactive { enabled: false }
+    );
+    assert_eq!(
+        unit("LoadState=loaded\nActiveState=inactive\nResult=success\nUnitFileState=enabled\n"),
+        UnitState::Inactive { enabled: true }
     );
     assert_eq!(
         unit("LoadState=loaded\nActiveState=active\nResult=success\n"),
@@ -33,7 +37,7 @@ fn systemctl_show_tells_the_unit_states_apart() {
     // A masked unit is installed; enabling it says why it can't start.
     assert_eq!(
         unit("LoadState=masked\nActiveState=inactive\nResult=success\n"),
-        UnitState::Inactive
+        UnitState::Inactive { enabled: false }
     );
 }
 

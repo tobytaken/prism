@@ -446,7 +446,7 @@ impl Core {
                     ServiceOutcome::Canceled => return Vec::new(),
                     ServiceOutcome::Done => self.service_error = None,
                     ServiceOutcome::Failed { message } => {
-                        self.service_error = Some(Self::service_failed(action, &message));
+                        self.service_error = Some(action.failure(&message));
                     }
                 }
                 if self.connected() {
@@ -648,8 +648,9 @@ impl Core {
                 if self.service.is_some() || self.service_action() != Some(action) {
                     return Vec::new();
                 }
+                // Any earlier error stays until this one ends, since a canceled prompt changes
+                // nothing.
                 self.service = Some(action);
-                self.service_error = None;
                 vec![Effect::RunService(action)]
             }
             Command::CopyPrismdSetup => {

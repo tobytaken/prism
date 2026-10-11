@@ -83,7 +83,7 @@ fn every_fixture_state_is_accessible() {
     harness.tick();
     audit("tunable, temperature unknown", &harness);
 
-    let not_running = PrismdInstall::Native(UnitState::Inactive);
+    let not_running = PrismdInstall::Native(UnitState::Inactive { enabled: false });
     for (daemon, install, state) in [
         (
             DaemonState::Running,

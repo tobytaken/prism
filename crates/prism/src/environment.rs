@@ -8,7 +8,7 @@ use prism_gpu::GpuProviders;
 
 use crate::activation::DesktopActivation;
 use crate::prismd::{PrismdConnector, SocketConnector};
-use crate::prismd_host::{HostPrismd, PrismdService};
+use crate::prismd_host::{HostPrismdService, PrismdService};
 use crate::settings::{SettingsFile, SettingsStore};
 
 /// Everything [`App`](crate::App) reaches outside itself through.
@@ -53,7 +53,7 @@ impl Default for HostServices {
     /// raised through the desktop.
     fn default() -> Self {
         Self {
-            prismd: Box::new(HostPrismd::production()),
+            prismd: Box::new(HostPrismdService::production()),
             launches: Box::new(NoLaunches),
             activation: Box::new(DesktopActivation),
         }
