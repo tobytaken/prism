@@ -86,6 +86,34 @@ jobs:
           fi
       - run: bash scripts/package-prismd-deb.sh
       - run: bash scripts/package-prismd-rpm.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prismd-packages
+          path: |
+            target/debian/prismd_*.deb
+            target/generate-rpm/prismd-*.rpm
+          if-no-files-found: error
+
+  install-prismd-packages:
+    needs: package-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The deb's glibc dependency comes from the ubuntu-latest build host.
+          - image: ubuntu:24.04
+            package: debian/prismd_*.deb
+          - image: fedora:latest
+            package: generate-rpm/prismd-*.rpm
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: prismd-packages
+          path: packages
+      - run: bash scripts/check-prismd-install.sh packages/${{ matrix.package }}
 
   build-prism-release:
     runs-on: ubuntu-latest

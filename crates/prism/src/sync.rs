@@ -56,6 +56,11 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 id: workspace.id.as_str().into(),
                 title: workspace.title.as_str().into(),
                 subtitle: workspace.subtitle.as_str().into(),
+                no_tuning_access: workspace
+                    .no_tuning_access
+                    .as_deref()
+                    .unwrap_or_default()
+                    .into(),
                 temperature: TemperatureTrackView {
                     readout: readout(&track.readout),
                     unknown_reason: track.unknown_reason.as_deref().unwrap_or_default().into(),

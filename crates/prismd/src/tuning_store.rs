@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use super::session::{DaemonSession, SessionEvents, SessionPeer};
+use super::session::{DaemonSession, SessionEvents, SessionPeer, SessionPolicy};
 use prism_protocol::{
     DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBehavior, TuningStoreHealth,
     TuningStoreProblem,
@@ -186,8 +186,8 @@ impl TuningStore {
         self.events.held_gpus()
     }
 
-    pub fn subscribe(&self, peer: SessionPeer) -> DaemonSession {
-        self.events.subscribe(peer)
+    pub fn subscribe(&self, peer: SessionPeer, policy: SessionPolicy) -> DaemonSession {
+        self.events.subscribe(peer, policy)
     }
 
     /// Builds a caller-scoped event for each session; None leaves that session unchanged.
@@ -401,13 +401,19 @@ mod tests {
         let sessions: Vec<_> = [(1000, "alice"), (1001, "bob")]
             .into_iter()
             .map(|(uid, username)| {
-                store.subscribe(SessionPeer {
-                    uid,
-                    username: username.into(),
-                    groups: vec![],
-                    primary_group: "users".into(),
-                    home: format!("/home/{username}").into(),
-                })
+                store.subscribe(
+                    SessionPeer {
+                        uid,
+                        username: username.into(),
+                        groups: vec![],
+                        primary_group: "users".into(),
+                        home: format!("/home/{username}").into(),
+                    },
+                    SessionPolicy {
+                        admin_group: "admins".into(),
+                        admin_user: None,
+                    },
+                )
             })
             .collect();
         fs::create_dir(path.with_file_name("tuning-state.json.tmp")).unwrap();

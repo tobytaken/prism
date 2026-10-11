@@ -1,7 +1,11 @@
-# The Unix socket is owned by root and this group.
-# Members of this group can connect to prismd and submit privileged GPU changes.
+# Anyone on this host can connect to prismd and read GPU state, telemetry and Activity. Changing
+# GPU tuning, profiles, games, startup behavior or driver jobs needs root, membership of
+# admin_group, or being admin_user. Prism shows anyone else a read-only view that names the group
+# they lack.
+
+# The group whose members may change GPU tuning. Without this line it defaults to wheel, then
+# sudo, then root, whichever exists first.
 admin_group = "wheel"
 
-# Optional explicit user allowlist for setups where group-based socket access is not practical,
-# such as Flatpak-host integration.
+# One more user who may change GPU tuning without being in admin_group.
 # admin_user = "your-username"

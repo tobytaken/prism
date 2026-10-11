@@ -59,27 +59,34 @@ fn sessions_keep_their_callers_and_start_from_the_store_health_alongside_one_sho
 }
 
 #[test]
-fn unauthorized_sessions_are_rejected_by_the_same_admin_policy() {
+fn the_admin_group_or_admin_user_decides_whether_a_session_can_tune() {
     use super::{SessionPeer, SessionPolicy};
     let daemon = Harness::start(FakeGpuBackend::default());
     let policy = SessionPolicy {
         admin_group: "admins".into(),
         admin_user: Some("alice".into()),
     };
-    let peer = SessionPeer {
-        uid: 1002,
-        username: "mallory".into(),
-        groups: vec!["users".into()],
+    let peer = |uid, username: &str, groups: &[&str]| SessionPeer {
+        uid,
+        username: username.into(),
+        groups: groups.iter().map(|group| (*group).into()).collect(),
         primary_group: "users".into(),
-        home: "/home/mallory".into(),
+        home: format!("/home/{username}").into(),
     };
-    let expected = policy.authorize(&peer).unwrap_err();
-    let Err(super::HelloRefused::NotAllowed(actual)) = daemon.core().hello(peer, &policy, hello())
-    else {
-        panic!("unauthorized session was admitted")
-    };
-    assert_eq!(actual, expected);
-    assert_eq!(actual.code, GpuCommandErrorCode::NoPermission);
+    for (peer, reason) in [
+        (peer(0, "root", &[]), None),
+        (peer(1000, "alice", &[]), None),
+        (peer(1001, "bob", &["admins"]), None),
+        (
+            peer(1002, "mallory", &["users"]),
+            Some("mallory isn't in group admins"),
+        ),
+    ] {
+        let username = peer.username.clone();
+        let welcomed = daemon.core().hello(peer, &policy, hello()).unwrap();
+        assert_eq!(welcomed.welcome.can_tune, reason.is_none(), "{username}");
+        assert_eq!(welcomed.welcome.reason.as_deref(), reason, "{username}");
+    }
 }
 
 #[test]
@@ -237,38 +244,57 @@ fn an_incompatible_hello_over_the_socket_is_answered_and_closed() {
 }
 
 #[test]
-fn a_non_admin_socket_peer_is_rejected_identically_for_sessions_and_one_shot_requests() {
+fn a_socket_peer_who_cannot_tune_may_read_but_every_write_is_refused() {
     use prism_protocol::framing::{read_frame, write_frame};
     use prism_protocol::{SessionMessage, SessionRequest};
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
-    // Root is always authorized, including on CI hosts that run the tests as root.
+    // Root is always allowed to tune, including on CI hosts that run the tests as root.
     if users::get_current_uid() == 0 {
         return;
     }
-    let daemon = Harness::start(FakeGpuBackend::default());
+    let username = users::get_current_username()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let refusal = format!("{username} isn't in group prism-test-no-admin-group");
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
     let policy = super::SessionPolicy {
         admin_group: "prism-test-no-admin-group".into(),
         admin_user: None,
     };
-    let (mut one_shot, mut server) = UnixStream::pair().unwrap();
-    let core = daemon.core();
-    let one_shot_policy = policy.clone();
-    let serving =
-        std::thread::spawn(move || super::handle_connection(&core, &one_shot_policy, &mut server));
-    one_shot
-        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-        .unwrap();
-    one_shot
-        .write_all(&serde_json::to_vec(&DaemonRequest::GetInventory).unwrap())
-        .unwrap();
-    one_shot.shutdown(std::net::Shutdown::Write).unwrap();
-    let mut response = Vec::new();
-    one_shot.read_to_end(&mut response).unwrap();
-    let DaemonResponse::Error(expected) = serde_json::from_slice(&response).unwrap() else {
-        panic!("unauthorized one-shot client was admitted")
+    let set_power_limit = DaemonRequest::SetPowerLimit(SetGpuPowerLimitRequest {
+        gpu_id: "GPU-123".into(),
+        limit_watts: 300,
+    });
+    let one_shot = |request: &DaemonRequest| {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let core = daemon.core();
+        let policy = policy.clone();
+        let serving =
+            std::thread::spawn(move || super::handle_connection(&core, &policy, &mut server));
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        client
+            .write_all(&serde_json::to_vec(request).unwrap())
+            .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        serving.join().unwrap().unwrap();
+        serde_json::from_slice::<DaemonResponse>(&response).unwrap()
     };
-    serving.join().unwrap().unwrap();
+    assert!(matches!(
+        one_shot(&DaemonRequest::GetInventory),
+        DaemonResponse::Inventory(_)
+    ));
+    let DaemonResponse::Error(refused) = one_shot(&set_power_limit) else {
+        panic!("a one-shot write was allowed")
+    };
+    assert_eq!(refused.code, GpuCommandErrorCode::NoPermission);
+    assert_eq!(refused.message, refusal);
+
     let (mut session, mut server) = UnixStream::pair().unwrap();
     let core = daemon.core();
     let serving = std::thread::spawn(move || super::handle_connection(&core, &policy, &mut server));
@@ -285,19 +311,64 @@ fn a_non_admin_socket_peer_is_rejected_identically_for_sessions_and_one_shot_req
     .unwrap();
     let Some(SessionMessage::Response {
         id: 1,
-        response: DaemonResponse::Error(actual),
+        response: DaemonResponse::Welcome(welcome),
     }) = read_frame(&mut session).unwrap()
     else {
-        panic!("unauthorized session was admitted")
+        panic!("the session wasn't welcomed")
     };
-    assert_eq!(actual, expected);
-    assert_eq!(actual.code, GpuCommandErrorCode::NoPermission);
-    assert!(
-        read_frame::<SessionMessage>(&mut session)
-            .unwrap()
-            .is_none()
-    );
+    assert!(!welcome.can_tune);
+    assert_eq!(welcome.reason.as_deref(), Some(refusal.as_str()));
+    assert!(matches!(
+        read_frame::<SessionMessage>(&mut session).unwrap(),
+        Some(SessionMessage::Snapshot { .. })
+    ));
+    for (id, request) in [
+        (
+            2,
+            DaemonRequest::SetEditHolds(prism_protocol::SetEditHoldsRequest {
+                gpu_ids: vec!["GPU-123".into()],
+            }),
+        ),
+        (3, set_power_limit),
+    ] {
+        write_frame(&mut session, &SessionRequest { id, request }).unwrap();
+        let Some(SessionMessage::Response {
+            id: answered,
+            response: DaemonResponse::Error(refused),
+        }) = read_frame(&mut session).unwrap()
+        else {
+            panic!("a session write was allowed")
+        };
+        assert_eq!(answered, id);
+        assert_eq!(refused.code, GpuCommandErrorCode::NoPermission);
+        assert_eq!(refused.message, refusal);
+    }
+    session.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut end = Vec::new();
+    session.read_to_end(&mut end).unwrap();
     serving.join().unwrap().unwrap();
+    assert_eq!(daemon.gpus.writes(), []);
+}
+
+#[test]
+fn the_socket_lets_any_local_user_connect() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let paths = super::DaemonPaths {
+        socket_path: dir.path().join("prism/prismd.sock"),
+        persistent_dir: dir.path().join("state"),
+        boot_dir: dir.path().join("prism"),
+        driver_jobs_path: dir.path().join("state/driver-jobs.json"),
+        config_path: dir.path().join("prismd.toml"),
+    };
+
+    let _listener = super::bind_listener(&paths).unwrap();
+
+    let mode = std::fs::metadata(&paths.socket_path)
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o666);
 }
 
 fn apply_profile_request(settings: serde_json::Value) -> serde_json::Value {

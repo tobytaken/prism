@@ -70,6 +70,8 @@ pub struct GpuWorkspace {
     pub title: String,
     /// Index, bus id and architecture, such as "GPU 0 · 01:00.0 · Blackwell".
     pub subtitle: String,
+    /// Why there's no tuning access, for the inline "Tuning needs prismd" line; none with it.
+    pub no_tuning_access: Option<String>,
     pub temperature: TemperatureTrack,
 }
 
@@ -226,6 +228,7 @@ impl Core {
             id: gpu.id.clone(),
             title: gpu.name.clone(),
             subtitle,
+            no_tuning_access: self.tuning_access().reason().map(str::to_owned),
             temperature: self.temperature_track(gpu),
         }
     }

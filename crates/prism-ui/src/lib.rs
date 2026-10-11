@@ -12,7 +12,7 @@ mod view;
 
 pub use crate::core::{
     AppearanceMode, Core, Effect, Input, Intent, NotConnected, PrismdConnection, Section,
-    TelemetrySource,
+    TelemetrySource, TuningAccess, TuningControl,
 };
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{

@@ -21,6 +21,30 @@
       }
     }
   },
+  "read_only_welcome": {
+    "type": "response",
+    "id": 0,
+    "response": {
+      "type": "welcome",
+      "payload": {
+        "protocol": "0.1",
+        "prismd_version": "0.1.0",
+        "can_tune": false,
+        "reason": "bob isn't in group wheel"
+      }
+    }
+  },
+  "no_permission": {
+    "type": "response",
+    "id": 3,
+    "response": {
+      "type": "error",
+      "payload": {
+        "code": "no_permission",
+        "message": "bob isn't in group wheel"
+      }
+    }
+  },
   "incompatible": {
     "type": "response",
     "id": 0,

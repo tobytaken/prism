@@ -75,15 +75,15 @@ pub struct DaemonCore {
 pub enum HelloRefused {
     /// The caller speaks a protocol this daemon can't.
     Incompatible(Incompatible),
-    /// The caller isn't allowed a session.
-    NotAllowed(GpuCommandError),
+    /// The caller couldn't be identified, or didn't start with a hello.
+    Unidentified(GpuCommandError),
 }
 
 impl From<HelloRefused> for DaemonResponse {
     fn from(refused: HelloRefused) -> Self {
         match refused {
             HelloRefused::Incompatible(incompatible) => Self::Incompatible(incompatible),
-            HelloRefused::NotAllowed(error) => Self::Error(error),
+            HelloRefused::Unidentified(error) => Self::Error(error),
         }
     }
 }
@@ -97,7 +97,8 @@ pub struct Welcomed {
 
 impl DaemonCore {
     /// Answers a session connection's hello: a caller speaking a compatible protocol gets a
-    /// session and its snapshot, and any other is refused with this daemon's versions.
+    /// session and its snapshot, and any other is refused with this daemon's versions. A caller
+    /// the policy doesn't allow to tune gets a read-only session, and the welcome says why.
     pub fn hello(
         &self,
         peer: SessionPeer,
@@ -111,17 +112,17 @@ impl DaemonCore {
                 prismd_version,
             }));
         }
-        policy.authorize(&peer).map_err(HelloRefused::NotAllowed)?;
+        let tuning = policy.allow_tuning(&peer);
         self.switching.opened(&peer);
         // Subscribed before the snapshot is read, so no change between the two is lost: one
         // already in the snapshot arrives again as an event with the same full value.
-        let session = self.tuning_store.subscribe(peer);
+        let session = self.tuning_store.subscribe(peer, policy.clone());
         Ok(Welcomed {
             welcome: Welcome {
                 protocol: ProtocolVersion::CURRENT,
                 prismd_version,
-                can_tune: true,
-                reason: None,
+                can_tune: tuning.is_ok(),
+                reason: tuning.err().map(|refused| refused.message),
             },
             snapshot: self.snapshot(session.peer()),
             session,
@@ -144,11 +145,15 @@ impl DaemonCore {
         }
     }
 
+    /// Handles one of the session's requests, once its caller is allowed to make it.
     pub fn handle_session(
         &self,
         session: &DaemonSession,
         request: DaemonRequest,
     ) -> DaemonResponse {
+        if let Err(refused) = session.authorize(&request) {
+            return DaemonResponse::Error(refused);
+        }
         match request {
             DaemonRequest::SetEditHolds(request) => {
                 session.set_edit_holds(request.gpu_ids);
@@ -222,6 +227,19 @@ impl DaemonCore {
                     .collect()
             })
             .map_err(GpuCommandError::from)
+    }
+
+    /// Handles a request from an identified caller once the policy allows it.
+    pub(super) fn handle_authorized(
+        &self,
+        peer: &SessionPeer,
+        policy: &SessionPolicy,
+        request: DaemonRequest,
+    ) -> DaemonResponse {
+        match policy.authorize(peer, &request) {
+            Ok(()) => self.handle_for_peer(peer, request),
+            Err(refused) => DaemonResponse::Error(refused),
+        }
     }
 
     /// Handles a request from an identified caller, whose own profiles it may use.

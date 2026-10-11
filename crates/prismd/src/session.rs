@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
-use prism_protocol::DaemonEvent;
+use prism_protocol::{DaemonEvent, DaemonRequest};
 
 /// Resolved by the socket adapter from SO_PEERCRED, never from client JSON.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +18,8 @@ pub struct SessionPeer {
     pub home: PathBuf,
 }
 
+/// Who may change GPU tuning: root, the admin user and members of the admin group. Anyone else
+/// may still read.
 #[derive(Debug, Clone)]
 pub struct SessionPolicy {
     pub admin_group: String,
@@ -25,7 +27,8 @@ pub struct SessionPolicy {
 }
 
 impl SessionPolicy {
-    pub fn authorize(&self, peer: &SessionPeer) -> Result<(), GpuCommandError> {
+    /// Allows the caller to change GPU tuning, or says why not, naming the group they lack.
+    pub fn allow_tuning(&self, peer: &SessionPeer) -> Result<(), GpuCommandError> {
         if peer.uid == 0
             || self.admin_user.as_deref() == Some(&peer.username)
             || peer.groups.contains(&self.admin_group)
@@ -34,11 +37,72 @@ impl SessionPolicy {
         }
         Err(GpuCommandError::new(
             GpuCommandErrorCode::NoPermission,
-            format!(
-                "User {} is not allowed to access prismd (primary group: {})",
-                peer.username, peer.primary_group
-            ),
+            format!("{} isn't in group {}", peer.username, self.admin_group),
         ))
+    }
+
+    /// Allows one request from the caller: anyone may read, and only a caller allowed to tune may
+    /// write.
+    pub fn authorize(
+        &self,
+        peer: &SessionPeer,
+        request: &DaemonRequest,
+    ) -> Result<(), GpuCommandError> {
+        if writes(request) {
+            self.allow_tuning(peer)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Whether the request changes anything: GPU controls, the tuning store, games, startup, driver
+/// jobs, the host or the session's edit holds.
+fn writes(request: &DaemonRequest) -> bool {
+    match request {
+        DaemonRequest::Hello(_)
+        | DaemonRequest::SubscribeTelemetry
+        | DaemonRequest::GetInventory
+        | DaemonRequest::GetDaemonStatus
+        | DaemonRequest::PreviewFanCurve(_)
+        | DaemonRequest::GetStartupState
+        | DaemonRequest::ListProfiles
+        | DaemonRequest::GetTuningStates
+        | DaemonRequest::ListSteamApps
+        | DaemonRequest::ListRunningPrograms
+        | DaemonRequest::GetGames
+        | DaemonRequest::GetRunningGames
+        | DaemonRequest::GetAutomaticSwitchingStatus
+        | DaemonRequest::GetDriverStatus
+        | DaemonRequest::GetDriverJob(_) => false,
+        DaemonRequest::SetEditHolds(_)
+        | DaemonRequest::ApplyProfile(_)
+        | DaemonRequest::SetPowerLimit(_)
+        | DaemonRequest::ResetPowerLimit(_)
+        | DaemonRequest::SetFanSpeed(_)
+        | DaemonRequest::SetFanModeAuto(_)
+        | DaemonRequest::ApplyCooling(_)
+        | DaemonRequest::SetClockOffsets(_)
+        | DaemonRequest::ResetClockOffsets(_)
+        | DaemonRequest::SetStartupBehavior(_)
+        | DaemonRequest::SetStartupProfile(_)
+        | DaemonRequest::DismissStartupOutcome(_)
+        | DaemonRequest::SaveProfileAsNew(_)
+        | DaemonRequest::SaveToCurrentProfile(_)
+        | DaemonRequest::RenameProfile(_)
+        | DaemonRequest::DeleteProfile(_)
+        | DaemonRequest::ApplyProfileById(_)
+        | DaemonRequest::CorrectAndApplyProfile(_)
+        | DaemonRequest::AddProgram(_)
+        | DaemonRequest::AddSteamGame(_)
+        | DaemonRequest::SetGameProfile(_)
+        | DaemonRequest::RemoveGame(_)
+        | DaemonRequest::SetAutomaticSwitching(_)
+        | DaemonRequest::SetGpuSwitchingPaused(_)
+        | DaemonRequest::RetryAutomaticSwitching(_)
+        | DaemonRequest::StartDriverAction(_)
+        | DaemonRequest::CancelDriverJob(_)
+        | DaemonRequest::RequestHostReboot => true,
     }
 }
 
@@ -62,7 +126,7 @@ struct Subscriber {
 }
 
 impl SessionEvents {
-    pub fn subscribe(self: &Arc<Self>, peer: SessionPeer) -> DaemonSession {
+    pub fn subscribe(self: &Arc<Self>, peer: SessionPeer, policy: SessionPolicy) -> DaemonSession {
         let (sender, events) = mpsc::sync_channel(64);
         let mut subscribers = self.0.lock().unwrap();
         subscribers.next_id += 1;
@@ -79,6 +143,7 @@ impl SessionEvents {
         DaemonSession {
             id,
             peer,
+            policy,
             events: Some(events),
             subscribers: Arc::downgrade(self),
         }
@@ -131,6 +196,8 @@ impl SessionEvents {
 pub struct DaemonSession {
     id: u64,
     peer: SessionPeer,
+    /// Checked on each of the session's requests.
+    policy: SessionPolicy,
     events: Option<Receiver<DaemonEvent>>,
     subscribers: Weak<SessionEvents>,
 }
@@ -155,6 +222,15 @@ impl DaemonSession {
 
     pub fn peer(&self) -> &SessionPeer {
         &self.peer
+    }
+
+    pub fn policy(&self) -> &SessionPolicy {
+        &self.policy
+    }
+
+    /// Allows one of the session's requests, or says why its caller may not make it.
+    pub fn authorize(&self, request: &DaemonRequest) -> Result<(), GpuCommandError> {
+        self.policy.authorize(&self.peer, request)
     }
 
     pub fn recv_timeout(&self, timeout: Duration) -> Result<DaemonEvent, RecvTimeoutError> {

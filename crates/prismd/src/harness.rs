@@ -600,9 +600,30 @@ impl Harness {
         }
     }
 
+    /// Opens a session in this build's protocol as this user, who isn't in the admin group
+    /// `admins`. The uid's account now has this username.
+    pub fn read_only_user(&self, uid: u32, username: &str) -> FakeSession {
+        match self.hello_in(uid, username, &[], HelloRequest::current("0.1.0")) {
+            Handshake::Welcomed(session) => session,
+            Handshake::Refused(response) => panic!("the session was refused: {response:?}"),
+        }
+    }
+
     /// Starts a session connection as this user, an administrator, with `hello`. The uid's
     /// account now has this username.
     pub fn hello(&self, uid: u32, username: &str, hello: HelloRequest) -> Handshake {
+        self.hello_in(uid, username, &["admins"], hello)
+    }
+
+    /// Starts a session connection as this user, a member of `groups`, with `hello`. The admin
+    /// group is `admins`.
+    fn hello_in(
+        &self,
+        uid: u32,
+        username: &str,
+        groups: &[&str],
+        hello: HelloRequest,
+    ) -> Handshake {
         self.users.0.lock().unwrap().insert(uid, username.into());
         let policy = SessionPolicy {
             admin_group: "admins".into(),
@@ -611,7 +632,7 @@ impl Harness {
         let peer = SessionPeer {
             uid,
             username: username.into(),
-            groups: vec!["admins".into()],
+            groups: groups.iter().map(|group| (*group).into()).collect(),
             primary_group: "users".into(),
             home: format!("/home/{username}").into(),
         };

@@ -40,10 +40,12 @@ export struct TemperatureTrackView {
     min: ReadoutView,
 }
 
+// `no-tuning-access` is why there's no tuning access, and empty with it.
 export struct WorkspaceView {
     id: string,
     title: string,
     subtitle: string,
+    no-tuning-access: string,
     temperature: TemperatureTrackView,
 }
 

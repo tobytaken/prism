@@ -14,6 +14,8 @@ pub enum DaemonState {
     NotRunning,
     /// Running, and welcoming sessions.
     Running,
+    /// Running, and welcoming sessions read-only: the user isn't in the admin group.
+    ReadOnly,
     /// Running, but speaking a protocol this Prism can't.
     Incompatible,
 }
@@ -67,7 +69,7 @@ impl FakePrismd {
     /// Without a session.
     pub fn push(&self, event: DaemonEvent) {
         let fake = self.0.lock().unwrap();
-        assert_eq!(fake.state, DaemonState::Running, "no session to push to");
+        assert!(fake.state.welcomes(), "no session to push to");
         let report = fake.report.clone().expect("Prism hasn't connected");
         drop(fake);
         report(PrismdReport::Event(event));
@@ -106,9 +108,16 @@ impl PrismdConnector for FakePrismd {
 
     fn send(&self, request: DaemonRequest) {
         let mut fake = self.0.lock().unwrap();
-        if fake.state == DaemonState::Running {
+        if fake.state.welcomes() {
             fake.requests.push(request);
         }
+    }
+}
+
+impl DaemonState {
+    /// Whether a connecting Prism gets a session.
+    fn welcomes(self) -> bool {
+        matches!(self, Self::Running | Self::ReadOnly)
     }
 }
 
@@ -121,11 +130,16 @@ fn report_for(state: DaemonState) -> PrismdReport {
         DaemonState::NotRunning => PrismdReport::NotConnected(NotConnected::Unavailable {
             message: "No such file or directory (os error 2)".into(),
         }),
-        DaemonState::Running => {
+        DaemonState::Running | DaemonState::ReadOnly => {
+            let answer = if state == DaemonState::Running {
+                "welcome"
+            } else {
+                "read_only_welcome"
+            };
             let SessionMessage::Response {
                 response: prism_protocol::DaemonResponse::Welcome(welcome),
                 ..
-            } = serde_json::from_value(handshake["welcome"].clone()).unwrap()
+            } = serde_json::from_value(handshake[answer].clone()).unwrap()
             else {
                 panic!("the handshake contract holds a welcome")
             };
