@@ -16,6 +16,12 @@ sudo install -Dm0644 \
   "$ROOT_DIR/contrib/systemd/prismd.service" \
   /etc/systemd/system/prismd.service
 
+echo "Installing prismd's runtime directory..."
+sudo install -Dm0644 \
+  "$ROOT_DIR/contrib/tmpfiles.d/prismd.conf" \
+  /etc/tmpfiles.d/prismd.conf
+sudo systemd-tmpfiles --create prismd.conf
+
 if [[ ! -f /etc/prism/prismd.toml ]]; then
   echo "Installing default prismd config..."
   sudo install -Dm0644 \

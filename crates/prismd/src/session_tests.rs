@@ -158,3 +158,145 @@ fn a_gpu_arriving_or_departing_changes_the_inventory_before_its_telemetry() {
     assert_eq!(events[0]["payload"]["gpus"][0]["id"], "GPU-456");
     assert_eq!(events[0]["payload"]["gpus"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn a_user_outside_the_admin_group_is_welcomed_read_only_with_the_group_they_lack() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+
+    let bob = daemon.read_only_user(1001, "bob");
+
+    let welcome = bob.welcome();
+    assert_eq!(welcome.protocol, ProtocolVersion::CURRENT);
+    assert!(!welcome.can_tune);
+    assert_eq!(welcome.reason.as_deref(), Some("bob isn't in group admins"));
+}
+
+#[test]
+fn a_read_only_session_gets_the_snapshot_events_telemetry_and_every_read() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let bob = daemon.read_only_user(1001, "bob");
+
+    assert_eq!(bob.snapshot().inventory.gpus[0].id, "GPU-123");
+    assert_eq!(bob.snapshot().tuning_states[0].gpu_id, "GPU-123");
+    assert_eq!(
+        bob.send_json(json!({ "type": "subscribe_telemetry" }))["payload"]["success"],
+        true
+    );
+    daemon.gpus.arrive(tunable_gpu_with_id("GPU-456"));
+    daemon.tick_telemetry();
+    let kinds: Vec<_> = bob
+        .pushed_events()
+        .into_iter()
+        .map(|event| event["type"].clone())
+        .collect();
+    assert_eq!(kinds, ["inventory_changed", "telemetry_sampled"]);
+
+    for request in [
+        json!({ "type": "get_inventory" }),
+        json!({ "type": "get_daemon_status" }),
+        json!({ "type": "get_tuning_states" }),
+        json!({ "type": "get_startup_state" }),
+        json!({ "type": "list_profiles" }),
+        json!({ "type": "get_games" }),
+        json!({ "type": "get_running_games" }),
+        json!({ "type": "list_steam_apps" }),
+        json!({ "type": "list_running_programs" }),
+        json!({ "type": "get_automatic_switching_status" }),
+        json!({ "type": "get_driver_status" }),
+        json!({ "type": "preview_fan_curve", "payload": {
+            "gpu_id": "GPU-123", "points": [
+                { "temperature_c": 40, "speed_percent": 40 },
+                { "temperature_c": 70, "speed_percent": 100 }
+            ]
+        } }),
+    ] {
+        // Some reads fail on the fake host, such as listing programs without a /proc, but none
+        // is refused.
+        let response = bob.send_json(request.clone());
+        assert_ne!(
+            response["payload"]["code"], "no_permission",
+            "{request} → {response}"
+        );
+    }
+}
+
+#[test]
+fn every_write_from_a_read_only_session_is_refused_naming_the_user_and_group() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    alice.seed_profiles(json!([{
+        "id": "quiet", "name": "Quiet", "gpu_id": "GPU-123",
+        "settings": { "power_limit_watts": { "kind": "value", "value": 300 } }
+    }]));
+    let bob = daemon.read_only_user(1001, "bob");
+    let revision = bob.snapshot().tuning_states[0].revision.clone();
+    let store = daemon.persistent_file(super::tuning_store::TUNING_STORE_FILE_NAME);
+    let steam = json!({ "kind": "steam", "app_id": 570 });
+
+    for request in [
+        json!({ "type": "set_edit_holds", "payload": { "gpu_ids": ["GPU-123"] } }),
+        json!({ "type": "apply_profile", "payload": {
+            "gpu_id": "GPU-123", "settings": { "power_limit_watts": { "kind": "default" } }
+        } }),
+        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 300 } }),
+        json!({ "type": "reset_power_limit", "payload": { "gpu_id": "GPU-123" } }),
+        json!({ "type": "set_fan_speed", "payload": {
+            "gpu_id": "GPU-123", "fan_index": 0, "speed_percent": 60
+        } }),
+        json!({ "type": "set_fan_mode_auto", "payload": { "gpu_id": "GPU-123", "fan_index": 0 } }),
+        json!({ "type": "apply_cooling", "payload": {
+            "gpu_id": "GPU-123",
+            "configuration": { "arrangement": "shared", "setting": { "mode": "automatic" } }
+        } }),
+        json!({ "type": "set_clock_offsets", "payload": {
+            "gpu_id": "GPU-123", "graphics_offset_mhz": 30, "memory_offset_mhz": 40
+        } }),
+        json!({ "type": "reset_clock_offsets", "payload": { "gpu_id": "GPU-123" } }),
+        json!({ "type": "set_startup_behavior", "payload": { "behavior": "startup_profiles" } }),
+        json!({ "type": "set_startup_profile", "payload": {
+            "gpu_id": "GPU-123", "profile_id": "quiet"
+        } }),
+        json!({ "type": "dismiss_startup_outcome", "payload": { "gpu_id": "GPU-123" } }),
+        json!({ "type": "save_profile_as_new", "payload": {
+            "gpu_id": "GPU-123", "name": "Mine", "revision": revision
+        } }),
+        json!({ "type": "save_to_current_profile", "payload": {
+            "gpu_id": "GPU-123", "revision": revision
+        } }),
+        json!({ "type": "rename_profile", "payload": { "profile_id": "quiet", "name": "Silent" } }),
+        json!({ "type": "delete_profile", "payload": { "profile_id": "quiet" } }),
+        json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" } }),
+        json!({ "type": "correct_and_apply_profile", "payload": {
+            "profile_id": "quiet", "corrections": []
+        } }),
+        json!({ "type": "add_program", "payload": { "path": "/usr/bin/game" } }),
+        json!({ "type": "add_steam_game", "payload": { "app_id": 570 } }),
+        json!({ "type": "set_game_profile", "payload": {
+            "game": steam, "gpu_id": "GPU-123", "profile_id": "quiet"
+        } }),
+        json!({ "type": "remove_game", "payload": { "game": steam } }),
+        json!({ "type": "set_automatic_switching", "payload": { "enabled": true } }),
+        json!({ "type": "set_gpu_switching_paused", "payload": {
+            "gpu_id": "GPU-123", "paused": true
+        } }),
+        json!({ "type": "retry_automatic_switching", "payload": { "gpu_id": "GPU-123" } }),
+        json!({ "type": "start_driver_action", "payload": { "action": "install_recommended" } }),
+        json!({ "type": "cancel_driver_job", "payload": { "job_id": "job-1" } }),
+        json!({ "type": "request_host_reboot" }),
+    ] {
+        assert_eq!(
+            bob.send_json(request.clone()),
+            json!({ "type": "error", "payload": {
+                "code": "no_permission", "message": "bob isn't in group admins"
+            } }),
+            "{request}"
+        );
+    }
+    daemon.settle();
+    assert_eq!(daemon.gpus.writes(), []);
+    assert_eq!(
+        daemon.persistent_file(super::tuning_store::TUNING_STORE_FILE_NAME),
+        store
+    );
+    assert!(daemon.core().tuning_store.held_gpus().is_empty());
+}

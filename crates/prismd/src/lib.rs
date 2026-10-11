@@ -54,14 +54,12 @@ mod switching_tests;
 mod tests;
 
 use std::env;
-use std::ffi::CString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -133,7 +131,7 @@ pub fn run_with(backend: Arc<dyn DaemonBackend>) -> Result<(), String> {
     let stop_signals = block_stop_signals().map_err(|error| error.to_string())?;
     let paths = DaemonPaths::from_environment();
     let config = load_config(&paths).map_err(|error| error.to_string())?;
-    let listener = bind_listener(&paths, &config).map_err(|error| error.to_string())?;
+    let listener = bind_listener(&paths).map_err(|error| error.to_string())?;
     let core = DaemonCore::start(CoreDependencies {
         backend,
         drivers: DriverService::new(paths.driver_jobs_path.clone()),
@@ -288,10 +286,14 @@ fn handle_connection(
 
     let request: DaemonRequest =
         serde_json::from_slice(&request).map_err(|error| error.to_string())?;
-    let response = match authorize_request(config, stream, &request) {
-        Ok(Some(peer)) => core.handle_for_peer(&peer, request),
-        Ok(None) => core.handle(request),
-        Err(error) => DaemonResponse::Error(error),
+    // A status probe needs no caller; any other request is checked against its caller.
+    let response = if matches!(request, DaemonRequest::GetDaemonStatus) {
+        core.handle(request)
+    } else {
+        match resolve_peer(config, stream) {
+            Ok(peer) => core.handle_authorized(&peer, config, request),
+            Err(error) => DaemonResponse::Error(error),
+        }
     };
     let payload = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
 
@@ -415,11 +417,13 @@ fn handle_session_connection(
                 }
                 let core = Arc::clone(core);
                 let writer = Arc::clone(&writer);
-                // The admitted caller remains attached to this connection. Requests can finish
-                // independently, so a slow GPU cannot delay EOF detection or other requests.
+                // The caller remains attached to this connection, and each request is checked
+                // against the policy. Requests can finish independently, so a slow GPU cannot
+                // delay EOF detection or other requests.
                 let peer = session.peer().clone();
+                let policy = session.policy().clone();
                 thread::spawn(move || {
-                    let response = core.handle_for_peer(&peer, request.request);
+                    let response = core.handle_authorized(&peer, &policy, request.request);
                     let mut stream = writer.lock().unwrap();
                     if write_frame(
                         &mut *stream,
@@ -449,21 +453,6 @@ fn handle_session_connection(
 struct SessionFrame {
     id: u64,
     request: serde_json::Value,
-}
-
-/// The authorized caller, or none for a status probe, which anyone may send.
-fn authorize_request(
-    config: &PrismDaemonConfig,
-    stream: &UnixStream,
-    request: &DaemonRequest,
-) -> Result<Option<SessionPeer>, GpuCommandError> {
-    if matches!(request, DaemonRequest::GetDaemonStatus) {
-        return Ok(None);
-    }
-
-    let peer = resolve_peer(config, stream)?;
-    config.authorize(&peer)?;
-    Ok(Some(peer))
 }
 
 fn resolve_peer(
@@ -530,10 +519,8 @@ fn load_config(paths: &DaemonPaths) -> Result<PrismDaemonConfig, std::io::Error>
     })
 }
 
-fn bind_listener(
-    paths: &DaemonPaths,
-    config: &PrismDaemonConfig,
-) -> Result<UnixListener, std::io::Error> {
+/// Any local process may connect: prismd itself decides what each caller may do (ADR 0011).
+fn bind_listener(paths: &DaemonPaths) -> Result<UnixListener, std::io::Error> {
     if let Some(parent) = paths.socket_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -543,35 +530,9 @@ fn bind_listener(
     }
 
     let listener = UnixListener::bind(&paths.socket_path)?;
-    let socket_mode = if config.admin_user.is_some() {
-        0o666
-    } else {
-        0o660
-    };
-    fs::set_permissions(&paths.socket_path, fs::Permissions::from_mode(socket_mode))?;
-    set_socket_group(&paths.socket_path, &config.admin_group)?;
+    fs::set_permissions(&paths.socket_path, fs::Permissions::from_mode(0o666))?;
 
     Ok(listener)
-}
-
-fn set_socket_group(socket_path: &Path, admin_group: &str) -> Result<(), std::io::Error> {
-    let Some(group) = get_group_by_name(admin_group) else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("group '{admin_group}' was not found"),
-        ));
-    };
-
-    let path = CString::new(socket_path.as_os_str().as_bytes()).map_err(|error| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
-    })?;
-
-    let result = unsafe { libc::chown(path.as_ptr(), u32::MAX, group.gid()) };
-    if result != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-
-    Ok(())
 }
 
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, std::io::Error> {

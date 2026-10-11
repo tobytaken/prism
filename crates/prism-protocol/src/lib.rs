@@ -1031,7 +1031,13 @@ mod session_tests {
             DaemonRequest::Hello(HelloRequest::current("0.1.0"))
         );
         assert_eq!(serde_json::to_value(hello).unwrap(), handshake["hello"]);
-        for answer in ["welcome", "incompatible", "unsupported"] {
+        for answer in [
+            "welcome",
+            "read_only_welcome",
+            "no_permission",
+            "incompatible",
+            "unsupported",
+        ] {
             let typed: SessionMessage = serde_json::from_value(handshake[answer].clone()).unwrap();
             assert_eq!(
                 serde_json::to_value(typed).unwrap(),
