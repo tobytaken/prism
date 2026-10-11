@@ -66,7 +66,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 changes: ChangeStripView {
                     summary: changes.summary.as_str().into(),
                     pending: changes.pending,
-                    problem: changes.problem.as_deref().unwrap_or_default().into(),
+                    outcome: changes.outcome.as_deref().unwrap_or_default().into(),
                     can_apply: changes.apply_unavailable.is_none(),
                     apply_reason: changes
                         .apply_unavailable
@@ -344,7 +344,6 @@ fn stepper_view(stepper: &Stepper) -> StepperView {
         reason: stepper.read_only.as_deref().unwrap_or_default().into(),
         can_use_default: stepper.can_use_default,
         default_label: format!("Use default {}", stepper.name.to_lowercase()).into(),
-        failed: stepper.failed.is_some(),
         failure: stepper.failed.as_deref().unwrap_or_default().into(),
     }
 }

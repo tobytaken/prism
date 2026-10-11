@@ -131,7 +131,7 @@ pub struct ChangeStrip {
     pub pending: bool,
     /// What the last Apply put into effect and what it left unapplied, and why, until the next
     /// edit, such as "Power limit applied · Graphics clock offset not applied: …".
-    pub problem: Option<String>,
+    pub outcome: Option<String>,
     /// Why Apply can't run now, while there are changes it can't apply.
     pub apply_unavailable: Option<String>,
     /// Why Discard can't run now, while there are changes it can't discard.
@@ -796,7 +796,7 @@ impl Core {
         ChangeStrip {
             summary: unapplied(count),
             pending: count > 0,
-            problem: draft.and_then(|draft| draft.outcome.clone()),
+            outcome: draft.and_then(|draft| draft.outcome.clone()),
             apply_unavailable: draft.and_then(|_| self.changes_unavailable(&Command::ApplyChanges)),
             discard_unavailable: draft
                 .and_then(|_| self.changes_unavailable(&Command::DiscardChanges)),

@@ -10,7 +10,7 @@ use std::time::Duration;
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode, GpuTelemetryProvider};
-use prism_protocol::DaemonResponse;
+use prism_protocol::{DaemonEvent, DaemonResponse};
 use slint::ComponentHandle;
 
 use prism_ui::{PrismdInstall, ServiceAction, SettingsSection, UnitState};
@@ -190,6 +190,11 @@ fn the_review_and_the_close_confirmation_are_accessible() {
     harness
         .find(AccessibleRole::Button, "Apply")
         .invoke_accessible_default_action();
+    // Changed outside Prism while the Apply was on its way.
+    let mut state = support::prismd::snapshot().tuning_states[0].clone();
+    state.revision = "changed".into();
+    state.reported.power_limit_watts = Some(500);
+    harness.prismd.push(DaemonEvent::TuningStateChanged(state));
     harness
         .prismd
         .answer(DaemonResponse::Error(GpuCommandError::new(

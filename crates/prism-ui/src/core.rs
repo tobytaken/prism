@@ -461,6 +461,68 @@ pub(crate) struct Gpu {
     pub(crate) capabilities: Vec<TuningControl>,
 }
 
+impl Gpu {
+    /// The values the GPU allows for a setting, as its latest reading or else its inventory says.
+    pub(crate) fn range(&self, key: ProfileSettingKey) -> Option<(i64, i64)> {
+        let device = match &self.latest {
+            Latest::Read(device) => Some(device),
+            Latest::Waiting | Latest::Missing { .. } => None,
+        };
+        let control = &self.device.control;
+        let (read, inventory) = match key {
+            ProfileSettingKey::PowerLimitWatts => {
+                let power = device.map(|device| &device.power);
+                let watts = |watts: Option<u32>| watts.map(i64::from);
+                (
+                    power.map(|power| (watts(power.min_limit_watts), watts(power.max_limit_watts))),
+                    (
+                        watts(control.power_limit.min_watts),
+                        watts(control.power_limit.max_watts),
+                    ),
+                )
+            }
+            ProfileSettingKey::GraphicsOffsetMhz | ProfileSettingKey::MemoryOffsetMhz => {
+                let graphics = key == ProfileSettingKey::GraphicsOffsetMhz;
+                let offset = device.map(|device| {
+                    if graphics {
+                        &device.clocks.graphics
+                    } else {
+                        &device.clocks.memory
+                    }
+                });
+                let mhz = |mhz: Option<i32>| mhz.map(i64::from);
+                let offsets = &control.offsets;
+                (
+                    offset.map(|offset| (mhz(offset.min_offset_mhz), mhz(offset.max_offset_mhz))),
+                    if graphics {
+                        (mhz(offsets.min_graphics_mhz), mhz(offsets.max_graphics_mhz))
+                    } else {
+                        (mhz(offsets.min_memory_mhz), mhz(offsets.max_memory_mhz))
+                    },
+                )
+            }
+        };
+        let (read_min, read_max) = read.unwrap_or_default();
+        let min = read_min.or(inventory.0)?;
+        let max = read_max.or(inventory.1)?;
+        (min <= max).then_some((min, max))
+    }
+
+    /// What a default instruction for the setting resolves to, as far as Prism knows: the GPU's
+    /// reported default power limit, or no offset (ADR 0001).
+    pub(crate) fn default_of(&self, key: ProfileSettingKey) -> Option<i64> {
+        match key {
+            ProfileSettingKey::PowerLimitWatts => match &self.latest {
+                Latest::Read(device) => device.power.default_limit_watts,
+                Latest::Waiting | Latest::Missing { .. } => None,
+            }
+            .or(self.device.control.power_limit.default_watts)
+            .map(i64::from),
+            ProfileSettingKey::GraphicsOffsetMhz | ProfileSettingKey::MemoryOffsetMhz => Some(0),
+        }
+    }
+}
+
 /// What the latest telemetry sample said about a GPU.
 #[derive(Debug, Default)]
 pub(crate) enum Latest {
@@ -577,7 +639,9 @@ impl Core {
                         self.take_sample(&sample, TelemetrySource::Prismd, received_at)
                     }
                     DaemonEvent::TuningStateChanged(state) => {
-                        self.tuning.insert(state.gpu_id.clone(), state);
+                        let gpu_id = state.gpu_id.clone();
+                        self.tuning.insert(gpu_id.clone(), state);
+                        self.tuning_pushed(&gpu_id);
                     }
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)
@@ -824,7 +888,7 @@ impl Core {
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }
-            Command::Quit => self.close(),
+            Command::Quit => self.close_or_ask(),
         };
         // Settings → Daemon shows why there's no session, as the host says it now.
         if !daemon_was_open && self.daemon_open() && !self.connected() {

@@ -44,7 +44,8 @@ export enum TuningSetting { power-limit, graphics-offset, memory-offset }
 // `value-text` how it's said, `text` the value in effect as shown, `pending` such as "→ 450 W" or
 // "→ default" while one is staged, and `reason` why it's read-only, when it is.
 // `can-use-default` says whether Use default, called `default-label` for a screen reader, can
-// stage the default; `failure` is why the last Apply didn't put the pending value into effect.
+// stage the default; `failure` says the last Apply didn't put the pending value into effect, and
+// why.
 export struct StepperView {
     setting: TuningSetting,
     label: string,
@@ -59,7 +60,6 @@ export struct StepperView {
     reason: string,
     can-use-default: bool,
     default-label: string,
-    failed: bool,
     failure: string,
 }
 
@@ -119,11 +119,12 @@ export struct TrackView {
 }
 
 // The fixed change strip under the workspace's header: its summary, whether there are unapplied
-// changes, why the last Apply left some, and whether Apply and Discard can run and why not.
+// changes, what the last Apply applied and left, and whether Apply and Discard can run and why
+// not.
 export struct ChangeStripView {
     summary: string,
     pending: bool,
-    problem: string,
+    outcome: string,
     can-apply: bool,
     apply-reason: string,
     can-discard: bool,

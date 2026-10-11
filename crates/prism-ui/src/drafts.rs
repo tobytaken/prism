@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 
 use prism_gpu::{GpuCommandErrorCode, TuningOutcome, TuningOutcomeStatus};
 use prism_protocol::{
-    ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, ProfileApplicationResponse,
-    ProfileSetting, ProfileSettingKey, ProfileSettings, ReportedTuningValues, SetEditHoldsRequest,
+    ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, GpuTuningState,
+    ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings,
+    ReportedTuningValues, SetEditHoldsRequest,
 };
 
 use crate::core::{CommandId, Core, Effect, Gpu, Latest, Selection, TuningControl};
@@ -26,6 +27,28 @@ pub(crate) struct Draft {
     pub(crate) failed: BTreeMap<ProfileSettingKey, Option<String>>,
     /// What the last Apply put into effect and what it didn't, and why, until the next edit.
     pub(crate) outcome: Option<String>,
+    /// How the draft moves onto the next tuning state prismd pushes for its GPU, while it waits
+    /// for one.
+    follow: Option<Follow>,
+}
+
+/// Why a draft waits for the next tuning state prismd pushes for its GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Follow {
+    /// An Apply put some of its settings into effect, and the state that write pushed hasn't
+    /// arrived yet: the changes left are made against it.
+    Quietly,
+    /// prismd refused an Apply for review before the change that made it stale reached Prism: the
+    /// review opens once it does.
+    WithReview,
+}
+
+/// An Apply waiting for prismd's answer.
+#[derive(Debug, Clone)]
+pub(crate) struct Applying {
+    command: CommandId,
+    /// The GPU's tuning-state revision Prism had last heard of when it sent the Apply.
+    seen: String,
 }
 
 impl Draft {
@@ -45,7 +68,7 @@ impl Draft {
 pub(crate) struct Drafts {
     pub(crate) by_gpu: BTreeMap<String, Draft>,
     /// The Apply waiting for prismd's answer, on each GPU that has one.
-    pub(crate) applying: BTreeMap<String, CommandId>,
+    pub(crate) applying: BTreeMap<String, Applying>,
     /// The GPUs prismd last heard this session holds edits on.
     held: Vec<String>,
     next_command: u64,
@@ -119,74 +142,6 @@ fn reported(values: &ReportedTuningValues, key: ProfileSettingKey) -> Option<i64
         ProfileSettingKey::PowerLimitWatts => values.power_limit_watts,
         ProfileSettingKey::GraphicsOffsetMhz => values.graphics_offset_mhz,
         ProfileSettingKey::MemoryOffsetMhz => values.memory_offset_mhz,
-    }
-}
-
-impl Gpu {
-    /// The values the GPU allows for a setting, as its latest reading or else its inventory says.
-    pub(crate) fn range(&self, key: ProfileSettingKey) -> Option<(i64, i64)> {
-        let device = match &self.latest {
-            Latest::Read(device) => Some(device),
-            Latest::Waiting | Latest::Missing { .. } => None,
-        };
-        let control = &self.device.control;
-        let (min, max) = match key {
-            ProfileSettingKey::PowerLimitWatts => {
-                let power = device.map(|device| &device.power);
-                (
-                    power
-                        .and_then(|power| power.min_limit_watts)
-                        .or(control.power_limit.min_watts)
-                        .map(i64::from),
-                    power
-                        .and_then(|power| power.max_limit_watts)
-                        .or(control.power_limit.max_watts)
-                        .map(i64::from),
-                )
-            }
-            ProfileSettingKey::GraphicsOffsetMhz => {
-                let offset = device.map(|device| &device.clocks.graphics);
-                (
-                    offset
-                        .and_then(|offset| offset.min_offset_mhz)
-                        .or(control.offsets.min_graphics_mhz)
-                        .map(i64::from),
-                    offset
-                        .and_then(|offset| offset.max_offset_mhz)
-                        .or(control.offsets.max_graphics_mhz)
-                        .map(i64::from),
-                )
-            }
-            ProfileSettingKey::MemoryOffsetMhz => {
-                let offset = device.map(|device| &device.clocks.memory);
-                (
-                    offset
-                        .and_then(|offset| offset.min_offset_mhz)
-                        .or(control.offsets.min_memory_mhz)
-                        .map(i64::from),
-                    offset
-                        .and_then(|offset| offset.max_offset_mhz)
-                        .or(control.offsets.max_memory_mhz)
-                        .map(i64::from),
-                )
-            }
-        };
-        let (min, max) = (min?, max?);
-        (min <= max).then_some((min, max))
-    }
-
-    /// What a default instruction for the setting resolves to, as far as Prism knows: the GPU's
-    /// reported default power limit, or no offset (ADR 0001).
-    pub(crate) fn default_of(&self, key: ProfileSettingKey) -> Option<i64> {
-        match key {
-            ProfileSettingKey::PowerLimitWatts => match &self.latest {
-                Latest::Read(device) => device.power.default_limit_watts,
-                Latest::Waiting | Latest::Missing { .. } => None,
-            }
-            .or(self.device.control.power_limit.default_watts)
-            .map(i64::from),
-            ProfileSettingKey::GraphicsOffsetMhz | ProfileSettingKey::MemoryOffsetMhz => Some(0),
-        }
     }
 }
 
@@ -282,6 +237,7 @@ impl Core {
             settings: ProfileSettings::default(),
             failed: BTreeMap::new(),
             outcome: None,
+            follow: None,
         });
         match setting {
             Some(setting) => draft.settings.set(key, setting),
@@ -328,7 +284,8 @@ impl Core {
             expected_revision: draft.revision.clone(),
             fan_indexes: None,
         });
-        self.drafts.applying.insert(id, command);
+        let seen = self.revision_of(&id);
+        self.drafts.applying.insert(id, Applying { command, seen });
         self.close_review();
         vec![Effect::CommandPrismd {
             id: command,
@@ -362,31 +319,44 @@ impl Core {
             .drafts
             .applying
             .iter()
-            .find(|(_, applying)| **applying == command)
+            .find(|(_, applying)| applying.command == command)
             .map(|(id, _)| id.clone())
         else {
             return Vec::new();
         };
-        self.drafts.applying.remove(&id);
+        let Some(applying) = self.drafts.applying.remove(&id) else {
+            return Vec::new();
+        };
         let latest = self.tuning.get(&id).cloned();
         let Some(draft) = self.drafts.by_gpu.get_mut(&id) else {
             return Vec::new();
         };
-        // The changes left stay made against the state they started from: an answer can overtake
-        // the event its own write pushed, so only a refusal for review moves them, onto the state
-        // the user is now shown.
+        // An answer can overtake the event its own write pushed, or the one that made it stale:
+        // the changes left move onto a state only once Prism has heard of it.
+        let heard_since = latest
+            .as_ref()
+            .is_some_and(|state| state.revision != applying.seen);
         let mut review = None;
         match response {
-            DaemonResponse::ProfileApplication(application) => settle(draft, &application),
+            DaemonResponse::ProfileApplication(application) => {
+                // A write that changed nothing leaves the state the changes are made against.
+                if settle(draft, &application) {
+                    match &latest {
+                        Some(state) if heard_since => {
+                            follow(draft, state);
+                        }
+                        _ => draft.follow = Some(Follow::Quietly),
+                    }
+                }
+            }
             DaemonResponse::Error(error) => {
                 if error.code == GpuCommandErrorCode::StaleRevision {
-                    let now = latest.as_ref().map(|state| &state.reported);
-                    review = Some(review_changes(draft.base.as_ref(), now, &draft.settings));
-                    draft.revision = latest
-                        .as_ref()
-                        .map(|state| state.revision.clone())
-                        .unwrap_or_default();
-                    draft.base = now.cloned();
+                    match &latest {
+                        Some(state) if state.revision != draft.revision => {
+                            review = Some(follow(draft, state));
+                        }
+                        _ => draft.follow = Some(Follow::WithReview),
+                    }
                 }
                 draft.outcome = Some(error.message);
             }
@@ -398,17 +368,45 @@ impl Core {
         if draft.len() == 0 {
             self.drafts.by_gpu.remove(&id);
         }
-        // Nothing opens over a dialog the user hasn't answered; the strip still says why.
-        if let Some(changes) = review
-            && self.dialog.is_none()
-        {
-            self.palette = None;
-            self.dialog = Some(DialogState::Review {
-                gpu_id: id,
-                changes,
-            });
+        if let Some(changes) = review {
+            self.open_review(id, changes);
         }
         self.sync_edit_holds()
+    }
+
+    /// prismd pushed the GPU's tuning state: a draft waiting for it moves onto it, opening the
+    /// review it waited to open.
+    pub(crate) fn tuning_pushed(&mut self, gpu_id: &str) {
+        let Some(state) = self.tuning.get(gpu_id).cloned() else {
+            return;
+        };
+        let Some(draft) = self.drafts.by_gpu.get_mut(gpu_id) else {
+            return;
+        };
+        let Some(how) = draft.follow else {
+            return;
+        };
+        let changes = follow(draft, &state);
+        if how == Follow::WithReview {
+            self.open_review(gpu_id.to_owned(), changes);
+        }
+    }
+
+    /// Opens the review of what changed under the GPU's draft, unless a dialog the user hasn't
+    /// answered is open; the strip still says why.
+    fn open_review(&mut self, gpu_id: String, changes: Vec<ReviewChange>) {
+        if self.dialog.is_none() {
+            self.palette = None;
+            self.dialog = Some(DialogState::Review { gpu_id, changes });
+        }
+    }
+
+    /// The GPU's tuning-state revision as prismd last pushed it, or none without one.
+    fn revision_of(&self, gpu_id: &str) -> String {
+        self.tuning
+            .get(gpu_id)
+            .map(|state| state.revision.clone())
+            .unwrap_or_default()
     }
 
     /// The session ended: Applies it didn't answer stay unapplied, and prismd let go of every
@@ -439,7 +437,7 @@ impl Core {
     }
 
     /// Asks before quitting while any GPU has unapplied tuning changes; quits at once otherwise.
-    pub(crate) fn close(&mut self) -> Vec<Effect> {
+    pub(crate) fn close_or_ask(&mut self) -> Vec<Effect> {
         if self.drafts.by_gpu.is_empty() {
             return self.quit();
         }
@@ -480,10 +478,20 @@ impl Core {
     }
 }
 
+/// Moves the draft onto `state`, returning the current tuning values that changed under it.
+fn follow(draft: &mut Draft, state: &GpuTuningState) -> Vec<ReviewChange> {
+    let changes = review_changes(draft.base.as_ref(), Some(&state.reported), &draft.settings);
+    draft.revision = state.revision.clone();
+    draft.base = Some(state.reported.clone());
+    draft.follow = None;
+    changes
+}
+
 /// Removes the settings the application put into effect, marks the ones it didn't, and words
-/// both in the draft's outcome.
-fn settle(draft: &mut Draft, application: &ProfileApplicationResponse) {
+/// both in the draft's outcome. Says whether it put any into effect.
+fn settle(draft: &mut Draft, application: &ProfileApplicationResponse) -> bool {
     let mut outcome = Vec::new();
+    let mut applied = false;
     for (key, result) in [
         (ProfileSettingKey::PowerLimitWatts, &application.power),
         (ProfileSettingKey::GraphicsOffsetMhz, &application.graphics),
@@ -496,6 +504,7 @@ fn settle(draft: &mut Draft, application: &ProfileApplicationResponse) {
         if succeeded(result) {
             draft.settings.clear(key);
             outcome.push(format!("{name} applied"));
+            applied = true;
             continue;
         }
         let why = result.as_ref().and_then(|result| result.error.clone());
@@ -508,6 +517,7 @@ fn settle(draft: &mut Draft, application: &ProfileApplicationResponse) {
         if cooling.outcome.status == TuningOutcomeStatus::Succeeded {
             draft.settings.cooling = None;
             outcome.push("Cooling applied".into());
+            applied = true;
         } else {
             outcome.push(not_applied(
                 "Cooling not applied",
@@ -517,6 +527,7 @@ fn settle(draft: &mut Draft, application: &ProfileApplicationResponse) {
     }
     // Only a partial Apply leaves a draft to say this on.
     draft.outcome = Some(outcome.join(" · "));
+    applied
 }
 
 fn succeeded(outcome: &Option<TuningOutcome>) -> bool {

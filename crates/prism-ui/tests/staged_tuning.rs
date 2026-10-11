@@ -327,7 +327,7 @@ fn a_failed_setting_stays_pending_with_why_for_a_retry_against_the_same_state() 
     let changes = workspace(&core).changes;
     assert!(changes.pending);
     assert_eq!(
-        changes.problem.as_deref(),
+        changes.outcome.as_deref(),
         Some("Power limit not applied: Insufficient permissions")
     );
     let retry = applies(&intent(&mut core, Intent::ApplyChanges));
@@ -354,8 +354,8 @@ fn a_stale_apply_keeps_the_draft_for_review_and_bases_the_next_apply_on_what_cha
     assert!(
         workspace(&core)
             .changes
-            .problem
-            .is_some_and(|problem| problem.contains("Review them"))
+            .outcome
+            .is_some_and(|outcome| outcome.contains("Review them"))
     );
     let retry = applies(&intent(&mut core, Intent::ApplyChanges));
     assert_eq!(retry[0].1.expected_revision, "changed");
@@ -675,7 +675,7 @@ fn a_partial_apply_marks_what_succeeded_and_failed_and_keeps_the_failed_edits_pe
     let changes = workspace(&core).changes;
     assert_eq!(changes.summary, "2 unapplied changes");
     assert_eq!(
-        changes.problem.as_deref(),
+        changes.outcome.as_deref(),
         Some(
             "Power limit applied · Graphics clock offset not applied: The driver refused the \
              offset · Memory clock offset not applied"
@@ -729,7 +729,7 @@ fn editing_a_failed_setting_clears_its_failure_and_the_last_outcome() {
         stepper(&core, MemoryOffsetMhz).failed.as_deref(),
         Some("Not applied: Refused")
     );
-    assert_eq!(workspace(&core).changes.problem, None);
+    assert_eq!(workspace(&core).changes.outcome, None);
 }
 
 #[test]
@@ -918,4 +918,73 @@ fn closing_without_unapplied_changes_quits_at_once() {
 
     assert_eq!(intent(&mut core, Intent::CloseWindow), [Effect::Quit]);
     assert_eq!(core.dialog(), None);
+}
+
+/// Stages a power limit and a graphics clock offset and applies them; prismd puts the power
+/// limit into effect and refuses the offset.
+fn partly_applied(core: &mut Core) -> CommandId {
+    intent(core, Intent::Stage(PowerLimitWatts, 450));
+    intent(core, Intent::Stage(GraphicsOffsetMhz, 150));
+    the_apply(&intent(core, Intent::ApplyChanges)).0
+}
+
+fn power_applied_offset_refused() -> DaemonResponse {
+    outcomes(
+        outcome(TuningOutcomeStatus::Succeeded, None),
+        outcome(TuningOutcomeStatus::Failed, Some("Refused")),
+        None,
+    )
+}
+
+#[test]
+fn a_retry_after_a_partial_apply_is_made_against_the_state_its_own_write_pushed() {
+    let mut core = connected();
+    let id = partly_applied(&mut core);
+
+    core.handle(Input::PrismdAnswered {
+        id,
+        response: power_applied_offset_refused(),
+    });
+    // The write's own event arrives after its answer.
+    tuning_changed(&mut core, GPU, "applied", 450);
+
+    assert_eq!(core.dialog(), None);
+    let (_, retry) = the_apply(&intent(&mut core, Intent::ApplyChanges));
+    assert_eq!(retry.expected_revision, "applied");
+}
+
+#[test]
+fn a_retry_after_a_partial_apply_whose_event_came_first_is_made_against_that_state() {
+    let mut core = connected();
+    let id = partly_applied(&mut core);
+    tuning_changed(&mut core, GPU, "applied", 450);
+
+    core.handle(Input::PrismdAnswered {
+        id,
+        response: power_applied_offset_refused(),
+    });
+
+    let (_, retry) = the_apply(&intent(&mut core, Intent::ApplyChanges));
+    assert_eq!(retry.expected_revision, "applied");
+}
+
+#[test]
+fn a_stale_apply_answered_before_the_change_reaches_prism_opens_the_review_once_it_does() {
+    let mut core = connected();
+    let (id, _) = stage_and_apply(&mut core, 450);
+
+    core.handle(Input::PrismdAnswered {
+        id,
+        response: stale(),
+    });
+    // prismd saw the change before it pushed it.
+    assert_eq!(core.dialog(), None);
+    tuning_changed(&mut core, GPU, "changed", 500);
+
+    let Some(Dialog::Review(review)) = core.dialog() else {
+        panic!("expected the review, got {:?}", core.dialog())
+    };
+    assert_eq!(review.changes[0].change, "575 W → 500 W");
+    let (_, apply) = the_apply(&intent(&mut core, Intent::ApplyChanges));
+    assert_eq!(apply.expected_revision, "changed");
 }
