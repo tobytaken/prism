@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
-use prism_protocol::{DaemonEvent, DaemonRequest};
+use prism_protocol::{Authorization, DaemonEvent, DaemonRequest};
 
 /// Resolved by the socket adapter from SO_PEERCRED, never from client JSON.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,16 +29,35 @@ pub struct SessionPolicy {
 impl SessionPolicy {
     /// Allows the caller to change GPU tuning, or says why not, naming the group they lack.
     pub fn allow_tuning(&self, peer: &SessionPeer) -> Result<(), GpuCommandError> {
-        if peer.uid == 0
-            || self.admin_user.as_deref() == Some(&peer.username)
-            || peer.groups.contains(&self.admin_group)
-        {
-            return Ok(());
+        match self.authorization(peer) {
+            Authorization::NotInAdminGroup { user, group } => Err(GpuCommandError::new(
+                GpuCommandErrorCode::NoPermission,
+                format!("{user} isn't in group {group}"),
+            )),
+            Authorization::Root {}
+            | Authorization::AdminUser { .. }
+            | Authorization::AdminGroup { .. } => Ok(()),
         }
-        Err(GpuCommandError::new(
-            GpuCommandErrorCode::NoPermission,
-            format!("{} isn't in group {}", peer.username, self.admin_group),
-        ))
+    }
+
+    /// How the caller is allowed to tune, or that they aren't.
+    pub fn authorization(&self, peer: &SessionPeer) -> Authorization {
+        let user = peer.username.clone();
+        if peer.uid == 0 {
+            Authorization::Root {}
+        } else if self.admin_user.as_deref() == Some(&peer.username) {
+            Authorization::AdminUser { user }
+        } else if peer.groups.contains(&self.admin_group) {
+            Authorization::AdminGroup {
+                user,
+                group: self.admin_group.clone(),
+            }
+        } else {
+            Authorization::NotInAdminGroup {
+                user,
+                group: self.admin_group.clone(),
+            }
+        }
     }
 
     /// Allows one request from the caller: anyone may read, and only a caller allowed to tune may

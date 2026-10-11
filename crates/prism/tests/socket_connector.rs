@@ -8,7 +8,7 @@ use std::time::Duration;
 use prism::{PrismdConnector, PrismdReport, SocketConnector};
 use prism_protocol::framing::{read_frame, write_frame};
 use prism_protocol::{DaemonEvent, DaemonRequest, SessionRequest, TuningStoreHealth};
-use prism_ui::NotConnected;
+use prism_ui::SessionFailure;
 
 /// Longer than the longest backoff, so a missed reconnect fails instead of hanging.
 const DEADLINE: Duration = Duration::from_secs(8);
@@ -56,7 +56,7 @@ fn the_connector_reports_no_session_then_connects_once_prismd_answers_and_after_
 
     assert!(matches!(
         next(&reports),
-        PrismdReport::NotConnected(NotConnected::Unavailable { .. })
+        PrismdReport::NotConnected(SessionFailure::Unavailable { .. })
     ));
 
     // prismd starts while the connector waits to retry.

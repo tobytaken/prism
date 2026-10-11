@@ -11,7 +11,7 @@ use prism_protocol::{
     DaemonEvent, DaemonSnapshot, Incompatible, ProtocolVersion, SessionMessage, Welcome,
 };
 use prism_ui::{
-    AppearanceMode, Content, Core, Input, NotConnected, TelemetrySource, TuningAccess,
+    AppearanceMode, Content, Core, Input, SessionFailure, TelemetrySource, TuningAccess,
     TuningControl,
 };
 
@@ -39,6 +39,7 @@ fn welcome(can_tune: bool, reason: Option<&str>) -> Welcome {
         prismd_version: "0.1.0".into(),
         can_tune,
         reason: reason.map(Into::into),
+        authorization: None,
     }
 }
 
@@ -54,17 +55,18 @@ fn connect(core: &mut Core, welcome: Welcome) {
     core.handle(Input::PrismdConnected {
         welcome,
         snapshot: snapshot(),
+        socket: "/run/prism/prismd.sock".into(),
     });
 }
 
 fn not_running() -> Input {
-    Input::PrismdNotConnected(NotConnected::Unavailable {
+    Input::PrismdNotConnected(SessionFailure::Unavailable {
         message: "No such file or directory (os error 2)".into(),
     })
 }
 
 fn incompatible() -> Input {
-    Input::PrismdNotConnected(NotConnected::Incompatible(Incompatible {
+    Input::PrismdNotConnected(SessionFailure::Incompatible(Incompatible {
         protocol: ProtocolVersion { major: 0, minor: 9 },
         prismd_version: "0.9.0".into(),
     }))
@@ -100,10 +102,10 @@ fn every_connection_state_decides_tuning_access() {
     assert_eq!(core.tuning_access(), read_only("connecting"));
 
     core.handle(not_running());
-    assert_eq!(core.tuning_access(), read_only("not connected"));
+    assert_eq!(core.tuning_access(), read_only("not running"));
 
     core.handle(incompatible());
-    assert_eq!(core.tuning_access(), read_only("incompatible version"));
+    assert_eq!(core.tuning_access(), read_only("incompatible"));
 
     connect(&mut core, welcome(false, Some("bob isn't in group wheel")));
     assert_eq!(core.tuning_access(), read_only("bob isn't in group wheel"));
@@ -115,7 +117,7 @@ fn every_connection_state_decides_tuning_access() {
     assert_eq!(core.tuning_access(), TuningAccess::Granted);
 
     core.handle(not_running());
-    assert_eq!(core.tuning_access(), read_only("not connected"));
+    assert_eq!(core.tuning_access(), read_only("not running"));
 }
 
 #[test]
@@ -131,7 +133,7 @@ fn running_prism_as_root_without_prismd_still_has_no_tuning_access() {
 
     // The in-process reading says the GPU supports every control, but there is no write path
     // without prismd.
-    assert_eq!(core.tuning_access(), read_only("not connected"));
+    assert_eq!(core.tuning_access(), read_only("not running"));
     for control in TuningControl::ALL {
         assert!(!core.editable(GPU, control), "{control:?}");
     }
@@ -208,7 +210,7 @@ fn the_workspace_says_why_tuning_needs_prismd_only_without_tuning_access() {
     let mut core = launched();
     core.handle(not_running());
     core.handle(Input::InventoryRead(tunable().inventory()));
-    assert_eq!(no_tuning_access(&core).as_deref(), Some("not connected"));
+    assert_eq!(no_tuning_access(&core).as_deref(), Some("not running"));
 
     connect(&mut core, welcome(false, Some("bob isn't in group wheel")));
     assert_eq!(

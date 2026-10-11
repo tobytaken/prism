@@ -1,7 +1,8 @@
 //! The command palette: its command catalog with each command's availability, fuzzy matching and
 //! recent-first ordering. Also the keyboard shortcuts, which run the same commands.
 
-use crate::core::{Core, Section, Selection};
+use crate::core::{Core, Section, Selection, SettingsSection};
+use crate::daemon::ServiceAction;
 use crate::view::gpu_label;
 
 /// Something the palette or a shortcut runs.
@@ -10,6 +11,10 @@ pub(crate) enum Command {
     /// Show this GPU, by id, in the workspace.
     GoToGpu(String),
     GoTo(Section),
+    GoToSettings(SettingsSection),
+    RunService(ServiceAction),
+    /// Copy the one command that sets prismd up from here.
+    CopyPrismdSetup,
     Quit,
 }
 
@@ -218,10 +223,17 @@ impl Core {
 
     /// Why `command` can't run now, when it can't.
     pub(crate) fn unavailable(&self, command: &Command) -> Option<String> {
+        if let Command::RunService(_) = command {
+            return self.service.map(|running| running.running().to_owned());
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
-            Command::Quit => false,
+            Command::GoToSettings(section) => {
+                self.selection == Some(Selection::Section(Section::Settings))
+                    && self.settings_section == *section
+            }
+            Command::RunService(_) | Command::CopyPrismdSetup | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
     }
@@ -255,9 +267,30 @@ impl Core {
                 Some(Shortcut::GoTo(section)),
             )
         });
+        let settings = SettingsSection::ALL.map(|section| {
+            (
+                Command::GoToSettings(section),
+                format!("Go to Settings: {}", section.name()),
+                None,
+            )
+        });
+        // Only those that fix the prismd connection from here.
+        let prismd = self
+            .service_action()
+            .map(|action| (Command::RunService(action), action.title().to_owned(), None))
+            .into_iter()
+            .chain(self.setup_command().map(|_| {
+                (
+                    Command::CopyPrismdSetup,
+                    "Copy prismd setup command".to_owned(),
+                    None,
+                )
+            }));
         let app = [(Command::Quit, "Quit Prism".to_owned(), Some(Shortcut::Quit))];
         navigation
             .chain(sections)
+            .chain(settings)
+            .chain(prismd)
             .chain(app)
             .map(|(command, title, shortcut)| CatalogEntry {
                 unavailable: self.unavailable(&command),

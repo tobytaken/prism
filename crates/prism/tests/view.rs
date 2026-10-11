@@ -29,7 +29,7 @@ fn prism_opens_with_its_title_bar_sidebar_temperature_track_and_status_bar() {
     for section in ["Games", "Drivers", "Settings"] {
         harness.find(ListItem, section);
     }
-    harness.find(Text, "PRISMD NOT CONNECTED");
+    harness.find(Button, "PRISMD · NOT RUNNING");
     harness.find(Text, "MONITORING IN-PROCESS");
 }
 

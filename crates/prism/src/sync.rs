@@ -3,11 +3,15 @@
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use prism_ui::format::Readout;
-use prism_ui::{AppearanceMode as CoreAppearance, Content, Core, Section as CoreSection};
+use prism_ui::{
+    AppearanceMode as CoreAppearance, Content, Core, Section as CoreSection,
+    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection,
+};
 
 use crate::{
-    AppState, AppearanceMode, ContentKind, ExplainedStateView, MainWindow, PaletteEntryView,
-    ReadoutView, SidebarGpuView, TemperatureTrackView, Theme, WorkspaceView,
+    AppState, AppearanceMode, ContentKind, DaemonView, ExplainedStateView, FactView, MainWindow,
+    PaletteEntryView, ReadoutView, ServiceAction, SettingsSection, SidebarGpuView,
+    TemperatureTrackView, Theme, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -76,6 +80,56 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         Content::Section(CoreSection::Drivers) => ContentKind::Drivers,
         Content::Section(CoreSection::Settings) => ContentKind::Settings,
     });
+
+    state.set_settings_section(match core.settings_section() {
+        CoreSettingsSection::Appearance => SettingsSection::Appearance,
+        CoreSettingsSection::Startup => SettingsSection::Startup,
+        CoreSettingsSection::Notifications => SettingsSection::Notifications,
+        CoreSettingsSection::Daemon => SettingsSection::Daemon,
+        CoreSettingsSection::About => SettingsSection::About,
+    });
+    let daemon = core.daemon_settings();
+    let action = daemon.action.as_ref();
+    state.set_daemon(DaemonView {
+        title: daemon.title.as_str().into(),
+        has_action: action.is_some(),
+        action: match action.map(|action| action.action) {
+            Some(CoreServiceAction::Restart) => ServiceAction::Restart,
+            Some(CoreServiceAction::Enable) | None => ServiceAction::Enable,
+        },
+        action_title: action
+            .map(|action| action.title.as_str())
+            .unwrap_or_default()
+            .into(),
+        action_busy: action.is_some_and(|action| action.busy),
+        error: daemon.error.as_deref().unwrap_or_default().into(),
+    });
+    let strings = |lines: &[String]| lines.iter().map(SharedString::from).collect::<Vec<_>>();
+    if let Some(model) = update_in_place(
+        &state.get_daemon_paragraphs(),
+        strings(&daemon.paragraphs),
+        PartialEq::eq,
+    ) {
+        state.set_daemon_paragraphs(model);
+    }
+    if let Some(model) = update_in_place(
+        &state.get_daemon_commands(),
+        strings(&daemon.commands),
+        PartialEq::eq,
+    ) {
+        state.set_daemon_commands(model);
+    }
+    let facts: Vec<_> = daemon
+        .facts
+        .iter()
+        .map(|fact| FactView {
+            label: fact.label.as_str().into(),
+            value: fact.value.as_str().into(),
+        })
+        .collect();
+    if let Some(model) = update_in_place(&state.get_daemon_facts(), facts, PartialEq::eq) {
+        state.set_daemon_facts(model);
+    }
 
     let palette = core.palette();
     state.set_palette_open(palette.is_some());

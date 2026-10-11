@@ -136,15 +136,8 @@ impl Core {
 
     pub fn status_bar(&self) -> StatusBar {
         StatusBar {
-            connection: match self.prismd {
-                PrismdConnection::Connected(_) => "PRISMD CONNECTED",
-                // Why not comes with the connection reasons (#132).
-                PrismdConnection::Connecting | PrismdConnection::NotConnected(_) => {
-                    "PRISMD NOT CONNECTED"
-                }
-            }
-            .into(),
-            connected: matches!(self.prismd, PrismdConnection::Connected(_)),
+            connection: self.connection_item(),
+            connected: self.connected(),
             telemetry: if self.no_gpus().is_some() {
                 "NO GPU TELEMETRY"
             } else {
@@ -156,6 +149,16 @@ impl Core {
             }
             .into(),
         }
+    }
+
+    /// The status bar's prismd item: "PRISMD · " and the reason, or that it's connected.
+    fn connection_item(&self) -> String {
+        let state = match self.prismd() {
+            PrismdConnection::Connected(welcome) if !welcome.can_tune => "not allowed",
+            PrismdConnection::Connected(_) => "connected",
+            other => other.reason().unwrap_or_default(),
+        };
+        format!("PRISMD · {}", state.to_uppercase())
     }
 
     pub(crate) fn gpus(&self) -> &[Gpu] {

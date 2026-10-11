@@ -10,7 +10,7 @@ mod support;
 
 mod screenshot {
     use prism_gpu::simulated::SimulatedFixture;
-    use prism_ui::AppearanceMode;
+    use prism_ui::{AppearanceMode, PrismdInstall, UnitState};
     use slint::ComponentHandle;
 
     use crate::support::Harness;
@@ -56,6 +56,67 @@ mod screenshot {
     #[test]
     fn the_command_palette_in_dark() {
         command_palette(AppearanceMode::Dark, "command-palette-dark");
+    }
+
+    /// Settings → Daemon on an Ubuntu host without prismd: why it's needed and the commands that
+    /// install it, each with a copy button.
+    fn daemon_not_installed(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = Harness::on_host(
+            SimulatedFixture::TwoIdenticalGpus,
+            appearance,
+            PrismdInstall::Native(UnitState::NotFound),
+        );
+        harness.tick();
+        harness.ctrl(",");
+        harness.tick();
+        harness
+            .find(i_slint_backend_testing::AccessibleRole::ListItem, "Daemon")
+            .invoke_accessible_default_action();
+        harness.tick();
+
+        assert_screenshot(name, harness.app.window().window(), WINDOW);
+    }
+
+    #[test]
+    fn settings_daemon_without_prismd_in_light() {
+        daemon_not_installed(AppearanceMode::Light, "daemon-not-installed-light");
+    }
+
+    #[test]
+    fn settings_daemon_without_prismd_in_dark() {
+        daemon_not_installed(AppearanceMode::Dark, "daemon-not-installed-dark");
+    }
+
+    /// Settings → Daemon connected to prismd without tuning access: the fix, then the
+    /// connection's facts.
+    fn daemon_not_allowed(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = Harness::with_daemon_in(
+            SimulatedFixture::TwoIdenticalGpus,
+            appearance,
+            crate::support::prismd::DaemonState::ReadOnly,
+        );
+        harness.tick();
+        harness
+            .find(
+                i_slint_backend_testing::AccessibleRole::Button,
+                "PRISMD · NOT ALLOWED",
+            )
+            .invoke_accessible_default_action();
+        harness.tick();
+
+        assert_screenshot(name, harness.app.window().window(), WINDOW);
+    }
+
+    #[test]
+    fn settings_daemon_without_tuning_access_in_light() {
+        daemon_not_allowed(AppearanceMode::Light, "daemon-not-allowed-light");
+    }
+
+    #[test]
+    fn settings_daemon_without_tuning_access_in_dark() {
+        daemon_not_allowed(AppearanceMode::Dark, "daemon-not-allowed-dark");
     }
 
     mod popup_surface {

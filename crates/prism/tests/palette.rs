@@ -73,6 +73,14 @@ fn ctrl_k_opens_the_palette_with_its_field_focused() {
             "Go to Games".into(),
             "Go to Drivers".into(),
             "Go to Settings".into(),
+            "Go to Settings: Appearance".into(),
+            "Go to Settings: Startup".into(),
+            "Go to Settings: Notifications".into(),
+            "Go to Settings: Daemon".into(),
+            "Go to Settings: About".into(),
+            // The harness's prismd is installed but not running.
+            "Enable prismd".into(),
+            "Copy prismd setup command".into(),
             "Quit Prism".into(),
         ]
     );
@@ -169,7 +177,7 @@ fn escape_closes_the_palette_and_ctrl_k_opens_it_again() {
 
     harness.ctrl("k");
     assert!(palette_is_open(&harness));
-    assert_eq!(commands(&harness).len(), 6);
+    assert_eq!(commands(&harness).len(), 13);
 }
 
 #[test]
@@ -254,4 +262,17 @@ fn a_later_launch_raises_the_window_with_its_activation_token() {
         harness.activation.tokens(),
         [Some("token-from-the-launcher".to_owned())]
     );
+}
+
+#[test]
+fn copy_prismd_setup_command_puts_it_on_the_clipboard() {
+    let harness = harness();
+    harness.ctrl("k");
+    harness.type_text("copy prismd");
+
+    harness
+        .find(ListItem, "Copy prismd setup command")
+        .invoke_accessible_default_action();
+
+    assert_eq!(harness.clipboard(), "sudo systemctl enable --now prismd");
 }

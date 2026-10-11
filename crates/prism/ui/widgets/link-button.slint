@@ -5,15 +5,18 @@ import { StyledText } from "styled-text.slint";
 // A button that reads as a word in a line of text, such as the "Set up" that ends an explanation.
 export component LinkButton inherits Rectangle {
     in property <string> text;
+    // What a screen reader calls it, when `text` alone doesn't say, such as "Copy" next to one of
+    // several commands.
+    in property <string> label: text;
     callback activated();
 
     accessible-role: button;
-    accessible-label: text;
+    accessible-label: root.label;
     accessible-action-default => {
         root.activated();
     }
     forward-focus: press;
-    width: label.preferred-width + 2 * Theme.space.xs;
+    width: caption.preferred-width + 2 * Theme.space.xs;
     background: press.has-hover ? Theme.color.hover : transparent;
 
     press := PressArea {
@@ -22,7 +25,7 @@ export component LinkButton inherits Rectangle {
         }
     }
 
-    label := StyledText {
+    caption := StyledText {
         text: root.text;
         style: Theme.text.name;
         accessible-role: none;

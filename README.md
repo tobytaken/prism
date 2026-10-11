@@ -82,6 +82,8 @@ bash scripts/install-prismd-host.sh
 
 The daemon listens on `/run/prism/prismd.sock`. Its versioned tuning store lives in `/var/lib/prism/tuning-state.json` and holds each user's GPU tuning profiles, which only that user sees, and each GPU's current profile, which every user sees by name. If the tuning store can't be read, or was written by a newer version of Prism, the daemon leaves it untouched, reports the problem, and manual tuning keeps working.
 
+Without a `prismd` connection, or without tuning access, Prism's status bar says why (`PRISMD · NOT RUNNING`, for example) and opens Settings → Daemon, which explains how to fix it: the install commands for the host's distribution, **Enable prismd** (`systemctl enable --now prismd.service`, under polkit) when it isn't running, systemd's result with **Restart prismd** and the `journalctl` command when it failed, the `usermod` command when the user isn't allowed to tune, and both versions when they're incompatible. The Flatpak can't talk to systemd, so it offers the commands to copy instead.
+
 Any local user can connect to the socket, which is always `0666`, and read GPU state, telemetry and Activity. prismd checks each request: changing GPU tuning, profiles, games, startup behavior or driver jobs needs root, membership of `admin_group`, or being `admin_user`. Anyone else gets a read-only session, and Prism names the group they lack. The packages create `/run/prism` at install and at boot through `/usr/lib/tmpfiles.d/prismd.conf`, so it exists even while the daemon isn't running.
 
 The default daemon config, `/etc/prism/prismd.toml`, is:

@@ -256,7 +256,7 @@ fn closing_the_window_quits_prism() {
 #[test]
 fn the_status_bar_shows_the_prismd_connection_and_the_telemetry_source() {
     let mut core = launched(SimulatedFixture::TunableGpu);
-    assert_eq!(core.status_bar().connection, "PRISMD NOT CONNECTED");
+    assert_eq!(core.status_bar().connection, "PRISMD · CONNECTING");
     assert_eq!(core.status_bar().telemetry, "WAITING FOR TELEMETRY");
 
     sampled(

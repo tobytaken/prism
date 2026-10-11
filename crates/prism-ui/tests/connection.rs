@@ -9,7 +9,7 @@ use prism_protocol::{
     Welcome,
 };
 use prism_ui::{
-    AppearanceMode, Content, Core, Effect, GpuWorkspace, Input, NotConnected, PrismdConnection,
+    AppearanceMode, Content, Core, Effect, GpuWorkspace, Input, PrismdConnection, SessionFailure,
     TelemetrySource,
 };
 
@@ -35,6 +35,7 @@ fn welcome() -> Welcome {
         prismd_version: "0.1.0".into(),
         can_tune: true,
         reason: None,
+        authorization: None,
     }
 }
 
@@ -50,11 +51,12 @@ fn connected(core: &mut Core) -> Vec<Effect> {
     core.handle(Input::PrismdConnected {
         welcome: welcome(),
         snapshot: snapshot(),
+        socket: "/run/prism/prismd.sock".into(),
     })
 }
 
 fn not_running() -> Input {
-    Input::PrismdNotConnected(NotConnected::Unavailable {
+    Input::PrismdNotConnected(SessionFailure::Unavailable {
         message: "prismd isn't running".into(),
     })
 }
@@ -105,12 +107,15 @@ fn prism_connects_to_prismd_before_reading_any_gpu_itself() {
 fn without_a_session_prism_samples_in_process() {
     let mut core = launched();
 
-    assert_eq!(core.handle(not_running()), [Effect::StartSampler]);
+    assert_eq!(
+        core.handle(not_running()),
+        [Effect::StartSampler, Effect::CheckPrismdHost]
+    );
     // Another failed attempt changes nothing.
     assert_eq!(core.handle(not_running()), []);
 
     assert!(matches!(core.prismd(), PrismdConnection::NotConnected(_)));
-    assert_eq!(core.status_bar().connection, "PRISMD NOT CONNECTED");
+    assert_eq!(core.status_bar().connection, "PRISMD · NOT RUNNING");
     assert!(!core.status_bar().connected);
 }
 
@@ -128,7 +133,7 @@ fn a_session_from_startup_brings_the_gpus_and_their_telemetry_without_sampling_i
     assert_eq!(prismd_sample(&mut core, 64, 1), []);
     assert_eq!(core.sidebar().gpus[0].temperature.text(), "64 °C");
     assert!(matches!(core.prismd(), PrismdConnection::Connected(_)));
-    assert_eq!(core.status_bar().connection, "PRISMD CONNECTED");
+    assert_eq!(core.status_bar().connection, "PRISMD · CONNECTED");
     assert!(core.status_bar().connected);
     assert_eq!(core.status_bar().telemetry, "MONITORING THROUGH PRISMD");
 }
@@ -165,7 +170,10 @@ fn losing_the_session_samples_in_process_again_and_history_continues_as_one_seri
     prismd_sample(&mut core, 50, 1);
     prismd_sample(&mut core, 60, 2);
 
-    assert_eq!(core.handle(not_running()), [Effect::StartSampler]);
+    assert_eq!(
+        core.handle(not_running()),
+        [Effect::StartSampler, Effect::CheckPrismdHost]
+    );
     // The sampler reads the inventory first, which keeps each GPU's history.
     core.handle(Input::InventoryRead(tunable().inventory()));
     in_process_sample(&mut core, 70, 3);
@@ -194,7 +202,7 @@ fn losing_the_session_samples_in_process_again_and_history_continues_as_one_seri
 fn an_incompatible_prismd_counts_as_no_connection() {
     let mut core = launched();
 
-    let effects = core.handle(Input::PrismdNotConnected(NotConnected::Incompatible(
+    let effects = core.handle(Input::PrismdNotConnected(SessionFailure::Incompatible(
         Incompatible {
             protocol: ProtocolVersion { major: 0, minor: 9 },
             prismd_version: "0.9.0".into(),
@@ -202,7 +210,7 @@ fn an_incompatible_prismd_counts_as_no_connection() {
     )));
 
     assert_eq!(effects, [Effect::StartSampler]);
-    assert_eq!(core.status_bar().connection, "PRISMD NOT CONNECTED");
+    assert_eq!(core.status_bar().connection, "PRISMD · INCOMPATIBLE");
 }
 
 #[test]

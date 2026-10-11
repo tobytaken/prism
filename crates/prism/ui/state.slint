@@ -71,6 +71,28 @@ export struct KeyPress {
 
 export enum Section { games, drivers, settings }
 
+export enum SettingsSection { appearance, startup, notifications, daemon, about }
+
+export enum ServiceAction { enable, restart }
+
+// A labeled fact about the prismd connection, such as the socket path.
+export struct FactView {
+    label: string,
+    value: string,
+}
+
+// Settings → Daemon, apart from its lists. `has-action` says whether there's a button for
+// `action`, titled `action-title` and not pressable while `action-busy`; `error` is why the last
+// one failed, and empty otherwise.
+export struct DaemonView {
+    title: string,
+    has-action: bool,
+    action: ServiceAction,
+    action-title: string,
+    action-busy: bool,
+    error: string,
+}
+
 export enum ContentKind { searching, no-gpus, gpu, games, drivers, settings }
 
 export global AppState {
@@ -82,6 +104,12 @@ export global AppState {
     in property <string> connection;
     in property <bool> connected;
     in property <string> telemetry;
+    in property <SettingsSection> settings-section;
+    in property <DaemonView> daemon;
+    // Settings → Daemon's paragraphs, commands to copy and facts, in order.
+    in property <[string]> daemon-paragraphs;
+    in property <[string]> daemon-commands;
+    in property <[FactView]> daemon-facts;
     in property <bool> palette-open;
     // The commands matching the palette's query, recently run ones first.
     in property <[PaletteEntryView]> palette-entries;
@@ -95,6 +123,11 @@ export global AppState {
 export global Intents {
     callback select-gpu(id: string);
     callback go-to(section: Section);
+    callback go-to-settings(section: SettingsSection);
+    // Asks systemd to enable or restart prismd.
+    callback run-service(action: ServiceAction);
+    // Puts `text` on the clipboard.
+    callback copy(text: string);
     callback minimize-window();
     callback toggle-maximized();
     callback close-window();

@@ -8,7 +8,7 @@ use i_slint_backend_testing::AccessibleRole;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuPerformanceResponse, GpuTelemetryProvider};
 use prism_protocol::DaemonRequest;
-use prism_ui::{Content, Section};
+use prism_ui::{Content, Section, SettingsSection};
 
 use support::prismd::DaemonState;
 use support::{Harness, texts};
@@ -62,7 +62,7 @@ fn with_a_session_from_startup_telemetry_comes_from_prismd_and_nvml_is_never_loa
     let block = harness.find(ListItem, TUNABLE_GPU);
     assert_eq!(texts(&block)[3], "66");
     assert_eq!(statistic(&harness, "Minimum temperature"), "64 °C");
-    harness.find(Text, "PRISMD CONNECTED");
+    harness.find(Button, "PRISMD · CONNECTED");
     harness.find(Text, "MONITORING THROUGH PRISMD");
 }
 
@@ -87,7 +87,7 @@ fn stopping_the_daemon_switches_to_in_process_sampling_and_history_continues() {
         statistic(&harness, "Temperature reading"),
         format!("{celsius} °C")
     );
-    harness.find(Text, "PRISMD NOT CONNECTED");
+    harness.find(Button, "PRISMD · NOT RUNNING");
     harness.find(Text, "MONITORING IN-PROCESS");
 
     // When the daemon is back, it takes over again, still as one series.
@@ -96,7 +96,7 @@ fn stopping_the_daemon_switches_to_in_process_sampling_and_history_continues() {
     harness.prismd_tick(reading(70));
     assert_eq!(harness.in_process_reads(), reads);
     assert_eq!(temperature_samples(&harness), [5]);
-    harness.find(Text, "PRISMD CONNECTED");
+    harness.find(Button, "PRISMD · CONNECTED");
 }
 
 #[test]
@@ -128,25 +128,28 @@ fn an_incompatible_daemon_counts_as_no_connection_and_monitoring_continues_in_pr
     assert!(harness.in_process_reads() > 0);
     assert_eq!(harness.prismd.requests(), []);
     assert_eq!(temperature_samples(&harness), [2]);
-    harness.find(Text, "PRISMD NOT CONNECTED");
+    harness.find(Button, "PRISMD · INCOMPATIBLE");
     harness.find(Text, "MONITORING IN-PROCESS");
 }
 
 #[test]
-fn without_prismd_the_workspace_says_tuning_needs_it_and_set_up_opens_settings() {
+fn without_prismd_the_workspace_says_tuning_needs_it_and_set_up_opens_settings_daemon() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     harness.tick();
 
     let line = harness.find(Text, "Tuning needs prismd");
-    assert_eq!(line.accessible_value().as_deref(), Some("not connected"));
+    assert_eq!(line.accessible_value().as_deref(), Some("not running"));
 
-    // Settings → Daemon lands with the connection reasons (#132).
     harness
         .find(Button, "Set up")
         .invoke_accessible_default_action();
     assert_eq!(
         harness.app.core().content(),
         Content::Section(Section::Settings)
+    );
+    assert_eq!(
+        harness.app.core().settings_section(),
+        SettingsSection::Daemon
     );
 }
 
@@ -164,7 +167,7 @@ fn a_user_prismd_wont_let_tune_is_told_which_group_they_lack_and_monitors_throug
         Some("bob isn't in group wheel")
     );
     assert_eq!(harness.in_process_reads(), 0);
-    harness.find(Text, "PRISMD CONNECTED");
+    harness.find(Button, "PRISMD · NOT ALLOWED");
     harness.find(Text, "MONITORING THROUGH PRISMD");
 }
 

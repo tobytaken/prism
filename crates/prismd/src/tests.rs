@@ -61,6 +61,7 @@ fn sessions_keep_their_callers_and_start_from_the_store_health_alongside_one_sho
 #[test]
 fn the_admin_group_or_admin_user_decides_whether_a_session_can_tune() {
     use super::{SessionPeer, SessionPolicy};
+    use prism_protocol::Authorization;
     let daemon = Harness::start(FakeGpuBackend::default());
     let policy = SessionPolicy {
         admin_group: "admins".into(),
@@ -73,19 +74,41 @@ fn the_admin_group_or_admin_user_decides_whether_a_session_can_tune() {
         primary_group: "users".into(),
         home: format!("/home/{username}").into(),
     };
-    for (peer, reason) in [
-        (peer(0, "root", &[]), None),
-        (peer(1000, "alice", &[]), None),
-        (peer(1001, "bob", &["admins"]), None),
+    for (peer, reason, authorization) in [
+        (peer(0, "root", &[]), None, Authorization::Root {}),
+        (
+            peer(1000, "alice", &[]),
+            None,
+            Authorization::AdminUser {
+                user: "alice".into(),
+            },
+        ),
+        (
+            peer(1001, "bob", &["admins"]),
+            None,
+            Authorization::AdminGroup {
+                user: "bob".into(),
+                group: "admins".into(),
+            },
+        ),
         (
             peer(1002, "mallory", &["users"]),
             Some("mallory isn't in group admins"),
+            Authorization::NotInAdminGroup {
+                user: "mallory".into(),
+                group: "admins".into(),
+            },
         ),
     ] {
         let username = peer.username.clone();
         let welcomed = daemon.core().hello(peer, &policy, hello()).unwrap();
         assert_eq!(welcomed.welcome.can_tune, reason.is_none(), "{username}");
         assert_eq!(welcomed.welcome.reason.as_deref(), reason, "{username}");
+        assert_eq!(
+            welcomed.welcome.authorization,
+            Some(authorization),
+            "{username}"
+        );
     }
 }
 

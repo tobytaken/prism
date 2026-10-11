@@ -14,6 +14,7 @@ mod app;
 mod chart;
 mod environment;
 mod prismd;
+mod prismd_host;
 mod sampler;
 pub mod settings;
 pub mod single_instance;
@@ -25,3 +26,4 @@ pub use crate::environment::{
     Clock, Environment, HostServices, Launches, NoLaunches, Sampling, SystemClock, WindowActivation,
 };
 pub use crate::prismd::{NoPrismd, PrismdConnector, PrismdReport, SocketConnector};
+pub use crate::prismd_host::{HostPrismd, PrismdService};
