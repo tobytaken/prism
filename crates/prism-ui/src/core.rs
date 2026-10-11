@@ -7,6 +7,7 @@ use prism_protocol::{DaemonEvent, DaemonRequest, DaemonSnapshot, Incompatible, W
 
 use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
+use crate::notifications::{Notification, NotificationId, Notifications, Subject};
 use crate::palette::{Command, PaletteState, Shortcut};
 use crate::telemetry::{Readings, TelemetryHistory, TelemetryRange};
 
@@ -218,6 +219,17 @@ impl SettingsSection {
     }
 }
 
+/// How long a lost prismd connection has to stay lost before Prism notifies, so a daemon restart,
+/// such as during an upgrade, doesn't.
+const CONNECTION_LOST_GRACE: Duration = Duration::from_secs(10);
+
+/// A one-shot timer the core starts with [`Effect::StartTimer`], for [`Input::TimerElapsed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Timer {
+    /// The wait before notifying about a lost prismd connection.
+    ConnectionLost,
+}
+
 /// Something that happened, for the core to take in.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
@@ -258,6 +270,18 @@ pub enum Input {
     /// Prism was launched again, and that launch handed over to this one, with the activation
     /// token it was started with, if any.
     LaunchedAgain { activation_token: Option<String> },
+    /// Prism's window gained or lost focus.
+    WindowFocusChanged(bool),
+    /// A timer started with [`Effect::StartTimer`] ran out.
+    TimerElapsed(Timer),
+    /// The user clicked a notification, and the notification server handed over this activation
+    /// token, if any.
+    NotificationClicked {
+        id: NotificationId,
+        activation_token: Option<String>,
+    },
+    /// The notification server closed a notification: the user dismissed it, or it expired.
+    NotificationClosed(NotificationId),
 }
 
 /// Something the user asked for.
@@ -311,6 +335,17 @@ pub enum Effect {
     RaiseWindow {
         activation_token: Option<String>,
     },
+    /// Start this timer, or start it over if it's running.
+    StartTimer {
+        timer: Timer,
+        after: Duration,
+    },
+    /// Stop this timer, if it's running.
+    StopTimer(Timer),
+    /// Send this desktop notification, in place of the one it replaces.
+    Notify(Notification),
+    /// Close this notification, if the user hasn't yet.
+    WithdrawNotification(NotificationId),
     Quit,
 }
 
@@ -336,6 +371,9 @@ pub struct Core {
     pub(crate) service_error: Option<String>,
     /// Whether the in-process sampler is reading.
     sampling: bool,
+    /// A session ended and hasn't come back, and Prism hasn't notified about it yet.
+    connection_lost: bool,
+    notifications: Notifications,
     revision: u64,
 }
 
@@ -421,6 +459,13 @@ impl Core {
                 if std::mem::take(&mut self.sampling) {
                     effects.push(Effect::StopSampler);
                 }
+                if std::mem::take(&mut self.connection_lost) {
+                    effects.push(Effect::StopTimer(Timer::ConnectionLost));
+                }
+                // What it said no longer holds.
+                if let Some(id) = self.notifications.withdraw(&Subject::Prismd) {
+                    effects.push(Effect::WithdrawNotification(id));
+                }
                 effects
             }
             Input::PrismdNotConnected(failure) => {
@@ -429,6 +474,7 @@ impl Core {
                     self.session,
                     Session::Failed(SessionFailure::Unavailable { .. })
                 );
+                let lost = self.connected();
                 self.session = Session::Failed(failure);
                 let mut effects = Vec::new();
                 if !std::mem::replace(&mut self.sampling, true) {
@@ -436,6 +482,14 @@ impl Core {
                 }
                 if unavailable && !was_unavailable {
                     effects.push(Effect::CheckPrismdHost);
+                }
+                if lost {
+                    // Only a connection still lost when this runs out is worth notifying about.
+                    self.connection_lost = true;
+                    effects.push(Effect::StartTimer {
+                        timer: Timer::ConnectionLost,
+                        after: CONNECTION_LOST_GRACE,
+                    });
                 }
                 effects
             }
@@ -490,6 +544,48 @@ impl Core {
             Input::Intent(intent) => self.intent(intent),
             Input::LaunchedAgain { activation_token } => {
                 vec![Effect::RaiseWindow { activation_token }]
+            }
+            Input::WindowFocusChanged(focused) => {
+                self.notifications.focus_changed(focused);
+                Vec::new()
+            }
+            Input::TimerElapsed(Timer::ConnectionLost) => {
+                // It may have run out on its way in, just as the session came back.
+                if !std::mem::take(&mut self.connection_lost) || self.connected() {
+                    return Vec::new();
+                }
+                let body = format!(
+                    "{}. Tuning is read-only until Prism reconnects.",
+                    self.daemon_settings().title
+                );
+                self.notifications
+                    .send(
+                        Subject::Prismd,
+                        "Prism lost its connection to prismd".into(),
+                        body,
+                    )
+                    .map(Effect::Notify)
+                    .into_iter()
+                    .collect()
+            }
+            Input::NotificationClicked {
+                id,
+                activation_token,
+            } => {
+                let mut effects = match self.notifications.closed(id) {
+                    Some(Subject::Prismd) => {
+                        self.perform(Command::GoToSettings(SettingsSection::Daemon))
+                    }
+                    Some(Subject::Gpu(id)) => self.perform(Command::GoToGpu(id)),
+                    // Withdrawn on its way in: the window is still what the user asked for.
+                    None => Vec::new(),
+                };
+                effects.push(Effect::RaiseWindow { activation_token });
+                effects
+            }
+            Input::NotificationClosed(id) => {
+                self.notifications.closed(id);
+                Vec::new()
             }
         }
     }
@@ -656,7 +752,17 @@ impl Core {
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }
-            Command::Quit => vec![Effect::Quit],
+            Command::Quit => {
+                // Clicking one would lead nowhere once Prism is gone.
+                let mut effects: Vec<_> = self
+                    .notifications
+                    .withdraw_all()
+                    .into_iter()
+                    .map(Effect::WithdrawNotification)
+                    .collect();
+                effects.push(Effect::Quit);
+                effects
+            }
         };
         // Settings → Daemon shows why there's no session, as the host says it now.
         if !daemon_was_open && self.daemon_open() && !self.connected() {

@@ -2,10 +2,12 @@
 //! prismd (systemd's unit state natively, whether `/run/prism` is visible in Flatpak) and the
 //! handshake.
 
+use std::time::Duration;
+
 use prism_protocol::{DaemonSnapshot, Incompatible, ProtocolVersion, SessionMessage, Welcome};
 use prism_ui::{
     AppearanceMode, Core, Distro, Effect, Input, NotConnected, PrismdConnection, PrismdHost,
-    PrismdInstall, SessionFailure, TuningAccess, UnitState,
+    PrismdInstall, SessionFailure, Timer, TuningAccess, UnitState,
 };
 
 /// The snapshot from the shared contract, which describes the simulated tunable GPU.
@@ -175,7 +177,14 @@ fn losing_the_session_checks_the_host_but_failed_reconnects_dont() {
     core.handle(input(Handshake::Welcomed));
     assert_eq!(
         core.handle(unavailable()),
-        [Effect::StartSampler, Effect::CheckPrismdHost]
+        [
+            Effect::StartSampler,
+            Effect::CheckPrismdHost,
+            Effect::StartTimer {
+                timer: Timer::ConnectionLost,
+                after: Duration::from_secs(10),
+            },
+        ]
     );
 }
 

@@ -13,6 +13,7 @@ mod activation;
 mod app;
 mod chart;
 mod environment;
+mod notifications;
 mod prismd;
 mod prismd_host;
 mod sampler;
@@ -25,5 +26,6 @@ pub use crate::app::App;
 pub use crate::environment::{
     Clock, Environment, HostServices, Launches, NoLaunches, Sampling, SystemClock, WindowActivation,
 };
+pub use crate::notifications::{DesktopNotifier, NotificationEvent, Notifier};
 pub use crate::prismd::{NoPrismd, PrismdConnector, PrismdReport, SocketConnector};
 pub use crate::prismd_host::{HostPrismdService, PrismdService};

@@ -1,51 +1,24 @@
 //! The single-instance bus on a private session bus: a later launch hands its activation token
 //! over to the first Prism and exits.
 
-use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
+mod support;
+
+use std::process::Command;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use prism::Launches;
 use prism::single_instance::{BusLaunches, Claim, claim_on};
-use zbus::blocking::Connection;
-use zbus::blocking::connection::Builder;
 
-/// A session bus of the test's own, run by `dbus-daemon`.
-struct PrivateBus {
-    daemon: Child,
-    address: String,
-    _directory: tempfile::TempDir,
+use support::bus::PrivateBus;
+
+/// Launching Prism on the test's bus.
+trait Launch {
+    fn launch(&self, activation_token: Option<&str>) -> Claim;
+    fn launch_first(&self) -> BusLaunches;
 }
 
-impl PrivateBus {
-    fn start() -> Self {
-        let directory = tempfile::tempdir().unwrap();
-        let socket = directory.path().join("bus");
-        let mut daemon = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .arg(format!("--address=unix:path={}", socket.display()))
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("run dbus-daemon, from the dbus package, for the test's session bus");
-        let mut address = String::new();
-        BufReader::new(daemon.stdout.take().unwrap())
-            .read_line(&mut address)
-            .unwrap();
-        Self {
-            daemon,
-            address: address.trim().to_owned(),
-            _directory: directory,
-        }
-    }
-
-    fn connect(&self) -> Connection {
-        Builder::address(self.address.as_str())
-            .unwrap()
-            .build()
-            .unwrap()
-    }
-
+impl Launch for PrivateBus {
     fn launch(&self, activation_token: Option<&str>) -> Claim {
         claim_on(self.connect(), activation_token.map(String::from)).unwrap()
     }
@@ -55,13 +28,6 @@ impl PrivateBus {
             Claim::First(launches) => launches,
             Claim::HandedOver => panic!("the first launch should own the name"),
         }
-    }
-}
-
-impl Drop for PrivateBus {
-    fn drop(&mut self) {
-        let _ = self.daemon.kill();
-        let _ = self.daemon.wait();
     }
 }
 

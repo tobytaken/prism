@@ -1,20 +1,22 @@
 //! The composition root: builds the window over the prism-ui core and performs its effects.
 
 use std::cell::{Ref, RefCell};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use slint::{CloseRequestResponse, ComponentHandle, PlatformError};
+use slint::{CloseRequestResponse, ComponentHandle, PlatformError, TimerMode};
 
 use prism_ui::{
     Content, Core, Effect, Input, Intent, Key, PrismdHost, Section as CoreSection,
     ServiceAction as CoreServiceAction, ServiceOutcome, SettingsSection as CoreSettingsSection,
-    Shortcut, TelemetrySource,
+    Shortcut, TelemetrySource, Timer,
 };
 
 use crate::chart::series_commands;
 use crate::environment::{Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
+use crate::notifications::{NotificationEvent, Notifier};
 use crate::prismd::{PrismdConnector, PrismdReport};
 use crate::prismd_host::PrismdService;
 use crate::sampler::{Sampler, SamplerReading, SamplerSwitch};
@@ -44,6 +46,9 @@ struct Inner {
     /// Kept while Prism runs, since it holds the single-instance name.
     launches: Box<dyn Launches>,
     activation: Box<dyn WindowActivation>,
+    notifier: Box<dyn Notifier>,
+    /// The core's timers, made the first time each starts.
+    timers: RefCell<HashMap<Timer, slint::Timer>>,
     /// What other threads posted for the UI thread.
     inbox: Receiver<Posted>,
     outbox: Sender<Posted>,
@@ -60,6 +65,10 @@ enum Posted {
     PrismdHost(PrismdHost),
     /// A service action ended.
     ServiceDone(CoreServiceAction, ServiceOutcome),
+    Notification(NotificationEvent),
+    /// The window gained or lost focus.
+    Focused(bool),
+    TimerElapsed(Timer),
 }
 
 impl App {
@@ -74,6 +83,7 @@ impl App {
                     prismd: prismd_service,
                     launches,
                     activation,
+                    notifier,
                 },
             settings,
             clock,
@@ -94,17 +104,25 @@ impl App {
             prismd_service,
             launches,
             activation,
+            notifier,
+            timers: RefCell::default(),
             inbox,
             outbox,
         });
         Inner::connect(&inner);
-        let outbox = inner.outbox.clone();
-        let window = inner.window.as_weak();
+        let post = inner.poster();
         inner.launches.listen(Box::new(move |activation_token| {
-            if outbox.send(Posted::LaunchedAgain(activation_token)).is_ok() {
-                wake(&window);
-            }
+            post(Posted::LaunchedAgain(activation_token))
         }));
+        let post = inner.poster();
+        inner
+            .notifier
+            .listen(Box::new(move |event| post(Posted::Notification(event))));
+        let post = inner.poster();
+        inner.activation.watch_focus(
+            inner.window.window(),
+            Box::new(move |focused| post(Posted::Focused(focused))),
+        );
         inner.handle(Input::Launched {
             appearance: settings.load().appearance,
         });
@@ -354,6 +372,16 @@ impl Inner {
             Posted::LaunchedAgain(activation_token) => Input::LaunchedAgain { activation_token },
             Posted::PrismdHost(host) => Input::PrismdHostChecked(host),
             Posted::ServiceDone(action, outcome) => Input::PrismdServiceDone { action, outcome },
+            Posted::Notification(NotificationEvent::Clicked {
+                id,
+                activation_token,
+            }) => Input::NotificationClicked {
+                id,
+                activation_token,
+            },
+            Posted::Notification(NotificationEvent::Closed(id)) => Input::NotificationClosed(id),
+            Posted::Focused(focused) => Input::WindowFocusChanged(focused),
+            Posted::TimerElapsed(timer) => Input::TimerElapsed(timer),
         });
     }
 
@@ -391,6 +419,22 @@ impl Inner {
                 self.activation
                     .activate(window, activation_token.as_deref());
             }
+            Effect::StartTimer { timer, after } => {
+                let post = self.poster();
+                // Starting a running timer starts it over.
+                self.timers.borrow_mut().entry(timer).or_default().start(
+                    TimerMode::SingleShot,
+                    after,
+                    move || post(Posted::TimerElapsed(timer)),
+                );
+            }
+            Effect::StopTimer(timer) => {
+                if let Some(running) = self.timers.borrow().get(&timer) {
+                    running.stop();
+                }
+            }
+            Effect::Notify(notification) => self.notifier.notify(notification),
+            Effect::WithdrawNotification(id) => self.notifier.withdraw(id),
             Effect::Quit => {
                 let _ = self.window.hide();
                 // There is no event loop to quit when the window never ran, as in tests.
