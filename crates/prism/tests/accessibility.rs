@@ -19,9 +19,9 @@ use support::prismd::DaemonState;
 /// Audits the window in `state`, with the tuning access its prismd connection gives: without it,
 /// every control must be read-only.
 fn audit(state: &str, harness: &Harness) {
-    let access = match harness.app.core().tuning_access() {
-        prism_ui::TuningAccess::Granted => TuningAccess::Granted,
-        prism_ui::TuningAccess::ReadOnly { .. } => TuningAccess::Denied,
+    let access = match harness.app.core().tuning_access().reason() {
+        None => TuningAccess::Granted,
+        Some(_) => TuningAccess::Denied,
     };
     assert_accessible(state, harness.app.window(), access);
 }

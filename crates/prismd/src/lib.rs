@@ -316,9 +316,9 @@ fn handle_session_connection(
         .ok_or("missing session opening request")?;
     let admitted = match opening.request {
         DaemonRequest::Hello(hello) => resolve_peer(config, stream)
-            .map_err(HelloRefused::NotAllowed)
+            .map_err(HelloRefused::Unidentified)
             .and_then(|peer| core.hello(peer, config, hello)),
-        _ => Err(HelloRefused::NotAllowed(GpuCommandError::new(
+        _ => Err(HelloRefused::Unidentified(GpuCommandError::new(
             GpuCommandErrorCode::InvalidArgument,
             "the first session request must be Hello",
         ))),

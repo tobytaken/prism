@@ -2,7 +2,6 @@
 
 use crate::core::{
     Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
-    TuningAccess,
 };
 use crate::format::{Readout, short_bus_id, short_gpu_name};
 use crate::telemetry::{Chart, Metric, Readings};
@@ -229,10 +228,7 @@ impl Core {
             id: gpu.id.clone(),
             title: gpu.name.clone(),
             subtitle,
-            no_tuning_access: match self.tuning_access() {
-                TuningAccess::Granted => None,
-                TuningAccess::ReadOnly { reason } => Some(reason),
-            },
+            no_tuning_access: self.tuning_access().reason().map(str::to_owned),
             temperature: self.temperature_track(gpu),
         }
     }

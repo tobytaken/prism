@@ -74,6 +74,14 @@ impl TuningAccess {
             reason: reason.to_owned(),
         }
     }
+
+    /// Why tuning is read-only, or none with tuning access.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Self::Granted => None,
+            Self::ReadOnly { reason } => Some(reason),
+        }
+    }
 }
 
 /// A tuning control a GPU can offer.
@@ -476,7 +484,7 @@ impl Core {
     /// Whether the GPU's control can be changed: only with tuning access and the GPU control
     /// capability for it.
     pub fn editable(&self, gpu_id: &str, control: TuningControl) -> bool {
-        self.tuning_access() == TuningAccess::Granted
+        self.tuning_access().reason().is_none()
             && self
                 .gpus()
                 .iter()

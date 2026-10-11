@@ -76,14 +76,14 @@ pub enum HelloRefused {
     /// The caller speaks a protocol this daemon can't.
     Incompatible(Incompatible),
     /// The caller couldn't be identified, or didn't start with a hello.
-    NotAllowed(GpuCommandError),
+    Unidentified(GpuCommandError),
 }
 
 impl From<HelloRefused> for DaemonResponse {
     fn from(refused: HelloRefused) -> Self {
         match refused {
             HelloRefused::Incompatible(incompatible) => Self::Incompatible(incompatible),
-            HelloRefused::NotAllowed(error) => Self::Error(error),
+            HelloRefused::Unidentified(error) => Self::Error(error),
         }
     }
 }
