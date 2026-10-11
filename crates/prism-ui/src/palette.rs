@@ -3,6 +3,7 @@
 
 use crate::core::{Core, Section, Selection, SettingsSection};
 use crate::daemon::ServiceAction;
+use crate::drafts::DialogState;
 use crate::telemetry::TelemetryRange;
 use crate::view::gpu_label;
 
@@ -186,16 +187,31 @@ impl Core {
         self.palette.is_some()
     }
 
+    /// Opens the palette, unless a dialog waits for an answer.
     pub(crate) fn open_palette(&mut self) {
-        if self.palette.is_none() {
+        if self.palette.is_none() && self.dialog.is_none() {
             self.palette = Some(PaletteState::default());
             self.highlight_first_available();
         }
     }
 
-    /// Closes the topmost overlay, which so far can only be the palette.
+    /// Closes the topmost overlay: the palette, or else the dialog, which keeps editing.
     pub(crate) fn dismiss(&mut self) {
-        self.palette = None;
+        if self.palette.take().is_none() {
+            self.dialog = None;
+        }
+    }
+
+    /// Whether an open dialog keeps a shortcut from running `command`: only its own answers run
+    /// under it.
+    pub(crate) fn blocked_by_dialog(&self, command: &Command) -> bool {
+        match self.dialog {
+            None => false,
+            Some(DialogState::Review { .. }) => {
+                !matches!(command, Command::ApplyChanges | Command::DiscardChanges)
+            }
+            Some(DialogState::ConfirmClose) => *command != Command::Quit,
+        }
     }
 
     pub(crate) fn filter_palette(&mut self, query: String) {
@@ -268,10 +284,10 @@ impl Core {
         already_open.then(|| "Already open".into())
     }
 
-    /// Why the selected GPU's unapplied tuning changes can't be applied or discarded now, when
-    /// they can't.
+    /// Why the unapplied tuning changes Apply and Discard act on can't be applied or discarded
+    /// now, when they can't.
     pub(crate) fn changes_unavailable(&self, command: &Command) -> Option<String> {
-        if self.selected_draft().is_none() {
+        if self.changes_draft().is_none() {
             return Some("No unapplied changes".into());
         }
         if *command == Command::ApplyChanges
@@ -279,7 +295,7 @@ impl Core {
         {
             return Some(format!("Needs tuning access · {reason}"));
         }
-        self.selected_applying().then(|| "Applying…".into())
+        self.changes_applying().then(|| "Applying…".into())
     }
 
     /// Notes that `command` ran, so the palette lists it first.

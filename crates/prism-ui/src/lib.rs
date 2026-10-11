@@ -19,10 +19,11 @@ pub use crate::core::{
     Section, SessionFailure, SettingsSection, TelemetrySource, Timer, TuningAccess, TuningControl,
 };
 pub use crate::daemon::{DaemonAction, DaemonSettings, Fact, ServiceAction, ServiceOutcome};
+pub use crate::drafts::ReviewChange;
 pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
-    ChangeStrip, Content, Detail, ExplainedState, GpuWorkspace, HardwareDetails, Sidebar,
-    SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind,
+    ChangeStrip, ConfirmClose, Content, Detail, Dialog, ExplainedState, GpuWorkspace,
+    HardwareDetails, Review, Sidebar, SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind,
 };

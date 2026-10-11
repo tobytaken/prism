@@ -3,13 +3,15 @@
 use std::time::Duration;
 
 use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
-use prism_protocol::ProfileSetting;
+use prism_protocol::{ProfileSetting, ProfileSettingKey};
 
 use crate::core::{
     Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
-    TuningControl,
 };
 use crate::daemon::Fact;
+use crate::drafts::{
+    DialogState, ReviewChange, control_of, not_applied, setting_name, setting_readout, staged_text,
+};
 use crate::format::{Readout, UNKNOWN, pending, short_bus_id, short_gpu_name, signed};
 use crate::palette::Command;
 use crate::telemetry::{Chart, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
@@ -108,6 +110,15 @@ impl GpuWorkspace {
             .find(|track| track.kind == kind)
             .expect("the workspace has every track")
     }
+
+    /// The stepper that tunes `setting`, in whichever track's details it is.
+    pub fn stepper(&self, setting: ProfileSettingKey) -> Option<&Stepper> {
+        self.tracks
+            .iter()
+            .flat_map(|track| &track.details)
+            .filter_map(|detail| detail.stepper.as_ref())
+            .find(|stepper| stepper.setting == setting)
+    }
 }
 
 /// The fixed strip under the workspace's header: "No unapplied changes", or how many there are,
@@ -118,8 +129,9 @@ pub struct ChangeStrip {
     pub summary: String,
     /// Whether the GPU has unapplied tuning changes.
     pub pending: bool,
-    /// Why the last Apply left changes unapplied, until the next edit.
-    pub problem: Option<String>,
+    /// What the last Apply put into effect and what it left unapplied, and why, until the next
+    /// edit, such as "Power limit applied · Graphics clock offset not applied: …".
+    pub outcome: Option<String>,
     /// Why Apply can't run now, while there are changes it can't apply.
     pub apply_unavailable: Option<String>,
     /// Why Discard can't run now, while there are changes it can't discard.
@@ -188,8 +200,6 @@ pub struct Track {
     pub min: Readout,
     /// Side by side, left to right.
     pub charts: Vec<TrackChart>,
-    /// The control that tunes what the track shows, such as the power limit, if it has one.
-    pub stepper: Option<Stepper>,
     /// Whether the fan curve belongs to this track.
     pub holds_fan_curve: bool,
 }
@@ -211,6 +221,8 @@ impl Track {
 /// effect and any pending one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stepper {
+    /// The setting it stages.
+    pub setting: ProfileSettingKey,
     /// What a screen reader calls it, such as "Power limit".
     pub name: String,
     /// The value it steps from: the pending one, or else the one in effect.
@@ -222,8 +234,15 @@ pub struct Stepper {
     pub step: i64,
     /// The value in effect, as shown.
     pub readout: Readout,
-    /// The pending value as shown next to the control, such as "→ 450 W", while one is staged.
+    /// The pending value as shown next to the control, such as "→ 450 W" or "→ default", while
+    /// one is staged.
     pub pending: Option<String>,
+    /// Whether Use default can stage the setting's default, which it can while it's editable and
+    /// the default isn't staged already.
+    pub can_use_default: bool,
+    /// That the last Apply didn't put the pending value into effect, and why if prismd said, such
+    /// as "Not applied: Insufficient permissions", while it's still pending.
+    pub failed: Option<String>,
     /// Why it can't be changed, when it can't.
     pub read_only: Option<String>,
 }
@@ -240,6 +259,8 @@ pub struct Detail {
     pub unknown_reason: Option<String>,
     /// The limit it is, which is drawn across the chart, when it's one.
     pub limit: Option<LimitKind>,
+    /// The stepper that tunes it in place, when it's a tuning value.
+    pub stepper: Option<Stepper>,
 }
 
 /// One of a track's charts: a metric's readings over the range, and any limits across it.
@@ -272,6 +293,39 @@ pub struct ExplainedState {
     pub hint: String,
 }
 
+/// A dialog over the whole window, which waits for an answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Dialog {
+    /// prismd refused an Apply because the GPU's tuning state changed since its draft was made.
+    Review(Review),
+    /// Closing Prism with unapplied tuning changes: "Discard and close" or "Keep editing".
+    ConfirmClose(ConfirmClose),
+}
+
+/// What changed under a GPU's draft, with Apply to apply it again over the new state and Discard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Review {
+    /// Such as "GPU 0 · RTX 5090 · 01:00.0 changed since these changes were made".
+    pub title: String,
+    /// What happened, and what the user can do about it.
+    pub message: String,
+    /// The current tuning values that changed, if any of them did.
+    pub changes: Vec<ReviewChange>,
+    /// Why Apply can't run now, when it can't.
+    pub apply_unavailable: Option<String>,
+    /// Why Discard can't run now, when it can't.
+    pub discard_unavailable: Option<String>,
+}
+
+/// The question closing with unapplied tuning changes asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmClose {
+    /// How many unapplied changes every GPU has, such as "3 unapplied changes".
+    pub summary: String,
+    /// What closing does to them.
+    pub message: String,
+}
+
 /// The status bar's items.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusBar {
@@ -284,6 +338,43 @@ pub struct StatusBar {
 }
 
 impl Core {
+    /// Whether a dialog is over the window.
+    pub fn dialog_open(&self) -> bool {
+        self.dialog.is_some()
+    }
+
+    /// The dialog over the window, while one is open.
+    pub fn dialog(&self) -> Option<Dialog> {
+        Some(match self.dialog.as_ref()? {
+            DialogState::Review { gpu_id, changes } => {
+                let gpu = self
+                    .gpus()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, gpu)| &gpu.id == gpu_id)
+                    .map_or_else(|| gpu_id.clone(), |(index, gpu)| gpu_label(index, gpu));
+                Dialog::Review(Review {
+                    title: format!("{gpu} changed since these changes were made"),
+                    message: if changes.is_empty() {
+                        "Its tuning state changed, but not the values these changes set. Apply \
+                         them again, or discard them."
+                    } else {
+                        "Another Prism, automatic switching or a change outside Prism changed \
+                         these values. Apply your changes over them, or discard them."
+                    }
+                    .into(),
+                    changes: changes.clone(),
+                    apply_unavailable: self.changes_unavailable(&Command::ApplyChanges),
+                    discard_unavailable: self.changes_unavailable(&Command::DiscardChanges),
+                })
+            }
+            DialogState::ConfirmClose => Dialog::ConfirmClose(ConfirmClose {
+                summary: unapplied(self.unapplied_count()),
+                message: "Closing Prism discards them and ends their edit hold.".into(),
+            }),
+        })
+    }
+
     pub fn sidebar(&self) -> Sidebar {
         Sidebar {
             gpus: self
@@ -489,10 +580,14 @@ impl Core {
                     readout: Readout::watts(watts),
                     unknown_reason: value_reason(gpu, watts.is_some(), said),
                     limit: Some(kind),
+                    stepper: None,
                 };
                 (
                     vec![
-                        limit(LimitKind::Configured, "limit", "Power limit", configured),
+                        Detail {
+                            stepper: Some(self.stepper(gpu, ProfileSettingKey::PowerLimitWatts)),
+                            ..limit(LimitKind::Configured, "limit", "Power limit", configured)
+                        },
                         limit(
                             LimitKind::Enforced,
                             "enforced",
@@ -507,7 +602,9 @@ impl Core {
                 let memory = latest_readings(gpu).memory_clock_mhz;
                 let clocks = latest_device(gpu).map(|device| &device.clocks);
                 let offset =
-                    |label: &str, name: &str, offset: Option<&prism_gpu::ClockOffsetInfo>| {
+                    |label: &str,
+                     setting: ProfileSettingKey,
+                     offset: Option<&prism_gpu::ClockOffsetInfo>| {
                         let mhz = offset.and_then(|offset| offset.current_offset_mhz);
                         let said = offset.and_then(|offset| {
                             gpu_said(
@@ -517,10 +614,11 @@ impl Core {
                         });
                         Detail {
                             label: label.into(),
-                            name: name.into(),
+                            name: setting_name(setting).into(),
                             readout: Readout::offset_megahertz(mhz),
                             unknown_reason: value_reason(gpu, mhz.is_some(), said),
                             limit: None,
+                            stepper: Some(self.stepper(gpu, setting)),
                         }
                     };
                 (
@@ -531,15 +629,16 @@ impl Core {
                             readout: Readout::megahertz(memory),
                             unknown_reason: unknown_reason(gpu, &[Metric::MemoryClock]),
                             limit: None,
+                            stepper: None,
                         },
                         offset(
                             "graphics offset",
-                            "Graphics clock offset",
+                            ProfileSettingKey::GraphicsOffsetMhz,
                             clocks.map(|clocks| &clocks.graphics),
                         ),
                         offset(
                             "memory offset",
-                            "Memory clock offset",
+                            ProfileSettingKey::MemoryOffsetMhz,
                             clocks.map(|clocks| &clocks.memory),
                         ),
                     ],
@@ -573,6 +672,7 @@ impl Core {
                             None,
                         ),
                         limit: None,
+                        stepper: None,
                     })
                     .collect();
                 (details, vec![chart(metric, None, &[])])
@@ -581,7 +681,6 @@ impl Core {
         let stats = gpu.history.stats(metric, self.range, now);
         let value = |value: Option<u32>| readout(metric, value);
         Track {
-            stepper: (kind == TrackKind::Power).then(|| self.power_limit_stepper(gpu)),
             kind,
             readout: value(latest_readings(gpu).get(metric)),
             unknown_reason: unknown_reason(gpu, &[metric]),
@@ -619,56 +718,73 @@ impl Core {
             .chart(Metric::PowerDraw, self.range, self.now(), &fit)
     }
 
-    /// The power limit the GPU's draft stages, if it stages one.
+    /// The power limit the GPU's draft stages, if it stages one, with a default as the GPU
+    /// reports it.
     fn staged_power_limit(&self, gpu: &Gpu) -> Option<u32> {
-        match self
-            .drafts
-            .by_gpu
-            .get(&gpu.id)?
-            .settings
-            .power_limit_watts?
-        {
+        let key = ProfileSettingKey::PowerLimitWatts;
+        match self.drafts.by_gpu.get(&gpu.id)?.settings.get(key)? {
             ProfileSetting::Value { value } => u32::try_from(value).ok(),
-            ProfileSetting::Default {} => None,
+            ProfileSetting::Default {} => gpu.default_of(key)?.try_into().ok(),
         }
     }
 
-    /// The power limit's stepper: the value in effect, any pending one, and why it's read-only
-    /// when it is.
-    fn power_limit_stepper(&self, gpu: &Gpu) -> Stepper {
-        let in_effect = self.power_limit_in_effect(gpu);
-        let staged = self.staged_power_limit(gpu);
-        let range = gpu.power_limit_range();
-        let read_only =
-            match (self.tuning_access().reason(), &gpu.latest) {
-                (Some(reason), _) => Some(reason.to_owned()),
-                (None, Latest::Waiting) => Some(WAITING.into()),
-                (None, Latest::Missing { reason }) => Some(reason.clone()),
-                (None, Latest::Read(device)) => {
-                    if !self.editable(&gpu.id, TuningControl::PowerLimit) {
-                        Some(device.power.reason.clone().unwrap_or_else(|| {
-                            "The power limit isn't supported by this GPU".into()
-                        }))
-                    } else if range.is_none() {
-                        Some("The allowed power limits aren't reported by this GPU".into())
-                    } else {
-                        None
-                    }
+    /// The stepper for the GPU's setting: the value in effect, any pending one, and why it's
+    /// read-only when it is.
+    fn stepper(&self, gpu: &Gpu, setting: ProfileSettingKey) -> Stepper {
+        let in_effect = self.in_effect(gpu, setting);
+        let draft = self.drafts.by_gpu.get(&gpu.id);
+        let staged = draft.and_then(|draft| draft.settings.get(setting));
+        let range = gpu.range(setting);
+        let name = setting_name(setting);
+        let read_only = match (self.tuning_access().reason(), &gpu.latest) {
+            (Some(reason), _) => Some(reason.to_owned()),
+            (None, Latest::Waiting) => Some(WAITING.into()),
+            (None, Latest::Missing { reason }) => Some(reason.clone()),
+            (None, Latest::Read(device)) => {
+                let said = match setting {
+                    ProfileSettingKey::PowerLimitWatts => &device.power.reason,
+                    ProfileSettingKey::GraphicsOffsetMhz => &device.clocks.graphics.reason,
+                    ProfileSettingKey::MemoryOffsetMhz => &device.clocks.memory.reason,
+                };
+                if !self.editable(&gpu.id, control_of(setting)) {
+                    Some(said.clone().unwrap_or_else(|| {
+                        format!("The {} isn't supported by this GPU", name.to_lowercase())
+                    }))
+                } else if range.is_none() {
+                    Some(format!(
+                        "The allowed {}s aren't reported by this GPU",
+                        name.to_lowercase()
+                    ))
+                } else {
+                    None
                 }
-            };
+            }
+        };
         let (min, max) = range.unwrap_or_default();
-        let watts =
-            |value: Option<i64>| Readout::watts(value.and_then(|value| value.try_into().ok()));
-        let value = staged.map(i64::from).or(in_effect);
+        let value = match staged {
+            Some(ProfileSetting::Value { value }) => Some(value),
+            Some(ProfileSetting::Default {}) => gpu.default_of(setting).or(in_effect),
+            None => in_effect,
+        };
         Stepper {
-            name: "Power limit".into(),
+            setting,
+            name: name.into(),
             value: value.unwrap_or(min),
-            value_text: watts(value).spoken(),
+            value_text: setting_readout(setting, value).spoken(),
             min,
             max,
-            step: 1,
-            readout: watts(in_effect),
-            pending: staged.map(|staged| pending(&Readout::watts(Some(staged)))),
+            step: match setting {
+                ProfileSettingKey::PowerLimitWatts => 1,
+                ProfileSettingKey::GraphicsOffsetMhz | ProfileSettingKey::MemoryOffsetMhz => 10,
+            },
+            readout: setting_readout(setting, in_effect),
+            pending: staged.map(|staged| pending(&staged_text(setting, staged))),
+            can_use_default: read_only.is_none()
+                && staged != Some(ProfileSetting::Default {})
+                && !self.applying(&gpu.id),
+            failed: draft
+                .and_then(|draft| draft.failed.get(&setting))
+                .map(|why| not_applied("Not applied", why.as_deref())),
             read_only,
         }
     }
@@ -678,17 +794,22 @@ impl Core {
         let draft = self.selected_draft();
         let count = draft.map_or(0, |draft| draft.len());
         ChangeStrip {
-            summary: match count {
-                0 => "No unapplied changes".into(),
-                1 => "1 unapplied change".into(),
-                count => format!("{count} unapplied changes"),
-            },
+            summary: unapplied(count),
             pending: count > 0,
-            problem: draft.and_then(|draft| draft.problem.clone()),
+            outcome: draft.and_then(|draft| draft.outcome.clone()),
             apply_unavailable: draft.and_then(|_| self.changes_unavailable(&Command::ApplyChanges)),
             discard_unavailable: draft
                 .and_then(|_| self.changes_unavailable(&Command::DiscardChanges)),
         }
+    }
+}
+
+/// How many unapplied changes there are, such as "No unapplied changes" or "2 unapplied changes".
+fn unapplied(count: usize) -> String {
+    match count {
+        0 => "No unapplied changes".into(),
+        1 => "1 unapplied change".into(),
+        count => format!("{count} unapplied changes"),
     }
 }
 

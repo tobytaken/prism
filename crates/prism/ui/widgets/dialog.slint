@@ -1,0 +1,49 @@
+import { Theme } from "../theme.slint";
+import { PopupSurface } from "popup-surface.slint";
+import { StyledText } from "styled-text.slint";
+
+// A dialog over the whole window that waits for an answer: its title, its message, then what it
+// holds, such as its actions. Clicks outside it do nothing, and Escape is left to the window's
+// shortcuts, which dismiss it. It's a groupbox labeled by its title (see widgets.slint).
+export component Dialog inherits Rectangle {
+    in property <string> title;
+    in property <string> message;
+
+    // Clicks outside the dialog don't reach the window under it.
+    TouchArea { }
+
+    PopupSurface {
+        x: (parent.width - self.width) / 2;
+        y: Theme.size.palette-top;
+        width: Theme.size.dialog-width;
+        height: layout.preferred-height;
+        accessible-role: groupbox;
+        accessible-label: root.title;
+        accessible-description: root.message;
+
+        TouchArea { }
+
+        layout := VerticalLayout {
+            height: self.preferred-height;
+            padding: Theme.space.xl;
+            spacing: Theme.space.m;
+
+            StyledText {
+                text: root.title;
+                style: Theme.text.heading;
+                wrap: word-wrap;
+                accessible-role: none;
+            }
+
+            StyledText {
+                text: root.message;
+                style: Theme.text.body;
+                color: Theme.color.ink-muted;
+                wrap: word-wrap;
+                accessible-role: none;
+            }
+
+            @children
+        }
+    }
+}

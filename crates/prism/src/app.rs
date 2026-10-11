@@ -8,6 +8,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, TimerMode};
 
+use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
     Content, Core, Effect, Input, Intent, Key, PrismdHost, Section as CoreSection,
@@ -25,7 +26,7 @@ use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{
     AppState, ChartId, ChartPart, Inbox, Intents, KeyPress, MainWindow, Section, ServiceAction,
-    SettingsSection,
+    SettingsSection, TuningSetting,
 };
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
@@ -258,10 +259,20 @@ impl Inner {
         intents.on_toggle_hardware_details(to_core(Intent::ToggleHardwareDetails));
         intents.on_apply_changes(to_core(Intent::ApplyChanges));
         intents.on_discard_changes(to_core(Intent::DiscardChanges));
+        intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
         let inner = Rc::downgrade(this);
-        intents.on_stage_power_limit(move |watts| {
+        intents.on_stage(move |setting, value| {
             with_inner(&inner, |inner| {
-                inner.handle(Input::Intent(Intent::StagePowerLimit(watts.into())))
+                inner.handle(Input::Intent(Intent::Stage(
+                    setting_key(setting),
+                    value.into(),
+                )))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_use_default(move |setting| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::UseDefault(setting_key(setting))))
             });
         });
         let inner = Rc::downgrade(this);
@@ -384,6 +395,12 @@ impl Inner {
         .into()
     }
 
+    /// Whether the palette or a dialog is over the window.
+    fn overlay_open(&self) -> bool {
+        let core = self.core.borrow();
+        core.palette_open() || core.dialog_open()
+    }
+
     /// Runs the global shortcut `key` presses, if any, and says whether the key was spoken for.
     fn key_pressed(&self, key: KeyPress, in_text_field: bool) -> bool {
         let key = Key {
@@ -397,7 +414,7 @@ impl Inner {
             return false;
         };
         // With nothing to close, Escape is left to whoever else wants it.
-        if shortcut == Shortcut::Dismiss && !self.core.borrow().palette_open() {
+        if shortcut == Shortcut::Dismiss && !self.overlay_open() {
             return false;
         }
         // A focused text field keeps the keys it edits with.
@@ -409,11 +426,11 @@ impl Inner {
 
     /// Takes in one input, updates the view and performs the effects it calls for.
     fn handle(&self, input: Input) {
-        let palette_was_open = self.core.borrow().palette_open();
+        let overlay_was_open = self.overlay_open();
         let effects = self.core.borrow_mut().handle(input);
         sync(&self.window, &self.core.borrow());
-        if palette_was_open && !self.core.borrow().palette_open() {
-            // The palette's field had the keyboard.
+        if overlay_was_open && !self.overlay_open() {
+            // The palette's field or a dialog's button had the keyboard.
             self.window.invoke_focus_window();
         }
         for effect in effects {
@@ -572,4 +589,13 @@ fn wake(window: &slint::Weak<MainWindow>) -> bool {
 
 fn with_inner<T>(inner: &Weak<Inner>, f: impl FnOnce(&Inner) -> T) -> Option<T> {
     inner.upgrade().map(|inner| f(&inner))
+}
+
+/// The setting a stepper stages.
+fn setting_key(setting: TuningSetting) -> ProfileSettingKey {
+    match setting {
+        TuningSetting::PowerLimit => ProfileSettingKey::PowerLimitWatts,
+        TuningSetting::GraphicsOffset => ProfileSettingKey::GraphicsOffsetMhz,
+        TuningSetting::MemoryOffset => ProfileSettingKey::MemoryOffsetMhz,
+    }
 }

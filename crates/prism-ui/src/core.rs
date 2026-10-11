@@ -7,11 +7,11 @@ use std::collections::BTreeMap;
 
 use prism_protocol::{
     DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GpuTuningState, Incompatible,
-    Welcome,
+    ProfileSettingKey, Welcome,
 };
 
 use crate::daemon::{ServiceAction, ServiceOutcome};
-use crate::drafts::Drafts;
+use crate::drafts::{DialogState, Drafts};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
 use crate::notifications::{Notification, NotificationId, Notifications, Subject};
 use crate::palette::{Command, PaletteState, Shortcut};
@@ -328,8 +328,11 @@ pub enum Intent {
     ShowRange(TelemetryRange),
     /// Open the hardware details, or collapse them again.
     ToggleHardwareDetails,
-    /// Stage this power limit, in watts, for the selected GPU.
-    StagePowerLimit(i64),
+    /// Stage this value for the selected GPU's setting, such as a power limit in watts or a clock
+    /// offset in MHz.
+    Stage(ProfileSettingKey, i64),
+    /// Stage an explicit request for the selected GPU's setting's default.
+    UseDefault(ProfileSettingKey),
     /// Stage the power limit drawn at this height on the selected GPU's power chart, from the top
     /// (0) to the bottom (1), as dragging its line does.
     DragPowerLimit(f32),
@@ -337,6 +340,9 @@ pub enum Intent {
     ApplyChanges,
     /// Drop the selected GPU's unapplied tuning changes.
     DiscardChanges,
+    /// Close Prism, dropping every GPU's unapplied tuning changes, as the close confirmation
+    /// offers.
+    DiscardAndClose,
 }
 
 /// Something the core asks the caller to do.
@@ -413,6 +419,8 @@ pub struct Core {
     /// Each GPU's tuning state as prismd last pushed it, by GPU id, while there is a session.
     pub(crate) tuning: BTreeMap<String, GpuTuningState>,
     pub(crate) drafts: Drafts,
+    /// The dialog over the window, while one is open.
+    pub(crate) dialog: Option<DialogState>,
     revision: u64,
 }
 
@@ -454,21 +462,64 @@ pub(crate) struct Gpu {
 }
 
 impl Gpu {
-    /// The power limits the GPU allows, in watts, as its latest reading or else its inventory
-    /// says.
-    pub(crate) fn power_limit_range(&self) -> Option<(i64, i64)> {
-        let reading = match &self.latest {
-            Latest::Read(device) => Some(&device.power),
+    /// The values the GPU allows for a setting, as its latest reading or else its inventory says.
+    pub(crate) fn range(&self, key: ProfileSettingKey) -> Option<(i64, i64)> {
+        let device = match &self.latest {
+            Latest::Read(device) => Some(device),
             Latest::Waiting | Latest::Missing { .. } => None,
         };
-        let control = &self.device.control.power_limit;
-        let min = reading
-            .and_then(|power| power.min_limit_watts)
-            .or(control.min_watts)?;
-        let max = reading
-            .and_then(|power| power.max_limit_watts)
-            .or(control.max_watts)?;
-        (min <= max).then_some((i64::from(min), i64::from(max)))
+        let control = &self.device.control;
+        let (read, inventory) = match key {
+            ProfileSettingKey::PowerLimitWatts => {
+                let power = device.map(|device| &device.power);
+                let watts = |watts: Option<u32>| watts.map(i64::from);
+                (
+                    power.map(|power| (watts(power.min_limit_watts), watts(power.max_limit_watts))),
+                    (
+                        watts(control.power_limit.min_watts),
+                        watts(control.power_limit.max_watts),
+                    ),
+                )
+            }
+            ProfileSettingKey::GraphicsOffsetMhz | ProfileSettingKey::MemoryOffsetMhz => {
+                let graphics = key == ProfileSettingKey::GraphicsOffsetMhz;
+                let offset = device.map(|device| {
+                    if graphics {
+                        &device.clocks.graphics
+                    } else {
+                        &device.clocks.memory
+                    }
+                });
+                let mhz = |mhz: Option<i32>| mhz.map(i64::from);
+                let offsets = &control.offsets;
+                (
+                    offset.map(|offset| (mhz(offset.min_offset_mhz), mhz(offset.max_offset_mhz))),
+                    if graphics {
+                        (mhz(offsets.min_graphics_mhz), mhz(offsets.max_graphics_mhz))
+                    } else {
+                        (mhz(offsets.min_memory_mhz), mhz(offsets.max_memory_mhz))
+                    },
+                )
+            }
+        };
+        let (read_min, read_max) = read.unwrap_or_default();
+        let min = read_min.or(inventory.0)?;
+        let max = read_max.or(inventory.1)?;
+        (min <= max).then_some((min, max))
+    }
+
+    /// What a default instruction for the setting resolves to, as far as Prism knows: the GPU's
+    /// reported default power limit, or no offset (ADR 0001).
+    pub(crate) fn default_of(&self, key: ProfileSettingKey) -> Option<i64> {
+        match key {
+            ProfileSettingKey::PowerLimitWatts => match &self.latest {
+                Latest::Read(device) => device.power.default_limit_watts,
+                Latest::Waiting | Latest::Missing { .. } => None,
+            }
+            .or(self.device.control.power_limit.default_watts)
+            .map(i64::from),
+            ProfileSettingKey::GraphicsOffsetMhz | ProfileSettingKey::MemoryOffsetMhz => Some(0),
+        }
     }
 }
 
@@ -588,7 +639,9 @@ impl Core {
                         self.take_sample(&sample, TelemetrySource::Prismd, received_at)
                     }
                     DaemonEvent::TuningStateChanged(state) => {
-                        self.tuning.insert(state.gpu_id.clone(), state);
+                        let gpu_id = state.gpu_id.clone();
+                        self.tuning.insert(gpu_id.clone(), state);
+                        self.tuning_pushed(&gpu_id);
                     }
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)
@@ -777,10 +830,12 @@ impl Core {
                 self.hardware_open = !self.hardware_open;
                 Vec::new()
             }
-            Intent::StagePowerLimit(watts) => self.stage_power_limit(watts),
+            Intent::Stage(key, value) => self.stage(key, value),
+            Intent::UseDefault(key) => self.use_default(key),
             Intent::DragPowerLimit(y) => self.drag_power_limit(y),
             Intent::ApplyChanges => self.perform(Command::ApplyChanges),
             Intent::DiscardChanges => self.perform(Command::DiscardChanges),
+            Intent::DiscardAndClose => self.quit(),
         }
     }
 
@@ -789,11 +844,11 @@ impl Core {
         let Some(command) = command else {
             return Vec::new();
         };
-        if self.unavailable(&command).is_some() {
+        if self.unavailable(&command).is_some() || self.blocked_by_dialog(&command) {
             return Vec::new();
         }
         self.record_run(&command);
-        self.dismiss();
+        self.palette = None;
         self.perform(command)
     }
 
@@ -833,22 +888,25 @@ impl Core {
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }
-            Command::Quit => {
-                // Clicking one would lead nowhere once Prism is gone.
-                let mut effects: Vec<_> = self
-                    .notifications
-                    .withdraw_all()
-                    .into_iter()
-                    .map(Effect::WithdrawNotification)
-                    .collect();
-                effects.push(Effect::Quit);
-                effects
-            }
+            Command::Quit => self.close_or_ask(),
         };
         // Settings → Daemon shows why there's no session, as the host says it now.
         if !daemon_was_open && self.daemon_open() && !self.connected() {
             return [effects, vec![Effect::CheckPrismdHost]].concat();
         }
+        effects
+    }
+
+    /// Quits, which ends the session and with it the edit holds of any drafts.
+    pub(crate) fn quit(&mut self) -> Vec<Effect> {
+        // Clicking one would lead nowhere once Prism is gone.
+        let mut effects: Vec<_> = self
+            .notifications
+            .withdraw_all()
+            .into_iter()
+            .map(Effect::WithdrawNotification)
+            .collect();
+        effects.push(Effect::Quit);
         effects
     }
 
@@ -864,18 +922,6 @@ impl Core {
 
     pub fn tuning_access(&self) -> TuningAccess {
         TuningAccess::of(&self.prismd())
-    }
-
-    /// The GPU's power limit in effect: as prismd last pushed its tuning state, or else as the
-    /// latest reading says.
-    pub(crate) fn power_limit_in_effect(&self, gpu: &Gpu) -> Option<i64> {
-        self.tuning
-            .get(&gpu.id)
-            .and_then(|state| state.reported.power_limit_watts)
-            .or(match &gpu.latest {
-                Latest::Read(device) => device.power.current_limit_watts.map(i64::from),
-                Latest::Waiting | Latest::Missing { .. } => None,
-            })
     }
 
     /// Whether the GPU's control can be changed: only with tuning access and the GPU control

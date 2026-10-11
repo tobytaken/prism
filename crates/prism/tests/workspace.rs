@@ -32,13 +32,18 @@ fn value(harness: &Harness, label: &str) -> String {
         .unwrap_or_default()
 }
 
-/// What the power limit's stepper says its value is.
-fn power_limit(harness: &Harness) -> String {
+/// What the stepper labeled `label`, such as the power limit's, says its value is.
+fn stepper(harness: &Harness, label: &str) -> String {
     harness
-        .find(Spinbox, "Power limit")
+        .find(Spinbox, label)
         .accessible_value()
         .map(String::from)
         .unwrap_or_default()
+}
+
+/// What the power limit's stepper says its value is.
+fn power_limit(harness: &Harness) -> String {
+    stepper(harness, "Power limit")
 }
 
 fn description(harness: &Harness, label: &str) -> String {
@@ -91,8 +96,8 @@ fn the_five_tracks_fill_from_in_process_telemetry() {
     assert_eq!(value(&harness, "Enforced power limit"), "575 W");
     assert_eq!(value(&harness, "Graphics clock reading"), "287 MHz");
     assert_eq!(value(&harness, "Memory clock"), "812 MHz");
-    assert_eq!(value(&harness, "Graphics clock offset"), "0 MHz");
-    assert_eq!(value(&harness, "Memory clock offset"), "0 MHz");
+    assert_eq!(stepper(&harness, "Graphics clock offset"), "0 MHz");
+    assert_eq!(stepper(&harness, "Memory clock offset"), "0 MHz");
     assert_eq!(value(&harness, "Fan speed reading"), "31%");
     assert_eq!(value(&harness, "Fan 0 speed"), "31%");
     assert_eq!(value(&harness, "Fan 1 speed"), "31%");
@@ -209,12 +214,16 @@ fn every_track_shows_unknown_readings_as_unknown() {
             assert_eq!(value(&harness, &label), "unknown", "{label}");
         }
     }
-    assert_eq!(power_limit(&harness), "unknown");
+    for tuning in [
+        "Power limit",
+        "Graphics clock offset",
+        "Memory clock offset",
+    ] {
+        assert_eq!(stepper(&harness, tuning), "unknown", "{tuning}");
+    }
     for detail in [
         "Enforced power limit",
         "Memory clock",
-        "Graphics clock offset",
-        "Memory clock offset",
         "Fan 0 speed",
         "Fan 1 speed",
     ] {
@@ -268,6 +277,28 @@ fn at_the_minimum_size_every_track_fits_without_scrolling() {
     harness.resize(MINIMUM_SIZE);
 
     let status_bar = harness.find(Button, "PRISMD · NOT RUNNING");
+    let details = harness.find(Button, "Hardware details");
+    let bottom = details.absolute_position().y + details.size().height;
+    assert!(
+        bottom <= status_bar.absolute_position().y,
+        "the hardware details end at {bottom}, below the workspace"
+    );
+}
+
+#[test]
+fn at_the_minimum_size_every_track_fits_with_tuning_access_and_pending_changes() {
+    // With tuning access, the steppers take a line of their own.
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::Running);
+    let gpus = SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO);
+    harness.prismd_tick(gpus.performance());
+    harness.prismd_tick(gpus.performance());
+    harness
+        .find(Spinbox, "Graphics clock offset")
+        .set_accessible_value("150");
+
+    harness.resize(MINIMUM_SIZE);
+
+    let status_bar = harness.find(Button, "PRISMD · CONNECTED");
     let details = harness.find(Button, "Hardware details");
     let bottom = details.absolute_position().y + details.size().height;
     assert!(

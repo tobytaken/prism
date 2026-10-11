@@ -2,18 +2,19 @@
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
+use prism_protocol::ProfileSettingKey;
 use prism_ui::format::Readout;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    AppearanceMode as CoreAppearance, Content, Core, Fact, Section as CoreSection,
-    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Track,
+    AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, Section as CoreSection,
+    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Stepper, Track,
 };
 
 use crate::{
     AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, DaemonView,
-    DetailView, ExplainedStateView, FactView, LimitMark, MainWindow, PaletteEntryView, ReadoutView,
-    SegmentView, ServiceAction, SettingsSection, SidebarGpuView, StepperView, Theme, TrackView,
-    WorkspaceView,
+    DetailView, DialogKind, DialogView, ExplainedStateView, FactView, LimitMark, MainWindow,
+    PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection,
+    SidebarGpuView, StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -65,7 +66,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 changes: ChangeStripView {
                     summary: changes.summary.as_str().into(),
                     pending: changes.pending,
-                    problem: changes.problem.as_deref().unwrap_or_default().into(),
+                    outcome: changes.outcome.as_deref().unwrap_or_default().into(),
                     can_apply: changes.apply_unavailable.is_none(),
                     apply_reason: changes
                         .apply_unavailable
@@ -200,6 +201,48 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         state.set_palette_entries(model);
     }
 
+    let (dialog, changes) = match core.dialog() {
+        None => (DialogView::default(), Vec::new()),
+        Some(Dialog::Review(review)) => (
+            DialogView {
+                kind: DialogKind::Review,
+                title: review.title.into(),
+                message: review.message.into(),
+                can_apply: review.apply_unavailable.is_none(),
+                apply_reason: review.apply_unavailable.unwrap_or_default().into(),
+                can_discard: review.discard_unavailable.is_none(),
+                discard_reason: review.discard_unavailable.unwrap_or_default().into(),
+            },
+            review
+                .changes
+                .iter()
+                .map(|change| ReviewChangeView {
+                    name: change.name.as_str().into(),
+                    change: change.change.as_str().into(),
+                    yours: change
+                        .yours
+                        .as_ref()
+                        .map(|yours| format!("Yours: {yours}"))
+                        .unwrap_or_default()
+                        .into(),
+                })
+                .collect(),
+        ),
+        Some(Dialog::ConfirmClose(confirm)) => (
+            DialogView {
+                kind: DialogKind::ConfirmClose,
+                title: confirm.summary.into(),
+                message: confirm.message.into(),
+                ..DialogView::default()
+            },
+            Vec::new(),
+        ),
+    };
+    state.set_dialog(dialog);
+    if let Some(model) = update_in_place(&state.get_review_changes(), changes, PartialEq::eq) {
+        state.set_review_changes(model);
+    }
+
     let status = core.status_bar();
     state.set_connection(status.connection.into());
     state.set_connected(status.connected);
@@ -225,13 +268,22 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
                 Some(LimitKind::Configured | LimitKind::Pending) => LimitMark::Solid,
                 Some(LimitKind::Enforced) => LimitMark::Dashed,
             },
+            has_stepper: detail.stepper.is_some(),
+            stepper: detail
+                .stepper
+                .as_ref()
+                .map(stepper_view)
+                .unwrap_or_default(),
         })
         .collect();
     // The power limit's line can be dragged while its stepper can be changed.
     let editable = track
-        .stepper
-        .as_ref()
-        .is_some_and(|stepper| stepper.read_only.is_none());
+        .details
+        .iter()
+        .filter_map(|detail| detail.stepper.as_ref())
+        .any(|stepper| {
+            stepper.setting == ProfileSettingKey::PowerLimitWatts && stepper.read_only.is_none()
+        });
     let charts = track
         .charts
         .iter()
@@ -250,22 +302,6 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
             }
         })
         .collect();
-    let stepper = track
-        .stepper
-        .as_ref()
-        .map(|stepper| StepperView {
-            label: stepper.name.as_str().into(),
-            value: clamped(stepper.value),
-            value_text: stepper.value_text.as_str().into(),
-            minimum: clamped(stepper.min),
-            maximum: clamped(stepper.max),
-            step: clamped(stepper.step),
-            text: stepper.readout.text().into(),
-            pending: stepper.pending.as_deref().unwrap_or_default().into(),
-            read_only: stepper.read_only.is_some(),
-            reason: stepper.read_only.as_deref().unwrap_or_default().into(),
-        })
-        .unwrap_or_default();
     let [max_label, avg_label, min_label] = track.statistic_labels().map(SharedString::from);
     TrackView {
         name: track.kind.name().into(),
@@ -286,8 +322,29 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
         avg_label,
         min_label,
         holds_fan_curve: track.holds_fan_curve,
-        has_stepper: track.stepper.is_some(),
-        stepper,
+    }
+}
+
+fn stepper_view(stepper: &Stepper) -> StepperView {
+    StepperView {
+        setting: match stepper.setting {
+            ProfileSettingKey::PowerLimitWatts => TuningSetting::PowerLimit,
+            ProfileSettingKey::GraphicsOffsetMhz => TuningSetting::GraphicsOffset,
+            ProfileSettingKey::MemoryOffsetMhz => TuningSetting::MemoryOffset,
+        },
+        label: stepper.name.as_str().into(),
+        value: clamped(stepper.value),
+        value_text: stepper.value_text.as_str().into(),
+        minimum: clamped(stepper.min),
+        maximum: clamped(stepper.max),
+        step: clamped(stepper.step),
+        text: stepper.readout.text().into(),
+        pending: stepper.pending.as_deref().unwrap_or_default().into(),
+        read_only: stepper.read_only.is_some(),
+        reason: stepper.read_only.as_deref().unwrap_or_default().into(),
+        can_use_default: stepper.can_use_default,
+        default_label: format!("Use default {}", stepper.name.to_lowercase()).into(),
+        failure: stepper.failed.as_deref().unwrap_or_default().into(),
     }
 }
 
