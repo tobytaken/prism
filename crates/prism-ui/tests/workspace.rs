@@ -238,6 +238,20 @@ fn the_fans_track_shows_each_fan_s_current_speed() {
 }
 
 #[test]
+fn only_the_fans_track_holds_the_fan_curve() {
+    let mut core = launched(SimulatedFixture::TunableGpu);
+    sampled(&mut core, tunable_sample(|_| {}), 1);
+
+    for kind in TrackKind::ALL {
+        assert_eq!(
+            track(&core, kind).holds_fan_curve,
+            kind == TrackKind::Fans,
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
 fn every_track_shows_unknown_readings_as_unknown_with_a_reason() {
     let mut core = launched(SimulatedFixture::TunableGpu);
     let sample = tunable_sample(|gpu| {

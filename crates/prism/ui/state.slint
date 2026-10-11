@@ -64,7 +64,8 @@ export struct ChartView {
 }
 
 // A track: its name, readout and details, its charts, and the max/avg/min of its metric over the
-// range, each with what a screen reader calls it.
+// range, each with what a screen reader calls it. `holds-fan-curve` says whether the fan curve
+// belongs to it.
 export struct TrackView {
     name: string,
     label: string,
@@ -80,6 +81,7 @@ export struct TrackView {
     max-label: string,
     avg-label: string,
     min-label: string,
+    holds-fan-curve: bool,
 }
 
 // `no-tuning-access` is why there's no tuning access, and empty with it.

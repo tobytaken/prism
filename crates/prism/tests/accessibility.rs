@@ -85,6 +85,12 @@ fn every_fixture_state_is_accessible() {
         harness.press(&[], slint::platform::Key::Escape);
     }
 
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+    // The minimum window size, where the workspace is narrow and short.
+    harness.resize(support::MINIMUM_SIZE);
+    audit("tunable, at the minimum window size", &harness);
+
     let harness = Harness::without_temperature();
     harness.tick();
     audit("tunable, temperature unknown", &harness);

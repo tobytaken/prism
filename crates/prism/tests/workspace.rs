@@ -8,9 +8,10 @@ use std::time::Duration;
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuPerformanceResponse, GpuTelemetryProvider};
+use slint::ComponentHandle;
 
-use support::Harness;
 use support::prismd::DaemonState;
+use support::{DEFAULT_SIZE, HALF_1080P, Harness, MINIMUM_SIZE};
 
 use AccessibleRole::{Button, Groupbox, Text};
 
@@ -218,4 +219,64 @@ fn every_track_shows_unknown_readings_as_unknown() {
     assert_eq!(chart_parts(&harness, "Series"), 0);
     assert_eq!(chart_parts(&harness, "LimitLine"), 0);
     assert!(!harness.shows("0 W"));
+}
+
+#[test]
+fn a_narrow_window_drops_max_avg_min_and_reserves_the_fan_curve_in_place_of_fan_speed() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.ticks(2);
+    assert_eq!(harness.count(Groupbox, "Fan curve"), 0);
+
+    for size in [HALF_1080P, MINIMUM_SIZE] {
+        harness.resize(size);
+
+        for (track, reading, metric) in TRACKS {
+            harness.find(Groupbox, track);
+            assert_ne!(value(&harness, reading), "unknown", "{reading}");
+            for statistic in ["Maximum", "Average", "Minimum"] {
+                let label = format!("{statistic} {metric}");
+                assert_eq!(harness.count(Text, &label), 0, "{label} at {size:?}");
+            }
+        }
+        harness.find(Groupbox, "Fan curve");
+        // Every chart but fan speed's.
+        assert_eq!(chart_parts(&harness, "Series"), 5, "at {size:?}");
+        assert_eq!(value(&harness, "Fan 0 speed"), "31%");
+    }
+
+    harness.resize(DEFAULT_SIZE);
+    assert_tracks_filled(&harness);
+    assert_eq!(harness.count(Groupbox, "Fan curve"), 0);
+}
+
+#[test]
+fn at_the_minimum_size_every_track_fits_without_scrolling() {
+    // Without tuning access, so the "Tuning needs prismd" line takes room too.
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.ticks(2);
+
+    harness.resize(MINIMUM_SIZE);
+
+    let status_bar = harness.find(Button, "PRISMD · NOT RUNNING");
+    let details = harness.find(Button, "Hardware details");
+    let bottom = details.absolute_position().y + details.size().height;
+    assert!(
+        bottom <= status_bar.absolute_position().y,
+        "the hardware details end at {bottom}, below the workspace"
+    );
+}
+
+#[test]
+fn the_window_asks_the_desktop_not_to_resize_it_below_its_minimum() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.ticks(2);
+
+    for size in [DEFAULT_SIZE, HALF_1080P, MINIMUM_SIZE] {
+        harness.resize(size);
+        assert_eq!(
+            support::minimum_size(harness.app.window().window()),
+            slint::LogicalSize::new(MINIMUM_SIZE.0 as f32, MINIMUM_SIZE.1 as f32),
+            "at {size:?}"
+        );
+    }
 }

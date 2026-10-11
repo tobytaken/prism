@@ -17,8 +17,10 @@ prism-gpu = { path = "crates/prism-gpu" }
 prism-protocol = { path = "crates/prism-protocol" }
 prism-ui = { path = "crates/prism-ui" }
 
-# Slint and its testing backend are pinned exactly and bumped together (#120).
+# Slint, its testing backend and its core are pinned exactly and bumped together (#120).
 i-slint-backend-testing = "=1.18.1"
+# Reads the window's minimum size in tests, which no public API exposes.
+i-slint-core = { version = "=1.18.1", default-features = false }
 slint = { version = "=1.18.1", default-features = false, features = [
     "std",
     "compat-1-2",

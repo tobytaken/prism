@@ -54,7 +54,8 @@ component TuningNeedsPrismd inherits Rectangle {
 }
 
 // The selected GPU's workspace: its header with the range picker, then one full-width track per
-// metric and the hardware details. When they don't fit, they scroll under the header.
+// metric and the hardware details. When they don't fit, they scroll under the header. Narrower
+// than `narrow-workspace`, the tracks are narrow, and shorter than `short-workspace`, short.
 export component Workspace inherits Rectangle {
     in property <WorkspaceView> workspace;
 
@@ -116,6 +117,8 @@ export component Workspace inherits Rectangle {
 
                 for track in AppState.tracks: Track {
                     track: track;
+                    narrow: root.width < Theme.size.narrow-workspace;
+                    short: root.height < Theme.size.short-workspace;
                 }
 
                 HardwareDetails {

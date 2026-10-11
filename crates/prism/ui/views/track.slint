@@ -134,14 +134,42 @@ component ChartPane inherits Rectangle {
     }
 }
 
+// Where the fan curve goes once it's built, in place of the fan speed history in a narrow
+// workspace.
+component FanCurve inherits Rectangle {
+    accessible-role: groupbox;
+    accessible-label: "Fan curve";
+
+    StyledText {
+        x: Theme.space.xs;
+        y: Theme.space.xxs;
+        height: self.preferred-height;
+        text: "CURVE";
+        style: Theme.text.label;
+        color: Theme.color.ink-muted;
+        accessible-role: none;
+    }
+
+    StyledText {
+        text: "The fan curve isn't built yet.";
+        style: Theme.text.body;
+        color: Theme.color.ink-muted;
+    }
+}
+
 // A full-width track: the label, a large readout and its details on the left, the live charts in
-// the middle, and max/avg/min over the range on the right.
+// the middle, and max/avg/min over the range on the right. A `narrow` track drops max/avg/min, and
+// the fan curve takes its charts' place; a `short` one gets shorter.
 export component Track inherits Rectangle {
     in property <TrackView> track;
+    in property <bool> narrow;
+    in property <bool> short;
+    property <bool> shows-fan-curve: root.narrow && root.track.holds-fan-curve;
+    property <length> head-padding: root.short ? Theme.space.xs : Theme.space.m;
 
     accessible-role: groupbox;
     accessible-label: track.name;
-    min-height: max(Theme.size.track-min, head.min-height);
+    min-height: max(root.short ? Theme.size.track-min-short : Theme.size.track-min, head.min-height);
     preferred-height: max(Theme.size.track, head.preferred-height);
     vertical-stretch: 1;
 
@@ -150,8 +178,8 @@ export component Track inherits Rectangle {
             width: Theme.size.track-head;
 
             head := VerticalLayout {
-                padding-top: Theme.space.m;
-                padding-bottom: Theme.space.m;
+                padding-top: root.head-padding;
+                padding-bottom: root.head-padding;
                 padding-left: Theme.space.xxl;
                 padding-right: Theme.space.xxl;
                 spacing: Theme.space.xs;
@@ -226,13 +254,21 @@ export component Track inherits Rectangle {
             padding-right: Theme.space.m;
             spacing: Theme.space.m;
 
-            for chart in root.track.charts: ChartPane {
+            if root.shows-fan-curve: FanCurve {
                 horizontal-stretch: 1;
-                chart: chart;
+            }
+            if !root.shows-fan-curve: HorizontalLayout {
+                horizontal-stretch: 1;
+                spacing: Theme.space.m;
+
+                for chart in root.track.charts: ChartPane {
+                    horizontal-stretch: 1;
+                    chart: chart;
+                }
             }
         }
 
-        Rectangle {
+        if !root.narrow: Rectangle {
             width: Theme.size.stats;
 
             VerticalDivider {

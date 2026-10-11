@@ -30,6 +30,7 @@ slint-build.workspace = true
 [dev-dependencies]
 # The software renderer draws the screenshot tests.
 i-slint-backend-testing = { workspace = true, features = ["renderer-software"] }
+i-slint-core.workspace = true
 png.workspace = true
 prism-gpu = { workspace = true, features = ["simulated"] }
 serde_json.workspace = true
