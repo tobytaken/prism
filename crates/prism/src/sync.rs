@@ -444,12 +444,24 @@ fn update_in_place<T: Clone + 'static>(
     while model.row_count() > rows.len() {
         model.remove(model.row_count() - 1);
     }
+    let mut changed = false;
     for (index, row) in rows.into_iter().enumerate() {
         match model.row_data(index) {
             Some(existing) if same(&existing, &row) => {}
-            Some(_) => model.set_row_data(index, row),
+            Some(_) => {
+                model.set_row_data(index, row);
+                changed = true;
+            }
             None => model.push(row),
         }
+    }
+    // Slint 1.18 drops a changed row of a list inside another view model, such as a track's
+    // details, when that view model changed too and nothing has drawn since: the list's repeater
+    // waits to update the row, then finds its model the same and skips it. Adding and removing a
+    // row makes it update every row it's waiting on, keeping the others and their focus.
+    if changed && let Some(last) = model.row_data(model.row_count() - 1) {
+        model.push(last);
+        model.remove(model.row_count() - 1);
     }
     None
 }
