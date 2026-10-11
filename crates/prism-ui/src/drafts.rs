@@ -316,7 +316,10 @@ impl Core {
         let Some(draft) = self.drafts.by_gpu.get(&id) else {
             return Vec::new();
         };
-        if self.drafts.applying.contains_key(&id) || self.tuning_access().reason().is_some() {
+        if self.drafts.applying.contains_key(&id)
+            || self.tuning_access().reason().is_some()
+            || !self.curve_problems(&id).is_empty()
+        {
             return Vec::new();
         }
         self.drafts.next_command += 1;
@@ -506,6 +509,16 @@ impl Core {
     /// The draft Apply and Discard act on, if there is one.
     pub(crate) fn changes_draft(&self) -> Option<&Draft> {
         self.drafts.by_gpu.get(&self.changes_gpu()?)
+    }
+
+    /// The first thing keeping the fan curve the draft Apply acts on stages from being applied,
+    /// if it stages one that can't be.
+    pub(crate) fn changes_curve_problem(&self) -> Option<String> {
+        let id = self.changes_gpu()?;
+        self.curve_problems(&id)
+            .into_iter()
+            .next()
+            .map(|problem| problem.message)
     }
 
     /// Whether the Apply of the draft Apply and Discard act on is waiting for prismd's answer.

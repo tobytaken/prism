@@ -295,6 +295,11 @@ impl Core {
         {
             return Some(format!("Needs tuning access · {reason}"));
         }
+        if *command == Command::ApplyChanges
+            && let Some(problem) = self.changes_curve_problem()
+        {
+            return Some(format!("Fix the fan curve · {problem}"));
+        }
         self.changes_applying().then(|| "Applying…".into())
     }
 

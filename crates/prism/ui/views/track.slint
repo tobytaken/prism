@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
-import { Area, Divider, Grid, LimitLine, LinkButton, Segmented, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
-import { AppState, ChartPart, ChartView, DetailView, FanModeView, Intents, LimitMark, ReadoutView, StepperView, TrackView, TuningSetting } from "../state.slint";
+import { Area, CurveLine, DisclosureMarker, Divider, Grid, LimitLine, LinkButton, PressArea, Segmented, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, ChartPart, ChartView, CurvePart, CurvePointView, DetailView, FanCurveView, FanModeView, Intents, LimitMark, ReadoutView, StepperView, TrackView, TuningSetting } from "../state.slint";
 
 component Statistic inherits Rectangle {
     in property <string> name;
@@ -272,43 +272,284 @@ component ChartPane inherits Rectangle {
     }
 }
 
-// Where the fan curve goes once it's built, in place of the fan speed history in a narrow
-// workspace.
+// One of the fan curve's points, drawn as a square at its temperature and speed in an editor
+// `area-width` by `area-height`. Dragging it moves it, and so do the arrow keys while it has focus:
+// ← and → by 1 °C, ↑ and ↓ by 1% (×5 with Shift); Tab moves on to the next point. Read-only, it
+// still takes focus, so the keyboard reaches it and why it's read-only.
+component CurveHandle inherits Rectangle {
+    in property <CurvePointView> point;
+    in property <int> index;
+    in property <length> area-width;
+    in property <length> area-height;
+    in property <bool> pending;
+    in property <bool> read-only;
+    in property <string> reason;
+    in property <int> minimum;
+    in property <int> maximum;
+    property <bool> keyboard-focus;
+
+    // Moves the point by `temperature-by` °C and `speed-by` %, unless it's read-only.
+    function move(temperature-by: int, speed-by: int) {
+        if !root.read-only {
+            Intents.move-curve-point(root.index, temperature-by, speed-by);
+        }
+    }
+
+    accessible-role: slider;
+    accessible-label: point.label;
+    accessible-value: point.value-text;
+    accessible-value-minimum: minimum;
+    accessible-value-maximum: maximum;
+    accessible-value-step: 1;
+    accessible-read-only: read-only;
+    accessible-description: read-only ? reason : "";
+    accessible-action-increment => {
+        move(0, 1);
+    }
+    accessible-action-decrement => {
+        move(0, -1);
+    }
+    forward-focus: keys;
+    x: root.area-width * root.point.x - self.width / 2;
+    y: root.area-height * root.point.y - self.height / 2;
+    width: Theme.size.curve-grab;
+    height: Theme.size.curve-grab;
+
+    keys := FocusScope {
+        focus-gained(reason) => {
+            root.keyboard-focus = reason == FocusReason.tab-navigation;
+        }
+        focus-lost => {
+            root.keyboard-focus = false;
+        }
+        key-pressed(event) => {
+            let by = event.modifiers.shift ? 5 : 1;
+            if event.text == Key.LeftArrow {
+                move(-by, 0);
+                return accept;
+            }
+            if event.text == Key.RightArrow {
+                move(by, 0);
+                return accept;
+            }
+            if event.text == Key.UpArrow {
+                move(0, by);
+                return accept;
+            }
+            if event.text == Key.DownArrow {
+                move(0, -by);
+                return accept;
+            }
+            reject
+        }
+
+        TouchArea {
+            mouse-cursor: root.read-only ? MouseCursor.default : MouseCursor.move;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    keys.focus();
+                }
+            }
+            moved => {
+                if self.pressed && !root.read-only {
+                    Intents.drag-curve-point(root.index, (root.x + self.mouse-x) / root.area-width, (root.y + self.mouse-y) / root.area-height);
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        width: Theme.size.curve-point;
+        height: Theme.size.curve-point;
+        background: Theme.color.surface;
+        border-width: Theme.stroke.limit;
+        border-color: root.point.faulty ? Theme.color.danger : root.pending ? Theme.color.accent : Theme.color.series;
+    }
+
+    if keyboard-focus: Rectangle {
+        border-width: Theme.stroke.focus;
+        border-color: Theme.color.ink;
+    }
+}
+
+// The fan curve editor: temperature across and requested fan speed up, with the curve in effect,
+// any pending curve over it in the accent, the temperature a curve must reach full speed by, and
+// a live marker at the GPU's temperature and fan speed now, which it also says above the curve.
+// The temperature axis's ends are under it, then what keeps the pending curve from being
+// applied.
 component FanCurve inherits Rectangle {
+    in property <FanCurveView> curve;
+
     accessible-role: groupbox;
     accessible-label: "Fan curve";
 
-    StyledText {
-        x: Theme.space.xs;
-        y: Theme.space.xxs;
-        height: self.preferred-height;
-        text: "CURVE";
-        style: Theme.text.label;
-        color: Theme.color.ink-muted;
-        accessible-role: none;
+    // Spaced so a point at 0% or 100%, drawn half outside the plot, clears the lines around it.
+    VerticalLayout {
+        spacing: Theme.space.s;
+
+        HorizontalLayout {
+            spacing: Theme.space.s;
+
+            StyledText {
+                horizontal-stretch: 1;
+                text: "CURVE";
+                style: Theme.text.label;
+                color: Theme.color.ink-muted;
+                accessible-role: none;
+            }
+
+            if root.curve.has-marker: StyledText {
+                text: root.curve.marker-text;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                accessible-role: text;
+                accessible-label: "Temperature and fan speed now";
+                accessible-value: root.curve.marker-text;
+            }
+        }
+
+        plot := Rectangle {
+            vertical-stretch: 1;
+
+            // The path commands for `part`, at the plot's size.
+            pure function path(part: CurvePart) -> string {
+                AppState.curve-path(part, plot.width / 1px, plot.height / 1px, AppState.revision)
+            }
+            property <string> in-effect: root.curve.in-effect ? path(CurvePart.in-effect) : "";
+            property <string> pending: root.curve.pending ? path(CurvePart.pending) : "";
+
+            Grid { }
+
+            if root.curve.has-full-speed: Rectangle {
+                x: parent.width * root.curve.full-speed-x;
+                width: Theme.stroke.hairline;
+                background: Theme.color.ink-muted;
+            }
+
+            if root.curve.has-marker: Rectangle {
+                x: parent.width * root.curve.marker-x;
+                width: Theme.stroke.hairline;
+                background: Theme.color.rule;
+            }
+
+            // While a curve is pending, the one in effect steps back.
+            if plot.in-effect != "": CurveLine {
+                commands: plot.in-effect;
+                ink: root.curve.pending ? Theme.color.ink-muted : Theme.color.series;
+            }
+            if plot.pending != "": CurveLine {
+                commands: plot.pending;
+                ink: Theme.color.accent;
+            }
+
+            if root.curve.has-marker: marker := Rectangle {
+                x: parent.width * root.curve.marker-x - self.width / 2;
+                y: parent.height * root.curve.marker-y - self.height / 2;
+                width: Theme.size.curve-marker;
+                height: Theme.size.curve-marker;
+                border-radius: self.width / 2;
+                background: Theme.color.ink;
+                border-width: Theme.stroke.hairline;
+                border-color: Theme.color.surface;
+            }
+
+            for point[index] in root.curve.points: CurveHandle {
+                point: point;
+                index: index;
+                area-width: plot.width;
+                area-height: plot.height;
+                pending: root.curve.pending;
+                read-only: root.curve.read-only;
+                reason: root.curve.reason;
+                minimum: root.curve.speed-minimum;
+                maximum: root.curve.speed-maximum;
+            }
+        }
+
+        HorizontalLayout {
+            StyledText {
+                horizontal-stretch: 1;
+                text: root.curve.temperature-from;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                accessible-role: none;
+            }
+
+            StyledText {
+                text: root.curve.temperature-to;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                accessible-role: none;
+            }
+        }
+
+        if root.curve.problems != "": StyledText {
+            text: root.curve.problems;
+            style: Theme.text.value;
+            color: Theme.color.danger;
+            overflow: elide;
+            accessible-role: text;
+            accessible-label: "Fan curve problems";
+            accessible-value: root.curve.problems;
+        }
+    }
+}
+
+// The marker and word that collapse the fan curve editor, or open it again.
+component CurveToggle inherits Rectangle {
+    in property <bool> open;
+
+    accessible-role: button;
+    accessible-label: "Fan curve editor";
+    accessible-expandable: true;
+    accessible-expanded: open;
+    accessible-action-default => {
+        Intents.toggle-fan-curve();
+    }
+    forward-focus: press;
+    width: row.preferred-width + 2 * Theme.space.xs;
+    background: press.has-hover ? Theme.color.hover : transparent;
+
+    press := PressArea {
+        activated => {
+            Intents.toggle-fan-curve();
+        }
     }
 
-    StyledText {
-        text: "The fan curve isn't built yet.";
-        style: Theme.text.body;
-        color: Theme.color.ink-muted;
+    row := HorizontalLayout {
+        x: Theme.space.xs;
+        spacing: Theme.space.xs;
+
+        DisclosureMarker {
+            y: (parent.height - self.height) / 2;
+            open: root.open;
+        }
+
+        StyledText {
+            text: "CURVE";
+            style: Theme.text.label;
+            color: press.has-hover ? Theme.color.ink : Theme.color.ink-muted;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
     }
 }
 
 // A full-width track: the label, a large readout and its details on the left, the live charts in
-// the middle, and max/avg/min over the range on the right. A `narrow` track drops max/avg/min, and
-// the fan curve takes its charts' place; a `short` one gets shorter.
+// the middle, and max/avg/min over the range on the right. The Fans track's open fan curve editor
+// goes before its charts; a `narrow` track drops max/avg/min, and the editor takes its charts'
+// place. A `short` track gets shorter.
 export component Track inherits Rectangle {
     in property <TrackView> track;
     in property <bool> narrow;
     in property <bool> short;
-    property <bool> shows-fan-curve: root.narrow && root.track.holds-fan-curve;
+    property <bool> shows-fan-curve: root.track.has-fan-curve && root.track.fan-curve.open;
     property <length> head-padding: root.short ? Theme.space.xs : Theme.space.m;
 
     accessible-role: groupbox;
     accessible-label: track.name;
     min-height: max(root.short ? Theme.size.track-min-short : Theme.size.track-min, head.min-height);
-    preferred-height: max(Theme.size.track, head.preferred-height);
+    preferred-height: max(root.shows-fan-curve ? Theme.size.track-curve : Theme.size.track, head.preferred-height);
     vertical-stretch: 1;
 
     HorizontalLayout {
@@ -323,11 +564,19 @@ export component Track inherits Rectangle {
                 spacing: root.short ? Theme.space.xxs : Theme.space.xs;
                 alignment: start;
 
-                StyledText {
-                    text: root.track.label;
-                    style: Theme.text.label;
-                    color: Theme.color.ink-muted;
-                    accessible-role: none;
+                HorizontalLayout {
+                    StyledText {
+                        horizontal-stretch: 1;
+                        text: root.track.label;
+                        style: Theme.text.label;
+                        color: Theme.color.ink-muted;
+                        vertical-alignment: center;
+                        accessible-role: none;
+                    }
+
+                    if root.track.has-fan-curve: CurveToggle {
+                        open: root.track.fan-curve.open;
+                    }
                 }
 
                 Rectangle {
@@ -381,13 +630,14 @@ export component Track inherits Rectangle {
 
                     // Tuning values are tuned in place with their steppers. With a fixed speed,
                     // every fan is asked for the same speed, so a short track shows it in place of
-                    // each fan's.
+                    // each fan's; with a fan curve, every fan follows it, and its live marker
+                    // shows their speed.
                     for detail in root.track.details: VerticalLayout {
                         if detail.has-stepper: TuningDetail {
                             detail: detail;
                             short: root.short;
                         }
-                        if !detail.has-stepper && !(root.short && root.track.fan-mode.has-fixed-speed): Detail {
+                        if !detail.has-stepper && !(root.short && (root.track.fan-mode.has-fixed-speed || root.shows-fan-curve)): Detail {
                             detail: detail;
                         }
                     }
@@ -408,8 +658,9 @@ export component Track inherits Rectangle {
 
             if root.shows-fan-curve: FanCurve {
                 horizontal-stretch: 1;
+                curve: root.track.fan-curve;
             }
-            if !root.shows-fan-curve: HorizontalLayout {
+            if !(root.narrow && root.shows-fan-curve): HorizontalLayout {
                 horizontal-stretch: 1;
                 spacing: Theme.space.m;
 

@@ -145,6 +145,71 @@ mod screenshot {
         pending_cooling(AppearanceMode::Dark, "workspace-cooling-pending-dark");
     }
 
+    /// The workspace with a fan curve in effect and an edit of it pending: the Fans track's curve
+    /// editor with the curve in effect behind the pending one, the full-speed boundary, the live
+    /// marker, and the fan speed history beside it, or in its place when `size` is narrow.
+    fn pending_fan_curve(appearance: AppearanceMode, name: &str, size: (u32, u32)) {
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        let mut state = crate::support::prismd::snapshot().tuning_states[0].clone();
+        state.revision = "curve".into();
+        state.reported.cooling = Some(prism_gpu::cooling::CoolingConfiguration::Shared {
+            setting: prism_gpu::cooling::FanSetting::Curve {
+                points: [(40, 30), (60, 50), (75, 80), (85, 100)]
+                    .map(|(temperature, speed)| {
+                        prism_gpu::fan_curve::FanCurvePoint::new(temperature, speed)
+                    })
+                    .to_vec(),
+            },
+        });
+        harness
+            .prismd
+            .push(prism_protocol::DaemonEvent::TuningStateChanged(state));
+        harness.app.receive_posted();
+        let point = harness.find(AccessibleRole::Slider, "Fan curve point 2");
+        for _ in 0..15 {
+            point.invoke_accessible_increment_action();
+        }
+
+        assert_screenshot(name, harness.app.window().window(), size);
+    }
+
+    #[test]
+    fn the_workspace_with_a_pending_fan_curve_in_light() {
+        pending_fan_curve(
+            AppearanceMode::Light,
+            "workspace-fan-curve-light",
+            DEFAULT_SIZE,
+        );
+    }
+
+    #[test]
+    fn the_workspace_with_a_pending_fan_curve_in_dark() {
+        pending_fan_curve(
+            AppearanceMode::Dark,
+            "workspace-fan-curve-dark",
+            DEFAULT_SIZE,
+        );
+    }
+
+    #[test]
+    fn the_workspace_with_a_pending_fan_curve_at_half_a_1080p_screen_in_light() {
+        pending_fan_curve(
+            AppearanceMode::Light,
+            "workspace-fan-curve-half-1080p-light",
+            HALF_1080P,
+        );
+    }
+
+    #[test]
+    fn the_workspace_with_a_pending_fan_curve_at_half_a_1080p_screen_in_dark() {
+        pending_fan_curve(
+            AppearanceMode::Dark,
+            "workspace-fan-curve-half-1080p-dark",
+            HALF_1080P,
+        );
+    }
+
     /// The review a stale Apply opens: the power limit changed outside Prism under a pending one.
     fn review(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();
@@ -208,7 +273,8 @@ mod screenshot {
         close_confirmation(AppearanceMode::Dark, "close-confirmation-dark");
     }
 
-    /// The narrow workspace: no max/avg/min, and the fan curve's place in the Fans track.
+    /// The narrow workspace: no max/avg/min, and the fan speed history while the fans follow no
+    /// curve.
     fn narrow_workspace(appearance: AppearanceMode, name: &str, size: (u32, u32)) {
         init_rendering_backend();
         let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);

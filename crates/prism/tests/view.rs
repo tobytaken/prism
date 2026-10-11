@@ -2,14 +2,20 @@
 
 mod support;
 
+use std::time::Duration;
+
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
-use prism_gpu::simulated::SimulatedFixture;
+use prism_gpu::GpuTelemetryProvider;
+use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
+use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
+use prism_protocol::DaemonEvent;
 use prism_ui::AppearanceMode;
 use slint::ComponentHandle;
 
+use support::prismd::DaemonState;
 use support::{Harness, texts};
 
-use AccessibleRole::{Button, Groupbox, List, ListItem, Text};
+use AccessibleRole::{Button, Groupbox, List, ListItem, Spinbox, Text};
 
 const TUNABLE_GPU: &str = "GPU 0 · RTX 5090 · 01:00.0";
 
@@ -241,5 +247,46 @@ mod harness {
     fn the_harness_fails_loudly_when_the_element_tree_is_empty() {
         super::support::init_testing_backend();
         super::support::ensure_element_tree(&Empty::new().unwrap());
+    }
+}
+
+#[test]
+fn values_prismd_pushes_show_even_when_readings_arrived_since_the_window_last_drew() {
+    // Slint brings a list inside a track up to date only when it next draws or is read, and
+    // nothing is drawn or read between these inputs, as when several arrive at once.
+    for (readings, changing) in [(1, false), (2, false), (2, true), (3, true), (4, true)] {
+        let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::Running);
+        for second in 0..readings {
+            let second = if changing { second } else { 1 };
+            harness.prismd_tick(
+                SimulatedGpus::new(SimulatedFixture::TunableGpu, move || {
+                    Duration::from_secs(second)
+                })
+                .performance(),
+            );
+        }
+        let mut state = support::prismd::snapshot().tuning_states[0].clone();
+        state.reported.power_limit_watts = Some(500);
+        state.reported.cooling = Some(CoolingConfiguration::Shared {
+            setting: FanSetting::Fixed { speed_percent: 60 },
+        });
+        state.revision = "after".into();
+        harness.prismd.push(DaemonEvent::TuningStateChanged(state));
+        harness.app.receive_posted();
+
+        let case = format!("after {readings} readings, changing: {changing}");
+        assert_eq!(
+            harness
+                .find(Spinbox, "Power limit")
+                .accessible_value()
+                .as_deref(),
+            Some("500 W"),
+            "{case}"
+        );
+        assert_eq!(
+            harness.find(Button, "Fixed speed").accessible_checked(),
+            Some(true),
+            "{case}"
+        );
     }
 }

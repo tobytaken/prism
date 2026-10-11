@@ -11,12 +11,12 @@ use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, 
 use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    Content, Core, Effect, FanMode, Input, Intent, Key, PrismdHost, Section as CoreSection,
-    ServiceAction as CoreServiceAction, ServiceOutcome, SettingsSection as CoreSettingsSection,
-    Shortcut, TelemetrySource, Timer, TrackChart,
+    Content, Core, Effect, FanCurveEditor, FanMode, Input, Intent, Key, PrismdHost,
+    Section as CoreSection, ServiceAction as CoreServiceAction, ServiceOutcome,
+    SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer, TrackChart,
 };
 
-use crate::chart::{area_commands, limit_commands, series_commands};
+use crate::chart::{area_commands, limit_commands, line_commands, series_commands};
 use crate::environment::{Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
 use crate::notifications::{NotificationEvent, Notifier};
 use crate::prismd::{PrismdConnector, PrismdReport};
@@ -25,8 +25,8 @@ use crate::sampler::{Sampler, SamplerReading, SamplerSwitch};
 use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{
-    AppState, ChartId, ChartPart, Inbox, Intents, KeyPress, MainWindow, Section, ServiceAction,
-    SettingsSection, TuningSetting,
+    AppState, ChartId, ChartPart, CurvePart, Inbox, Intents, KeyPress, MainWindow, Section,
+    ServiceAction, SettingsSection, TuningSetting,
 };
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
@@ -52,12 +52,19 @@ struct Inner {
     notifier: Box<dyn Notifier>,
     /// The core's timers, made the first time each starts.
     timers: RefCell<HashMap<Timer, slint::Timer>>,
-    /// The selected GPU's charts as of the core revision they were made at, so drawing every part
-    /// of every chart derives them once.
-    charts: RefCell<Option<(u64, Vec<TrackChart>)>>,
+    /// The selected GPU's charts and fan curve editor as of the core revision they were made at,
+    /// so drawing every part of every chart derives them once.
+    drawn: RefCell<Option<Drawn>>,
     /// What other threads posted for the UI thread.
     inbox: Receiver<Posted>,
     outbox: Sender<Posted>,
+}
+
+/// What the selected GPU's charts and fan curve editor draw, as of a core revision.
+struct Drawn {
+    revision: u64,
+    charts: Vec<TrackChart>,
+    fan_curve: Option<FanCurveEditor>,
 }
 
 /// Something another thread posted for the UI thread.
@@ -112,7 +119,7 @@ impl App {
             activation,
             notifier,
             timers: RefCell::default(),
-            charts: RefCell::default(),
+            drawn: RefCell::default(),
             inbox,
             outbox,
         });
@@ -197,6 +204,14 @@ impl Inner {
             },
         );
 
+        let inner = Rc::downgrade(this);
+        window
+            .global::<AppState>()
+            .on_curve_path(move |part, width, height, _revision| {
+                with_inner(&inner, |inner| inner.curve_path(part, (width, height)))
+                    .unwrap_or_default()
+            });
+
         let intents = window.global::<Intents>();
         let inner = Rc::downgrade(this);
         intents.on_select_gpu(move |id| {
@@ -260,6 +275,27 @@ impl Inner {
         intents.on_apply_changes(to_core(Intent::ApplyChanges));
         intents.on_discard_changes(to_core(Intent::DiscardChanges));
         intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
+        intents.on_toggle_fan_curve(to_core(Intent::ToggleFanCurve));
+        let inner = Rc::downgrade(this);
+        intents.on_drag_curve_point(move |point, x, y| {
+            if let Ok(point) = usize::try_from(point) {
+                with_inner(&inner, |inner| {
+                    inner.handle(Input::Intent(Intent::DragCurvePoint { point, x, y }))
+                });
+            }
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_move_curve_point(move |point, temperature_by, speed_by| {
+            if let Ok(point) = usize::try_from(point) {
+                with_inner(&inner, |inner| {
+                    inner.handle(Input::Intent(Intent::MoveCurvePoint {
+                        point,
+                        temperature_by: temperature_by.into(),
+                        speed_by: speed_by.into(),
+                    }))
+                });
+            }
+        });
         let inner = Rc::downgrade(this);
         intents.on_stage(move |setting, value| {
             let intent = stage_intent(setting, value.into());
@@ -362,26 +398,8 @@ impl Inner {
             ChartId::MemoryClock => Metric::MemoryClock,
             ChartId::FanSpeed => Metric::FanSpeed,
         };
-        let revision = self.core.borrow().revision();
-        let mut charts = self.charts.borrow_mut();
-        if charts
-            .as_ref()
-            .is_none_or(|(made_at, _)| *made_at != revision)
-        {
-            let made = match self.core.borrow().content() {
-                Content::Gpu(workspace) => workspace
-                    .tracks
-                    .into_iter()
-                    .flat_map(|track| track.charts)
-                    .collect(),
-                _ => Vec::new(),
-            };
-            *charts = Some((revision, made));
-        }
-        let Some(chart) = charts
-            .as_ref()
-            .and_then(|(_, charts)| charts.iter().find(|chart| chart.metric == metric))
-        else {
+        let drawn = self.drawn();
+        let Some(chart) = drawn.charts.iter().find(|chart| chart.metric == metric) else {
             return SharedString::default();
         };
         let limit = |kind, dashes| {
@@ -400,6 +418,58 @@ impl Inner {
             ChartPart::PendingLimit => limit(LimitKind::Pending, None),
         }
         .into()
+    }
+
+    /// A part of the selected GPU's fan curve editor as path commands for an editor `size` pixels.
+    fn curve_path(&self, part: CurvePart, (width, height): (f32, f32)) -> SharedString {
+        let drawn = self.drawn();
+        let Some(curve) = &drawn.fan_curve else {
+            return SharedString::default();
+        };
+        let line = match part {
+            CurvePart::InEffect => &curve.in_effect_line,
+            CurvePart::Pending => &curve.pending_line,
+        };
+        line.as_deref()
+            .map(|points| line_commands(points, width, height))
+            .unwrap_or_default()
+            .into()
+    }
+
+    /// What the selected GPU's charts and fan curve editor draw now, derived once per core
+    /// revision.
+    fn drawn(&self) -> Ref<'_, Drawn> {
+        let revision = self.core.borrow().revision();
+        let stale = self
+            .drawn
+            .borrow()
+            .as_ref()
+            .is_none_or(|drawn| drawn.revision != revision);
+        if stale {
+            let (charts, fan_curve) = match self.core.borrow().content() {
+                Content::Gpu(workspace) => {
+                    let mut fan_curve = None;
+                    let charts = workspace
+                        .tracks
+                        .into_iter()
+                        .flat_map(|track| {
+                            fan_curve = fan_curve.take().or(track.fan_curve);
+                            track.charts
+                        })
+                        .collect();
+                    (charts, fan_curve)
+                }
+                _ => (Vec::new(), None),
+            };
+            *self.drawn.borrow_mut() = Some(Drawn {
+                revision,
+                charts,
+                fan_curve,
+            });
+        }
+        Ref::map(self.drawn.borrow(), |drawn| {
+            drawn.as_ref().expect("derived above")
+        })
     }
 
     /// Whether the palette or a dialog is over the window.

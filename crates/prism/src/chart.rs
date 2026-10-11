@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use prism_ui::telemetry::Chart;
+use prism_ui::telemetry::{Chart, ChartPoint};
 
 /// Path commands for a line through each run of a chart's readings, in a chart `width` by
 /// `height` pixels; a run of one reading has no line.
@@ -23,6 +23,20 @@ pub(crate) fn series_commands(chart: &Chart, width: f32, height: f32) -> String 
         }
     }
     commands
+}
+
+/// Path commands for a line through `points`, such as a fan curve's, in a chart `width` by
+/// `height` pixels.
+pub(crate) fn line_commands(points: &[ChartPoint], width: f32, height: f32) -> String {
+    points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let verb = if index == 0 { 'M' } else { 'L' };
+            format!("{verb}{:.1} {:.1}", point.x * width, point.y * height)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Path commands for the area under each run of a chart's readings, down to the bottom of a
@@ -68,7 +82,7 @@ pub(crate) fn limit_commands(
 mod tests {
     use prism_ui::telemetry::{Chart, ChartPoint};
 
-    use super::{area_commands, limit_commands, series_commands};
+    use super::{area_commands, limit_commands, line_commands, series_commands};
 
     fn point(x: f32, y: f32) -> ChartPoint {
         ChartPoint { x, y }
@@ -89,6 +103,19 @@ mod tests {
             series_commands(&chart, 200.0, 100.0),
             "M50.0 100.0 L100.0 50.0 M150.0 0.0 L200.0 25.0"
         );
+    }
+
+    #[test]
+    fn a_line_runs_through_every_point() {
+        assert_eq!(
+            line_commands(
+                &[point(0.0, 1.0), point(0.5, 0.25), point(1.0, 0.0)],
+                200.0,
+                100.0
+            ),
+            "M0.0 100.0 L100.0 25.0 L200.0 0.0"
+        );
+        assert_eq!(line_commands(&[], 200.0, 100.0), "");
     }
 
     #[test]
