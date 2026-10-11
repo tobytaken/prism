@@ -37,8 +37,8 @@ export struct ExplainedStateView {
 // How a limit is drawn across a chart, and keyed next to its value.
 export enum LimitMark { none, solid, dashed }
 
-// A setting a stepper stages.
-export enum TuningSetting { power-limit, graphics-offset, memory-offset }
+// A setting a stepper stages; `fan-speed` is the fixed speed every fan shares.
+export enum TuningSetting { power-limit, graphics-offset, memory-offset, fan-speed }
 
 // A tuning value's stepper: `label` as a screen reader says it, `value` the one it steps from and
 // `value-text` how it's said, `text` the value in effect as shown, `pending` such as "→ 450 W" or
@@ -97,9 +97,24 @@ export struct ChartView {
     handle-y: float,
 }
 
+// The fan control mode every fan of the GPU shares: automatic cooling, a fixed speed or a fan
+// curve as segments, with the cooling pending next to them, such as "→ fixed", `failure` when the
+// last Apply didn't put it into effect, and why it's read-only, when it is. `note` is what the user
+// should know about the GPU's cooling, such as why fan curves are unavailable, and `fixed-speed`
+// whether the track's details have the fixed speed's stepper.
+export struct FanModeView {
+    modes: [SegmentView],
+    fixed-speed: bool,
+    pending: string,
+    failure: string,
+    read-only: bool,
+    reason: string,
+    note: string,
+}
+
 // A track: its name, readout and details, its charts, and the max/avg/min of its metric over the
 // range, each with what a screen reader calls it. `holds-fan-curve` says whether the fan curve
-// belongs to it.
+// belongs to it, and `has-fan-mode` whether it has the fan control mode.
 export struct TrackView {
     name: string,
     label: string,
@@ -116,6 +131,8 @@ export struct TrackView {
     avg-label: string,
     min-label: string,
     holds-fan-curve: bool,
+    has-fan-mode: bool,
+    fan-mode: FanModeView,
 }
 
 // The fixed change strip under the workspace's header: its summary, whether there are unapplied
@@ -273,6 +290,8 @@ export global Intents {
     // Stages this value for the selected GPU's setting, or the setting's default.
     callback stage(setting: TuningSetting, value: int);
     callback use-default(setting: TuningSetting);
+    // Stages the fan control mode at this index among the fan control mode's segments.
+    callback stage-fan-mode(index: int);
     // Stages the power limit drawn at `y` on the power chart, from the top (0) to the bottom (1).
     callback drag-power-limit(y: float);
     // Applies or discards the selected GPU's unapplied tuning changes.

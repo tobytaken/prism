@@ -6,15 +6,16 @@ use prism_protocol::ProfileSettingKey;
 use prism_ui::format::Readout;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, Section as CoreSection,
-    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Stepper, Track,
+    AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanModeControl,
+    Section as CoreSection, ServiceAction as CoreServiceAction,
+    SettingsSection as CoreSettingsSection, Stepper, Track, Tunable,
 };
 
 use crate::{
     AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, DaemonView,
-    DetailView, DialogKind, DialogView, ExplainedStateView, FactView, LimitMark, MainWindow,
-    PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection,
-    SidebarGpuView, StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
+    DetailView, DialogKind, DialogView, ExplainedStateView, FactView, FanModeView, LimitMark,
+    MainWindow, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction,
+    SettingsSection, SidebarGpuView, StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -103,6 +104,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                     text: range.label().into(),
                     label: range.command().into(),
                     selected: range == workspace.range,
+                    unavailable_reason: SharedString::new(),
                 })
                 .collect();
             if let Some(model) = update_in_place(&state.get_ranges(), ranges, PartialEq::eq) {
@@ -282,7 +284,8 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
         .iter()
         .filter_map(|detail| detail.stepper.as_ref())
         .any(|stepper| {
-            stepper.setting == ProfileSettingKey::PowerLimitWatts && stepper.read_only.is_none()
+            stepper.setting == Tunable::Setting(ProfileSettingKey::PowerLimitWatts)
+                && stepper.read_only.is_none()
         });
     let charts = track
         .charts
@@ -303,6 +306,7 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
         })
         .collect();
     let [max_label, avg_label, min_label] = track.statistic_labels().map(SharedString::from);
+    let current_fan_mode = current.as_ref().map(|current| current.fan_mode.clone());
     TrackView {
         name: track.kind.name().into(),
         label: track.kind.name().to_uppercase().into(),
@@ -322,15 +326,53 @@ fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
         avg_label,
         min_label,
         holds_fan_curve: track.holds_fan_curve,
+        has_fan_mode: track.fan_mode.is_some(),
+        fan_mode: track
+            .fan_mode
+            .as_ref()
+            .map(|fan_mode| fan_mode_view(current_fan_mode, fan_mode, track))
+            .unwrap_or_default(),
+    }
+}
+
+/// The fan control mode as the view shows it, its segments in the model `current` has, if any.
+fn fan_mode_view(
+    current: Option<FanModeView>,
+    fan_mode: &FanModeControl,
+    track: &Track,
+) -> FanModeView {
+    let modes = fan_mode
+        .modes
+        .iter()
+        .map(|choice| SegmentView {
+            text: choice.mode.short_name().into(),
+            label: choice.name.into(),
+            selected: choice.selected,
+            unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
+        })
+        .collect();
+    FanModeView {
+        modes: reuse(current.map(|current| current.modes), modes),
+        fixed_speed: track
+            .details
+            .iter()
+            .filter_map(|detail| detail.stepper.as_ref())
+            .any(|stepper| stepper.setting == Tunable::FixedFanSpeed),
+        pending: fan_mode.pending.as_deref().unwrap_or_default().into(),
+        failure: fan_mode.failed.as_deref().unwrap_or_default().into(),
+        read_only: fan_mode.read_only.is_some(),
+        reason: fan_mode.read_only.as_deref().unwrap_or_default().into(),
+        note: fan_mode.note.as_deref().unwrap_or_default().into(),
     }
 }
 
 fn stepper_view(stepper: &Stepper) -> StepperView {
     StepperView {
         setting: match stepper.setting {
-            ProfileSettingKey::PowerLimitWatts => TuningSetting::PowerLimit,
-            ProfileSettingKey::GraphicsOffsetMhz => TuningSetting::GraphicsOffset,
-            ProfileSettingKey::MemoryOffsetMhz => TuningSetting::MemoryOffset,
+            Tunable::Setting(ProfileSettingKey::PowerLimitWatts) => TuningSetting::PowerLimit,
+            Tunable::Setting(ProfileSettingKey::GraphicsOffsetMhz) => TuningSetting::GraphicsOffset,
+            Tunable::Setting(ProfileSettingKey::MemoryOffsetMhz) => TuningSetting::MemoryOffset,
+            Tunable::FixedFanSpeed => TuningSetting::FanSpeed,
         },
         label: stepper.name.as_str().into(),
         value: clamped(stepper.value),

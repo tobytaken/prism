@@ -10,6 +10,8 @@ use prism_protocol::{
     Incompatible, ProfileSettingKey, Welcome,
 };
 
+use crate::cooling::FanMode;
+
 use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::drafts::{DialogState, Drafts};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
@@ -336,6 +338,10 @@ pub enum Intent {
     /// Stage the power limit drawn at this height on the selected GPU's power chart, from the top
     /// (0) to the bottom (1), as dragging its line does.
     DragPowerLimit(f32),
+    /// Stage this fan control mode for every fan of the selected GPU.
+    StageFanMode(FanMode),
+    /// Stage this fixed speed, in percent, for every fan of the selected GPU.
+    StageFanSpeed(i64),
     /// Send the selected GPU's unapplied tuning changes to prismd as one Apply.
     ApplyChanges,
     /// Drop the selected GPU's unapplied tuning changes.
@@ -845,6 +851,8 @@ impl Core {
             Intent::Stage(key, value) => self.stage(key, value),
             Intent::UseDefault(key) => self.use_default(key),
             Intent::DragPowerLimit(y) => self.drag_power_limit(y),
+            Intent::StageFanMode(mode) => self.stage_fan_mode(mode),
+            Intent::StageFanSpeed(speed_percent) => self.stage_fan_speed(speed_percent),
             Intent::ApplyChanges => self.perform(Command::ApplyChanges),
             Intent::DiscardChanges => self.perform(Command::DiscardChanges),
             Intent::DiscardAndClose => self.quit(),

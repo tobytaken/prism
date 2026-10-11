@@ -11,7 +11,7 @@ use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, 
 use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    Content, Core, Effect, Input, Intent, Key, PrismdHost, Section as CoreSection,
+    Content, Core, Effect, FanMode, Input, Intent, Key, PrismdHost, Section as CoreSection,
     ServiceAction as CoreServiceAction, ServiceOutcome, SettingsSection as CoreSettingsSection,
     Shortcut, TelemetrySource, Timer, TrackChart,
 };
@@ -262,18 +262,31 @@ impl Inner {
         intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
         let inner = Rc::downgrade(this);
         intents.on_stage(move |setting, value| {
-            with_inner(&inner, |inner| {
-                inner.handle(Input::Intent(Intent::Stage(
-                    setting_key(setting),
-                    value.into(),
-                )))
-            });
+            let intent = match setting_key(setting) {
+                Some(key) => Intent::Stage(key, value.into()),
+                None => Intent::StageFanSpeed(value.into()),
+            };
+            with_inner(&inner, |inner| inner.handle(Input::Intent(intent)));
         });
         let inner = Rc::downgrade(this);
         intents.on_use_default(move |setting| {
-            with_inner(&inner, |inner| {
-                inner.handle(Input::Intent(Intent::UseDefault(setting_key(setting))))
-            });
+            // The fixed fan speed has no default to use.
+            if let Some(key) = setting_key(setting) {
+                with_inner(&inner, |inner| {
+                    inner.handle(Input::Intent(Intent::UseDefault(key)))
+                });
+            }
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_stage_fan_mode(move |index| {
+            let mode = usize::try_from(index)
+                .ok()
+                .and_then(|index| FanMode::ALL.get(index));
+            if let Some(&mode) = mode {
+                with_inner(&inner, |inner| {
+                    inner.handle(Input::Intent(Intent::StageFanMode(mode)))
+                });
+            }
         });
         let inner = Rc::downgrade(this);
         intents.on_drag_power_limit(move |y| {
@@ -592,10 +605,12 @@ fn with_inner<T>(inner: &Weak<Inner>, f: impl FnOnce(&Inner) -> T) -> Option<T> 
 }
 
 /// The setting a stepper stages.
-fn setting_key(setting: TuningSetting) -> ProfileSettingKey {
-    match setting {
+/// The profile setting a stepper stages, or none for the fixed fan speed.
+fn setting_key(setting: TuningSetting) -> Option<ProfileSettingKey> {
+    Some(match setting {
         TuningSetting::PowerLimit => ProfileSettingKey::PowerLimitWatts,
         TuningSetting::GraphicsOffset => ProfileSettingKey::GraphicsOffsetMhz,
         TuningSetting::MemoryOffset => ProfileSettingKey::MemoryOffsetMhz,
-    }
+        TuningSetting::FanSpeed => return None,
+    })
 }

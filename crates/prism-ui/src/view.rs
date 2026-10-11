@@ -5,16 +5,22 @@ use std::time::Duration;
 use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
 use prism_protocol::{ProfileSetting, ProfileSettingKey};
 
+use crate::cooling::{
+    FanMode, cooling_read, fixed_speed_of, fixed_speed_range, mode_of, staged_cooling_text,
+};
 use crate::core::{
     Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
+    TuningControl,
 };
 use crate::daemon::Fact;
 use crate::drafts::{
-    DialogState, ReviewChange, control_of, not_applied, setting_name, setting_readout, staged_text,
+    DialogState, ReviewChange, Staged, control_of, not_applied, setting_name, setting_readout,
+    staged_text,
 };
 use crate::format::{Readout, UNKNOWN, pending, short_bus_id, short_gpu_name, signed};
 use crate::palette::Command;
 use crate::telemetry::{Chart, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
+use prism_gpu::fan_curve::FanCurveSupport;
 
 /// The readings the sidebar shows for each GPU.
 const VITALS: [Metric; 4] = [
@@ -113,11 +119,25 @@ impl GpuWorkspace {
 
     /// The stepper that tunes `setting`, in whichever track's details it is.
     pub fn stepper(&self, setting: ProfileSettingKey) -> Option<&Stepper> {
+        self.stepper_of(Tunable::Setting(setting))
+    }
+
+    /// The stepper of every fan's fixed speed, while the Fans track shows one.
+    pub fn fixed_fan_speed(&self) -> Option<&Stepper> {
+        self.stepper_of(Tunable::FixedFanSpeed)
+    }
+
+    fn stepper_of(&self, tunable: Tunable) -> Option<&Stepper> {
         self.tracks
             .iter()
             .flat_map(|track| &track.details)
             .filter_map(|detail| detail.stepper.as_ref())
-            .find(|stepper| stepper.setting == setting)
+            .find(|stepper| stepper.setting == tunable)
+    }
+
+    /// The Fans track's fan control mode.
+    pub fn fan_mode(&self) -> Option<&FanModeControl> {
+        self.tracks.iter().find_map(|track| track.fan_mode.as_ref())
     }
 }
 
@@ -202,6 +222,39 @@ pub struct Track {
     pub charts: Vec<TrackChart>,
     /// Whether the fan curve belongs to this track.
     pub holds_fan_curve: bool,
+    /// The fan control mode, in the Fans track.
+    pub fan_mode: Option<FanModeControl>,
+}
+
+/// The fan control mode every fan of a GPU shares: the GPU's default automatic cooling, a fixed
+/// speed or a fan curve, with the mode picked and any pending one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FanModeControl {
+    /// Every mode, left to right.
+    pub modes: Vec<FanModeChoice>,
+    /// The cooling staged, as shown next to the control, such as "→ fixed 55%", while it's
+    /// pending.
+    pub pending: Option<String>,
+    /// That the last Apply didn't put the pending cooling into effect, and why if prismd said,
+    /// while it's still pending.
+    pub failed: Option<String>,
+    /// Why it can't be changed, when it can't.
+    pub read_only: Option<String>,
+    /// What the user should know about the GPU's cooling, such as why Prism stopped following its
+    /// curve or why fan curves are unavailable.
+    pub note: Option<String>,
+}
+
+/// One of the fan control mode's choices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FanModeChoice {
+    pub mode: FanMode,
+    /// As shown, such as "Fixed speed".
+    pub name: &'static str,
+    /// Whether it's the mode pending, or else the one in effect.
+    pub selected: bool,
+    /// Why it can't be picked, when it can't.
+    pub unavailable: Option<String>,
 }
 
 impl Track {
@@ -217,12 +270,20 @@ impl Track {
     }
 }
 
+/// What a stepper stages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tunable {
+    Setting(ProfileSettingKey),
+    /// The fixed speed every fan shares, in percent.
+    FixedFanSpeed,
+}
+
 /// A tuning value stepped through its allowed range, such as the power limit, with the value in
 /// effect and any pending one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stepper {
-    /// The setting it stages.
-    pub setting: ProfileSettingKey,
+    /// What it stages.
+    pub setting: Tunable,
     /// What a screen reader calls it, such as "Power limit".
     pub name: String,
     /// The value it steps from: the pending one, or else the one in effect.
@@ -660,9 +721,17 @@ impl Core {
                 let fans = latest_device(gpu)
                     .map(|device| device.cooling.fans.as_slice())
                     .unwrap_or_default();
-                let details = fans
-                    .iter()
-                    .map(|fan| Detail {
+                let fixed = self.fixed_fan_speed(gpu).map(|stepper| Detail {
+                    label: "fixed speed".into(),
+                    name: stepper.name.clone(),
+                    readout: stepper.readout.clone(),
+                    unknown_reason: None,
+                    limit: None,
+                    stepper: Some(stepper),
+                });
+                let details = fixed
+                    .into_iter()
+                    .chain(fans.iter().map(|fan| Detail {
                         label: format!("fan {}", fan.index),
                         name: format!("Fan {} speed", fan.index),
                         readout: Readout::percent(fan.current_speed_percent),
@@ -673,7 +742,7 @@ impl Core {
                         ),
                         limit: None,
                         stepper: None,
-                    })
+                    }))
                     .collect();
                 (details, vec![chart(metric, None, &[])])
             }
@@ -691,6 +760,7 @@ impl Core {
             min: value(stats.map(|stats| stats.min)),
             charts,
             holds_fan_curve: kind == TrackKind::Fans,
+            fan_mode: (kind == TrackKind::Fans).then(|| self.fan_mode(gpu)),
         }
     }
 }
@@ -736,30 +806,23 @@ impl Core {
         let staged = draft.and_then(|draft| draft.settings.get(setting));
         let range = gpu.range(setting);
         let name = setting_name(setting);
-        let read_only = match (self.tuning_access().reason(), &gpu.latest) {
-            (Some(reason), _) => Some(reason.to_owned()),
-            (None, Latest::Waiting) => Some(WAITING.into()),
-            (None, Latest::Missing { reason }) => Some(reason.clone()),
-            (None, Latest::Read(device)) => {
-                let said = match setting {
-                    ProfileSettingKey::PowerLimitWatts => &device.power.reason,
-                    ProfileSettingKey::GraphicsOffsetMhz => &device.clocks.graphics.reason,
-                    ProfileSettingKey::MemoryOffsetMhz => &device.clocks.memory.reason,
-                };
-                if !self.editable(&gpu.id, control_of(setting)) {
-                    Some(said.clone().unwrap_or_else(|| {
-                        format!("The {} isn't supported by this GPU", name.to_lowercase())
-                    }))
-                } else if range.is_none() {
-                    Some(format!(
+        let said = latest_device(gpu).and_then(|device| match setting {
+            ProfileSettingKey::PowerLimitWatts => device.power.reason.clone(),
+            ProfileSettingKey::GraphicsOffsetMhz => device.clocks.graphics.reason.clone(),
+            ProfileSettingKey::MemoryOffsetMhz => device.clocks.memory.reason.clone(),
+        });
+        let unsupported = said
+            .unwrap_or_else(|| format!("The {} isn't supported by this GPU", name.to_lowercase()));
+        let read_only = self
+            .read_only(gpu, control_of(setting), unsupported)
+            .or_else(|| {
+                range.is_none().then(|| {
+                    format!(
                         "The allowed {}s aren't reported by this GPU",
                         name.to_lowercase()
-                    ))
-                } else {
-                    None
-                }
-            }
-        };
+                    )
+                })
+            });
         let (min, max) = range.unwrap_or_default();
         let value = match staged {
             Some(ProfileSetting::Value { value }) => Some(value),
@@ -767,7 +830,7 @@ impl Core {
             None => in_effect,
         };
         Stepper {
-            setting,
+            setting: Tunable::Setting(setting),
             name: name.into(),
             value: value.unwrap_or(min),
             value_text: setting_readout(setting, value).spoken(),
@@ -783,10 +846,126 @@ impl Core {
                 && staged != Some(ProfileSetting::Default {})
                 && !self.applying(&gpu.id),
             failed: draft
-                .and_then(|draft| draft.failed.get(&setting))
+                .and_then(|draft| draft.failed.get(&Staged::Setting(setting)))
                 .map(|why| not_applied("Not applied", why.as_deref())),
             read_only,
         }
+    }
+
+    /// Why the GPU's control can't be changed, if it can't: no tuning access, no reading yet, or
+    /// what the GPU says about the control.
+    fn read_only(&self, gpu: &Gpu, control: TuningControl, unsupported: String) -> Option<String> {
+        match (self.tuning_access().reason(), &gpu.latest) {
+            (Some(reason), _) => Some(reason.to_owned()),
+            (None, Latest::Waiting) => Some(WAITING.into()),
+            (None, Latest::Missing { reason }) => Some(reason.clone()),
+            (None, Latest::Read(_)) => (!self.editable(&gpu.id, control)).then_some(unsupported),
+        }
+    }
+
+    /// Why the GPU's cooling can't be changed, if it can't.
+    fn cooling_read_only(&self, gpu: &Gpu) -> Option<String> {
+        let unsupported = cooling_read(gpu)
+            .and_then(|cooling| cooling.unsupported_reason.clone())
+            .unwrap_or_else(|| "Fan control isn't supported by this GPU".into());
+        self.read_only(gpu, TuningControl::Cooling, unsupported)
+    }
+
+    /// The fan control mode every fan of the GPU shares: the one pending, or else the one in
+    /// effect.
+    fn fan_mode(&self, gpu: &Gpu) -> FanModeControl {
+        let staged = self
+            .drafts
+            .by_gpu
+            .get(&gpu.id)
+            .and_then(|draft| Some((draft, draft.settings.cooling.as_ref()?)));
+        let shown = match staged {
+            Some((_, staged)) => mode_of(staged),
+            None => self.cooling_in_effect(gpu).as_ref().and_then(mode_of),
+        };
+        let cooling = cooling_read(gpu);
+        let curves = match self.curve_support(gpu) {
+            Some(FanCurveSupport::Unavailable { reason }) => Some(reason),
+            Some(FanCurveSupport::Available { .. }) => None,
+            None => {
+                Some(cooling_unknown(gpu).unwrap_or_else(|| "Fan curves aren't available".into()))
+            }
+        };
+        let modes = FanMode::ALL
+            .into_iter()
+            .map(|mode| FanModeChoice {
+                mode,
+                name: mode.name(),
+                selected: shown == Some(mode),
+                unavailable: match mode {
+                    FanMode::Automatic => None,
+                    FanMode::Fixed => cooling
+                        .and_then(fixed_speed_range)
+                        .is_none()
+                        .then(|| "This GPU reports no fans to set a fixed speed for".into()),
+                    FanMode::Curve => curves.clone(),
+                },
+            })
+            .collect();
+        // Why the curve stopped matters most; why curves are unavailable only where fans can be
+        // controlled at all.
+        let suspension = self
+            .cooling
+            .get(&gpu.id)
+            .and_then(|control| control.suspension.as_ref())
+            .map(|suspension| suspension.reason.clone());
+        let curves = curves.filter(|_| gpu.capabilities.contains(&TuningControl::Cooling));
+        let note: Vec<_> = suspension.into_iter().chain(curves).collect();
+        FanModeControl {
+            modes,
+            pending: staged.map(|(_, staged)| pending(&staged_cooling_text(staged))),
+            failed: staged
+                .and_then(|(draft, _)| draft.failed.get(&Staged::Cooling))
+                .map(|why| not_applied("Not applied", why.as_deref())),
+            read_only: self.cooling_read_only(gpu),
+            note: (!note.is_empty()).then(|| note.join(" ")),
+        }
+    }
+
+    /// The stepper of the fixed speed every fan of the GPU shares, while fixed speed is the mode
+    /// pending, or else the one in effect.
+    fn fixed_fan_speed(&self, gpu: &Gpu) -> Option<Stepper> {
+        let staged = self
+            .drafts
+            .by_gpu
+            .get(&gpu.id)
+            .and_then(|draft| draft.settings.cooling.as_ref());
+        let in_effect = self.cooling_in_effect(gpu);
+        let in_effect_speed = in_effect.as_ref().and_then(fixed_speed_of);
+        let staged_speed = staged.and_then(fixed_speed_of);
+        let fixed = match staged {
+            Some(staged) => mode_of(staged) == Some(FanMode::Fixed),
+            None => in_effect.as_ref().and_then(mode_of) == Some(FanMode::Fixed),
+        };
+        if !fixed {
+            return None;
+        }
+        let (min, max) = cooling_read(gpu).and_then(fixed_speed_range)?;
+        let value = staged_speed.or(in_effect_speed).unwrap_or(min);
+        // Under another mode, the fans' speed now is what's in effect.
+        let readout = in_effect_speed
+            .map(|speed| speed.try_into().ok())
+            .unwrap_or_else(|| latest_readings(gpu).fan_speed_percent);
+        Some(Stepper {
+            setting: Tunable::FixedFanSpeed,
+            name: "Fixed fan speed".into(),
+            value,
+            value_text: Readout::percent(value.try_into().ok()).spoken(),
+            min,
+            max,
+            step: 1,
+            readout: Readout::percent(readout),
+            pending: staged_speed.map(|speed| pending(&format!("{speed}%"))),
+            can_use_default: false,
+            // The fan control mode says when the last Apply didn't put cooling into effect.
+            failed: None,
+            read_only: self.cooling_read_only(gpu),
+        })
     }
 
     /// The selected GPU's change strip.
@@ -827,6 +1006,15 @@ fn readout(metric: Metric, value: Option<u32>) -> Readout {
 /// the control is unavailable.
 fn gpu_said<'a>(value_error: Option<&'a str>, control_reason: Option<&'a str>) -> Option<&'a str> {
     value_error.or(control_reason)
+}
+
+/// Why the GPU's cooling is unknown, while there's no reading of it.
+fn cooling_unknown(gpu: &Gpu) -> Option<String> {
+    match &gpu.latest {
+        Latest::Waiting => Some(WAITING.into()),
+        Latest::Missing { reason } => Some(reason.clone()),
+        Latest::Read(_) => None,
+    }
 }
 
 /// Why a value the latest reading carries is unknown: why there's no reading, or what the GPU

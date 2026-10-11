@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
-import { Area, Divider, Grid, LimitLine, LinkButton, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
-import { AppState, ChartPart, ChartView, DetailView, Intents, LimitMark, ReadoutView, StepperView, TrackView } from "../state.slint";
+import { Area, Divider, Grid, LimitLine, LinkButton, Segmented, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, ChartPart, ChartView, DetailView, FanModeView, Intents, LimitMark, ReadoutView, StepperView, TrackView, TuningSetting } from "../state.slint";
 
 component Statistic inherits Rectangle {
     in property <string> name;
@@ -116,12 +116,14 @@ component TuningStepper inherits Stepper {
 
 // A tuning value tuned in place, such as the power limit or a clock offset: how its line is drawn
 // if it's a limit, its label and Use default, then its stepper with any pending value on a line of
-// its own. Read-only, it's one line like any other detail, with its value after its label.
+// its own. Read-only, it's one line like any other detail, with its value after its label, and so
+// is the fixed fan speed, which has no default to use.
 component TuningDetail inherits VerticalLayout {
     in property <DetailView> detail;
     // In a short track, its lines close up.
     in property <bool> short;
     property <StepperView> stepper: detail.stepper;
+    property <bool> one-line: stepper.read-only || stepper.setting == TuningSetting.fan-speed;
 
     spacing: root.short ? 0 : Theme.space.xxs;
 
@@ -141,7 +143,7 @@ component TuningDetail inherits VerticalLayout {
             accessible-role: none;
         }
 
-        if root.stepper.read-only: TuningStepper {
+        if root.one-line: TuningStepper {
             stepper: root.stepper;
         }
 
@@ -159,8 +161,54 @@ component TuningDetail inherits VerticalLayout {
         }
     }
 
-    if !root.stepper.read-only: TuningStepper {
+    if !root.one-line: TuningStepper {
         stepper: root.stepper;
+    }
+}
+
+// The fan control mode every fan shares, with what the user should know about the GPU's cooling
+// under it.
+component FanMode inherits VerticalLayout {
+    in property <FanModeView> fan-mode;
+    // In a short track, its lines close up.
+    in property <bool> short;
+
+    spacing: root.short ? 0 : Theme.space.xxs;
+
+    // Read-only, it's one line like any other detail, with the mode after its label.
+    HorizontalLayout {
+        alignment: start;
+        spacing: Theme.space.s;
+
+        if root.fan-mode.read-only: StyledText {
+            text: "mode";
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        Segmented {
+            label: "Fan control mode";
+            segments: root.fan-mode.modes;
+            pending: root.fan-mode.pending;
+            failure: root.fan-mode.failure;
+            read-only: root.fan-mode.read-only;
+            reason: root.fan-mode.reason;
+            compact: root.short;
+            chosen(index) => {
+                Intents.stage-fan-mode(index);
+            }
+        }
+    }
+
+    if root.fan-mode.note != "": StyledText {
+        text: root.fan-mode.note;
+        style: Theme.text.value;
+        color: Theme.color.ink-muted;
+        wrap: word-wrap;
+        accessible-role: text;
+        accessible-label: "Cooling";
+        accessible-value: root.fan-mode.note;
     }
 }
 
@@ -324,13 +372,20 @@ export component Track inherits Rectangle {
                 VerticalLayout {
                     spacing: root.short ? 0 : Theme.space.xxs;
 
-                    // Tuning values are tuned in place with their steppers.
+                    if root.track.has-fan-mode: FanMode {
+                        fan-mode: root.track.fan-mode;
+                        short: root.short;
+                    }
+
+                    // Tuning values are tuned in place with their steppers. With a fixed speed,
+                    // every fan is asked for the same speed, so a short track shows it in place of
+                    // each fan's.
                     for detail in root.track.details: VerticalLayout {
                         if detail.has-stepper: TuningDetail {
                             detail: detail;
                             short: root.short;
                         }
-                        if !detail.has-stepper: Detail {
+                        if !detail.has-stepper && !(root.short && root.track.fan-mode.fixed-speed): Detail {
                             detail: detail;
                         }
                     }
