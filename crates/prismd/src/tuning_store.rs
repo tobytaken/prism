@@ -232,8 +232,8 @@ impl TuningStore {
         })
     }
 
-    /// Takes these tuning states, as a session's snapshot gave them, for those sessions know,
-    /// unless a state was already pushed for their GPU.
+    /// Notes these tuning states, from a session's snapshot, as known to sessions, except for GPUs
+    /// a state was already pushed for.
     pub fn known_tuning(&self, states: &[GpuTuningState]) {
         let mut pushed = self.pushed_tuning.lock().unwrap();
         for state in states {
@@ -290,6 +290,15 @@ impl TuningStore {
         match &*self.state.lock().unwrap() {
             StoreState::Healthy(document) => Ok(read(document)),
             StoreState::Unhealthy { .. } => Err(TuningStoreWriteError::Unhealthy),
+        }
+    }
+
+    /// Reads the document as GPUs' tuning states see it. An unhealthy store records nothing, so
+    /// then they're those of an empty document, and revisions still tell changes apart.
+    pub fn read_for_tuning<T>(&self, read: impl FnOnce(&TuningDocument) -> T) -> T {
+        match &*self.state.lock().unwrap() {
+            StoreState::Healthy(document) => read(document),
+            StoreState::Unhealthy { .. } => read(&TuningDocument::default()),
         }
     }
 

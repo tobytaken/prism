@@ -662,8 +662,8 @@ impl Harness {
         serde_json::to_value(self.send(request)).unwrap()
     }
 
-    /// The GPU's tuning-state revision now, or none when the daemon can't tell it, such as while
-    /// its tuning store is unhealthy.
+    /// The GPU's tuning-state revision now, or none when the daemon can't tell it, such as when
+    /// the GPU's identity can't be verified.
     pub fn revision(&self, gpu_id: &str) -> String {
         revision(&self.core(), gpu_id)
     }
@@ -885,6 +885,7 @@ impl FakeSession {
     }
 }
 
+/// The GPU's tuning-state revision now, or none when the daemon can't tell it.
 fn revision(core: &DaemonCore, gpu_id: &str) -> String {
     super::daemon_core::tuning_state(
         core.dependencies.backend.as_ref(),
@@ -896,6 +897,7 @@ fn revision(core: &DaemonCore, gpu_id: &str) -> String {
     .unwrap_or_default()
 }
 
+/// An Apply of `settings`, given as protocol JSON, to the GPU, made against its tuning state now.
 fn apply_request(core: &DaemonCore, gpu_id: &str, settings: serde_json::Value) -> DaemonRequest {
     DaemonRequest::ApplyProfile(prism_protocol::ApplyGpuProfileRequest {
         gpu_id: gpu_id.into(),

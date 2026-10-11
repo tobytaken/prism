@@ -159,21 +159,23 @@ impl Core {
             return Vec::new();
         };
         self.drafts.applying.remove(&id);
-        // prismd pushes the state an Apply leaves before answering it, so the changes left are
-        // made against that state from here on.
-        let revision = self.revision_of(&id);
+        let latest = self.revision_of(&id);
         let Some(draft) = self.drafts.by_gpu.get_mut(&id) else {
             return Vec::new();
         };
-        draft.revision = revision;
+        // The changes left stay made against the state they started from: an answer can overtake
+        // the event its own write pushed, so only a refusal for review moves them, onto the state
+        // the user has now been shown.
         draft.problem = match response {
             DaemonResponse::ProfileApplication(application) => {
                 unapplied(&mut draft.settings, &application)
             }
-            DaemonResponse::Error(error) if error.code == GpuCommandErrorCode::StaleRevision => {
+            DaemonResponse::Error(error) => {
+                if error.code == GpuCommandErrorCode::StaleRevision {
+                    draft.revision = latest;
+                }
                 Some(error.message)
             }
-            DaemonResponse::Error(error) => Some(error.message),
             _ => Some("prismd answered the Apply with something else. Apply again.".into()),
         };
         if draft.len() == 0 {
@@ -228,8 +230,8 @@ impl Core {
             .is_some_and(|id| self.drafts.applying.contains_key(&id))
     }
 
-    /// Whether any GPU has unapplied tuning changes, which holds automatic changes to it.
-    pub fn editing(&self) -> bool {
+    /// Whether any GPU has unapplied tuning changes, which put it under an edit hold.
+    pub fn edit_hold(&self) -> bool {
         !self.drafts.by_gpu.is_empty()
     }
 }
@@ -254,7 +256,7 @@ fn unapplied(
             continue;
         }
         if succeeded(outcome) {
-            clear(settings, key);
+            settings.clear(key);
             continue;
         }
         let why = outcome
@@ -274,12 +276,4 @@ fn unapplied(
         }
     }
     (!problems.is_empty()).then(|| problems.join("\n"))
-}
-
-fn clear(settings: &mut ProfileSettings, key: ProfileSettingKey) {
-    *match key {
-        ProfileSettingKey::PowerLimitWatts => &mut settings.power_limit_watts,
-        ProfileSettingKey::GraphicsOffsetMhz => &mut settings.graphics_offset_mhz,
-        ProfileSettingKey::MemoryOffsetMhz => &mut settings.memory_offset_mhz,
-    } = None;
 }

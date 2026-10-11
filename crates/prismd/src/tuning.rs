@@ -20,6 +20,7 @@ pub(super) struct TuningRequest {
 }
 
 impl TuningRequest {
+    /// The settings, with no fans reviewed.
     pub fn new(gpu_id: impl Into<String>, settings: ProfileSettings) -> Self {
         Self {
             gpu_id: gpu_id.into(),

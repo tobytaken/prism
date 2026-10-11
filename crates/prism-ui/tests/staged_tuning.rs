@@ -302,9 +302,11 @@ fn an_applied_draft_is_gone_with_its_edit_hold_and_the_values_come_from_prismd()
 }
 
 #[test]
-fn a_failed_setting_stays_pending_with_why_for_a_retry_against_the_new_state() {
+fn a_failed_setting_stays_pending_with_why_for_a_retry_against_the_same_state() {
     let mut core = connected();
     let (id, _) = stage_and_apply(&mut core, 450);
+    // Changed outside Prism while the Apply was on its way: its answer can overtake this.
+    tuning_changed(&mut core, GPU, "changed", 500);
 
     let effects = core.handle(Input::PrismdAnswered {
         id,
@@ -324,6 +326,8 @@ fn a_failed_setting_stays_pending_with_why_for_a_retry_against_the_new_state() {
     );
     let retry = applies(&intent(&mut core, Intent::ApplyChanges));
     assert_eq!(retry[0].1.settings, watts(450));
+    // Still made against the state the draft started from, so prismd refuses it for review.
+    assert_eq!(retry[0].1.expected_revision, REVISION);
 }
 
 #[test]

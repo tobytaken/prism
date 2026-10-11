@@ -159,3 +159,29 @@ fn an_apply_whose_reviewed_fans_changed_writes_no_cooling() {
     );
     assert!(daemon.gpus.writes().is_empty());
 }
+
+#[test]
+fn a_stale_apply_is_rejected_even_while_the_tuning_store_is_unhealthy() {
+    let daemon = Harness::start_with_persistent_files(
+        FakeGpuBackend::with_gpus(vec![tunable_gpu()]),
+        &[(
+            super::tuning_store::TUNING_STORE_FILE_NAME,
+            b"{\"schema_version\": 99}",
+        )],
+    );
+    let alice = daemon.user(1000, "alice");
+    let seen = alice.snapshot().tuning_states[0].revision.clone();
+    daemon
+        .gpus
+        .update("GPU-123", |gpu| gpu.power.current_limit_watts = Some(500));
+
+    let response = apply(&alice, power_limit(450), &seen);
+
+    assert_eq!(response["payload"]["code"], "stale_revision", "{response}");
+    assert!(daemon.gpus.writes().is_empty());
+    let reviewed = apply(&alice, power_limit(450), &revision(&alice));
+    assert_eq!(
+        reviewed["payload"]["power"]["status"], "succeeded",
+        "{reviewed}"
+    );
+}

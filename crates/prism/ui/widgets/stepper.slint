@@ -75,8 +75,8 @@ export component Stepper inherits Rectangle {
     height: Theme.size.stepper;
     width: row.preferred-width;
 
+    // Read-only, it still takes focus, so the keyboard reaches it and why it's read-only.
     keys := FocusScope {
-        enabled: !root.read-only;
         focus-gained(reason) => {
             root.keyboard-focus = reason == FocusReason.tab-navigation;
         }

@@ -135,7 +135,7 @@ impl DaemonCore {
         // Each read on its own, so no lock is held into the next: switching reads recognition.
         let running_games = self.recognition.lock().unwrap().for_uid(peer.uid);
         let automatic_switching = self.switching.status_for(peer);
-        let tuning_states = self.tuning_states(peer).unwrap_or_default();
+        let tuning_states = self.tuning_states(peer);
         // The session knows these now; the tick pushes them only once they change.
         self.tuning_store.known_tuning(&tuning_states);
         DaemonSnapshot {
@@ -185,7 +185,7 @@ impl DaemonCore {
             let performance = self.observed_performance(None);
             // A GPU's arrival comes before its tuning state and readings.
             self.publish_inventory_change(&performance);
-            let states = store.read(|document| {
+            let states = store.read_for_tuning(|document| {
                 performance
                     .gpus
                     .iter()
@@ -193,7 +193,7 @@ impl DaemonCore {
                     .map(|gpu| document.tuning_state(gpu))
                     .collect::<Vec<_>>()
             });
-            for state in states.into_iter().flatten() {
+            for state in states {
                 pushes.push(state, None);
             }
             performance
@@ -241,18 +241,16 @@ impl DaemonCore {
     }
 
     /// The caller's view of each identified GPU's tuning state.
-    fn tuning_states(&self, peer: &SessionPeer) -> Result<Vec<GpuTuningState>, GpuCommandError> {
+    fn tuning_states(&self, peer: &SessionPeer) -> Vec<GpuTuningState> {
         let performance = self.observed_performance(Some(peer));
-        self.tuning_store
-            .read(|document| {
-                performance
-                    .gpus
-                    .iter()
-                    .filter_map(|gpu| verified_gpu(&performance, gpu.stable_id.as_deref()?).ok())
-                    .map(|gpu| document.tuning_state(gpu))
-                    .collect()
-            })
-            .map_err(GpuCommandError::from)
+        self.tuning_store.read_for_tuning(|document| {
+            performance
+                .gpus
+                .iter()
+                .filter_map(|gpu| verified_gpu(&performance, gpu.stable_id.as_deref()?).ok())
+                .map(|gpu| document.tuning_state(gpu))
+                .collect()
+        })
     }
 
     /// Handles a request from an identified caller once the policy allows it.
@@ -325,7 +323,7 @@ impl DaemonCore {
                 .map_err(GpuCommandError::from)
                 .map(DaemonResponse::Profiles),
             DaemonRequest::GetTuningStates => {
-                self.tuning_states(peer).map(DaemonResponse::TuningStates)
+                Ok(DaemonResponse::TuningStates(self.tuning_states(peer)))
             }
             DaemonRequest::SaveProfileAsNew(request) => self
                 .save_profile_as_new(peer, request)
@@ -878,12 +876,10 @@ impl DaemonCore {
     pub(super) fn apply_cooling(
         &self,
         request: prism_gpu::cooling::ApplyCoolingRequest,
-        source: CoolingApplicationSource,
     ) -> prism_gpu::cooling::CoolingApplication {
-        assert!(matches!(source, CoolingApplicationSource::NonManual));
         let cooling = Arc::clone(&self.cooling);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
-            cooling.apply(backend, request, source)
+            cooling.apply(backend, request, CoolingApplicationSource::NonManual)
         })
     }
 
@@ -1071,7 +1067,7 @@ pub(super) fn apply_recorded_profile(
         stale.cooling_recorded(&uuid, recorded);
     }
     if !recorded {
-        response.not_recorded();
+        not_recorded(&mut response);
     }
     response
 }
@@ -1126,33 +1122,26 @@ fn record_manual(
     }
 }
 
-/// A manual write's response, which reports each setting that reached the GPU as succeeded even
-/// when its last applied tuning value couldn't be recorded.
-trait ManualWriteResponse {
-    fn not_recorded(&mut self);
-}
-
-impl ManualWriteResponse for ProfileApplicationResponse {
-    fn not_recorded(&mut self) {
-        mark_not_recorded([&mut self.power, &mut self.graphics, &mut self.memory]);
-        if let Some(cooling) = &mut self.cooling
-            && cooling.outcome.status == TuningOutcomeStatus::Succeeded
-        {
-            cooling.outcome.error = Some(NOT_RECORDED.into());
-        }
-    }
-}
-
-fn mark_not_recorded<const N: usize>(outcomes: [&mut Option<TuningOutcome>; N]) {
-    for outcome in outcomes.into_iter().flatten() {
+/// Notes on each setting of a manual application that reached the GPU that its last applied
+/// tuning value couldn't be recorded; it still reports as succeeded.
+fn not_recorded(response: &mut ProfileApplicationResponse) {
+    let numeric = [
+        &mut response.power,
+        &mut response.graphics,
+        &mut response.memory,
+    ];
+    let cooling = response
+        .cooling
+        .as_mut()
+        .map(|cooling| &mut cooling.outcome);
+    for outcome in numeric.into_iter().flatten().chain(cooling) {
         if outcome.status == TuningOutcomeStatus::Succeeded {
             outcome.error = Some(NOT_RECORDED.into());
         }
     }
 }
 
-/// The GPU's tuning state from fresh readings, unless the GPU can't be identified or the
-/// tuning store can't be used.
+/// The GPU's tuning state from fresh readings, unless the GPU can't be identified.
 pub(super) fn tuning_state(
     backend: &dyn DaemonBackend,
     store: &TuningStore,
@@ -1162,7 +1151,7 @@ pub(super) fn tuning_state(
     let performance = backend.performance();
     let mut gpu = verified_gpu(&performance, uuid).ok()?.clone();
     gpu.cooling.control = Some(cooling.control(uuid));
-    store.read(|document| document.tuning_state(&gpu)).ok()
+    Some(store.read_for_tuning(|document| document.tuning_state(&gpu)))
 }
 
 /// Each GPU's id, in order.

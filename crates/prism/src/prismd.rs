@@ -119,7 +119,7 @@ impl PrismdConnector for SocketConnector {
 fn run_sessions(
     socket: &std::path::Path,
     current: &Mutex<Option<SessionSender>>,
-    commands: &Mutex<HashMap<u64, CommandId>>,
+    commands: &Commands,
     report: &(dyn Fn(PrismdReport) -> bool + Send + Sync),
 ) {
     let hello = HelloRequest::current(env!("CARGO_PKG_VERSION"));

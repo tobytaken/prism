@@ -260,11 +260,20 @@ impl ProfileSettings {
     }
 
     pub fn set(&mut self, key: ProfileSettingKey, setting: ProfileSetting) {
-        *match key {
+        *self.setting_mut(key) = Some(setting);
+    }
+
+    /// Leaves the setting unchanged again, as if it were omitted.
+    pub fn clear(&mut self, key: ProfileSettingKey) {
+        *self.setting_mut(key) = None;
+    }
+
+    fn setting_mut(&mut self, key: ProfileSettingKey) -> &mut Option<ProfileSetting> {
+        match key {
             ProfileSettingKey::PowerLimitWatts => &mut self.power_limit_watts,
             ProfileSettingKey::GraphicsOffsetMhz => &mut self.graphics_offset_mhz,
             ProfileSettingKey::MemoryOffsetMhz => &mut self.memory_offset_mhz,
-        } = Some(setting);
+        }
     }
 
     pub fn is_empty(&self) -> bool {

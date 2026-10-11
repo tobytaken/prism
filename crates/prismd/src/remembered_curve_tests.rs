@@ -1,7 +1,6 @@
 //! Remembered choices through caller-scoped daemon requests, across session and host lifetimes.
 use serde_json::{Value, json};
 
-use super::cooling::CoolingApplicationSource;
 use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, cooled_gpu};
 
 fn curve() -> Value {
@@ -126,7 +125,6 @@ fn automatic_applications_restorations_and_curve_ticks_never_replace_manual_hist
                 "gpu_id": "GPU-123", "configuration": configuration
             }))
             .unwrap(),
-            CoolingApplicationSource::NonManual,
         );
         assert_eq!(
             serde_json::to_value(application).unwrap()["outcome"]["status"],

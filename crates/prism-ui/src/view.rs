@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
+use prism_protocol::ProfileSetting;
 
 use crate::core::{
     Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
@@ -10,6 +11,7 @@ use crate::core::{
 };
 use crate::daemon::Fact;
 use crate::format::{Readout, UNKNOWN, pending, short_bus_id, short_gpu_name, signed};
+use crate::palette::Command;
 use crate::telemetry::{Chart, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
 
 /// The readings the sidebar shows for each GPU.
@@ -323,7 +325,7 @@ impl Core {
                 }
             }
             .into(),
-            edit_hold: self.editing(),
+            edit_hold: self.edit_hold(),
         }
     }
 
@@ -626,11 +628,13 @@ impl Core {
             .settings
             .power_limit_watts?
         {
-            prism_protocol::ProfileSetting::Value { value } => u32::try_from(value).ok(),
-            prism_protocol::ProfileSetting::Default {} => None,
+            ProfileSetting::Value { value } => u32::try_from(value).ok(),
+            ProfileSetting::Default {} => None,
         }
     }
 
+    /// The power limit's stepper: the value in effect, any pending one, and why it's read-only
+    /// when it is.
     fn power_limit_stepper(&self, gpu: &Gpu) -> Stepper {
         let in_effect = self.power_limit_in_effect(gpu);
         let staged = self.staged_power_limit(gpu);
@@ -681,10 +685,9 @@ impl Core {
             },
             pending: count > 0,
             problem: draft.and_then(|draft| draft.problem.clone()),
-            apply_unavailable: draft
-                .and_then(|_| self.changes_unavailable(&crate::palette::Command::ApplyChanges)),
+            apply_unavailable: draft.and_then(|_| self.changes_unavailable(&Command::ApplyChanges)),
             discard_unavailable: draft
-                .and_then(|_| self.changes_unavailable(&crate::palette::Command::DiscardChanges)),
+                .and_then(|_| self.changes_unavailable(&Command::DiscardChanges)),
         }
     }
 }

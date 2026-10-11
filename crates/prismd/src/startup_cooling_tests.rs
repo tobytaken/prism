@@ -3,7 +3,6 @@
 use serde_json::{Value, json};
 
 use super::boot_state::STARTUP_IN_PROGRESS;
-use super::cooling::CoolingApplicationSource;
 use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, cooled_gpu};
 use prism_gpu::{FanControlMode, GpuPerformanceDevice};
 
@@ -164,7 +163,6 @@ fn restoring_last_applied_values_restores_the_latest_manual_cooling_configuratio
             "configuration": {"arrangement": "shared", "setting": {"mode": "fixed", "speed_percent": 90}}
         }))
         .unwrap(),
-        CoolingApplicationSource::NonManual,
     );
     assert_eq!(
         serde_json::to_value(temporary).unwrap()["outcome"]["status"],
