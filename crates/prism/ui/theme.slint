@@ -109,6 +109,9 @@ export struct Sizes {
     gpu-block: length,
     nav-row: length,
     header: length,
+    // The header in a short workspace.
+    header-short: length,
+    // A line across the workspace under the header, such as the change strip.
     notice: length,
     track: length,
     // The shortest a track gets before the workspace scrolls, and in a short workspace.
@@ -134,6 +137,10 @@ export struct Sizes {
     // The labels of the hardware details, which name GPU control capabilities.
     hardware-fact-label: length,
     button: length,
+    // A stepper's height, and the width of its − and + buttons.
+    stepper: length,
+    // How far from a draggable limit's line the pointer can grab it.
+    limit-grab: length,
     text-field: length,
     kbd: length,
     palette-width: length,
@@ -253,7 +260,8 @@ export global Theme {
         gpu-block: 106px,
         nav-row: 34px,
         header: 58px,
-        notice: 30px,
+        header-short: 44px,
+        notice: 28px,
         track: 104px,
         track-min: 80px,
         track-min-short: 64px,
@@ -270,6 +278,8 @@ export global Theme {
         fact-label: 120px,
         hardware-fact-label: 196px,
         button: 28px,
+        stepper: 16px,
+        limit-grab: 12px,
         text-field: 34px,
         kbd: 16px,
         palette-width: 520px,

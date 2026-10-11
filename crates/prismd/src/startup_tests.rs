@@ -246,34 +246,36 @@ fn a_late_gpu_gets_startup_before_manual_writes_while_reads_and_other_gpus_remai
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![startup_gpu()]));
     let alice = daemon.user(1000, "alice");
     seed(&alice, "quiet", "Quiet", 300);
+    seed(&alice, "manual", "Manual", 400);
     designate(&alice, Some("quiet"));
     enable(&alice);
     drop(alice);
     daemon.gpus.depart("GPU-123");
     daemon.reboot();
     assert!(daemon.performance().gpus.is_empty());
-    let mut manual = daemon.send_in_background(
-        serde_json::from_value(json!({
-            "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 400 }
-        }))
-        .unwrap(),
-    );
-    assert!(manual.is_pending());
+    // A saved profile: there's no tuning state for a staged Apply to be made against.
+    let session = daemon.user(1000, "alice");
+    let manual = std::thread::spawn(move || {
+        session.send_json(
+            json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "manual" } }),
+        )
+    });
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(!manual.is_finished());
     daemon
         .gpus
         .arrive(super::harness::tunable_gpu_with_id("GPU-456"));
-    let other = daemon.send_json(
-        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-456", "limit_watts": 400 } }),
+    let other = daemon.apply(
+        "GPU-456",
+        json!({ "power_limit_watts": { "kind": "value", "value": 400 } }),
     );
-    assert_eq!(other["payload"]["success"], true);
+    assert_eq!(other["payload"]["power"]["status"], "succeeded");
     daemon.clock.set(29_000);
     daemon.gpus.arrive(startup_gpu());
+    let manual = manual.join().unwrap();
     assert_eq!(
-        manual.response(),
-        prism_protocol::DaemonResponse::Command(prism_protocol::DaemonCommandResponse {
-            success: true,
-            error: None
-        })
+        manual["payload"]["power"]["status"], "succeeded",
+        "{manual}"
     );
     let outcome = completed_startup(&daemon);
     assert_eq!(outcome["outcomes"][0]["status"], "applied");
@@ -396,8 +398,9 @@ fn saving_renaming_and_deleting_follow_the_startup_link_across_boots() {
     daemon.reboot();
     completed_startup(&daemon);
     let alice = daemon.user(1000, "alice");
-    alice.send_json(
-        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 350 } }),
+    alice.apply(
+        "GPU-123",
+        json!({ "power_limit_watts": { "kind": "value", "value": 350 } }),
     );
     let revision =
         alice.send_json(json!({ "type": "get_tuning_states" }))["payload"][0]["revision"].clone();
@@ -521,7 +524,13 @@ fn unreadable_boot_state_is_preserved_and_prevents_startup_writes_while_manual_t
             std::fs::read(daemon.boot_path("startup-state.json")).unwrap(),
             bytes
         );
-        assert_eq!(alice.send_json(json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 350 } }))["payload"]["success"], true);
+        assert_eq!(
+            alice.apply(
+                "GPU-123",
+                json!({ "power_limit_watts": { "kind": "value", "value": 350 } })
+            )["payload"]["power"]["status"],
+            "succeeded"
+        );
         assert_eq!(
             daemon.gpus.gpu("GPU-123").power.current_limit_watts,
             Some(350)

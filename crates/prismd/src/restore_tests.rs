@@ -16,15 +16,24 @@ fn restore_gpu() -> prism_gpu::GpuPerformanceDevice {
 }
 
 fn send(session: &FakeSession, request: Value) -> Value {
-    let response = session.send_json(request);
+    send_response(session.send_json(request))
+}
+
+fn send_response(response: Value) -> Value {
     assert_ne!(response["type"], "error", "{response}");
     response["payload"].clone()
 }
 
+/// Applies `settings` to the GPU and returns what became of them.
+fn applied(session: &FakeSession, gpu_id: &str, settings: Value) -> Value {
+    send_response(session.apply(gpu_id, settings))
+}
+
 fn set_power(session: &FakeSession, watts: u32) -> Value {
-    send(
+    applied(
         session,
-        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": watts } }),
+        "GPU-123",
+        json!({ "power_limit_watts": { "kind": "value", "value": watts } }),
     )
 }
 
@@ -86,11 +95,10 @@ fn restore_puts_each_settings_latest_manual_value_into_effect_and_keeps_the_curr
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![restore_gpu()]));
     let alice = daemon.user(1000, "alice");
     set_power(&alice, 280);
-    send(
+    applied(
         &alice,
-        json!({ "type": "set_clock_offsets", "payload": {
-            "gpu_id": "GPU-123", "graphics_offset_mhz": 30, "memory_offset_mhz": 40
-        } }),
+        "GPU-123",
+        json!({ "graphics_offset_mhz": { "kind": "value", "value": 30 }, "memory_offset_mhz": { "kind": "value", "value": 40 } }),
     );
     alice.seed_profiles(json!([{
         "id": "quiet", "name": "Quiet", "gpu_id": "GPU-123", "settings": {
@@ -103,19 +111,13 @@ fn restore_puts_each_settings_latest_manual_value_into_effect_and_keeps_the_curr
         json!({ "type": "apply_profile_by_id", "payload": { "profile_id": "quiet" } }),
     );
     assert_eq!(application["power"]["status"], "succeeded", "{application}");
-    send(
+    applied(
         &alice,
-        json!({ "type": "set_clock_offsets", "payload": {
-            "gpu_id": "GPU-123", "graphics_offset_mhz": "default", "memory_offset_mhz": null
-        } }),
+        "GPU-123",
+        json!({ "graphics_offset_mhz": { "kind": "default" } }),
     );
     // A setting whose latest manual value is a default must be restored as the default.
-    send(
-        &alice,
-        json!({ "type": "set_clock_offsets", "payload": {
-            "gpu_id": "GPU-123", "graphics_offset_mhz": null, "memory_offset_mhz": null
-        } }),
-    );
+    applied(&alice, "GPU-123", json!({}));
     restore_on_boot(&alice);
     assert_eq!(startup(&alice)["behavior"], "restore_last_applied");
     drop(alice);
@@ -262,14 +264,13 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
     let blocker = daemon.persistent_path(&format!("{TUNING_STORE_FILE_NAME}.tmp"));
     std::fs::create_dir(&blocker).unwrap();
     assert_eq!(
-        set_power(&alice, 320),
-        json!({ "success": true, "error": NOT_RECORDED })
+        set_power(&alice, 320)["power"],
+        json!({ "status": "succeeded", "error": NOT_RECORDED })
     );
-    let offsets = send(
+    let offsets = applied(
         &alice,
-        json!({ "type": "set_clock_offsets", "payload": {
-            "gpu_id": "GPU-123", "graphics_offset_mhz": 50, "memory_offset_mhz": null
-        } }),
+        "GPU-123",
+        json!({ "graphics_offset_mhz": { "kind": "value", "value": 50 } }),
     );
     assert_eq!(
         offsets["graphics"],
@@ -285,16 +286,15 @@ fn a_write_that_could_not_be_recorded_succeeds_and_marks_last_applied_possibly_s
     let alice = daemon.user(1000, "alice");
     assert_eq!(startup(&alice)["possibly_stale"], json!(["GPU-123"]));
     assert_eq!(
-        set_power(&alice, 330),
-        json!({ "success": true, "error": null })
+        set_power(&alice, 330)["power"],
+        json!({ "status": "succeeded", "error": null })
     );
     // The graphics offset still hasn't been recorded since its write.
     assert_eq!(startup(&alice)["possibly_stale"], json!(["GPU-123"]));
-    let offsets = send(
+    let offsets = applied(
         &alice,
-        json!({ "type": "set_clock_offsets", "payload": {
-            "gpu_id": "GPU-123", "graphics_offset_mhz": 60, "memory_offset_mhz": null
-        } }),
+        "GPU-123",
+        json!({ "graphics_offset_mhz": { "kind": "value", "value": 60 } }),
     );
     assert_eq!(offsets["graphics"]["error"], Value::Null);
     assert_eq!(startup(&alice)["possibly_stale"], json!([]));
@@ -345,9 +345,10 @@ fn a_skipped_restore_is_reported_for_each_gpu_with_last_applied_values_even_when
     ]));
     let alice = daemon.user(1000, "alice");
     set_power(&alice, 300);
-    send(
+    applied(
         &alice,
-        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-456", "limit_watts": 300 } }),
+        "GPU-456",
+        json!({ "power_limit_watts": { "kind": "value", "value": 300 } }),
     );
     restore_on_boot(&alice);
     drop(alice);
@@ -383,8 +384,8 @@ fn an_unreadable_possibly_stale_marker_is_preserved_and_marks_every_recorded_gpu
     let alice = daemon.user(1000, "alice");
     assert_eq!(startup(&alice)["possibly_stale"], json!([]));
     assert_eq!(
-        set_power(&alice, 300),
-        json!({ "success": true, "error": null })
+        set_power(&alice, 300)["power"],
+        json!({ "status": "succeeded", "error": null })
     );
     assert_eq!(startup(&alice)["possibly_stale"], json!(["GPU-123"]));
     assert_eq!(

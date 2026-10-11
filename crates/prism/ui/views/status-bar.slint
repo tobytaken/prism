@@ -44,7 +44,8 @@ component ConnectionItem inherits Rectangle {
     }
 }
 
-// The status bar: the prismd connection, then where telemetry comes from.
+// The status bar: the prismd connection, where telemetry comes from, and EDIT HOLD while any
+// GPU has unapplied tuning changes.
 export component StatusBar inherits Rectangle {
     height: Theme.size.status-bar;
     background: Theme.color.chrome;
@@ -62,6 +63,13 @@ export component StatusBar inherits Rectangle {
             text: AppState.telemetry;
             style: Theme.text.status;
             color: Theme.color.chrome-ink-muted;
+        }
+
+        // Automatic changes wait while any GPU has unapplied tuning changes.
+        if AppState.edit-hold: StyledText {
+            text: "EDIT HOLD";
+            style: Theme.text.status;
+            color: Theme.color.accent;
         }
 
         Rectangle {

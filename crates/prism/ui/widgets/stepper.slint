@@ -1,0 +1,152 @@
+import { Theme } from "../theme.slint";
+import { StyledText } from "styled-text.slint";
+
+// One of the stepper's − and + buttons. The stepper carries their actions for a screen reader.
+component StepButton inherits Rectangle {
+    in property <string> text;
+    callback activated();
+
+    width: Theme.size.stepper;
+    height: Theme.size.stepper;
+    background: touch.has-hover ? Theme.color.hover : transparent;
+    border-width: Theme.stroke.hairline;
+    border-color: Theme.color.rule;
+
+    touch := TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+
+    StyledText {
+        text: root.text;
+        style: Theme.text.value;
+        horizontal-alignment: center;
+        accessible-role: none;
+    }
+}
+
+// A whole number stepped through its allowed range: − and + step it, and so do ↑ and ↓ (×10 with
+// Shift) while it has focus, with Home and End for the ends. It shows `text`, the value in effect,
+// and draws `pending`, such as "→ 450 W", next to it. Read-only, it shows the value with no
+// affordances and says why in its description.
+export component Stepper inherits Rectangle {
+    in property <string> label;
+    // The value it steps from: the pending one, or else the one in effect, and as a screen reader
+    // says it, such as "450 W".
+    in property <int> value;
+    in property <string> value-text;
+    in property <int> minimum;
+    in property <int> maximum;
+    in property <int> step: 1;
+    in property <string> text;
+    in property <string> pending;
+    in property <bool> read-only;
+    // Why it's read-only, when it is.
+    in property <string> reason;
+    callback changed(value: int);
+    property <bool> keyboard-focus;
+
+    // Asks for `value` kept within the allowed range, unless it's read-only.
+    function set(value: int) {
+        if !root.read-only {
+            root.changed(max(root.minimum, min(root.maximum, value)));
+        }
+    }
+
+    accessible-role: spinbox;
+    accessible-label: label;
+    accessible-value: value-text;
+    accessible-value-minimum: minimum;
+    accessible-value-maximum: maximum;
+    accessible-value-step: step;
+    accessible-read-only: read-only;
+    accessible-description: read-only ? reason : pending != "" ? "In effect \{text}, \{pending}" : "";
+    accessible-action-increment => {
+        set(value + step);
+    }
+    accessible-action-decrement => {
+        set(value - step);
+    }
+    accessible-action-set-value(text) => {
+        set(text.to-float().round());
+    }
+    forward-focus: keys;
+    height: Theme.size.stepper;
+    width: row.preferred-width;
+
+    // Read-only, it still takes focus, so the keyboard reaches it and why it's read-only.
+    keys := FocusScope {
+        focus-gained(reason) => {
+            root.keyboard-focus = reason == FocusReason.tab-navigation;
+        }
+        focus-lost => {
+            root.keyboard-focus = false;
+        }
+        key-pressed(event) => {
+            let by = event.modifiers.shift ? 10 * root.step : root.step;
+            if event.text == Key.UpArrow {
+                set(root.value + by);
+                return accept;
+            }
+            if event.text == Key.DownArrow {
+                set(root.value - by);
+                return accept;
+            }
+            if event.text == Key.Home {
+                set(root.minimum);
+                return accept;
+            }
+            if event.text == Key.End {
+                set(root.maximum);
+                return accept;
+            }
+            reject
+        }
+    }
+
+    row := HorizontalLayout {
+        spacing: Theme.space.s;
+        alignment: start;
+
+        if !root.read-only: StepButton {
+            text: "−";
+            activated => {
+                keys.focus();
+                set(root.value - root.step);
+            }
+        }
+
+        StyledText {
+            text: root.text;
+            style: Theme.text.value;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        if !root.read-only: StepButton {
+            text: "+";
+            activated => {
+                keys.focus();
+                set(root.value + root.step);
+            }
+        }
+
+        if root.pending != "": StyledText {
+            text: root.pending;
+            style: Theme.text.value;
+            color: Theme.color.accent;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+
+    if keyboard-focus: Rectangle {
+        x: -Theme.stroke.focus-offset;
+        y: -Theme.stroke.focus-offset;
+        width: parent.width + 2 * Theme.stroke.focus-offset;
+        height: parent.height + 2 * Theme.stroke.focus-offset;
+        border-width: Theme.stroke.focus;
+        border-color: Theme.color.ink;
+    }
+}

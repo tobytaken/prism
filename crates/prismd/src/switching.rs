@@ -20,13 +20,14 @@ use super::host::{Clock, UserDirectory};
 use super::profiles::{capture_cooling, reading, verified_gpu};
 use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
+use super::tuning::TuningRequest;
 use super::tuning_store::{TuningDocument, TuningStore, write_atomically};
 use prism_gpu::cooling::{CoolingConfiguration, SuspensionKind};
 use prism_gpu::{GpuPerformanceDevice, TuningOutcomeStatus};
 use prism_protocol::{
-    ApplyGpuProfileRequest, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
-    GpuSwitchingState, GpuSwitchingStatus, ProfileApplicationResponse, ProfileSetting,
-    ProfileSettingKey, ProfileSettings, RollbackStatus, SwitchingCondition,
+    AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId, GpuSwitchingState,
+    GpuSwitchingStatus, ProfileApplicationResponse, ProfileSetting, ProfileSettingKey,
+    ProfileSettings, RollbackStatus, SwitchingCondition,
 };
 
 pub(super) const SWITCHING_STATE_FILE_NAME: &str = "switching-state.json";
@@ -1100,14 +1101,7 @@ fn write_settings(
             );
         }
     }
-    apply_automatic_profile(
-        backend,
-        Some(cooling),
-        ApplyGpuProfileRequest {
-            gpu_id: gpu_id.into(),
-            settings,
-        },
-    )
+    apply_automatic_profile(backend, Some(cooling), TuningRequest::new(gpu_id, settings))
 }
 
 fn failure_message(outcomes: &ProfileApplicationResponse) -> String {

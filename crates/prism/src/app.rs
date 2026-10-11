@@ -256,6 +256,20 @@ impl Inner {
         intents.on_run_highlighted(to_core(Intent::RunHighlighted));
         intents.on_dismiss(to_core(Intent::Dismiss));
         intents.on_toggle_hardware_details(to_core(Intent::ToggleHardwareDetails));
+        intents.on_apply_changes(to_core(Intent::ApplyChanges));
+        intents.on_discard_changes(to_core(Intent::DiscardChanges));
+        let inner = Rc::downgrade(this);
+        intents.on_stage_power_limit(move |watts| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::StagePowerLimit(watts.into())))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_drag_power_limit(move |y| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::DragPowerLimit(y)))
+            });
+        });
         let inner = Rc::downgrade(this);
         intents.on_show_range(move |index| {
             let range = usize::try_from(index)
@@ -365,6 +379,7 @@ impl Inner {
             ChartPart::Area => area_commands(&chart.chart, width, height),
             ChartPart::Limit => limit(LimitKind::Configured, None),
             ChartPart::EnforcedLimit => limit(LimitKind::Enforced, Some(dashes)),
+            ChartPart::PendingLimit => limit(LimitKind::Pending, None),
         }
         .into()
     }
@@ -439,6 +454,7 @@ impl Inner {
                     event,
                     received_at: self.clock.now(),
                 },
+                PrismdReport::Answered { id, response } => Input::PrismdAnswered { id, response },
             },
             Posted::LaunchedAgain(activation_token) => Input::LaunchedAgain { activation_token },
             Posted::PrismdHost(host) => Input::PrismdHostChecked(host),
@@ -466,6 +482,7 @@ impl Inner {
                 }));
             }
             Effect::SendToPrismd(request) => self.prismd.send(request),
+            Effect::CommandPrismd { id, request } => self.prismd.command(id, request),
             Effect::CheckPrismdHost => {
                 let post = self.poster();
                 self.prismd_service

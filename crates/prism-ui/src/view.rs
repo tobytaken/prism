@@ -3,12 +3,15 @@
 use std::time::Duration;
 
 use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
+use prism_protocol::ProfileSetting;
 
 use crate::core::{
     Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
+    TuningControl,
 };
 use crate::daemon::Fact;
-use crate::format::{Readout, UNKNOWN, short_bus_id, short_gpu_name, signed};
+use crate::format::{Readout, UNKNOWN, pending, short_bus_id, short_gpu_name, signed};
+use crate::palette::Command;
 use crate::telemetry::{Chart, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
 
 /// The readings the sidebar shows for each GPU.
@@ -86,6 +89,8 @@ pub struct GpuWorkspace {
     pub title: String,
     /// Index, bus id and architecture, such as "GPU 0 · 01:00.0 · Blackwell".
     pub subtitle: String,
+    /// The fixed strip under the header with the GPU's unapplied tuning changes.
+    pub changes: ChangeStrip,
     /// Why there's no tuning access, for the inline "Tuning needs prismd" line; none with it.
     pub no_tuning_access: Option<String>,
     /// The range the range picker has picked, which every track shows.
@@ -103,6 +108,22 @@ impl GpuWorkspace {
             .find(|track| track.kind == kind)
             .expect("the workspace has every track")
     }
+}
+
+/// The fixed strip under the workspace's header: "No unapplied changes", or how many there are,
+/// with Discard and Apply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeStrip {
+    /// Such as "No unapplied changes" or "2 unapplied changes".
+    pub summary: String,
+    /// Whether the GPU has unapplied tuning changes.
+    pub pending: bool,
+    /// Why the last Apply left changes unapplied, until the next edit.
+    pub problem: Option<String>,
+    /// Why Apply can't run now, while there are changes it can't apply.
+    pub apply_unavailable: Option<String>,
+    /// Why Discard can't run now, while there are changes it can't discard.
+    pub discard_unavailable: Option<String>,
 }
 
 /// A full-width track of the workspace, one per metric.
@@ -167,6 +188,8 @@ pub struct Track {
     pub min: Readout,
     /// Side by side, left to right.
     pub charts: Vec<TrackChart>,
+    /// The control that tunes what the track shows, such as the power limit, if it has one.
+    pub stepper: Option<Stepper>,
     /// Whether the fan curve belongs to this track.
     pub holds_fan_curve: bool,
 }
@@ -182,6 +205,27 @@ impl Track {
         let metric = self.kind.metric().name();
         ["Maximum", "Average", "Minimum"].map(|statistic| format!("{statistic} {metric}"))
     }
+}
+
+/// A tuning value stepped through its allowed range, such as the power limit, with the value in
+/// effect and any pending one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stepper {
+    /// What a screen reader calls it, such as "Power limit".
+    pub name: String,
+    /// The value it steps from: the pending one, or else the one in effect.
+    pub value: i64,
+    /// That value as a screen reader says it, such as "450 W".
+    pub value_text: String,
+    pub min: i64,
+    pub max: i64,
+    pub step: i64,
+    /// The value in effect, as shown.
+    pub readout: Readout,
+    /// The pending value as shown next to the control, such as "→ 450 W", while one is staged.
+    pub pending: Option<String>,
+    /// Why it can't be changed, when it can't.
+    pub read_only: Option<String>,
 }
 
 /// A current value a track shows under its readout, such as the power limit.
@@ -235,6 +279,8 @@ pub struct StatusBar {
     /// Whether there is a session with prismd.
     pub connected: bool,
     pub telemetry: String,
+    /// Whether any GPU has unapplied tuning changes, which hold automatic changes: EDIT HOLD.
+    pub edit_hold: bool,
 }
 
 impl Core {
@@ -279,6 +325,7 @@ impl Core {
                 }
             }
             .into(),
+            edit_hold: self.edit_hold(),
         }
     }
 
@@ -363,6 +410,7 @@ impl Core {
             id: gpu.id.clone(),
             title: gpu.device.name.clone(),
             subtitle,
+            changes: self.change_strip(),
             no_tuning_access: self.tuning_access().reason().map(str::to_owned),
             range: self.range,
             tracks: TrackKind::ALL
@@ -408,15 +456,18 @@ impl Core {
                 let power = latest_device(gpu).map(|device| &device.power);
                 let configured = power.and_then(|power| power.current_limit_watts);
                 let enforced = power.and_then(|power| power.enforced_limit_watts);
-                let highest = power.and_then(|power| power.max_limit_watts).or(gpu
-                    .device
-                    .control
-                    .power_limit
-                    .max_watts);
-                let mut draw = chart(metric, None, &[configured, enforced, highest]);
+                let staged = self.staged_power_limit(gpu);
+                let mut draw = TrackChart {
+                    metric,
+                    label: None,
+                    area: false,
+                    chart: self.power_chart(gpu),
+                    limits: Vec::new(),
+                };
                 draw.limits = [
                     (LimitKind::Configured, configured),
                     (LimitKind::Enforced, enforced),
+                    (LimitKind::Pending, staged),
                 ]
                 .into_iter()
                 .filter_map(|(kind, watts)| {
@@ -530,6 +581,7 @@ impl Core {
         let stats = gpu.history.stats(metric, self.range, now);
         let value = |value: Option<u32>| readout(metric, value);
         Track {
+            stepper: (kind == TrackKind::Power).then(|| self.power_limit_stepper(gpu)),
             kind,
             readout: value(latest_readings(gpu).get(metric)),
             unknown_reason: unknown_reason(gpu, &[metric]),
@@ -540,6 +592,102 @@ impl Core {
             min: value(stats.map(|stats| stats.min)),
             charts,
             holds_fan_curve: kind == TrackKind::Fans,
+        }
+    }
+}
+
+impl Core {
+    /// The power chart's scale fits the readings, the limits in effect and the whole allowed
+    /// range, but not a pending limit, so the scale stays put while the limit's line is dragged.
+    pub(crate) fn power_chart(&self, gpu: &Gpu) -> Chart {
+        let power = latest_device(gpu).map(|device| &device.power);
+        let control = &gpu.device.control.power_limit;
+        let fit: Vec<_> = [
+            power.and_then(|power| power.current_limit_watts),
+            power.and_then(|power| power.enforced_limit_watts),
+            power
+                .and_then(|power| power.max_limit_watts)
+                .or(control.max_watts),
+            power
+                .and_then(|power| power.min_limit_watts)
+                .or(control.min_watts),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        gpu.history
+            .chart(Metric::PowerDraw, self.range, self.now(), &fit)
+    }
+
+    /// The power limit the GPU's draft stages, if it stages one.
+    fn staged_power_limit(&self, gpu: &Gpu) -> Option<u32> {
+        match self
+            .drafts
+            .by_gpu
+            .get(&gpu.id)?
+            .settings
+            .power_limit_watts?
+        {
+            ProfileSetting::Value { value } => u32::try_from(value).ok(),
+            ProfileSetting::Default {} => None,
+        }
+    }
+
+    /// The power limit's stepper: the value in effect, any pending one, and why it's read-only
+    /// when it is.
+    fn power_limit_stepper(&self, gpu: &Gpu) -> Stepper {
+        let in_effect = self.power_limit_in_effect(gpu);
+        let staged = self.staged_power_limit(gpu);
+        let range = gpu.power_limit_range();
+        let read_only =
+            match (self.tuning_access().reason(), &gpu.latest) {
+                (Some(reason), _) => Some(reason.to_owned()),
+                (None, Latest::Waiting) => Some(WAITING.into()),
+                (None, Latest::Missing { reason }) => Some(reason.clone()),
+                (None, Latest::Read(device)) => {
+                    if !self.editable(&gpu.id, TuningControl::PowerLimit) {
+                        Some(device.power.reason.clone().unwrap_or_else(|| {
+                            "The power limit isn't supported by this GPU".into()
+                        }))
+                    } else if range.is_none() {
+                        Some("The allowed power limits aren't reported by this GPU".into())
+                    } else {
+                        None
+                    }
+                }
+            };
+        let (min, max) = range.unwrap_or_default();
+        let watts =
+            |value: Option<i64>| Readout::watts(value.and_then(|value| value.try_into().ok()));
+        let value = staged.map(i64::from).or(in_effect);
+        Stepper {
+            name: "Power limit".into(),
+            value: value.unwrap_or(min),
+            value_text: watts(value).spoken(),
+            min,
+            max,
+            step: 1,
+            readout: watts(in_effect),
+            pending: staged.map(|staged| pending(&Readout::watts(Some(staged)))),
+            read_only,
+        }
+    }
+
+    /// The selected GPU's change strip.
+    fn change_strip(&self) -> ChangeStrip {
+        let draft = self.selected_draft();
+        let count = draft.map_or(0, |draft| draft.len());
+        ChangeStrip {
+            summary: match count {
+                0 => "No unapplied changes".into(),
+                1 => "1 unapplied change".into(),
+                count => format!("{count} unapplied changes"),
+            },
+            pending: count > 0,
+            problem: draft.and_then(|draft| draft.problem.clone()),
+            apply_unavailable: draft.and_then(|_| self.changes_unavailable(&Command::ApplyChanges)),
+            discard_unavailable: draft
+                .and_then(|_| self.changes_unavailable(&Command::DiscardChanges)),
         }
     }
 }

@@ -18,6 +18,10 @@ pub(crate) enum Command {
     RunService(ServiceAction),
     /// Copy the one command that sets prismd up from here.
     CopyPrismdSetup,
+    /// Apply the selected GPU's unapplied tuning changes.
+    ApplyChanges,
+    /// Discard the selected GPU's unapplied tuning changes.
+    DiscardChanges,
     Quit,
 }
 
@@ -93,9 +97,15 @@ pub enum Shortcut {
     Quit,
     /// Escape: close the topmost overlay.
     Dismiss,
+    /// Ctrl+Enter: apply the selected GPU's unapplied tuning changes.
+    Apply,
+    /// Ctrl+Shift+Backspace: discard them.
+    Discard,
 }
 
 const ESCAPE: &str = "\u{1b}";
+const ENTER: &str = "\n";
+const BACKSPACE: &str = "\u{8}";
 
 impl Shortcut {
     /// The shortcut `key` presses, if any.
@@ -107,6 +117,8 @@ impl Shortcut {
         Some(match (key.control, key.shift, text.as_str()) {
             (false, false, ESCAPE) => Self::Dismiss,
             (true, false, "k") => Self::OpenPalette,
+            (true, false, ENTER) => Self::Apply,
+            (true, true, BACKSPACE) => Self::Discard,
             (true, false, "q") => Self::Quit,
             (true, false, ",") => Self::GoTo(Section::Settings),
             (true, true, "g") => Self::GoTo(Section::Games),
@@ -122,7 +134,7 @@ impl Shortcut {
     /// Whether a focused text field keeps this key for editing, so the shortcut doesn't fire
     /// there.
     pub fn clashes_with_text_editing(self) -> bool {
-        matches!(self, Self::GoToGpu(_))
+        matches!(self, Self::GoToGpu(_) | Self::Discard)
     }
 
     /// The keys to press, as shown next to a command.
@@ -135,6 +147,8 @@ impl Shortcut {
             Self::GoTo(Section::Settings) => &["Ctrl", ","],
             Self::Quit => &["Ctrl", "Q"],
             Self::Dismiss => &["Esc"],
+            Self::Apply => &["Ctrl", "Enter"],
+            Self::Discard => &["Ctrl", "Shift", "Backspace"],
         };
         keys.iter().map(|&key| key.to_owned()).collect()
     }
@@ -220,6 +234,8 @@ impl Core {
                 .map(|gpu| Command::GoToGpu(gpu.id.clone())),
             Shortcut::GoTo(section) => Some(Command::GoTo(section)),
             Shortcut::Quit => Some(Command::Quit),
+            Shortcut::Apply => Some(Command::ApplyChanges),
+            Shortcut::Discard => Some(Command::DiscardChanges),
             Shortcut::OpenPalette | Shortcut::Dismiss => None,
         }
     }
@@ -232,6 +248,9 @@ impl Core {
         if let Command::ShowRange(range) = command {
             return (self.range == *range).then(|| "Already shown".into());
         }
+        if let Command::ApplyChanges | Command::DiscardChanges = command {
+            return self.changes_unavailable(command);
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
@@ -242,9 +261,25 @@ impl Core {
             Command::ShowRange(_)
             | Command::RunService(_)
             | Command::CopyPrismdSetup
+            | Command::ApplyChanges
+            | Command::DiscardChanges
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
+    }
+
+    /// Why the selected GPU's unapplied tuning changes can't be applied or discarded now, when
+    /// they can't.
+    pub(crate) fn changes_unavailable(&self, command: &Command) -> Option<String> {
+        if self.selected_draft().is_none() {
+            return Some("No unapplied changes".into());
+        }
+        if *command == Command::ApplyChanges
+            && let Some(reason) = self.tuning_access().reason()
+        {
+            return Some(format!("Needs tuning access · {reason}"));
+        }
+        self.selected_applying().then(|| "Applying…".into())
     }
 
     /// Notes that `command` ran, so the palette lists it first.
@@ -283,6 +318,21 @@ impl Core {
                 None,
             )
         });
+        // Staged tuning belongs to the selected GPU.
+        let tuning = [
+            (
+                Command::ApplyChanges,
+                "Apply unapplied changes".to_owned(),
+                Some(Shortcut::Apply),
+            ),
+            (
+                Command::DiscardChanges,
+                "Discard unapplied changes".to_owned(),
+                Some(Shortcut::Discard),
+            ),
+        ]
+        .into_iter()
+        .filter(|_| matches!(self.selection, Some(Selection::Gpu(_))));
         // Telemetry ranges only matter while there are GPUs to chart.
         let ranges = TelemetryRange::ALL
             .into_iter()
@@ -304,6 +354,7 @@ impl Core {
         navigation
             .chain(sections)
             .chain(settings)
+            .chain(tuning)
             .chain(ranges)
             .chain(prismd)
             .chain(app)

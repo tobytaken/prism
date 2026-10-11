@@ -96,13 +96,6 @@ fn writes(request: &DaemonRequest) -> bool {
         | DaemonRequest::GetDriverJob(_) => false,
         DaemonRequest::SetEditHolds(_)
         | DaemonRequest::ApplyProfile(_)
-        | DaemonRequest::SetPowerLimit(_)
-        | DaemonRequest::ResetPowerLimit(_)
-        | DaemonRequest::SetFanSpeed(_)
-        | DaemonRequest::SetFanModeAuto(_)
-        | DaemonRequest::ApplyCooling(_)
-        | DaemonRequest::SetClockOffsets(_)
-        | DaemonRequest::ResetClockOffsets(_)
         | DaemonRequest::SetStartupBehavior(_)
         | DaemonRequest::SetStartupProfile(_)
         | DaemonRequest::DismissStartupOutcome(_)

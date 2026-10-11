@@ -345,15 +345,6 @@ impl CoolingController {
         request: ApplyCoolingRequest,
     ) -> CoolingApplication {
         let _operation = self.operating(&request.gpu_id);
-        if request
-            .expected_revision
-            .is_some_and(|revision| revision != self.control(&request.gpu_id).revision)
-        {
-            return unattempted(
-                &[],
-                "Cooling changed since this draft was opened. Review the current cooling controls before applying again.",
-            );
-        }
         let performance = backend.performance();
         let Ok(gpu) = verified_gpu(&performance, &request.gpu_id) else {
             return unattempted(

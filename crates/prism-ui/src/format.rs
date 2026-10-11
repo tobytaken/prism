@@ -79,6 +79,11 @@ impl Readout {
     }
 }
 
+/// A pending value as shown next to its control, such as "→ 450 W".
+pub fn pending(readout: &Readout) -> String {
+    format!("→ {}", readout.text())
+}
+
 /// A signed number with its sign, such as "+150", "0" or "-500".
 pub fn signed(value: i32) -> String {
     if value > 0 {

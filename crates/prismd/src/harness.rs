@@ -662,6 +662,24 @@ impl Harness {
         serde_json::to_value(self.send(request)).unwrap()
     }
 
+    /// The GPU's tuning-state revision now, or none when the daemon can't tell it, such as when
+    /// the GPU's identity can't be verified.
+    pub fn revision(&self, gpu_id: &str) -> String {
+        revision(&self.core(), gpu_id)
+    }
+
+    /// An Apply of `settings`, given as protocol JSON, to the GPU, made against its tuning state
+    /// now.
+    pub fn apply_request(&self, gpu_id: &str, settings: serde_json::Value) -> DaemonRequest {
+        apply_request(&self.core(), gpu_id, settings)
+    }
+
+    /// Applies `settings`, given as protocol JSON, to the GPU against its tuning state now, and
+    /// returns the response as protocol JSON.
+    pub fn apply(&self, gpu_id: &str, settings: serde_json::Value) -> serde_json::Value {
+        serde_json::to_value(self.send(self.apply_request(gpu_id, settings))).unwrap()
+    }
+
     /// The GPUs' readings as the daemon reports them, with its control of each GPU's fans.
     pub fn performance(&self) -> GpuPerformanceResponse {
         self.core().observed_performance(None)
@@ -836,6 +854,12 @@ impl FakeSession {
         serde_json::to_value(self.send(request)).unwrap()
     }
 
+    /// Applies `settings`, given as protocol JSON, to the GPU against its tuning state now, and
+    /// returns the response as protocol JSON.
+    pub fn apply(&self, gpu_id: &str, settings: serde_json::Value) -> serde_json::Value {
+        serde_json::to_value(self.send(apply_request(&self.core, gpu_id, settings))).unwrap()
+    }
+
     /// Adds these profiles, given as protocol JSON, to the user's own as if saved earlier. Their
     /// ids and settings are kept as given, and no GPU is touched.
     pub fn seed_profiles(&self, profiles: serde_json::Value) {
@@ -859,6 +883,28 @@ impl FakeSession {
         }
         events
     }
+}
+
+/// The GPU's tuning-state revision now, or none when the daemon can't tell it.
+fn revision(core: &DaemonCore, gpu_id: &str) -> String {
+    super::daemon_core::tuning_state(
+        core.dependencies.backend.as_ref(),
+        &core.tuning_store,
+        &core.cooling,
+        gpu_id,
+    )
+    .map(|state| state.revision)
+    .unwrap_or_default()
+}
+
+/// An Apply of `settings`, given as protocol JSON, to the GPU, made against its tuning state now.
+fn apply_request(core: &DaemonCore, gpu_id: &str, settings: serde_json::Value) -> DaemonRequest {
+    DaemonRequest::ApplyProfile(prism_protocol::ApplyGpuProfileRequest {
+        gpu_id: gpu_id.into(),
+        settings: serde_json::from_value(settings).unwrap(),
+        expected_revision: revision(core, gpu_id),
+        fan_indexes: None,
+    })
 }
 
 pub struct InFlightRequest {

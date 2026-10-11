@@ -2,13 +2,33 @@ use super::backend::DaemonBackend;
 use super::cooling::{CoolingApplicationSource, CoolingController};
 use prism_gpu::cooling::{ApplyCoolingRequest, CoolingApplication};
 use prism_gpu::{
-    GpuTargetRequest, SetGpuClockOffsetsRequest, SetGpuPowerLimitRequest, TuningOutcome,
-    TuningOutcomeStatus,
+    SetGpuClockOffsetsRequest, SetGpuPowerLimitRequest, TuningOutcome, TuningOutcomeStatus,
 };
 use prism_protocol::{
-    ApplyGpuProfileRequest, ClockOffsetResponse, ProfileApplicationResponse,
-    ProfileRangeCorrection, ProfileSetting, ProfileSettingKey, RangeBound,
+    ProfileApplicationResponse, ProfileRangeCorrection, ProfileSetting, ProfileSettingKey,
+    ProfileSettings, RangeBound,
 };
+
+/// Settings to put into effect on one GPU.
+#[derive(Debug, Clone)]
+pub(super) struct TuningRequest {
+    /// The GPU's UUID.
+    pub gpu_id: String,
+    pub settings: ProfileSettings,
+    /// The fans the caller reviewed its cooling against, if it reviewed any.
+    pub fan_indexes: Option<Vec<u32>>,
+}
+
+impl TuningRequest {
+    /// The settings, with no fans reviewed.
+    pub fn new(gpu_id: impl Into<String>, settings: ProfileSettings) -> Self {
+        Self {
+            gpu_id: gpu_id.into(),
+            settings,
+            fan_indexes: None,
+        }
+    }
+}
 
 /// Manual operations may review range corrections and update manual intent. Temporary automatic
 /// applications/restorations use the same validation/controller but never become manual state.
@@ -22,7 +42,7 @@ pub(super) enum TuningOrigin {
 pub(super) fn apply_profile(
     backend: &dyn DaemonBackend,
     cooling: &CoolingController,
-    request: ApplyGpuProfileRequest,
+    request: TuningRequest,
     origin: TuningOrigin,
     source: CoolingApplicationSource,
 ) -> ProfileApplicationResponse {
@@ -32,7 +52,7 @@ pub(super) fn apply_profile(
 pub(super) fn apply(
     backend: &dyn DaemonBackend,
     cooling: Option<&CoolingController>,
-    request: ApplyGpuProfileRequest,
+    request: TuningRequest,
     origin: TuningOrigin,
     source: CoolingApplicationSource,
 ) -> ProfileApplicationResponse {
@@ -208,8 +228,7 @@ pub(super) fn apply(
                     ApplyCoolingRequest {
                         gpu_id: request.gpu_id.clone(),
                         configuration: configuration.clone(),
-                        expected_revision: None,
-                        fan_indexes: None,
+                        fan_indexes: request.fan_indexes.clone(),
                     },
                     source,
                 )
@@ -282,84 +301,4 @@ pub(super) fn apply(
         response.cooling = apply_cooling(failed, source);
     }
     response
-}
-
-// Split the existing live command so a later failure cannot hide an earlier write.
-// These commands deliberately never touch PersistedGpuState.
-pub(super) fn apply_live_offsets(
-    backend: &dyn DaemonBackend,
-    request: SetGpuClockOffsetsRequest,
-) -> ClockOffsetResponse {
-    let mut failed = false;
-    let mut apply = |graphics: bool, value: Option<i32>| {
-        value.map(|value| {
-            if failed {
-                return TuningOutcome {
-                    status: TuningOutcomeStatus::Unattempted,
-                    error: Some("An earlier clock offset failed".into()),
-                };
-            }
-            let result = backend.set_clock_offsets(SetGpuClockOffsetsRequest {
-                gpu_id: request.gpu_id.clone(),
-                graphics_offset_mhz: if graphics { Some(value) } else { None },
-                memory_offset_mhz: if graphics { None } else { Some(value) },
-            });
-            match result {
-                Ok(()) => TuningOutcome {
-                    status: TuningOutcomeStatus::Succeeded,
-                    error: None,
-                },
-                Err(error) => {
-                    failed = true;
-                    TuningOutcome {
-                        status: TuningOutcomeStatus::Failed,
-                        error: Some(error),
-                    }
-                }
-            }
-        })
-    };
-    ClockOffsetResponse {
-        graphics: apply(true, request.graphics_offset_mhz),
-        memory: apply(false, request.memory_offset_mhz),
-    }
-}
-
-pub(super) fn reset_live_offsets(
-    backend: &dyn DaemonBackend,
-    request: GpuTargetRequest,
-) -> ClockOffsetResponse {
-    use prism_gpu::ControlSupport;
-    let performance = backend.performance();
-    let gpu = performance.gpus.iter().find(|gpu| gpu.id == request.gpu_id);
-    let unavailable = |message: &str| {
-        Some(TuningOutcome {
-            status: TuningOutcomeStatus::Unattempted,
-            error: Some(message.into()),
-        })
-    };
-    let Some(gpu) = gpu else {
-        return ClockOffsetResponse {
-            graphics: unavailable("GPU unavailable"),
-            memory: unavailable("GPU unavailable"),
-        };
-    };
-    if gpu.clocks.graphics.support == ControlSupport::Unknown
-        || gpu.clocks.memory.support == ControlSupport::Unknown
-    {
-        return ClockOffsetResponse {
-            graphics: unavailable("Clock offset support is unknown"),
-            memory: unavailable("Clock offset support is unknown"),
-        };
-    }
-    apply_live_offsets(
-        backend,
-        SetGpuClockOffsetsRequest {
-            gpu_id: request.gpu_id,
-            graphics_offset_mhz: (gpu.clocks.graphics.support == ControlSupport::Supported)
-                .then_some(0),
-            memory_offset_mhz: (gpu.clocks.memory.support == ControlSupport::Supported)
-                .then_some(0),
-        },
-    )
 }

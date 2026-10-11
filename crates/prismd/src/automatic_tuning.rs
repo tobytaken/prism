@@ -3,12 +3,12 @@
 use super::backend::DaemonBackend;
 use super::cooling::{CoolingApplicationSource, CoolingController};
 use super::profiles::{capture_cooling, reading, verified_gpu};
-use super::tuning::{self, TuningOrigin};
+use super::tuning::{self, TuningOrigin, TuningRequest};
 use prism_gpu::cooling::CoolingApplication;
 use prism_gpu::{TuningOutcome, TuningOutcomeStatus};
 use prism_protocol::{
-    ApplyGpuProfileRequest, ProfileApplicationResponse, ProfileSetting, ProfileSettingKey,
-    ProfileSettings, RollbackResult, RollbackStatus,
+    ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings, RollbackResult,
+    RollbackStatus,
 };
 
 /// The daemon's reading of a profile application's per-setting outcomes.
@@ -120,7 +120,7 @@ pub(super) fn capture_cooling_baseline(
 pub(super) fn apply(
     backend: &dyn DaemonBackend,
     cooling: Option<&CoolingController>,
-    request: ApplyGpuProfileRequest,
+    request: TuningRequest,
 ) -> ProfileApplicationResponse {
     apply_with_baseline(backend, cooling, request).0
 }
@@ -128,7 +128,7 @@ pub(super) fn apply(
 pub(super) fn apply_with_baseline(
     backend: &dyn DaemonBackend,
     cooling: Option<&CoolingController>,
-    request: ApplyGpuProfileRequest,
+    request: TuningRequest,
 ) -> (ProfileApplicationResponse, ProfileSettings) {
     let blocked = |message: &str| {
         (
@@ -202,10 +202,7 @@ pub(super) fn apply_with_baseline(
                 let restored = tuning::apply(
                     backend,
                     cooling,
-                    ApplyGpuProfileRequest {
-                        gpu_id: gpu_id.clone(),
-                        settings,
-                    },
+                    TuningRequest::new(gpu_id.clone(), settings),
                     TuningOrigin::TemporaryAutomatic,
                     CoolingApplicationSource::NonManual,
                 );
@@ -257,13 +254,13 @@ pub(super) fn apply_with_baseline(
                 tuning::apply(
                     backend,
                     cooling,
-                    ApplyGpuProfileRequest {
-                        gpu_id: gpu_id.clone(),
-                        settings: ProfileSettings {
+                    TuningRequest::new(
+                        gpu_id.clone(),
+                        ProfileSettings {
                             cooling: before.cooling.clone(),
                             ..ProfileSettings::default()
                         },
-                    },
+                    ),
                     TuningOrigin::TemporaryAutomatic,
                     CoolingApplicationSource::NonManual,
                 )

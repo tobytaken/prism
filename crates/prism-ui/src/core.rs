@@ -3,9 +3,15 @@ use std::time::Duration;
 use prism_gpu::{
     ControlSupport, GpuDevice, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
 };
-use prism_protocol::{DaemonEvent, DaemonRequest, DaemonSnapshot, Incompatible, Welcome};
+use std::collections::BTreeMap;
+
+use prism_protocol::{
+    DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GpuTuningState, Incompatible,
+    Welcome,
+};
 
 use crate::daemon::{ServiceAction, ServiceOutcome};
+use crate::drafts::Drafts;
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
 use crate::notifications::{Notification, NotificationId, Notifications, Subject};
 use crate::palette::{Command, PaletteState, Shortcut};
@@ -282,10 +288,19 @@ pub enum Input {
     },
     /// The notification server closed a notification: the user dismissed it, or it expired.
     NotificationClosed(NotificationId),
+    /// prismd answered the command sent with [`Effect::CommandPrismd`] as `id`.
+    PrismdAnswered {
+        id: CommandId,
+        response: DaemonResponse,
+    },
 }
 
+/// Which command sent to prismd an answer belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CommandId(pub u64);
+
 /// Something the user asked for.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Intent {
     /// Show this GPU, by id, in the workspace.
     SelectGpu(String),
@@ -313,6 +328,15 @@ pub enum Intent {
     ShowRange(TelemetryRange),
     /// Open the hardware details, or collapse them again.
     ToggleHardwareDetails,
+    /// Stage this power limit, in watts, for the selected GPU.
+    StagePowerLimit(i64),
+    /// Stage the power limit drawn at this height on the selected GPU's power chart, from the top
+    /// (0) to the bottom (1), as dragging its line does.
+    DragPowerLimit(f32),
+    /// Send the selected GPU's unapplied tuning changes to prismd as one Apply.
+    ApplyChanges,
+    /// Drop the selected GPU's unapplied tuning changes.
+    DiscardChanges,
 }
 
 /// Something the core asks the caller to do.
@@ -328,8 +352,14 @@ pub enum Effect {
     RunService(ServiceAction),
     /// Put this text on the clipboard.
     Copy(String),
-    /// Send this request on the session with prismd.
+    /// Send this request on the session with prismd; its answer isn't needed.
     SendToPrismd(DaemonRequest),
+    /// Send this request on the session with prismd, and hand its answer back as
+    /// [`Input::PrismdAnswered`] with `id`. With no session it's dropped unanswered.
+    CommandPrismd {
+        id: CommandId,
+        request: DaemonRequest,
+    },
     /// Start reading the GPUs in-process at 1 Hz, or resume it.
     StartSampler,
     /// Pause the in-process sampler, keeping what it loaded.
@@ -380,6 +410,9 @@ pub struct Core {
     /// A session ended and hasn't come back, and Prism hasn't notified about it yet.
     lost_unnotified: bool,
     notifications: Notifications,
+    /// Each GPU's tuning state as prismd last pushed it, by GPU id, while there is a session.
+    pub(crate) tuning: BTreeMap<String, GpuTuningState>,
+    pub(crate) drafts: Drafts,
     revision: u64,
 }
 
@@ -418,6 +451,25 @@ pub(crate) struct Gpu {
     pub(crate) latest: Latest,
     /// The controls the latest reading said the GPU supports.
     pub(crate) capabilities: Vec<TuningControl>,
+}
+
+impl Gpu {
+    /// The power limits the GPU allows, in watts, as its latest reading or else its inventory
+    /// says.
+    pub(crate) fn power_limit_range(&self) -> Option<(i64, i64)> {
+        let reading = match &self.latest {
+            Latest::Read(device) => Some(&device.power),
+            Latest::Waiting | Latest::Missing { .. } => None,
+        };
+        let control = &self.device.control.power_limit;
+        let min = reading
+            .and_then(|power| power.min_limit_watts)
+            .or(control.min_watts)?;
+        let max = reading
+            .and_then(|power| power.max_limit_watts)
+            .or(control.max_watts)?;
+        (min <= max).then_some((i64::from(min), i64::from(max)))
+    }
 }
 
 /// What the latest telemetry sample said about a GPU.
@@ -459,7 +511,14 @@ impl Core {
                 self.host = None;
                 self.service_error = None;
                 self.found(snapshot.inventory);
+                self.tuning = snapshot
+                    .tuning_states
+                    .into_iter()
+                    .map(|state| (state.gpu_id.clone(), state))
+                    .collect();
                 let mut effects = vec![Effect::SendToPrismd(DaemonRequest::SubscribeTelemetry)];
+                // The new session holds edits only once told.
+                effects.extend(self.sync_edit_holds());
                 if std::mem::take(&mut self.sampling) {
                     effects.push(Effect::StopSampler);
                 }
@@ -480,6 +539,8 @@ impl Core {
                 );
                 let lost = self.connected();
                 self.session = Session::Failed(failure);
+                self.tuning.clear();
+                self.drafts_lost_session();
                 let mut effects = Vec::new();
                 if !std::mem::replace(&mut self.sampling, true) {
                     effects.push(Effect::StartSampler);
@@ -526,9 +587,11 @@ impl Core {
                     DaemonEvent::TelemetrySampled(sample) => {
                         self.take_sample(&sample, TelemetrySource::Prismd, received_at)
                     }
+                    DaemonEvent::TuningStateChanged(state) => {
+                        self.tuning.insert(state.gpu_id.clone(), state);
+                    }
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)
-                    | DaemonEvent::TuningStateChanged(_)
                     | DaemonEvent::RunningGamesChanged(_)
                     | DaemonEvent::AutomaticSwitchingChanged(_) => {}
                 }
@@ -591,6 +654,7 @@ impl Core {
                 self.notifications.closed(id);
                 Vec::new()
             }
+            Input::PrismdAnswered { id, response } => self.answered(id, response),
         }
     }
 
@@ -713,6 +777,10 @@ impl Core {
                 self.hardware_open = !self.hardware_open;
                 Vec::new()
             }
+            Intent::StagePowerLimit(watts) => self.stage_power_limit(watts),
+            Intent::DragPowerLimit(y) => self.drag_power_limit(y),
+            Intent::ApplyChanges => self.perform(Command::ApplyChanges),
+            Intent::DiscardChanges => self.perform(Command::DiscardChanges),
         }
     }
 
@@ -760,6 +828,8 @@ impl Core {
                 self.range = range;
                 Vec::new()
             }
+            Command::ApplyChanges => self.apply_changes(),
+            Command::DiscardChanges => self.discard_changes(),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }
@@ -794,6 +864,18 @@ impl Core {
 
     pub fn tuning_access(&self) -> TuningAccess {
         TuningAccess::of(&self.prismd())
+    }
+
+    /// The GPU's power limit in effect: as prismd last pushed its tuning state, or else as the
+    /// latest reading says.
+    pub(crate) fn power_limit_in_effect(&self, gpu: &Gpu) -> Option<i64> {
+        self.tuning
+            .get(&gpu.id)
+            .and_then(|state| state.reported.power_limit_watts)
+            .or(match &gpu.latest {
+                Latest::Read(device) => device.power.current_limit_watts.map(i64::from),
+                Latest::Waiting | Latest::Missing { .. } => None,
+            })
     }
 
     /// Whether the GPU's control can be changed: only with tuning access and the GPU control

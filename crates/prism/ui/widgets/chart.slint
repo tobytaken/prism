@@ -52,11 +52,12 @@ export component Area inherits Path {
 // A limit across a chart, solid or built from dashes. Rust supplies the path commands, in the
 // chart's own pixels.
 export component LimitLine inherits Path {
+    in property <color> ink: Theme.color.accent;
     width: 100%;
     height: 100%;
     viewbox-width: self.width / 1px;
     viewbox-height: self.height / 1px;
-    stroke: Theme.color.accent;
+    stroke: ink;
     stroke-width: Theme.stroke.limit;
     accessible-role: none;
 }

@@ -3,7 +3,6 @@
 use serde_json::{Value, json};
 
 use super::boot_state::STARTUP_IN_PROGRESS;
-use super::cooling::CoolingApplicationSource;
 use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, cooled_gpu};
 use prism_gpu::{FanControlMode, GpuPerformanceDevice};
 
@@ -53,13 +52,11 @@ fn set_behavior(session: &FakeSession, behavior: &str) {
 }
 
 fn apply_cooling(session: &FakeSession, configuration: Value) {
-    let response = send(
-        session,
-        json!({"type": "apply_cooling", "payload": {
-            "gpu_id": "GPU-123", "configuration": configuration
-        }}),
+    let response = session.apply("GPU-123", json!({ "cooling": configuration }));
+    assert_eq!(
+        response["payload"]["cooling"]["outcome"]["status"], "succeeded",
+        "{response}"
     );
-    assert_eq!(response["outcome"]["status"], "succeeded", "{response}");
 }
 
 /// The startup outcome for GPU-123 once startup has finished with it.
@@ -166,7 +163,6 @@ fn restoring_last_applied_values_restores_the_latest_manual_cooling_configuratio
             "configuration": {"arrangement": "shared", "setting": {"mode": "fixed", "speed_percent": 90}}
         }))
         .unwrap(),
-        CoolingApplicationSource::NonManual,
     );
     assert_eq!(
         serde_json::to_value(temporary).unwrap()["outcome"]["status"],
@@ -213,9 +209,13 @@ fn startup_off_and_gpus_without_manual_cooling_leave_cooling_unchanged() {
     // Restoring a GPU whose last applied values include no cooling leaves its fans alone.
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     let alice = daemon.user(1000, "alice");
-    send(
-        &alice,
-        json!({ "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 300 } }),
+    let applied = alice.apply(
+        "GPU-123",
+        json!({ "power_limit_watts": { "kind": "value", "value": 300 } }),
+    );
+    assert_eq!(
+        applied["payload"]["power"]["status"], "succeeded",
+        "{applied}"
     );
     set_behavior(&alice, "restore_last_applied");
     drop(alice);

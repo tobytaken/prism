@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
-import { Area, Divider, Grid, LimitLine, Series, StyledText, VerticalDivider } from "../widgets.slint";
-import { AppState, ChartPart, ChartView, DetailView, LimitMark, ReadoutView, TrackView } from "../state.slint";
+import { Area, Divider, Grid, LimitLine, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, ChartPart, ChartView, DetailView, Intents, LimitMark, ReadoutView, StepperView, TrackView } from "../state.slint";
 
 component Statistic inherits Rectangle {
     in property <string> name;
@@ -94,6 +94,49 @@ component Detail inherits Rectangle {
     }
 }
 
+// The configured limit's stepper, in its detail's place: how its line is drawn, its label, then
+// the stepper.
+component LimitStepper inherits Rectangle {
+    in property <DetailView> detail;
+    in property <StepperView> stepper;
+
+    height: row.preferred-height;
+
+    row := HorizontalLayout {
+        alignment: start;
+        spacing: Theme.space.s;
+
+        LimitKey {
+            mark: root.detail.mark;
+            known: root.detail.readout.known;
+        }
+
+        StyledText {
+            text: root.detail.label;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        Stepper {
+            label: root.stepper.label;
+            value: root.stepper.value;
+            value-text: root.stepper.value-text;
+            minimum: root.stepper.minimum;
+            maximum: root.stepper.maximum;
+            step: root.stepper.step;
+            text: root.stepper.text;
+            pending: root.stepper.pending;
+            read-only: root.stepper.read-only;
+            reason: root.stepper.reason;
+            changed(watts) => {
+                Intents.stage-power-limit(watts);
+            }
+        }
+    }
+}
+
 // One chart: the grid, the series (over its area, if it has one), its limits and its label.
 component ChartPane inherits Rectangle {
     in property <ChartView> chart;
@@ -106,6 +149,7 @@ component ChartPane inherits Rectangle {
     property <string> area: root.chart.area ? path(ChartPart.area) : "";
     property <string> limit: root.chart.limit ? path(ChartPart.limit) : "";
     property <string> enforced-limit: root.chart.enforced-limit ? path(ChartPart.enforced-limit) : "";
+    property <string> pending-limit: root.chart.pending-limit ? path(ChartPart.pending-limit) : "";
 
     Grid { }
 
@@ -119,8 +163,25 @@ component ChartPane inherits Rectangle {
     if root.enforced-limit != "": LimitLine {
         commands: root.enforced-limit;
     }
+    // While a limit is pending, the one in effect steps back and the pending one is in the accent.
     if root.limit != "": LimitLine {
         commands: root.limit;
+        ink: root.pending-limit != "" ? Theme.color.ink-muted : Theme.color.accent;
+    }
+    if root.pending-limit != "": LimitLine {
+        commands: root.pending-limit;
+    }
+
+    // The limit's line, which a drag moves to stage a new limit where it's let go.
+    if root.chart.draggable: limit-handle := TouchArea {
+        y: root.height * root.chart.handle-y - self.height / 2;
+        height: Theme.size.limit-grab;
+        mouse-cursor: ns-resize;
+        moved => {
+            if self.pressed {
+                Intents.drag-power-limit((self.y + self.mouse-y) / root.height);
+            }
+        }
     }
 
     if root.chart.label != "": StyledText {
@@ -236,8 +297,15 @@ export component Track inherits Rectangle {
                 VerticalLayout {
                     spacing: Theme.space.xxs;
 
-                    for detail in root.track.details: Detail {
-                        detail: detail;
+                    // The configured limit is tuned in place with its stepper.
+                    for detail in root.track.details: VerticalLayout {
+                        if root.track.has-stepper && detail.mark == LimitMark.solid: LimitStepper {
+                            detail: detail;
+                            stepper: root.track.stepper;
+                        }
+                        if !(root.track.has-stepper && detail.mark == LimitMark.solid): Detail {
+                            detail: detail;
+                        }
                     }
                 }
             }

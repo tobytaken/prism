@@ -165,10 +165,7 @@ fn save_to_current_overwrites_the_current_profile_with_the_applied_values() {
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
-    alice.send_json(json!({
-        "type": "set_clock_offsets",
-        "payload": { "gpu_id": "GPU-123", "graphics_offset_mhz": "default", "memory_offset_mhz": 40 }
-    }));
+    alice.apply("GPU-123", json!({ "graphics_offset_mhz": { "kind": "default" }, "memory_offset_mhz": { "kind": "value", "value": 40 } }));
 
     let saved = save_to_current(&alice, revision(&alice));
     assert_eq!(saved["type"], "profile", "{saved}");
@@ -193,9 +190,10 @@ fn save_as_new_creates_a_profile_that_becomes_current_and_leaves_the_previous_on
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(quiet_and_loud());
     apply_by_id(&alice, "quiet");
-    alice.send_json(json!({
-        "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 350 }
-    }));
+    alice.apply(
+        "GPU-123",
+        json!({ "power_limit_watts": { "kind": "value", "value": 350 } }),
+    );
 
     let saved = save_as_new(&alice, "Warmer", revision(&alice));
     assert_eq!(saved["type"], "profile", "{saved}");
@@ -246,9 +244,10 @@ fn a_save_with_a_stale_revision_is_rejected_and_saves_nothing() {
     // Recorded state changed through another session, with the same reported values.
     let bob = daemon.user(1001, "bob");
     let seen = revision(&alice);
-    bob.send_json(json!({
-        "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 320 }
-    }));
+    bob.apply(
+        "GPU-123",
+        json!({ "power_limit_watts": { "kind": "value", "value": 320 } }),
+    );
     assert_eq!(
         daemon.gpus.gpu("GPU-123").power.current_limit_watts,
         Some(320)
@@ -341,9 +340,10 @@ fn current_profile_and_revision_changes_are_pushed_to_every_session() {
 
     // A live change keeps the current profile but changes the revision.
     let before = revision(&bob);
-    alice.send_json(json!({
-        "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 320 }
-    }));
+    alice.apply(
+        "GPU-123",
+        json!({ "power_limit_watts": { "kind": "value", "value": 320 } }),
+    );
     let pushed = bob.pushed_events();
     assert_eq!(
         pushed,

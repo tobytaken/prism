@@ -35,12 +35,10 @@ fn a_profile_deleted_while_an_application_waits_is_never_applied_or_made_current
     let alice = daemon.user(1000, "alice");
     alice.seed_profiles(json!([profile("quiet", "Quiet", "GPU-123")]));
     let gate = daemon.gpus.block("GPU-123", Setter::PowerLimit);
-    let live_write = daemon.send_in_background(
-        serde_json::from_value(json!({
-            "type": "set_power_limit", "payload": { "gpu_id": "GPU-123", "limit_watts": 350 }
-        }))
-        .unwrap(),
-    );
+    let live_write = daemon.send_in_background(daemon.apply_request(
+        "GPU-123",
+        json!({ "power_limit_watts": { "kind": "value", "value": 350 } }),
+    ));
     gate.wait_until_entered();
 
     let deleting_session = daemon.user(1000, "alice");

@@ -259,11 +259,14 @@ impl Host {
     }
 
     fn apply_starter_curve(&self) {
+        let states = self.send(json!({ "type": "get_tuning_states" }));
+        let revision = states["payload"][0]["revision"].clone();
+        assert!(revision.is_string(), "{states}");
         let response = self.send(json!({
-            "type": "apply_cooling",
+            "type": "apply_profile",
             "payload": {
                 "gpu_id": "GPU-123",
-                "configuration": {
+                "settings": { "cooling": {
                     "arrangement": "shared",
                     "setting": { "mode": "curve", "points": [
                         { "temperature_c": 45, "speed_percent": 20 },
@@ -271,11 +274,12 @@ impl Host {
                         { "temperature_c": 75, "speed_percent": 80 },
                         { "temperature_c": 85, "speed_percent": 100 },
                     ] },
-                },
+                } },
+                "expected_revision": revision,
             },
         }));
         assert_eq!(
-            response["payload"]["outcome"]["status"], "succeeded",
+            response["payload"]["cooling"]["outcome"]["status"], "succeeded",
             "{response}"
         );
     }

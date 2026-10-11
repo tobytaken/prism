@@ -1,6 +1,7 @@
 //! Prism's side of prismd: a session thread that connects, reports what the session brings and
 //! reconnects whenever there is no session.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -8,9 +9,10 @@ use std::time::Duration;
 
 use prism_protocol::client::{self, ConnectError, Connected, SessionSender};
 use prism_protocol::{
-    DaemonEvent, DaemonRequest, DaemonSnapshot, HelloRequest, SessionMessage, Welcome,
+    DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, HelloRequest, SessionMessage,
+    Welcome,
 };
-use prism_ui::SessionFailure;
+use prism_ui::{CommandId, SessionFailure};
 
 /// How Prism reaches prismd. Production connects to its socket; tests and the simulator wire
 /// fakes.
@@ -21,6 +23,10 @@ pub trait PrismdConnector {
 
     /// Sends `request` on the current session; with no session it's dropped.
     fn send(&self, request: DaemonRequest);
+
+    /// Sends `request` on the current session and reports its answer as `id`; with no session
+    /// it's dropped unanswered.
+    fn command(&self, id: CommandId, request: DaemonRequest);
 }
 
 /// What the connection to prismd brought.
@@ -36,6 +42,11 @@ pub enum PrismdReport {
     NotConnected(SessionFailure),
     /// prismd pushed an event to the session.
     Event(DaemonEvent),
+    /// prismd answered the command sent as `id`.
+    Answered {
+        id: CommandId,
+        response: DaemonResponse,
+    },
 }
 
 /// Connects to prismd's socket on a thread of its own.
@@ -43,13 +54,19 @@ pub struct SocketConnector {
     socket: PathBuf,
     /// The current session's sender, while there is a session.
     session: Arc<Mutex<Option<SessionSender>>>,
+    /// The commands the current session hasn't answered yet, by the request id they went out with.
+    commands: Commands,
 }
+
+/// Commands awaiting prismd's answer, by the request id they went out with.
+type Commands = Arc<Mutex<HashMap<u64, CommandId>>>;
 
 impl SocketConnector {
     pub fn new(socket: impl Into<PathBuf>) -> Self {
         Self {
             socket: socket.into(),
             session: Arc::default(),
+            commands: Arc::default(),
         }
     }
 
@@ -64,10 +81,11 @@ impl PrismdConnector for SocketConnector {
         let report: Arc<dyn Fn(PrismdReport) -> bool + Send + Sync> = Arc::from(report);
         let socket = self.socket.clone();
         let current = Arc::clone(&self.session);
+        let commands = Arc::clone(&self.commands);
         let reporting = Arc::clone(&report);
         let started = thread::Builder::new()
             .name("prism-prismd".into())
-            .spawn(move || run_sessions(&socket, &current, &*reporting));
+            .spawn(move || run_sessions(&socket, &current, &commands, &*reporting));
         if let Err(error) = started {
             eprintln!("prism: can't start the prismd connection: {error}");
             report(PrismdReport::NotConnected(SessionFailure::Unavailable {
@@ -83,6 +101,17 @@ impl PrismdConnector for SocketConnector {
         // A failed write ends the session, which the session thread reports.
         let _ = sender.send(request);
     }
+
+    fn command(&self, id: CommandId, request: DaemonRequest) {
+        let Some(sender) = self.session.lock().unwrap().clone() else {
+            return;
+        };
+        // Held while sending, so the answer can't be read before it's known to be awaited.
+        let mut commands = self.commands.lock().unwrap();
+        if let Ok(request_id) = sender.send(request) {
+            commands.insert(request_id, id);
+        }
+    }
 }
 
 /// Opens one session after another until `report` returns false, waiting as the backoff says
@@ -90,6 +119,7 @@ impl PrismdConnector for SocketConnector {
 fn run_sessions(
     socket: &std::path::Path,
     current: &Mutex<Option<SessionSender>>,
+    commands: &Commands,
     report: &(dyn Fn(PrismdReport) -> bool + Send + Sync),
 ) {
     let hello = HelloRequest::current(env!("CARGO_PKG_VERSION"));
@@ -115,13 +145,21 @@ fn run_sessions(
                         Ok(Some(SessionMessage::Event { event })) => {
                             report(PrismdReport::Event(event))
                         }
-                        // Responses only feed what's shown to the user, which lands with the
-                        // first commands.
-                        Ok(Some(_)) => true,
+                        // Only commands' answers are reported: they feed what's shown to the
+                        // user, while state comes from events.
+                        Ok(Some(SessionMessage::Response { id, response })) => {
+                            match commands.lock().unwrap().remove(&id) {
+                                Some(id) => report(PrismdReport::Answered { id, response }),
+                                None => true,
+                            }
+                        }
+                        Ok(Some(SessionMessage::Snapshot { .. })) => true,
                         Ok(None) | Err(_) => break,
                     };
                 }
                 *current.lock().unwrap() = None;
+                // The session's unanswered commands never will be.
+                commands.lock().unwrap().clear();
                 if !open {
                     return;
                 }
@@ -194,6 +232,8 @@ impl PrismdConnector for NoPrismd {
     }
 
     fn send(&self, _: DaemonRequest) {}
+
+    fn command(&self, _: CommandId, _: DaemonRequest) {}
 }
 
 #[cfg(test)]

@@ -1,16 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
 use super::session::{DaemonSession, SessionEvents, SessionPeer, SessionPolicy};
 use prism_protocol::{
-    DaemonEvent, GpuTuningProfile, ProfileSettings, StartupBehavior, TuningStoreHealth,
-    TuningStoreProblem,
+    DaemonEvent, GpuTuningProfile, GpuTuningState, ProfileSettings, StartupBehavior,
+    TuningStoreHealth, TuningStoreProblem,
 };
 
 pub const TUNING_STORE_FILE_NAME: &str = "tuning-state.json";
@@ -149,6 +149,28 @@ pub struct TuningStore {
     path: PathBuf,
     state: Mutex<StoreState>,
     events: Arc<SessionEvents>,
+    /// The tuning state last pushed to sessions for each GPU, by UUID.
+    pushed_tuning: Mutex<HashMap<String, GpuTuningState>>,
+}
+
+/// Pushes GPUs' changed tuning states to every session while it's held. Only one is held at a
+/// time, so whatever reads the GPUs while holding it pushes the latest state last.
+pub struct TuningPushes<'a> {
+    events: &'a SessionEvents,
+    pushed: MutexGuard<'a, HashMap<String, GpuTuningState>>,
+}
+
+impl TuningPushes<'_> {
+    /// Pushes `state` unless it's the one last pushed for its GPU, or, before any was,
+    /// `unchanged_from`.
+    pub fn push(&mut self, state: GpuTuningState, unchanged_from: Option<&GpuTuningState>) {
+        let last = self.pushed.get(&state.gpu_id).or(unchanged_from);
+        if last != Some(&state) {
+            self.events
+                .publish(DaemonEvent::TuningStateChanged(state.clone()));
+        }
+        self.pushed.insert(state.gpu_id.clone(), state);
+    }
 }
 
 enum StoreState {
@@ -175,6 +197,7 @@ impl TuningStore {
             path,
             state: Mutex::new(state),
             events: Arc::default(),
+            pushed_tuning: Mutex::default(),
         }
     }
 
@@ -198,6 +221,26 @@ impl TuningStore {
     /// Pushes the event to every open session.
     pub fn publish(&self, event: DaemonEvent) {
         self.events.publish(event);
+    }
+
+    /// Lets `observe` read GPUs' tuning states and push the changed ones; anything else pushing
+    /// tuning states waits until it's done.
+    pub fn push_tuning<T>(&self, observe: impl FnOnce(&mut TuningPushes) -> T) -> T {
+        observe(&mut TuningPushes {
+            events: &self.events,
+            pushed: self.pushed_tuning.lock().unwrap(),
+        })
+    }
+
+    /// Notes these tuning states, from a session's snapshot, as known to sessions, except for GPUs
+    /// a state was already pushed for.
+    pub fn known_tuning(&self, states: &[GpuTuningState]) {
+        let mut pushed = self.pushed_tuning.lock().unwrap();
+        for state in states {
+            pushed
+                .entry(state.gpu_id.clone())
+                .or_insert_with(|| state.clone());
+        }
     }
 
     /// Whether any open session subscribed to telemetry.
@@ -247,6 +290,15 @@ impl TuningStore {
         match &*self.state.lock().unwrap() {
             StoreState::Healthy(document) => Ok(read(document)),
             StoreState::Unhealthy { .. } => Err(TuningStoreWriteError::Unhealthy),
+        }
+    }
+
+    /// Reads the document as GPUs' tuning states see it. An unhealthy store records nothing, so
+    /// then they're those of an empty document, and revisions still tell changes apart.
+    pub fn read_for_tuning<T>(&self, read: impl FnOnce(&TuningDocument) -> T) -> T {
+        match &*self.state.lock().unwrap() {
+            StoreState::Healthy(document) => read(document),
+            StoreState::Unhealthy { .. } => read(&TuningDocument::default()),
         }
     }
 

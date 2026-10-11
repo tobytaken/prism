@@ -431,12 +431,11 @@ fn separate_cooling(second_fan: Value) -> Value {
 }
 
 fn apply_cooling(session: &FakeSession, configuration: &Value) {
-    let result = ok(
-        session.send_json(json!({ "type": "apply_cooling", "payload": {
-        "gpu_id": GPU, "configuration": configuration
-    } })),
+    let result = ok(session.apply(GPU, json!({ "cooling": configuration })));
+    assert_eq!(
+        result["cooling"]["outcome"]["status"], "succeeded",
+        "{result}"
     );
-    assert_eq!(result["outcome"]["status"], "succeeded", "{result}");
 }
 
 fn cooling(session: &FakeSession) -> Value {

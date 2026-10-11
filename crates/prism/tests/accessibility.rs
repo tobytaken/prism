@@ -5,9 +5,11 @@ mod support;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
-use prism_gpu::simulated::SimulatedFixture;
+use prism_gpu::GpuTelemetryProvider;
+use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use slint::ComponentHandle;
 
 use prism_ui::{PrismdInstall, ServiceAction, SettingsSection, UnitState};
@@ -161,6 +163,17 @@ fn every_fixture_state_is_accessible() {
     }
 }
 
+#[test]
+fn a_pending_power_limit_is_accessible() {
+    let (harness, stepper) = power_limit();
+    audit("tunable, editable", &harness);
+
+    stepper.set_accessible_value("450");
+    audit("tunable, pending power limit", &harness);
+    harness.find(AccessibleRole::Button, "Apply");
+    harness.find(AccessibleRole::Button, "Discard");
+}
+
 /// Every `accessible-action-*` a widget or view declares, and the test below that invokes it.
 const ACTION_TESTS: &[(&str, &str, &str)] = &[
     (
@@ -194,6 +207,21 @@ const ACTION_TESTS: &[(&str, &str, &str)] = &[
         "a_palette_row_s_default_action_runs_its_command",
     ),
     ("Segment", "default", "a_segment_s_default_action_picks_it"),
+    (
+        "Stepper",
+        "decrement",
+        "a_stepper_s_increment_and_decrement_actions_step_it",
+    ),
+    (
+        "Stepper",
+        "increment",
+        "a_stepper_s_increment_and_decrement_actions_step_it",
+    ),
+    (
+        "Stepper",
+        "set-value(text)",
+        "a_stepper_s_set_value_action_sets_it_within_its_range",
+    ),
     (
         "WindowButton",
         "default",
@@ -355,6 +383,8 @@ fn a_link_button_s_default_action_activates_it() {
 #[test]
 fn a_disclosure_s_default_action_opens_and_collapses_what_it_discloses() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
+    // Tall enough to show what it discloses without scrolling.
+    harness.resize((1280, 1100));
     harness.tick();
     let details = harness.find(AccessibleRole::Button, "Hardware details");
 
@@ -383,6 +413,52 @@ fn a_segment_s_default_action_picks_it() {
             .accessible_checked(),
         Some(false)
     );
+}
+
+/// Prism with tuning access to the tunable GPU, whose power limit is 575 W in a 400–600 W range,
+/// and its power limit's stepper.
+fn power_limit() -> (Harness, ElementHandle) {
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::Running);
+    harness.prismd_tick(
+        SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
+    );
+    let stepper = harness.find(AccessibleRole::Spinbox, "Power limit");
+    (harness, stepper)
+}
+
+/// The pending value the stepper draws next to itself, as its description says it.
+fn pending(stepper: &ElementHandle) -> String {
+    stepper
+        .accessible_description()
+        .map(String::from)
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_stepper_s_increment_and_decrement_actions_step_it() {
+    let (_harness, stepper) = power_limit();
+    assert_eq!(stepper.accessible_value().as_deref(), Some("575 W"));
+
+    stepper.invoke_accessible_decrement_action();
+    assert_eq!(stepper.accessible_value().as_deref(), Some("574 W"));
+    assert_eq!(pending(&stepper), "In effect 575 W, → 574 W");
+
+    stepper.invoke_accessible_increment_action();
+    stepper.invoke_accessible_increment_action();
+    assert_eq!(stepper.accessible_value().as_deref(), Some("576 W"));
+    assert_eq!(pending(&stepper), "In effect 575 W, → 576 W");
+}
+
+#[test]
+fn a_stepper_s_set_value_action_sets_it_within_its_range() {
+    let (_harness, stepper) = power_limit();
+
+    stepper.set_accessible_value("450");
+    assert_eq!(stepper.accessible_value().as_deref(), Some("450 W"));
+    assert_eq!(pending(&stepper), "In effect 575 W, → 450 W");
+
+    stepper.set_accessible_value("9999");
+    assert_eq!(stepper.accessible_value().as_deref(), Some("600 W"));
 }
 
 #[test]
@@ -442,6 +518,7 @@ fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
             "Show last 15 minutes",
             "Show last 1 hour",
             "Set up",
+            "Power limit",
             "Hardware details",
             "PRISMD · NOT RUNNING",
         ]
