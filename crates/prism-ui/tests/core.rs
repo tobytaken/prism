@@ -4,6 +4,7 @@ use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuInventoryProvider, GpuPerformanceResponse, GpuTelemetryProvider};
 use prism_ui::{
     AppearanceMode, Content, Core, Effect, ExplainedState, Input, Intent, Section, TelemetrySource,
+    Track, TrackKind,
 };
 
 fn simulated(fixture: SimulatedFixture) -> SimulatedGpus {
@@ -71,6 +72,10 @@ fn workspace(core: &Core) -> prism_ui::GpuWorkspace {
     }
 }
 
+fn temperature(core: &Core) -> Track {
+    workspace(core).track(TrackKind::Temperature).clone()
+}
+
 #[test]
 fn sidebar_vitals_follow_the_latest_sample() {
     let mut core = launched(SimulatedFixture::TunableGpu);
@@ -98,7 +103,7 @@ fn sidebar_vitals_follow_the_latest_sample() {
 fn readings_are_unknown_until_the_first_sample_arrives() {
     let core = launched(SimulatedFixture::TunableGpu);
 
-    let track = workspace(&core).temperature;
+    let track = temperature(&core);
 
     assert_eq!(core.sidebar().gpus[0].temperature.text(), "—");
     assert_eq!(
@@ -124,7 +129,7 @@ fn the_temperature_track_shows_the_reading_and_its_range_statistics() {
         );
     }
 
-    let track = workspace(&core).temperature;
+    let track = temperature(&core);
 
     assert_eq!(track.readout.text(), "45 °C");
     assert_eq!(track.unknown_reason, None);
@@ -132,8 +137,8 @@ fn the_temperature_track_shows_the_reading_and_its_range_statistics() {
     assert_eq!(track.max.text(), "71 °C");
     assert_eq!(track.avg.text(), "52 °C");
     assert_eq!(track.min.text(), "40 °C");
-    assert_eq!(track.chart.segments.len(), 1);
-    assert_eq!(track.chart.segments[0].len(), 3);
+    assert_eq!(track.charts[0].chart.segments.len(), 1);
+    assert_eq!(track.charts[0].chart.segments[0].len(), 3);
 }
 
 #[test]
@@ -146,7 +151,7 @@ fn a_reading_the_gpu_does_not_report_is_unknown_with_a_reason() {
         1,
     );
 
-    let track = workspace(&core).temperature;
+    let track = temperature(&core);
     assert_eq!(track.readout.spoken(), "unknown");
     assert_eq!(
         track.unknown_reason.as_deref(),
@@ -170,7 +175,7 @@ fn a_gpu_missing_from_a_sample_is_unknown_with_the_sample_s_reason() {
         2,
     );
 
-    let track = workspace(&core).temperature;
+    let track = temperature(&core);
     assert_eq!(track.readout.text(), "—");
     assert_eq!(
         track.unknown_reason.as_deref(),

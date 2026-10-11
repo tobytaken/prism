@@ -8,7 +8,7 @@ use i_slint_backend_testing::AccessibleRole;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuPerformanceResponse, GpuTelemetryProvider};
 use prism_protocol::DaemonRequest;
-use prism_ui::{Content, Section, SettingsSection};
+use prism_ui::{Content, Section, SettingsSection, TrackKind};
 
 use support::prismd::DaemonState;
 use support::{Harness, texts};
@@ -28,8 +28,7 @@ fn reading(celsius: u32) -> GpuPerformanceResponse {
 /// How many samples the selected GPU's temperature chart holds, in one unbroken series.
 fn temperature_samples(harness: &Harness) -> Vec<usize> {
     match harness.app.core().content() {
-        Content::Gpu(workspace) => workspace
-            .temperature
+        Content::Gpu(workspace) => workspace.track(TrackKind::Temperature).charts[0]
             .chart
             .segments
             .iter()

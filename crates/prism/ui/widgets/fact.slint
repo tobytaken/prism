@@ -1,0 +1,36 @@
+import { Theme } from "../theme.slint";
+import { StyledText } from "styled-text.slint";
+
+// A labeled fact, such as prismd's socket path or a GPU's driver version: its label, then its
+// value in mono.
+export component Fact inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <length> label-width: Theme.size.fact-label;
+
+    accessible-role: text;
+    accessible-label: label;
+    accessible-value: value;
+    height: line.preferred-height;
+
+    line := HorizontalLayout {
+        spacing: Theme.space.m;
+
+        StyledText {
+            width: root.label-width;
+            text: root.label;
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            wrap: word-wrap;
+            accessible-role: none;
+        }
+
+        StyledText {
+            horizontal-stretch: 1;
+            text: root.value;
+            style: Theme.text.value;
+            wrap: word-wrap;
+            accessible-role: none;
+        }
+    }
+}

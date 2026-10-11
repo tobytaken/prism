@@ -11,6 +11,8 @@ pub struct Readings {
     pub temperature_c: Option<u32>,
     pub utilization_percent: Option<u32>,
     pub power_draw_watts: Option<u32>,
+    pub graphics_clock_mhz: Option<u32>,
+    pub memory_clock_mhz: Option<u32>,
     pub fan_speed_percent: Option<u32>,
 }
 
@@ -20,6 +22,8 @@ impl From<&GpuTelemetryInfo> for Readings {
             temperature_c: telemetry.temperature_c,
             utilization_percent: telemetry.gpu_utilization_percent,
             power_draw_watts: telemetry.power_draw_watts,
+            graphics_clock_mhz: telemetry.core_clock_mhz,
+            memory_clock_mhz: telemetry.memory_clock_mhz,
             fan_speed_percent: telemetry.fan_speed_percent,
         }
     }
@@ -31,6 +35,8 @@ impl Readings {
             Metric::Temperature => self.temperature_c,
             Metric::Utilization => self.utilization_percent,
             Metric::PowerDraw => self.power_draw_watts,
+            Metric::GraphicsClock => self.graphics_clock_mhz,
+            Metric::MemoryClock => self.memory_clock_mhz,
             Metric::FanSpeed => self.fan_speed_percent,
         }
     }
@@ -42,14 +48,18 @@ pub enum Metric {
     Temperature,
     Utilization,
     PowerDraw,
+    GraphicsClock,
+    MemoryClock,
     FanSpeed,
 }
 
 impl Metric {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::Temperature,
         Self::Utilization,
         Self::PowerDraw,
+        Self::GraphicsClock,
+        Self::MemoryClock,
         Self::FanSpeed,
     ];
 
@@ -59,6 +69,8 @@ impl Metric {
             Self::Temperature => "temperature",
             Self::Utilization => "utilization",
             Self::PowerDraw => "power draw",
+            Self::GraphicsClock => "graphics clock",
+            Self::MemoryClock => "memory clock",
             Self::FanSpeed => "fan speed",
         }
     }
@@ -80,11 +92,43 @@ impl Metric {
         match self {
             Self::Temperature => (20, 100),
             Self::Utilization | Self::PowerDraw | Self::FanSpeed => (0, 100),
+            Self::GraphicsClock | Self::MemoryClock => (0, 1_000),
+        }
+    }
+
+    /// The step a widened chart span snaps to, so its ends are round numbers.
+    fn chart_step(self) -> u32 {
+        match self {
+            Self::Temperature | Self::Utilization | Self::FanSpeed => 10,
+            Self::PowerDraw => 50,
+            Self::GraphicsClock | Self::MemoryClock => 500,
         }
     }
 }
 
 impl TelemetryRange {
+    pub const ALL: [Self; 4] = [
+        Self::OneMinute,
+        Self::FiveMinutes,
+        Self::FifteenMinutes,
+        Self::OneHour,
+    ];
+
+    /// The range in running text, such as "5 minutes".
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::OneMinute => "1 minute",
+            Self::FiveMinutes => "5 minutes",
+            Self::FifteenMinutes => "15 minutes",
+            Self::OneHour => "1 hour",
+        }
+    }
+
+    /// The command that shows the range, such as "Show last 5 minutes".
+    pub fn command(self) -> String {
+        format!("Show last {}", self.name())
+    }
+
     /// The range as the range picker names it, such as "5 m".
     pub fn label(self) -> &'static str {
         match self {
@@ -120,6 +164,29 @@ pub struct Chart {
     pub min: u32,
     pub max: u32,
     pub segments: Vec<Vec<ChartPoint>>,
+}
+
+impl Chart {
+    /// Where `value` sits on the value axis, from the top (0) to the bottom (1).
+    pub fn y(&self, value: u32) -> f32 {
+        (self.max as f32 - value as f32) / (self.max - self.min) as f32
+    }
+}
+
+/// Which power limit a line across a chart marks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LimitKind {
+    /// The power limit set on the GPU.
+    Configured,
+    /// The power limit the GPU enforces, which other constraints can hold below the configured one.
+    Enforced,
+}
+
+/// A limit drawn across a chart at `y`, which runs from the top (0) to the bottom (1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LimitLine {
+    pub kind: LimitKind,
+    pub y: f32,
 }
 
 /// A position in a chart: `x` runs from the start of the range (0) to the newest sample (1), and
@@ -181,12 +248,25 @@ impl TelemetryHistory {
         })
     }
 
-    /// `metric` over `range` before `now`, as a chart.
-    pub fn chart(&self, metric: Metric, range: TelemetryRange, now: Duration) -> Chart {
+    /// `metric` over `range` before `now`, as a chart whose scale also fits the values in
+    /// `also_fit`, such as a limit drawn on it.
+    pub fn chart(
+        &self,
+        metric: Metric,
+        range: TelemetryRange,
+        now: Duration,
+        also_fit: &[u32],
+    ) -> Chart {
         let (mut min, mut max) = metric.chart_span();
-        if let Some(stats) = self.stats(metric, range, now) {
-            min = min.min(stats.min / 10 * 10);
-            max = max.max(stats.max.div_ceil(10) * 10);
+        let step = metric.chart_step();
+        let stats = self.stats(metric, range, now);
+        let extremes = stats
+            .iter()
+            .flat_map(|stats| [stats.min, stats.max])
+            .chain(also_fit.iter().copied());
+        for value in extremes {
+            min = min.min(value / step * step);
+            max = max.max(value.div_ceil(step) * step);
         }
         let span = range.duration().as_secs_f32();
         let mut segments = Vec::new();
@@ -318,7 +398,12 @@ mod tests {
         history.record(secs(45), temperature(None));
         history.record(secs(60), temperature(Some(100)));
 
-        let chart = history.chart(Metric::Temperature, TelemetryRange::OneMinute, secs(60));
+        let chart = history.chart(
+            Metric::Temperature,
+            TelemetryRange::OneMinute,
+            secs(60),
+            &[],
+        );
 
         // Temperature charts span 20–100 °C; the newest sample sits at the right edge.
         assert_eq!(
@@ -340,8 +425,81 @@ mod tests {
         history.record(secs(59), temperature(Some(14)));
         history.record(secs(60), temperature(Some(121)));
 
-        let chart = history.chart(Metric::Temperature, TelemetryRange::OneMinute, secs(60));
+        let chart = history.chart(
+            Metric::Temperature,
+            TelemetryRange::OneMinute,
+            secs(60),
+            &[],
+        );
 
         assert_eq!((chart.min, chart.max), (10, 130));
+    }
+
+    #[test]
+    fn a_chart_widens_its_scale_to_fit_what_else_it_draws_in_round_steps() {
+        let mut history = TelemetryHistory::default();
+        history.record(
+            secs(60),
+            Readings {
+                power_draw_watts: Some(120),
+                ..Readings::default()
+            },
+        );
+
+        let chart = history.chart(
+            Metric::PowerDraw,
+            TelemetryRange::OneMinute,
+            secs(60),
+            &[575],
+        );
+
+        assert_eq!((chart.min, chart.max), (0, 600));
+        assert_eq!(chart.y(150), 0.75);
+        assert_eq!(chart.y(600), 0.0);
+    }
+
+    #[test]
+    fn each_range_covers_only_the_samples_received_within_it() {
+        let mut history = TelemetryHistory::default();
+        // One sample a minute for two hours, its temperature the minutes since the start.
+        for minute in 0..=120 {
+            history.record(secs(minute * 60), temperature(Some(minute as u32)));
+        }
+        let now = secs(120 * 60);
+
+        let stats = |range| history.stats(Metric::Temperature, range, now);
+
+        assert_eq!(
+            stats(TelemetryRange::OneMinute),
+            Some(RangeStats {
+                max: 120,
+                avg: 120.0,
+                min: 120,
+            })
+        );
+        assert_eq!(
+            stats(TelemetryRange::FiveMinutes),
+            Some(RangeStats {
+                max: 120,
+                avg: 118.0,
+                min: 116,
+            })
+        );
+        assert_eq!(
+            stats(TelemetryRange::FifteenMinutes),
+            Some(RangeStats {
+                max: 120,
+                avg: 113.0,
+                min: 106,
+            })
+        );
+        assert_eq!(
+            stats(TelemetryRange::OneHour),
+            Some(RangeStats {
+                max: 120,
+                avg: 90.5,
+                min: 61,
+            })
+        );
     }
 }

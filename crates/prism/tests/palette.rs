@@ -78,6 +78,10 @@ fn ctrl_k_opens_the_palette_with_its_field_focused() {
             "Go to Settings: Notifications".into(),
             "Go to Settings: Daemon".into(),
             "Go to Settings: About".into(),
+            "Show last 1 minute".into(),
+            "Show last 5 minutes".into(),
+            "Show last 15 minutes".into(),
+            "Show last 1 hour".into(),
             // The harness's prismd is installed but not running.
             "Enable prismd".into(),
             "Copy prismd setup command".into(),
@@ -177,7 +181,7 @@ fn escape_closes_the_palette_and_ctrl_k_opens_it_again() {
 
     harness.ctrl("k");
     assert!(palette_is_open(&harness));
-    assert_eq!(commands(&harness).len(), 13);
+    assert_eq!(commands(&harness).len(), 17);
 }
 
 #[test]

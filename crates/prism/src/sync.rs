@@ -3,15 +3,16 @@
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use prism_ui::format::Readout;
+use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    AppearanceMode as CoreAppearance, Content, Core, Section as CoreSection,
-    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection,
+    AppearanceMode as CoreAppearance, Content, Core, Fact, Section as CoreSection,
+    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Track,
 };
 
 use crate::{
-    AppState, AppearanceMode, ContentKind, DaemonView, ExplainedStateView, FactView, MainWindow,
-    PaletteEntryView, ReadoutView, ServiceAction, SettingsSection, SidebarGpuView,
-    TemperatureTrackView, Theme, WorkspaceView,
+    AppState, AppearanceMode, ChartId, ChartView, ContentKind, DaemonView, DetailView,
+    ExplainedStateView, FactView, LimitMark, MainWindow, PaletteEntryView, ReadoutView,
+    SegmentView, ServiceAction, SettingsSection, SidebarGpuView, Theme, TrackView, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -55,7 +56,6 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         Content::Searching => ContentKind::Searching,
         Content::NoGpus(_) => ContentKind::NoGpus,
         Content::Gpu(workspace) => {
-            let track = &workspace.temperature;
             state.set_workspace(WorkspaceView {
                 id: workspace.id.as_str().into(),
                 title: workspace.title.as_str().into(),
@@ -65,15 +65,43 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                     .as_deref()
                     .unwrap_or_default()
                     .into(),
-                temperature: TemperatureTrackView {
-                    readout: readout(&track.readout),
-                    unknown_reason: track.unknown_reason.as_deref().unwrap_or_default().into(),
-                    range: track.range.into(),
-                    max: readout(&track.max),
-                    avg: readout(&track.avg),
-                    min: readout(&track.min),
-                },
+                hardware_open: workspace.hardware.open,
             });
+            let current = state.get_tracks();
+            let tracks: Vec<_> = workspace
+                .tracks
+                .iter()
+                .enumerate()
+                .map(|(index, track)| track_view(current.row_data(index), track))
+                .collect();
+            if let Some(model) = update_in_place(&current, tracks, PartialEq::eq) {
+                state.set_tracks(model);
+            }
+            let ranges: Vec<_> = TelemetryRange::ALL
+                .into_iter()
+                .map(|range| SegmentView {
+                    text: range.label().into(),
+                    label: range.command().into(),
+                    selected: range == workspace.range,
+                })
+                .collect();
+            if let Some(model) = update_in_place(&state.get_ranges(), ranges, PartialEq::eq) {
+                state.set_ranges(model);
+            }
+            if let Some(model) = update_in_place(
+                &state.get_hardware_inventory(),
+                facts(&workspace.hardware.inventory),
+                PartialEq::eq,
+            ) {
+                state.set_hardware_inventory(model);
+            }
+            if let Some(model) = update_in_place(
+                &state.get_hardware_capabilities(),
+                facts(&workspace.hardware.capabilities),
+                PartialEq::eq,
+            ) {
+                state.set_hardware_capabilities(model);
+            }
             ContentKind::Gpu
         }
         Content::Section(CoreSection::Games) => ContentKind::Games,
@@ -120,15 +148,11 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     ) {
         state.set_daemon_commands(model);
     }
-    let facts: Vec<_> = daemon
-        .facts
-        .iter()
-        .map(|fact| FactView {
-            label: fact.label.as_str().into(),
-            value: fact.value.as_str().into(),
-        })
-        .collect();
-    if let Some(model) = update_in_place(&state.get_daemon_facts(), facts, PartialEq::eq) {
+    if let Some(model) = update_in_place(
+        &state.get_daemon_facts(),
+        facts(&daemon.facts),
+        PartialEq::eq,
+    ) {
         state.set_daemon_facts(model);
     }
 
@@ -163,6 +187,91 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     state.set_telemetry(status.telemetry.into());
     // Slint's int is 32 bits; wrapping still changes the value on every input.
     state.set_revision(core.revision() as i32);
+}
+
+/// A track as the view shows it. Its details and charts go into the models `current` has, if any,
+/// so Slint keeps their elements.
+fn track_view(current: Option<TrackView>, track: &Track) -> TrackView {
+    let details = track
+        .details
+        .iter()
+        .map(|detail| DetailView {
+            label: detail.label.as_str().into(),
+            name: detail.name.as_str().into(),
+            readout: readout(&detail.readout),
+            unknown_reason: detail.unknown_reason.as_deref().unwrap_or_default().into(),
+            mark: match detail.limit {
+                None => LimitMark::None,
+                Some(LimitKind::Configured) => LimitMark::Solid,
+                Some(LimitKind::Enforced) => LimitMark::Dashed,
+            },
+        })
+        .collect();
+    let charts = track
+        .charts
+        .iter()
+        .map(|chart| {
+            let draws = |kind| chart.limits.iter().any(|limit| limit.kind == kind);
+            ChartView {
+                id: chart_id(chart.metric),
+                label: chart.label.unwrap_or_default().into(),
+                area: chart.metric == Metric::Utilization,
+                limit: draws(LimitKind::Configured),
+                enforced_limit: draws(LimitKind::Enforced),
+            }
+        })
+        .collect();
+    let [max_label, avg_label, min_label] = track.statistic_labels().map(SharedString::from);
+    TrackView {
+        name: track.kind.name().into(),
+        label: track.kind.name().to_uppercase().into(),
+        readout: readout(&track.readout),
+        readout_label: track.readout_label().into(),
+        unknown_reason: track.unknown_reason.as_deref().unwrap_or_default().into(),
+        details: reuse(
+            current.as_ref().map(|current| current.details.clone()),
+            details,
+        ),
+        charts: reuse(current.map(|current| current.charts), charts),
+        range: track.range.into(),
+        max: readout(&track.max),
+        avg: readout(&track.avg),
+        min: readout(&track.min),
+        max_label,
+        avg_label,
+        min_label,
+    }
+}
+
+/// The chart the view asks to draw `metric` in.
+fn chart_id(metric: Metric) -> ChartId {
+    match metric {
+        Metric::Temperature => ChartId::Temperature,
+        Metric::Utilization => ChartId::Utilization,
+        Metric::PowerDraw => ChartId::PowerDraw,
+        Metric::GraphicsClock => ChartId::GraphicsClock,
+        Metric::MemoryClock => ChartId::MemoryClock,
+        Metric::FanSpeed => ChartId::FanSpeed,
+    }
+}
+
+fn facts(facts: &[Fact]) -> Vec<FactView> {
+    facts
+        .iter()
+        .map(|fact| FactView {
+            label: fact.label.as_str().into(),
+            value: fact.value.as_str().into(),
+        })
+        .collect()
+}
+
+/// `rows` in `model`, updated in place, when there is one this module made; otherwise in a new
+/// model.
+fn reuse<T: Clone + PartialEq + 'static>(model: Option<ModelRc<T>>, rows: Vec<T>) -> ModelRc<T> {
+    match model {
+        Some(model) => update_in_place(&model, rows, PartialEq::eq).unwrap_or(model),
+        None => ModelRc::new(VecModel::from(rows)),
+    }
 }
 
 /// Updates the rows of a model this module made, so Slint keeps the elements built for unchanged

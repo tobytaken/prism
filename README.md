@@ -1,6 +1,6 @@
 # Prism
 
-Prism is a Linux GPU control center for watching, tuning and managing NVIDIA GPUs and their drivers. It is being rewritten as a native Rust GUI built with Slint ([ADR 0007](docs/adr/0007-native-rust-gui.md), [ADR 0008](docs/adr/0008-slint-gui-toolkit.md), [#120](https://github.com/tobytaken/prism-electron/issues/120)). The Electron app has been removed. The native GUI is a walking skeleton so far: a window with live GPU vitals and a Temperature track.
+Prism is a Linux GPU control center for watching, tuning and managing NVIDIA GPUs and their drivers. It is being rewritten as a native Rust GUI built with Slint ([ADR 0007](docs/adr/0007-native-rust-gui.md), [ADR 0008](docs/adr/0008-slint-gui-toolkit.md), [#120](https://github.com/tobytaken/prism-electron/issues/120)). The Electron app has been removed. The native GUI monitors so far: live GPU vitals in the sidebar, and a GPU workspace with five tracks (Temperature, Utilization, Power, Clocks and Fans), a range picker and hardware details. Tuning comes next.
 
 Prism is licensed under the GNU General Public License, version 3 or later (`GPL-3.0-or-later`); see [`LICENSE`](./LICENSE).
 

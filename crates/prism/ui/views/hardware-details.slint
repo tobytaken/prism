@@ -1,0 +1,107 @@
+import { Theme } from "../theme.slint";
+import { Divider, Fact, PressArea, StyledText } from "../widgets.slint";
+import { AppState, FactView, Intents } from "../state.slint";
+
+// The row that opens and collapses the hardware details: a marker that points right while they're
+// collapsed and down while they're open, then the label.
+component Disclosure inherits Rectangle {
+    in property <bool> open;
+    in property <string> text;
+    callback activated();
+
+    accessible-role: button;
+    accessible-label: text;
+    accessible-expandable: true;
+    accessible-expanded: open;
+    accessible-action-default => {
+        root.activated();
+    }
+    forward-focus: press;
+    height: Theme.size.notice;
+    background: press.has-hover ? Theme.color.hover : transparent;
+
+    press := PressArea {
+        activated => {
+            root.activated();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space.xxl;
+        padding-right: Theme.space.xxl;
+        spacing: Theme.space.m;
+        alignment: start;
+
+        Path {
+            width: Theme.size.disclosure-icon;
+            height: Theme.size.disclosure-icon;
+            y: (parent.height - self.height) / 2;
+            viewbox-width: 8;
+            viewbox-height: 8;
+            commands: root.open ? "M0 2 L8 2 L4 7 Z" : "M2 0 L7 4 L2 8 Z";
+            fill: Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        StyledText {
+            text: root.text.to-uppercase();
+            style: Theme.text.label;
+            color: press.has-hover ? Theme.color.ink : Theme.color.ink-muted;
+            accessible-role: none;
+        }
+    }
+}
+
+// A column of facts under its heading.
+component FactColumn inherits VerticalLayout {
+    in property <string> heading;
+    in property <[FactView]> facts;
+
+    spacing: Theme.space.xs;
+    alignment: start;
+    horizontal-stretch: 1;
+
+    StyledText {
+        text: root.heading;
+        style: Theme.text.label;
+        color: Theme.color.ink-muted;
+        accessible-role: none;
+    }
+
+    for fact in root.facts: Fact {
+        label-width: Theme.size.hardware-fact-label;
+        label: fact.label;
+        value: fact.value;
+    }
+}
+
+// The GPU's hardware details, collapsed at the bottom of the workspace until opened: its entry in
+// the GPU inventory beside its GPU control capabilities.
+export component HardwareDetails inherits VerticalLayout {
+    in property <bool> open;
+
+    Disclosure {
+        text: "Hardware details";
+        open: root.open;
+        activated => {
+            Intents.toggle-hardware-details();
+        }
+    }
+
+    if root.open: HorizontalLayout {
+        padding-left: Theme.space.xxl;
+        padding-right: Theme.space.xxl;
+        padding-bottom: Theme.space.xl;
+        spacing: Theme.space.xxl;
+
+        FactColumn {
+            heading: "INVENTORY";
+            facts: AppState.hardware-inventory;
+        }
+
+        FactColumn {
+            heading: "CONTROL CAPABILITIES";
+            facts: AppState.hardware-capabilities;
+        }
+    }
+}

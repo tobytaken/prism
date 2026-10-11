@@ -6,15 +6,16 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use slint::{CloseRequestResponse, ComponentHandle, PlatformError, TimerMode};
+use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, TimerMode};
 
+use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
     Content, Core, Effect, Input, Intent, Key, PrismdHost, Section as CoreSection,
     ServiceAction as CoreServiceAction, ServiceOutcome, SettingsSection as CoreSettingsSection,
-    Shortcut, TelemetrySource, Timer,
+    Shortcut, TelemetrySource, Timer, TrackChart,
 };
 
-use crate::chart::series_commands;
+use crate::chart::{area_commands, limit_commands, series_commands};
 use crate::environment::{Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
 use crate::notifications::{NotificationEvent, Notifier};
 use crate::prismd::{PrismdConnector, PrismdReport};
@@ -23,7 +24,8 @@ use crate::sampler::{Sampler, SamplerReading, SamplerSwitch};
 use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{
-    AppState, Inbox, Intents, KeyPress, MainWindow, Section, ServiceAction, SettingsSection,
+    AppState, ChartId, ChartPart, Inbox, Intents, KeyPress, MainWindow, Section, ServiceAction,
+    SettingsSection,
 };
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
@@ -49,6 +51,9 @@ struct Inner {
     notifier: Box<dyn Notifier>,
     /// The core's timers, made the first time each starts.
     timers: RefCell<HashMap<Timer, slint::Timer>>,
+    /// The selected GPU's charts as of the core revision they were made at, so drawing every part
+    /// of every chart derives them once.
+    charts: RefCell<Option<(u64, Vec<TrackChart>)>>,
     /// What other threads posted for the UI thread.
     inbox: Receiver<Posted>,
     outbox: Sender<Posted>,
@@ -106,6 +111,7 @@ impl App {
             activation,
             notifier,
             timers: RefCell::default(),
+            charts: RefCell::default(),
             inbox,
             outbox,
         });
@@ -181,17 +187,14 @@ impl Inner {
         let window = &this.window;
 
         let inner = Rc::downgrade(this);
-        window
-            .global::<AppState>()
-            .on_temperature_series(move |width, height, _revision| {
-                with_inner(&inner, |inner| match inner.core.borrow().content() {
-                    Content::Gpu(workspace) => {
-                        series_commands(&workspace.temperature.chart, width, height).into()
-                    }
-                    _ => Default::default(),
+        window.global::<AppState>().on_chart_path(
+            move |chart, part, width, height, dash, gap, _revision| {
+                with_inner(&inner, |inner| {
+                    inner.chart_path(chart, part, (width, height), (dash, gap))
                 })
                 .unwrap_or_default()
-            });
+            },
+        );
 
         let intents = window.global::<Intents>();
         let inner = Rc::downgrade(this);
@@ -252,6 +255,18 @@ impl Inner {
         intents.on_highlight_previous(to_core(Intent::HighlightPrevious));
         intents.on_run_highlighted(to_core(Intent::RunHighlighted));
         intents.on_dismiss(to_core(Intent::Dismiss));
+        intents.on_toggle_hardware_details(to_core(Intent::ToggleHardwareDetails));
+        let inner = Rc::downgrade(this);
+        intents.on_show_range(move |index| {
+            let range = usize::try_from(index)
+                .ok()
+                .and_then(|index| TelemetryRange::ALL.get(index));
+            if let Some(&range) = range {
+                with_inner(&inner, |inner| {
+                    inner.handle(Input::Intent(Intent::ShowRange(range)))
+                });
+            }
+        });
         let inner = Rc::downgrade(this);
         intents.on_filter_palette(move |query| {
             with_inner(&inner, |inner| {
@@ -296,6 +311,62 @@ impl Inner {
         window.global::<Inbox>().on_inputs_posted(move || {
             with_inner(&inner, Inner::receive_posted);
         });
+    }
+
+    /// A part of the selected GPU's chart as path commands for a chart `size` pixels, with
+    /// `dashes` (dash and gap lengths) where the part is dashed.
+    fn chart_path(
+        &self,
+        chart: ChartId,
+        part: ChartPart,
+        (width, height): (f32, f32),
+        dashes: (f32, f32),
+    ) -> SharedString {
+        let metric = match chart {
+            ChartId::Temperature => Metric::Temperature,
+            ChartId::Utilization => Metric::Utilization,
+            ChartId::PowerDraw => Metric::PowerDraw,
+            ChartId::GraphicsClock => Metric::GraphicsClock,
+            ChartId::MemoryClock => Metric::MemoryClock,
+            ChartId::FanSpeed => Metric::FanSpeed,
+        };
+        let revision = self.core.borrow().revision();
+        let mut charts = self.charts.borrow_mut();
+        if charts
+            .as_ref()
+            .is_none_or(|(made_at, _)| *made_at != revision)
+        {
+            let made = match self.core.borrow().content() {
+                Content::Gpu(workspace) => workspace
+                    .tracks
+                    .into_iter()
+                    .flat_map(|track| track.charts)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            *charts = Some((revision, made));
+        }
+        let Some(chart) = charts
+            .as_ref()
+            .and_then(|(_, charts)| charts.iter().find(|chart| chart.metric == metric))
+        else {
+            return SharedString::default();
+        };
+        let limit = |kind, dashes| {
+            chart
+                .limits
+                .iter()
+                .find(|limit| limit.kind == kind)
+                .map(|limit| limit_commands(limit.y, width, height, dashes))
+                .unwrap_or_default()
+        };
+        match part {
+            ChartPart::Series => series_commands(&chart.chart, width, height),
+            ChartPart::Area => area_commands(&chart.chart, width, height),
+            ChartPart::Limit => limit(LimitKind::Configured, None),
+            ChartPart::EnforcedLimit => limit(LimitKind::Enforced, Some(dashes)),
+        }
+        .into()
     }
 
     /// Runs the global shortcut `key` presses, if any, and says whether the key was spoken for.

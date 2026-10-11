@@ -17,7 +17,7 @@ pub enum TuningAccess {
 }
 
 /// Chart parts carry no role; the track's readout carries the value.
-const CHART_PARTS: &[&str] = &["Grid", "Series"];
+pub const CHART_PARTS: &[&str] = &["Grid", "Series", "Area", "LimitLine"];
 
 /// What one element declares to assistive technology.
 #[derive(Debug, Clone, Default)]

@@ -24,8 +24,8 @@ use prism::{
 };
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{
-    GpuInventoryProvider, GpuInventoryResponse, GpuPerformanceResponse, GpuProviders,
-    GpuTelemetryProvider,
+    GpuInventoryProvider, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
+    GpuProviders, GpuTelemetryProvider,
 };
 
 use self::prismd::{DaemonState, FakeHost, FakePrismd};
@@ -255,6 +255,32 @@ impl Harness {
 
     /// Prism on the tunable fixture with its temperature sensor gone.
     pub fn without_temperature() -> Self {
+        Self::with_changed_readings(|gpu| gpu.telemetry.temperature_c = None)
+    }
+
+    /// Prism on the tunable fixture with every reading and current tuning value gone.
+    pub fn without_readings() -> Self {
+        Self::with_changed_readings(|gpu| {
+            let telemetry = &mut gpu.telemetry;
+            telemetry.temperature_c = None;
+            telemetry.gpu_utilization_percent = None;
+            telemetry.power_draw_watts = None;
+            telemetry.core_clock_mhz = None;
+            telemetry.memory_clock_mhz = None;
+            telemetry.fan_speed_percent = None;
+            gpu.power.current_draw_watts = None;
+            gpu.power.current_limit_watts = None;
+            gpu.power.enforced_limit_watts = None;
+            gpu.clocks.graphics.current_offset_mhz = None;
+            gpu.clocks.memory.current_offset_mhz = None;
+            for fan in &mut gpu.cooling.fans {
+                fan.current_speed_percent = None;
+            }
+        })
+    }
+
+    /// Prism on the tunable fixture, with each of its GPUs' readings changed by `change`.
+    fn with_changed_readings(change: fn(&mut GpuPerformanceDevice)) -> Self {
         Self::with_gpus(AppearanceMode::Light, |clock| {
             let tunable = || {
                 let clock = clock.clone();
@@ -262,7 +288,7 @@ impl Harness {
             };
             GpuProviders::empty()
                 .with_inventory(tunable())
-                .with_telemetry(WithoutTemperature(tunable()))
+                .with_telemetry(ChangedReadings(tunable(), change))
         })
     }
 
@@ -471,14 +497,14 @@ impl Harness {
     }
 }
 
-/// The tunable fixture's GPUs, with their temperature sensor gone.
-struct WithoutTemperature(SimulatedGpus);
+/// Simulated GPUs whose readings are changed before Prism gets them.
+struct ChangedReadings(SimulatedGpus, fn(&mut GpuPerformanceDevice));
 
-impl GpuTelemetryProvider for WithoutTemperature {
+impl GpuTelemetryProvider for ChangedReadings {
     fn performance(&self) -> GpuPerformanceResponse {
         let mut performance = self.0.performance();
         for gpu in &mut performance.gpus {
-            gpu.telemetry.temperature_c = None;
+            (self.1)(gpu);
         }
         performance
     }

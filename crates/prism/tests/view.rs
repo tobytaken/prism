@@ -14,7 +14,7 @@ use AccessibleRole::{Button, Groupbox, List, ListItem, Text};
 const TUNABLE_GPU: &str = "GPU 0 · RTX 5090 · 01:00.0";
 
 #[test]
-fn prism_opens_with_its_title_bar_sidebar_temperature_track_and_status_bar() {
+fn prism_opens_with_its_title_bar_sidebar_workspace_and_status_bar() {
     let harness = Harness::new(SimulatedFixture::TunableGpu);
     harness.tick();
 
@@ -25,7 +25,9 @@ fn prism_opens_with_its_title_bar_sidebar_temperature_track_and_status_bar() {
     harness.find(List, "GPUs");
     harness.find(ListItem, TUNABLE_GPU);
     harness.find(Text, "NVIDIA GeForce RTX 5090");
-    harness.find(Groupbox, "Temperature");
+    for track in ["Temperature", "Utilization", "Power", "Clocks", "Fans"] {
+        harness.find(Groupbox, track);
+    }
     for section in ["Games", "Drivers", "Settings"] {
         harness.find(ListItem, section);
     }
@@ -91,8 +93,10 @@ fn the_temperature_track_shows_the_reading_its_chart_and_range_statistics() {
         );
     }
     assert_eq!(
-        harness.find(Text, "Range").accessible_value().as_deref(),
-        Some("5 m")
+        harness
+            .find(Button, "Show last 5 minutes")
+            .accessible_checked(),
+        Some(true)
     );
     assert!(
         ElementHandle::find_by_element_type_name(harness.app.window(), "Series")

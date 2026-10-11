@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use prism_gpu::GpuInventoryProvider;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
+use prism_ui::telemetry::TelemetryRange;
 use prism_ui::{
     AppearanceMode, Content, Core, Effect, Input, Intent, Key, PaletteEntry, Section, Shortcut,
 };
@@ -67,7 +68,7 @@ fn selected_gpu(core: &Core) -> Option<String> {
 }
 
 #[test]
-fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_and_quit() {
+fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_ranges_and_quit() {
     let mut core = launched(SimulatedFixture::TwoIdenticalGpus);
     assert!(core.palette().is_none());
 
@@ -88,6 +89,10 @@ fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_and_quit
             "Go to Settings: Notifications",
             "Go to Settings: Daemon",
             "Go to Settings: About",
+            "Show last 1 minute",
+            "Show last 5 minutes",
+            "Show last 15 minutes",
+            "Show last 1 hour",
             "Quit Prism",
         ]
     );
@@ -111,6 +116,10 @@ fn each_command_shows_its_shortcut() {
             "Ctrl+Shift+G",
             "Ctrl+Shift+D",
             "Ctrl+,",
+            "",
+            "",
+            "",
+            "",
             "",
             "",
             "",
@@ -269,6 +278,10 @@ fn recently_run_commands_come_first() {
             "Go to Settings: Notifications",
             "Go to Settings: Daemon",
             "Go to Settings: About",
+            "Show last 1 minute",
+            "Show last 5 minutes",
+            "Show last 15 minutes",
+            "Show last 1 hour",
             "Quit Prism",
         ]
     );
@@ -290,7 +303,7 @@ fn recently_run_commands_come_first() {
 }
 
 #[test]
-fn gpu_commands_are_left_out_when_the_host_has_no_gpus() {
+fn gpu_and_range_commands_are_left_out_when_the_host_has_no_gpus() {
     let mut core = launched(SimulatedFixture::NvmlMissing);
 
     intent(&mut core, Intent::OpenPalette);
@@ -322,7 +335,32 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 11);
+    assert_eq!(titles(&core).len(), 15);
+}
+
+#[test]
+fn a_range_command_shows_its_range_unless_it_is_already_shown() {
+    let mut core = launched(SimulatedFixture::TwoIdenticalGpus);
+    intent(&mut core, Intent::OpenPalette);
+    assert_eq!(
+        entry(&core, "Show last 5 minutes").unavailable.as_deref(),
+        Some("Already shown")
+    );
+
+    intent(&mut core, Intent::FilterPalette("last hour".into()));
+    intent(&mut core, Intent::RunHighlighted);
+
+    let Content::Gpu(workspace) = core.content() else {
+        panic!("expected the GPU workspace");
+    };
+    assert_eq!(workspace.range, TelemetryRange::OneHour);
+    assert!(core.palette().is_none());
+    intent(&mut core, Intent::OpenPalette);
+    assert_eq!(entry(&core, "Show last 5 minutes").unavailable, None);
+    assert_eq!(
+        entry(&core, "Show last 1 hour").unavailable.as_deref(),
+        Some("Already shown")
+    );
 }
 
 fn key(text: &str) -> Key {

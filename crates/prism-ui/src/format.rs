@@ -25,11 +25,24 @@ impl Readout {
         Self::new(value, "W")
     }
 
+    pub fn megahertz(value: Option<u32>) -> Self {
+        Self::new(value, "MHz")
+    }
+
+    /// A clock offset, signed so a raise reads "+150 MHz" and a cut "-500 MHz".
+    pub fn offset_megahertz(value: Option<i32>) -> Self {
+        Self::shown(value.map(signed), "MHz")
+    }
+
     fn new(value: Option<u32>, unit: &'static str) -> Self {
+        Self::shown(value.map(|value| value.to_string()), unit)
+    }
+
+    fn shown(value: Option<String>, unit: &'static str) -> Self {
         Self {
-            value: value.map_or_else(|| UNKNOWN.into(), |value| value.to_string()),
-            unit,
             known: value.is_some(),
+            value: value.unwrap_or_else(|| UNKNOWN.into()),
+            unit,
         }
     }
 
@@ -53,6 +66,15 @@ impl Readout {
         } else {
             "unknown".into()
         }
+    }
+}
+
+/// A signed number with its sign, such as "+150", "0" or "-500".
+pub fn signed(value: i32) -> String {
+    if value > 0 {
+        format!("+{value}")
+    } else {
+        value.to_string()
     }
 }
 
@@ -80,6 +102,15 @@ mod tests {
         assert_eq!(Readout::percent(Some(96)).text(), "96%");
         assert_eq!(Readout::watts(Some(312)).text(), "312 W");
         assert_eq!(Readout::celsius(Some(0)).text(), "0 °C");
+        assert_eq!(Readout::megahertz(Some(2_790)).text(), "2790 MHz");
+    }
+
+    #[test]
+    fn offsets_show_their_sign() {
+        assert_eq!(Readout::offset_megahertz(Some(150)).text(), "+150 MHz");
+        assert_eq!(Readout::offset_megahertz(Some(0)).text(), "0 MHz");
+        assert_eq!(Readout::offset_megahertz(Some(-500)).text(), "-500 MHz");
+        assert_eq!(Readout::offset_megahertz(None).text(), "—");
     }
 
     #[test]
