@@ -42,13 +42,16 @@ enum Call {
 struct FakeServer {
     calls: Sender<Call>,
     last: u32,
+    /// Whether the user clicks each notification before the server has even answered `Notify`.
+    click_at_once: bool,
 }
 
 #[zbus::interface(name = "org.freedesktop.Notifications")]
 impl FakeServer {
     #[allow(clippy::too_many_arguments)]
-    fn notify(
+    async fn notify(
         &mut self,
+        #[zbus(connection)] connection: &zbus::Connection,
         app_name: String,
         replaces_id: u32,
         app_icon: String,
@@ -78,6 +81,36 @@ impl FakeServer {
             actions,
             desktop_entry,
         }));
+        if self.click_at_once {
+            // A click, as GNOME sends it: the token, the action, then the closing.
+            let _ = connection
+                .emit_signal(
+                    None::<()>,
+                    PATH,
+                    INTERFACE,
+                    "ActivationToken",
+                    &(id, "early"),
+                )
+                .await;
+            let _ = connection
+                .emit_signal(
+                    None::<()>,
+                    PATH,
+                    INTERFACE,
+                    "ActionInvoked",
+                    &(id, "default"),
+                )
+                .await;
+            let _ = connection
+                .emit_signal(
+                    None::<()>,
+                    PATH,
+                    INTERFACE,
+                    "NotificationClosed",
+                    &(id, 2u32),
+                )
+                .await;
+        }
         id
     }
 
@@ -94,7 +127,8 @@ struct Desktop {
     _bus: PrivateBus,
     server: Connection,
     calls: Receiver<Call>,
-    notifier: DesktopNotifier,
+    /// Until Prism quits.
+    notifier: Option<DesktopNotifier>,
     /// The notifier's unique name, for signals the server sends only to it.
     notifier_name: String,
     events: Receiver<NotificationEvent>,
@@ -102,6 +136,15 @@ struct Desktop {
 
 impl Desktop {
     fn start() -> Self {
+        Self::with_server(false)
+    }
+
+    /// With a server on which the user clicks each notification before it has even answered.
+    fn clicking_at_once() -> Self {
+        Self::with_server(true)
+    }
+
+    fn with_server(click_at_once: bool) -> Self {
         let bus = PrivateBus::start();
         let server = bus.connect();
         let (sender, calls) = mpsc::channel();
@@ -112,15 +155,16 @@ impl Desktop {
                 FakeServer {
                     calls: sender,
                     last: 0,
+                    click_at_once,
                 },
             )
             .unwrap();
         server.request_name(INTERFACE).unwrap();
         let connection = bus.connect();
         let notifier_name = connection.unique_name().unwrap().to_string();
-        let notifier = DesktopNotifier::on(connection);
+        let notifier = Some(DesktopNotifier::with_connection(connection));
         let (sender, events) = mpsc::channel();
-        notifier.listen(Box::new(move |event| {
+        notifier.as_ref().unwrap().listen(Box::new(move |event| {
             let _ = sender.send(event);
         }));
         Self {
@@ -139,9 +183,13 @@ impl Desktop {
             .expect("the server was called")
     }
 
+    fn notifier(&self) -> &DesktopNotifier {
+        self.notifier.as_ref().expect("Prism is running")
+    }
+
     /// Sends `notification` and waits for the server to show it.
     fn show(&self, notification: Notification) -> Shown {
-        self.notifier.notify(notification);
+        self.notifier().notify(notification);
         match self.call() {
             Call::Notify(shown) => shown,
             other => panic!("expected Notify, got {other:?}"),
@@ -283,7 +331,7 @@ fn withdrawing_closes_the_notification_on_the_server() {
     let desktop = Desktop::start();
     let shown = desktop.show(notification(1, None));
 
-    desktop.notifier.withdraw(NotificationId(1));
+    desktop.notifier().withdraw(NotificationId(1));
 
     assert!(matches!(desktop.call(), Call::Close(id) if id == shown.id));
     // Prism withdrew it, so it needn't hear that it closed.
@@ -300,4 +348,32 @@ fn other_apps_notifications_are_none_of_prisms_business() {
     desktop.signal(false, "NotificationClosed", &(shown.id + 1, 2u32));
 
     desktop.no_event();
+}
+
+#[test]
+fn a_click_that_overtakes_the_servers_answer_keeps_its_token() {
+    let desktop = Desktop::clicking_at_once();
+
+    desktop.show(notification(1, None));
+
+    assert_eq!(
+        desktop.event(),
+        NotificationEvent::Clicked {
+            id: NotificationId(1),
+            activation_token: Some("early".into()),
+        }
+    );
+    desktop.no_event();
+}
+
+#[test]
+fn withdrawals_queued_as_prism_quits_still_reach_the_server() {
+    let mut desktop = Desktop::start();
+    let shown = desktop.show(notification(1, None));
+
+    let notifier = desktop.notifier.take().unwrap();
+    notifier.withdraw(NotificationId(1));
+    drop(notifier);
+
+    assert!(matches!(desktop.calls.try_recv(), Ok(Call::Close(id)) if id == shown.id));
 }

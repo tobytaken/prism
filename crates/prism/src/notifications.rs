@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use prism_ui::{Notification, NotificationId};
 use zbus::blocking::{Connection, MessageIterator};
@@ -53,6 +53,7 @@ const DEFAULT_ACTION: &str = "default";
 pub struct DesktopNotifier {
     commands: Sender<Command>,
     state: Arc<Mutex<State>>,
+    worker: Option<JoinHandle<()>>,
 }
 
 enum Command {
@@ -88,7 +89,7 @@ impl DesktopNotifier {
     }
 
     /// On `connection`, a connection to the session bus.
-    pub fn on(connection: Connection) -> Self {
+    pub fn with_connection(connection: Connection) -> Self {
         Self::connecting(move || Ok(connection))
     }
 
@@ -96,17 +97,32 @@ impl DesktopNotifier {
         let (commands, received) = mpsc::channel();
         let state = Arc::<Mutex<State>>::default();
         let shared = state.clone();
-        let started = thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("prism-notifications".into())
             .spawn(move || {
                 if let Err(error) = serve(connect, &received, &shared) {
                     eprintln!("prism: can't send desktop notifications: {error}");
                 }
-            });
-        if let Err(error) = started {
-            eprintln!("prism: can't send desktop notifications: {error}");
+            })
+            .inspect_err(|error| eprintln!("prism: can't send desktop notifications: {error}"))
+            .ok();
+        Self {
+            commands,
+            state,
+            worker,
         }
-        Self { commands, state }
+    }
+}
+
+impl Drop for DesktopNotifier {
+    /// Waits for what's queued, such as the withdrawals as Prism quits, so no notification
+    /// outlives Prism.
+    fn drop(&mut self) {
+        // Hanging up ends the worker once it has done the rest.
+        self.commands = mpsc::channel().0;
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -170,7 +186,7 @@ fn notify(
         state.notifying = true;
         notification
             .replaces
-            .and_then(|replaced| state.sent.remove(&replaced))
+            .and_then(|replaced| state.sent.get(&replaced).copied())
             .unwrap_or(0)
     };
     let hints = HashMap::from([("desktop-entry", Value::from(APP_ID))]);
@@ -196,14 +212,22 @@ fn notify(
     let mut state = lock(state);
     state.notifying = false;
     let early = std::mem::take(&mut state.early);
-    let server_id = answer?;
-    state.sent.insert(notification.id, server_id);
-    let ended = early
-        .into_iter()
-        .find(|(early, _)| *early == server_id)
-        .and_then(|(_, ending)| state.end(server_id, ending));
+    // The one replaced stays Prism's until the server has shown this one in its place.
+    let ended = answer.as_ref().ok().and_then(|&server_id| {
+        if let Some(replaced) = notification.replaces {
+            state.sent.remove(&replaced);
+        }
+        state.sent.insert(notification.id, server_id);
+        let (_, ending) = early.iter().find(|(early, _)| *early == server_id)?;
+        state.end(server_id, *ending)
+    });
+    for (server_id, ending) in early {
+        if matches!(ending, Ending::Closed) {
+            state.tokens.remove(&server_id);
+        }
+    }
     tell(state, ended);
-    Ok(())
+    answer.map(drop)
 }
 
 fn withdraw(connection: &Connection, state: &Mutex<State>, id: NotificationId) -> zbus::Result<()> {
@@ -247,9 +271,9 @@ fn take_signal(state: &Mutex<State>, message: &Message) {
     let mut state = lock(state);
     let ended = state.end(server_id, ending);
     if ended.is_none() && state.notifying {
+        // Its token waits with it.
         state.early.push((server_id, ending));
-    }
-    if matches!(ending, Ending::Closed) {
+    } else if matches!(ending, Ending::Closed) {
         state.tokens.remove(&server_id);
     }
     tell(state, ended);

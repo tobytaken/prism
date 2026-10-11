@@ -372,7 +372,7 @@ pub struct Core {
     /// Whether the in-process sampler is reading.
     sampling: bool,
     /// A session ended and hasn't come back, and Prism hasn't notified about it yet.
-    connection_lost: bool,
+    lost_unnotified: bool,
     notifications: Notifications,
     revision: u64,
 }
@@ -459,7 +459,7 @@ impl Core {
                 if std::mem::take(&mut self.sampling) {
                     effects.push(Effect::StopSampler);
                 }
-                if std::mem::take(&mut self.connection_lost) {
+                if std::mem::take(&mut self.lost_unnotified) {
                     effects.push(Effect::StopTimer(Timer::ConnectionLost));
                 }
                 // What it said no longer holds.
@@ -485,7 +485,7 @@ impl Core {
                 }
                 if lost {
                     // Only a connection still lost when this runs out is worth notifying about.
-                    self.connection_lost = true;
+                    self.lost_unnotified = true;
                     effects.push(Effect::StartTimer {
                         timer: Timer::ConnectionLost,
                         after: CONNECTION_LOST_GRACE,
@@ -551,7 +551,7 @@ impl Core {
             }
             Input::TimerElapsed(Timer::ConnectionLost) => {
                 // It may have run out on its way in, just as the session came back.
-                if !std::mem::take(&mut self.connection_lost) || self.connected() {
+                if !std::mem::take(&mut self.lost_unnotified) || self.connected() {
                     return Vec::new();
                 }
                 let body = format!(
