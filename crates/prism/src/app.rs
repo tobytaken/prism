@@ -13,7 +13,8 @@ use prism_ui::{
 
 use crate::chart::series_commands;
 use crate::environment::{Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
-use crate::sampler::{Sampler, SamplerReading};
+use crate::prismd::{PrismdConnector, PrismdReport};
+use crate::sampler::{Sampler, SamplerReading, SamplerSwitch};
 use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{AppState, Inbox, Intents, KeyPress, MainWindow, Section};
@@ -28,8 +29,11 @@ struct Inner {
     core: RefCell<Core>,
     clock: Arc<dyn Clock>,
     sampling: Sampling,
-    /// The sampler before it starts, and afterwards while sampling is on demand.
+    /// The sampler before its thread starts, and for good while sampling is on demand.
     sampler: RefCell<Option<Sampler>>,
+    /// Whether the core has the sampler reading.
+    sampler_switch: SamplerSwitch,
+    prismd: Box<dyn PrismdConnector>,
     /// Kept while Prism runs, since it holds the single-instance name.
     launches: Box<dyn Launches>,
     activation: Box<dyn WindowActivation>,
@@ -41,6 +45,8 @@ struct Inner {
 /// Something another thread posted for the UI thread.
 enum Posted {
     Reading(SamplerReading),
+    /// Boxed, since a snapshot is far larger than anything else posted.
+    Prismd(Box<PrismdReport>),
     /// Prism was launched again, with this activation token.
     LaunchedAgain(Option<String>),
 }
@@ -51,8 +57,7 @@ impl App {
     pub fn new(environment: Environment) -> Result<Self, PlatformError> {
         let Environment {
             gpus,
-            // Not used until the GUI connection lands (#120, step 7).
-            prismd: _,
+            prismd,
             host: HostServices {
                 launches,
                 activation,
@@ -71,6 +76,8 @@ impl App {
             clock,
             sampling,
             sampler: RefCell::new(Some(Sampler::new(gpus))),
+            sampler_switch: SamplerSwitch::default(),
+            prismd,
             launches,
             activation,
             inbox,
@@ -99,23 +106,26 @@ impl App {
     }
 
     /// Reads every GPU once on this thread and takes in the readings, as the sampler thread
-    /// would; only for [`Sampling::OnDemand`].
+    /// would, unless the core has sampling off; only for [`Sampling::OnDemand`].
     ///
     /// # Panics
     ///
-    /// When sampling isn't on demand, or the core hasn't started the sampler.
+    /// When sampling isn't on demand.
     pub fn sample_gpus(&self) {
         assert_eq!(
             self.inner.sampling,
             Sampling::OnDemand,
             "only on-demand sampling reads when asked"
         );
+        if !self.inner.sampler_switch.is_on() {
+            return;
+        }
         let readings = self
             .inner
             .sampler
             .borrow_mut()
             .as_mut()
-            .expect("the core started the sampler")
+            .expect("on demand, the sampler stays on the UI thread")
             .read();
         for reading in readings {
             self.inner.receive(Posted::Reading(reading));
@@ -282,13 +292,32 @@ impl Inner {
                 source: TelemetrySource::InProcess,
                 received_at: self.clock.now(),
             },
+            Posted::Prismd(report) => match *report {
+                PrismdReport::Connected { welcome, snapshot } => {
+                    Input::PrismdConnected { welcome, snapshot }
+                }
+                PrismdReport::NotConnected(reason) => Input::PrismdNotConnected(reason),
+                PrismdReport::Event(event) => Input::PrismdEvent {
+                    event,
+                    received_at: self.clock.now(),
+                },
+            },
             Posted::LaunchedAgain(activation_token) => Input::LaunchedAgain { activation_token },
         });
     }
 
     fn perform(&self, effect: Effect) {
         match effect {
+            Effect::ConnectPrismd => {
+                let outbox = self.outbox.clone();
+                let window = self.window.as_weak();
+                self.prismd.start(Box::new(move |report| {
+                    outbox.send(Posted::Prismd(Box::new(report))).is_ok() && wake(&window)
+                }));
+            }
+            Effect::SendToPrismd(request) => self.prismd.send(request),
             Effect::StartSampler => self.start_sampler(),
+            Effect::StopSampler => self.sampler_switch.set(false),
             Effect::RaiseWindow { activation_token } => {
                 let window = self.window.window();
                 window.set_minimized(false);
@@ -306,7 +335,9 @@ impl Inner {
         }
     }
 
+    /// Turns the sampler on, starting its thread the first time.
     fn start_sampler(&self) {
+        self.sampler_switch.set(true);
         let Sampling::Every(interval) = self.sampling else {
             // On demand, the sampler stays here for `App::sample_gpus`.
             return;
@@ -316,7 +347,7 @@ impl Inner {
         };
         let outbox = self.outbox.clone();
         let window = self.window.as_weak();
-        let started = sampler.spawn(interval, move |reading| {
+        let started = sampler.spawn(interval, self.sampler_switch.clone(), move |reading| {
             outbox.send(Posted::Reading(reading)).is_ok() && wake(&window)
         });
         if let Err(error) = started {

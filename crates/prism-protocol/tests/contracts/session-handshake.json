@@ -1,0 +1,45 @@
+{
+  "hello": {
+    "id": 0,
+    "request": {
+      "type": "hello",
+      "payload": {
+        "protocol": "0.1",
+        "prism_version": "0.1.0"
+      }
+    }
+  },
+  "welcome": {
+    "type": "response",
+    "id": 0,
+    "response": {
+      "type": "welcome",
+      "payload": {
+        "protocol": "0.1",
+        "prismd_version": "0.1.0",
+        "can_tune": true
+      }
+    }
+  },
+  "incompatible": {
+    "type": "response",
+    "id": 0,
+    "response": {
+      "type": "incompatible",
+      "payload": {
+        "protocol": "0.1",
+        "prismd_version": "0.1.0"
+      }
+    }
+  },
+  "unsupported": {
+    "type": "response",
+    "id": 7,
+    "response": {
+      "type": "unsupported",
+      "payload": {
+        "message": "unknown variant `get_performance`, expected one of `hello`, `set_edit_holds`"
+      }
+    }
+  }
+}

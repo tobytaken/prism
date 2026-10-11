@@ -1,26 +1,30 @@
-//! The app harness: the real window and glue on simulated GPUs, a fixed clock and fake settings,
-//! under Slint's testing backend with no display.
+//! The app harness: the real window and glue on simulated GPUs, a fake prismd connection, a
+//! fixed clock and fake settings, under Slint's testing backend with no display.
 
 // Each test binary uses part of the harness.
 #![allow(dead_code)]
 
 pub mod audit;
+pub mod prismd;
 pub mod screenshot;
 
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
 use prism::settings::{GuiSettings, SettingsStore};
-use prism::{
-    App, Clock, Environment, HostServices, Launches, PrismdConnector, Sampling, WindowActivation,
-};
+use prism::{App, Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
-use prism_gpu::{GpuPerformanceResponse, GpuProviders, GpuTelemetryProvider};
+use prism_gpu::{
+    GpuInventoryProvider, GpuInventoryResponse, GpuPerformanceResponse, GpuProviders,
+    GpuTelemetryProvider,
+};
+
+use self::prismd::{DaemonState, FakePrismd};
 use prism_ui::AppearanceMode;
 use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
@@ -106,23 +110,26 @@ pub struct Harness {
     pub app: App,
     pub launches: FakeLaunches,
     pub activation: RecordedActivation,
+    pub prismd: FakePrismd,
     clock: Arc<ManualClock>,
+    /// How often Prism read the GPUs in-process.
+    in_process_reads: Arc<AtomicUsize>,
 }
 
 impl Harness {
-    /// Prism on `fixture` in Light: the testing backend reports no system color scheme, so tests
-    /// pin the appearance.
+    /// Prism on `fixture` in Light, with prismd not running: the testing backend reports no
+    /// system color scheme, so tests pin the appearance.
     pub fn new(fixture: SimulatedFixture) -> Self {
         Self::with_appearance(fixture, AppearanceMode::Light)
     }
 
+    /// Prism on `fixture` in Light, with prismd in `daemon` from the start.
+    pub fn with_daemon(fixture: SimulatedFixture, daemon: DaemonState) -> Self {
+        Self::build(AppearanceMode::Light, daemon, simulated(fixture))
+    }
+
     pub fn with_appearance(fixture: SimulatedFixture, appearance: AppearanceMode) -> Self {
-        Self::with_gpus(appearance, |clock| {
-            let gpus = Arc::new(SimulatedGpus::new(fixture, move || clock.now()));
-            GpuProviders::empty()
-                .with_inventory(gpus.clone())
-                .with_telemetry(gpus)
-        })
+        Self::build(appearance, DaemonState::NotRunning, simulated(fixture))
     }
 
     /// Prism on the tunable fixture with its temperature sensor gone.
@@ -143,13 +150,29 @@ impl Harness {
         appearance: AppearanceMode,
         gpus: impl FnOnce(Arc<ManualClock>) -> GpuProviders,
     ) -> Self {
+        Self::build(appearance, DaemonState::NotRunning, gpus)
+    }
+
+    fn build(
+        appearance: AppearanceMode,
+        daemon: DaemonState,
+        gpus: impl FnOnce(Arc<ManualClock>) -> GpuProviders,
+    ) -> Self {
         init_testing_backend();
         let clock = Arc::new(ManualClock::default());
         let launches = FakeLaunches::default();
         let activation = RecordedActivation::default();
-        let app = App::new(Environment {
+        let prismd = FakePrismd::new(daemon);
+        let in_process_reads = Arc::default();
+        let counted = Arc::new(Counted {
             gpus: gpus(clock.clone()),
-            prismd: PrismdConnector::Placeholder,
+            reads: Arc::clone(&in_process_reads),
+        });
+        let app = App::new(Environment {
+            gpus: GpuProviders::empty()
+                .with_inventory(counted.clone())
+                .with_telemetry(counted),
+            prismd: prismd.connector(),
             host: HostServices {
                 launches: launches.name(),
                 activation: Box::new(activation.clone()),
@@ -161,17 +184,23 @@ impl Harness {
         .expect("build the main window");
         app.window().show().expect("show the main window");
         ensure_element_tree(app.window());
+        // What connecting to prismd reported, as the event loop would take it in.
+        app.receive_posted();
         Self {
             app,
             launches,
             activation,
+            prismd,
             clock,
+            in_process_reads,
         }
     }
 
-    /// Lets a second pass, then reads every GPU once.
+    /// Lets a second pass, then takes in what was posted and, while Prism samples in-process,
+    /// reads every GPU once.
     pub fn tick(&self) {
         self.clock.advance(Duration::from_secs(1));
+        self.app.receive_posted();
         self.app.sample_gpus();
     }
 
@@ -181,6 +210,51 @@ impl Harness {
         }
     }
 
+    /// Lets a second pass with prismd pushing `gpus` as its telemetry.
+    pub fn prismd_tick(&self, gpus: GpuPerformanceResponse) {
+        self.clock.advance(Duration::from_secs(1));
+        self.prismd.sample(gpus);
+        self.app.receive_posted();
+        self.app.sample_gpus();
+    }
+
+    /// How many times Prism read the GPUs itself, inventory and telemetry together.
+    pub fn in_process_reads(&self) -> usize {
+        self.in_process_reads.load(Ordering::SeqCst)
+    }
+}
+
+/// The simulated fixture's GPUs, played against the harness's clock.
+fn simulated(fixture: SimulatedFixture) -> impl FnOnce(Arc<ManualClock>) -> GpuProviders {
+    move |clock| {
+        let gpus = Arc::new(SimulatedGpus::new(fixture, move || clock.now()));
+        GpuProviders::empty()
+            .with_inventory(gpus.clone())
+            .with_telemetry(gpus)
+    }
+}
+
+/// GPUs whose every read is counted.
+struct Counted {
+    gpus: GpuProviders,
+    reads: Arc<AtomicUsize>,
+}
+
+impl GpuInventoryProvider for Counted {
+    fn inventory(&self) -> GpuInventoryResponse {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.gpus.inventory()
+    }
+}
+
+impl GpuTelemetryProvider for Counted {
+    fn performance(&self) -> GpuPerformanceResponse {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.gpus.performance()
+    }
+}
+
+impl Harness {
     /// Presses `key` with `modifiers` held, then lets go of them all.
     pub fn press(&self, modifiers: &[Key], key: impl Into<slint::SharedString>) {
         let window = self.app.window().window();

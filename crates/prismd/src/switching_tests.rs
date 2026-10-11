@@ -707,7 +707,7 @@ fn apply_cooling(session: &FakeSession, configuration: Value) {
 }
 
 fn cooling(session: &FakeSession) -> Value {
-    ok(session.send_json(json!({ "type": "get_performance" })))["gpus"]
+    session.performance_json()["gpus"]
         .as_array()
         .unwrap()
         .iter()

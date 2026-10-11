@@ -14,6 +14,7 @@ use support::Harness;
 use support::audit::{
     Element, TuningAccess, assert_accessible, elements, is_interactive, problems,
 };
+use support::prismd::DaemonState;
 
 /// Audits the window in `state`. Until the GUI connects to prismd (#120, step 7) no state has
 /// tuning access, so every control must be read-only.
@@ -76,6 +77,15 @@ fn every_fixture_state_is_accessible() {
     let harness = Harness::without_temperature();
     harness.tick();
     audit("tunable, temperature unknown", &harness);
+
+    for (daemon, state) in [
+        (DaemonState::Running, "connected to prismd"),
+        (DaemonState::Incompatible, "with an incompatible prismd"),
+    ] {
+        let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, daemon);
+        harness.tick();
+        audit(&format!("tunable, {state}"), &harness);
+    }
 }
 
 /// Every `accessible-action-*` a widget or view declares, and the test below that invokes it.

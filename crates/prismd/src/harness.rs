@@ -17,11 +17,15 @@ use super::{
 };
 use prism_drivers::DriverService;
 use prism_gpu::{
-    ControlSupport, FanControlInfo, FanControlMode, GpuCommandError, GpuInventoryResponse,
-    GpuPerformanceDevice, GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest,
+    ClockInfo, ComputeInfo, ControlSupport, FanControlInfo, FanControlMode, GpuCommandError,
+    GpuControlInfo, GpuDevice, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
+    GpuTargetRequest, MemoryInfo, PcieInfo, PowerInfo, SetGpuClockOffsetsRequest,
     SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
-use prism_protocol::{DaemonRequest, DaemonResponse, GpuDaemonStatus, GpuTuningProfile};
+use prism_protocol::{
+    DaemonRequest, DaemonResponse, DaemonSnapshot, GpuDaemonStatus, GpuTuningProfile, HelloRequest,
+    Welcome,
+};
 
 /// Longer than any request should take, so a stuck request fails its test instead of hanging.
 const RESPONSE_DEADLINE: Duration = Duration::from_secs(5);
@@ -95,6 +99,7 @@ pub enum Setter {
 pub struct FakeGpuBackend {
     state: Mutex<FakeGpus>,
     performance_gate: Mutex<Option<Gate>>,
+    performance_reads: AtomicU64,
 }
 
 #[derive(Default)]
@@ -216,6 +221,11 @@ impl FakeGpuBackend {
         gate
     }
 
+    /// How many times the GPUs have been read so far.
+    pub fn performance_reads(&self) -> u64 {
+        self.performance_reads.load(Ordering::SeqCst)
+    }
+
     /// Every setter call so far, in the order the calls started.
     pub fn writes(&self) -> Vec<(String, Setter)> {
         self.state.lock().unwrap().writes.clone()
@@ -275,12 +285,13 @@ impl FakeGpuBackend {
 impl DaemonBackend for FakeGpuBackend {
     fn inventory(&self) -> GpuInventoryResponse {
         GpuInventoryResponse {
-            gpus: vec![],
+            gpus: self.gpus().iter().map(inventory_device).collect(),
             warnings: vec![],
         }
     }
 
     fn performance(&self) -> GpuPerformanceResponse {
+        self.performance_reads.fetch_add(1, Ordering::SeqCst);
         let gate = self.performance_gate.lock().unwrap().take();
         if let Some(gate) = gate {
             gate.pass();
@@ -352,6 +363,41 @@ impl DaemonBackend for FakeGpuBackend {
             })?;
         }
         Ok(())
+    }
+}
+
+/// The GPU as the inventory describes it, with the details the fake doesn't model unknown.
+fn inventory_device(gpu: &GpuPerformanceDevice) -> GpuDevice {
+    GpuDevice {
+        id: gpu.id.clone(),
+        vendor: gpu.vendor,
+        name: gpu.name.clone(),
+        architecture: gpu.architecture.clone(),
+        driver_version: None,
+        firmware_version: None,
+        bus_id: gpu.bus_id.clone(),
+        memory: MemoryInfo { total_mib: None },
+        compute: ComputeInfo {
+            api: None,
+            api_version: None,
+            capability: None,
+            core_count: None,
+        },
+        pcie: PcieInfo {
+            gen_max: None,
+            width_max: None,
+        },
+        power: PowerInfo {
+            enforced_limit_watts: gpu.power.enforced_limit_watts,
+            default_limit_watts: gpu.power.default_limit_watts,
+        },
+        clocks: ClockInfo {
+            graphics_current_mhz: None,
+            graphics_max_mhz: None,
+            sm_max_mhz: None,
+            memory_max_mhz: None,
+        },
+        control: GpuControlInfo::default(),
     }
 }
 
@@ -545,9 +591,18 @@ impl Harness {
         })));
     }
 
-    /// Opens a session as this user, who is admitted as an administrator. The uid's account now
-    /// has this username.
+    /// Opens a session in this build's protocol as this user, who is admitted as an
+    /// administrator. The uid's account now has this username.
     pub fn user(&self, uid: u32, username: &str) -> FakeSession {
+        match self.hello(uid, username, HelloRequest::current("0.1.0")) {
+            Handshake::Welcomed(session) => session,
+            Handshake::Refused(response) => panic!("the session was refused: {response:?}"),
+        }
+    }
+
+    /// Starts a session connection as this user, an administrator, with `hello`. The uid's
+    /// account now has this username.
+    pub fn hello(&self, uid: u32, username: &str, hello: HelloRequest) -> Handshake {
         self.users.0.lock().unwrap().insert(uid, username.into());
         let policy = SessionPolicy {
             admin_group: "admins".into(),
@@ -561,8 +616,15 @@ impl Harness {
             home: format!("/home/{username}").into(),
         };
         let core = self.core();
-        let session = core.open_session(peer, &policy).unwrap();
-        FakeSession { core, session }
+        match core.hello(peer, &policy, hello) {
+            Ok(welcomed) => Handshake::Welcomed(FakeSession {
+                core,
+                welcome: welcomed.welcome,
+                snapshot: welcomed.snapshot,
+                session: welcomed.session,
+            }),
+            Err(refused) => Handshake::Refused(refused.into()),
+        }
     }
 
     pub fn core(&self) -> Arc<DaemonCore> {
@@ -579,12 +641,19 @@ impl Harness {
         serde_json::to_value(self.send(request)).unwrap()
     }
 
+    /// The GPUs' readings as the daemon reports them, with its control of each GPU's fans.
     pub fn performance(&self) -> GpuPerformanceResponse {
-        let DaemonResponse::Performance(performance) = self.send(DaemonRequest::GetPerformance)
-        else {
-            panic!("expected performance")
-        };
-        performance
+        self.core().observed_performance(None)
+    }
+
+    /// The GPUs' readings as the daemon reports them, as protocol JSON.
+    pub fn performance_json(&self) -> serde_json::Value {
+        serde_json::to_value(self.performance()).unwrap()
+    }
+
+    /// Runs one tick of the daemon's 1 Hz telemetry loop.
+    pub fn tick_telemetry(&self) {
+        self.core().sample_telemetry();
     }
 
     pub fn status(&self) -> GpuDaemonStatus {
@@ -705,13 +774,37 @@ impl Harness {
     }
 }
 
-/// A user's session connection to the daemon.
+/// How the daemon answered a session connection's hello.
+pub enum Handshake {
+    Welcomed(FakeSession),
+    Refused(DaemonResponse),
+}
+
+/// A user's session connection to the daemon, which it welcomed.
 pub struct FakeSession {
     core: Arc<DaemonCore>,
+    welcome: Welcome,
+    snapshot: DaemonSnapshot,
     session: DaemonSession,
 }
 
 impl FakeSession {
+    pub fn welcome(&self) -> &Welcome {
+        &self.welcome
+    }
+
+    /// The daemon state the session started from.
+    pub fn snapshot(&self) -> &DaemonSnapshot {
+        &self.snapshot
+    }
+
+    /// The GPUs' readings as the daemon reports them to this user, with its control of each
+    /// GPU's fans and the user's remembered curves. Below the socket: telemetry events carry the
+    /// same readings without the remembered curves.
+    pub fn performance_json(&self) -> serde_json::Value {
+        serde_json::to_value(self.core.observed_performance(Some(self.session.peer()))).unwrap()
+    }
+
     pub fn send(&self, request: DaemonRequest) -> DaemonResponse {
         self.core.handle_session(&self.session, request)
     }

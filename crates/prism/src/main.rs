@@ -56,6 +56,8 @@ fn simulate(environment: &mut Environment, fixture: OsString) -> Result<(), Stri
     environment.gpus = GpuProviders::empty()
         .with_inventory(gpus.clone())
         .with_telemetry(gpus);
+    // prismd would report the host's real GPUs instead.
+    environment.prismd = Box::new(prism::NoPrismd);
     Ok(())
 }
 

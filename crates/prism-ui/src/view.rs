@@ -1,6 +1,8 @@
 //! What the view shows, derived from the core's state.
 
-use crate::core::{Core, Discovery, Gpu, Latest, Section, Selection, TelemetrySource};
+use crate::core::{
+    Core, Discovery, Gpu, Latest, PrismdConnection, Section, Selection, TelemetrySource,
+};
 use crate::format::{Readout, short_bus_id, short_gpu_name};
 use crate::telemetry::{Chart, Metric, Readings};
 
@@ -97,6 +99,8 @@ pub struct ExplainedState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusBar {
     pub connection: String,
+    /// Whether there is a session with prismd.
+    pub connected: bool,
     pub telemetry: String,
 }
 
@@ -130,13 +134,22 @@ impl Core {
 
     pub fn status_bar(&self) -> StatusBar {
         StatusBar {
-            connection: "PRISMD NOT CONNECTED".into(),
+            connection: match self.prismd {
+                PrismdConnection::Connected(_) => "PRISMD CONNECTED",
+                // Why not comes with the connection reasons (#132).
+                PrismdConnection::Connecting | PrismdConnection::NotConnected(_) => {
+                    "PRISMD NOT CONNECTED"
+                }
+            }
+            .into(),
+            connected: matches!(self.prismd, PrismdConnection::Connected(_)),
             telemetry: if self.no_gpus().is_some() {
                 "NO GPU TELEMETRY"
             } else {
                 match self.telemetry.as_ref().map(|telemetry| telemetry.source) {
                     None => "WAITING FOR TELEMETRY",
                     Some(TelemetrySource::InProcess) => "MONITORING IN-PROCESS",
+                    Some(TelemetrySource::Prismd) => "MONITORING THROUGH PRISMD",
                 }
             }
             .into(),

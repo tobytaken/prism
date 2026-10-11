@@ -187,11 +187,7 @@ impl TuningStore {
     }
 
     pub fn subscribe(&self, peer: SessionPeer) -> DaemonSession {
-        let state = self.state.lock().unwrap();
-        self.events.subscribe(
-            peer,
-            DaemonEvent::StoreHealthChanged(self.health_of(&state)),
-        )
+        self.events.subscribe(peer)
     }
 
     /// Builds a caller-scoped event for each session; None leaves that session unchanged.
@@ -202,6 +198,16 @@ impl TuningStore {
     /// Pushes the event to every open session.
     pub fn publish(&self, event: DaemonEvent) {
         self.events.publish(event);
+    }
+
+    /// Whether any open session subscribed to telemetry.
+    pub fn telemetry_subscribed(&self) -> bool {
+        self.events.telemetry_subscribed()
+    }
+
+    /// Pushes the event to every session that subscribed to telemetry.
+    pub fn publish_telemetry(&self, event: DaemonEvent) {
+        self.events.publish_telemetry(event);
     }
 
     fn health_of(&self, state: &StoreState) -> TuningStoreHealth {
@@ -404,11 +410,6 @@ mod tests {
                 })
             })
             .collect();
-        for session in &sessions {
-            session
-                .recv_timeout(std::time::Duration::from_secs(1))
-                .unwrap();
-        }
         fs::create_dir(path.with_file_name("tuning-state.json.tmp")).unwrap();
         assert!(store.update(|_| {}).is_err());
         for session in &sessions {

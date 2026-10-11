@@ -29,18 +29,6 @@ fn sampled(core: &mut Core, gpus: GpuPerformanceResponse, second: u64) {
 }
 
 #[test]
-fn launching_without_a_prismd_connection_starts_the_in_process_sampler() {
-    let mut core = Core::default();
-
-    let effects = core.handle(Input::Launched {
-        appearance: AppearanceMode::Dark,
-    });
-
-    assert_eq!(effects, [Effect::StartSampler]);
-    assert_eq!(core.appearance(), AppearanceMode::Dark);
-}
-
-#[test]
 fn the_first_gpu_found_opens_in_the_workspace() {
     let core = launched(SimulatedFixture::TunableGpu);
 

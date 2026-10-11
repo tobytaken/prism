@@ -30,8 +30,7 @@ fn apply(daemon: &Harness, configuration: Value) -> Value {
 
 /// Prism's cooling control of the GPU as the daemon reports it in performance readings.
 fn control(daemon: &Harness) -> Value {
-    let response = daemon.send_json(json!({ "type": "get_performance" }));
-    response["payload"]["gpus"][0]["cooling"]["control"].clone()
+    daemon.performance_json()["gpus"][0]["cooling"]["control"].clone()
 }
 
 /// Each fan's reported mode and speed on the fake GPU.
@@ -208,8 +207,10 @@ fn a_resumed_curve_follows_the_temperature_while_switching_waits_and_sessions_re
     assert_eq!(speeds(&daemon), vec![Some(90), Some(90)]);
     // A reconnecting session reads the controller's current state.
     let alice = daemon.user(1000, "alice");
-    let performance = alice.send_json(json!({ "type": "get_performance" }));
-    let reconnected = &performance["payload"]["gpus"][0]["cooling"]["control"];
+    alice.send_json(json!({ "type": "subscribe_telemetry" }));
+    daemon.tick_telemetry();
+    let sampled = alice.pushed_events().pop().unwrap();
+    let reconnected = &sampled["payload"]["gpus"][0]["cooling"]["control"];
     assert_eq!(reconnected["recovery"], resumed(&[0, 1]));
     assert_eq!(reconnected["requested"][0]["speed_percent"], 90);
 
@@ -377,9 +378,9 @@ fn curve_control_belongs_to_its_own_gpu() {
 
     assert_eq!(speeds(&daemon), vec![Some(90), Some(90)]);
     assert!(daemon.gpus.writes().iter().all(|(id, _)| id == "GPU-123"));
-    let performance = daemon.send_json(json!({ "type": "get_performance" }));
+    let performance = daemon.performance_json();
     assert_eq!(
-        performance["payload"]["gpus"][1]["cooling"]["control"]["applied"],
+        performance["gpus"][1]["cooling"]["control"]["applied"],
         Value::Null
     );
 }

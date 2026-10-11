@@ -99,6 +99,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
 
     let status = core.status_bar();
     state.set_connection(status.connection.into());
+    state.set_connected(status.connected);
     state.set_telemetry(status.telemetry.into());
     // Slint's int is 32 bits; wrapping still changes the value on every input.
     state.set_revision(core.revision() as i32);

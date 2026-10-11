@@ -501,9 +501,9 @@ fn applying_a_cooling_profile_evaluates_the_current_temperature_and_legacy_omiss
         result["payload"]["cooling"]["outcome"]["status"], "succeeded",
         "{result}"
     );
-    let performance = alice.send_json(json!({"type":"get_performance"}));
+    let performance = alice.performance_json();
     assert_eq!(
-        performance["payload"]["gpus"][0]["cooling"]["control"]["remembered_curve"],
+        performance["gpus"][0]["cooling"]["control"]["remembered_curve"],
         cooling
     );
     assert_eq!(
@@ -779,9 +779,9 @@ fn version_eight_remembered_curves_survive_adding_profile_cooling() {
             .get("cooling")
             .is_none()
     );
-    let performance = alice.send_json(json!({"type":"get_performance"}));
+    let performance = alice.performance_json();
     assert_eq!(
-        performance["payload"]["gpus"][0]["cooling"]["control"]["remembered_curve"],
+        performance["gpus"][0]["cooling"]["control"]["remembered_curve"],
         curve
     );
     let stored: Value =

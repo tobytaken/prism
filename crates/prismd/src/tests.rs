@@ -10,10 +10,14 @@ use prism_protocol::{
     OffsetInstruction, ProfileSetting, TuningStoreHealth, TuningStoreProblem,
 };
 
+/// This build's hello.
+fn hello() -> prism_protocol::HelloRequest {
+    prism_protocol::HelloRequest::current("0.1.0")
+}
+
 #[test]
-fn fake_sessions_keep_their_callers_and_receive_store_health_alongside_one_shot_requests() {
+fn sessions_keep_their_callers_and_start_from_the_store_health_alongside_one_shot_requests() {
     use super::{SessionPeer, SessionPolicy};
-    use prism_protocol::DaemonEvent;
     let daemon = Harness::start(FakeGpuBackend::default());
     let policy = SessionPolicy {
         admin_group: "admins".into(),
@@ -34,19 +38,17 @@ fn fake_sessions_keep_their_callers_and_receive_store_health_alongside_one_shot_
         home: "/home/bob".into(),
     };
     let core = daemon.core();
-    let first = core.open_session(alice, &policy).unwrap();
-    let second = core.open_session(bob, &policy).unwrap();
-    assert_eq!(first.peer().uid, 1000);
-    assert_eq!(second.peer().username, "bob");
-    for session in [&first, &second] {
+    let first = core.hello(alice, &policy, hello()).unwrap();
+    let second = core.hello(bob, &policy, hello()).unwrap();
+    assert_eq!(first.session.peer().uid, 1000);
+    assert_eq!(second.session.peer().username, "bob");
+    for welcomed in [&first, &second] {
         assert_eq!(
-            session
-                .recv_timeout(std::time::Duration::from_secs(1))
-                .unwrap(),
-            DaemonEvent::StoreHealthChanged(TuningStoreHealth::Healthy {})
+            welcomed.snapshot.store_health,
+            TuningStoreHealth::Healthy {}
         );
         assert!(matches!(
-            core.handle_session(session, DaemonRequest::GetDaemonStatus),
+            core.handle_session(&welcomed.session, DaemonRequest::GetDaemonStatus),
             DaemonResponse::DaemonStatus(_)
         ));
     }
@@ -72,7 +74,8 @@ fn unauthorized_sessions_are_rejected_by_the_same_admin_policy() {
         home: "/home/mallory".into(),
     };
     let expected = policy.authorize(&peer).unwrap_err();
-    let Err(actual) = daemon.core().open_session(peer, &policy) else {
+    let Err(super::HelloRefused::NotAllowed(actual)) = daemon.core().hello(peer, &policy, hello())
+    else {
         panic!("unauthorized session was admitted")
     };
     assert_eq!(actual, expected);
@@ -80,9 +83,8 @@ fn unauthorized_sessions_are_rejected_by_the_same_admin_policy() {
 }
 
 #[test]
-fn restarting_the_core_closes_old_fake_sessions_and_pushes_the_reopened_stores_health() {
+fn restarting_the_core_closes_old_sessions_and_new_ones_start_from_the_reopened_stores_health() {
     use super::{SessionPeer, SessionPolicy};
-    use prism_protocol::DaemonEvent;
     let mut daemon = Harness::start(FakeGpuBackend::default());
     let policy = SessionPolicy {
         admin_group: "admins".into(),
@@ -95,23 +97,20 @@ fn restarting_the_core_closes_old_fake_sessions_and_pushes_the_reopened_stores_h
         primary_group: "users".into(),
         home: "/home/alice".into(),
     };
-    let old = daemon.core().open_session(peer.clone(), &policy).unwrap();
-    old.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    let old = daemon.core().hello(peer.clone(), &policy, hello()).unwrap();
     std::fs::write(daemon.persistent_path(TUNING_STORE_FILE_NAME), b"{broken").unwrap();
     daemon.restart();
     assert!(matches!(
-        old.recv_timeout(std::time::Duration::from_secs(1)),
+        old.session.recv_timeout(std::time::Duration::from_secs(1)),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
     ));
-    let resumed = daemon.core().open_session(peer, &policy).unwrap();
+    let resumed = daemon.core().hello(peer, &policy, hello()).unwrap();
     assert!(matches!(
-        resumed
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap(),
-        DaemonEvent::StoreHealthChanged(TuningStoreHealth::Unhealthy {
+        resumed.snapshot.store_health,
+        TuningStoreHealth::Unhealthy {
             problem: TuningStoreProblem::Unreadable,
             ..
-        })
+        }
     ));
 }
 
@@ -136,7 +135,7 @@ fn framed_sessions_share_the_socket_with_one_shot_clients_and_close_on_eof() {
         &mut client,
         &SessionRequest {
             id: 1,
-            request: DaemonRequest::OpenSession,
+            request: DaemonRequest::Hello(hello()),
         },
     )
     .unwrap();
@@ -144,26 +143,44 @@ fn framed_sessions_share_the_socket_with_one_shot_clients_and_close_on_eof() {
         read_frame::<SessionMessage>(&mut client).unwrap(),
         Some(SessionMessage::Response {
             id: 1,
-            response: DaemonResponse::DaemonStatus(_)
+            response: DaemonResponse::Welcome(_)
         })
     ));
     assert!(matches!(
         read_frame::<SessionMessage>(&mut client).unwrap(),
-        Some(SessionMessage::Event { .. })
+        Some(SessionMessage::Snapshot { .. })
     ));
+    // A request this daemon doesn't know, such as the removed performance read, is unsupported,
+    // and the session carries on.
+    write_frame(
+        &mut client,
+        &serde_json::json!({ "id": 7, "request": { "type": "get_performance" } }),
+    )
+    .unwrap();
+    let Some(SessionMessage::Response {
+        id: 7,
+        response: DaemonResponse::Unsupported(unsupported),
+    }) = read_frame::<SessionMessage>(&mut client).unwrap()
+    else {
+        panic!("an unknown request wasn't answered as unsupported")
+    };
+    assert!(
+        unsupported.message.contains("get_performance"),
+        "{unsupported:?}"
+    );
     write_frame(
         &mut client,
         &SessionRequest {
-            id: 7,
-            request: DaemonRequest::GetPerformance,
+            id: 8,
+            request: DaemonRequest::GetDaemonStatus,
         },
     )
     .unwrap();
     assert!(matches!(
         read_frame::<SessionMessage>(&mut client).unwrap(),
         Some(SessionMessage::Response {
-            id: 7,
-            response: DaemonResponse::Performance(_)
+            id: 8,
+            response: DaemonResponse::DaemonStatus(_)
         })
     ));
     assert!(matches!(
@@ -173,6 +190,49 @@ fn framed_sessions_share_the_socket_with_one_shot_clients_and_close_on_eof() {
     client.shutdown(std::net::Shutdown::Write).unwrap();
     let mut end = Vec::new();
     client.read_to_end(&mut end).unwrap();
+    serving.join().unwrap().unwrap();
+}
+
+#[test]
+fn an_incompatible_hello_over_the_socket_is_answered_and_closed() {
+    use prism_protocol::client::{ConnectError, connect};
+    use prism_protocol::{HelloRequest, Incompatible, ProtocolVersion};
+    use std::os::unix::net::UnixListener;
+    let daemon = Harness::start(FakeGpuBackend::default());
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("prismd.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let core = daemon.core();
+    let policy = super::PrismDaemonConfig {
+        admin_group: "root".into(),
+        admin_user: users::get_current_username().map(|n| n.to_string_lossy().into_owned()),
+    };
+    let serving = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        super::handle_connection(&core, &policy, &mut stream)
+    });
+
+    let refused = connect(
+        &socket,
+        HelloRequest {
+            protocol: ProtocolVersion {
+                major: 0,
+                minor: 99,
+            },
+            prism_version: "9.9.9".into(),
+        },
+    );
+
+    let Err(ConnectError::Incompatible(incompatible)) = refused else {
+        panic!("an incompatible Prism was welcomed")
+    };
+    assert_eq!(
+        incompatible,
+        Incompatible {
+            protocol: ProtocolVersion::CURRENT,
+            prismd_version: env!("CARGO_PKG_VERSION").into(),
+        }
+    );
     serving.join().unwrap().unwrap();
 }
 
@@ -219,7 +279,7 @@ fn a_non_admin_socket_peer_is_rejected_identically_for_sessions_and_one_shot_req
         &mut session,
         &SessionRequest {
             id: 1,
-            request: DaemonRequest::OpenSession,
+            request: DaemonRequest::Hello(hello()),
         },
     )
     .unwrap();
@@ -737,19 +797,24 @@ fn live_reset_reports_partial_outcomes_and_memory_only_retry_leaves_graphics_alo
 }
 
 #[test]
-fn performance_reads_preserve_tuning_states_and_recover() {
+fn sampled_telemetry_preserves_tuning_states_and_recovers() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../prism-protocol/tests/contracts/tuning-observations.json"
     ))
     .unwrap();
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![observed_gpu()]));
-    let response = daemon.send(DaemonRequest::GetPerformance);
-    let wire = serde_json::to_value(&response).unwrap();
-    assert_eq!(wire["type"], "performance");
-    assert_eq!(wire["payload"], fixture);
+    let alice = daemon.user(1000, "alice");
+    alice.send(DaemonRequest::SubscribeTelemetry);
+    daemon.tick_telemetry();
+    let sampled = alice.pushed_events().pop().unwrap();
+    assert_eq!(sampled["type"], "telemetry_sampled");
+    assert_eq!(sampled["payload"], fixture);
     assert_eq!(
-        serde_json::from_value::<DaemonResponse>(wire).unwrap(),
-        response
+        serde_json::to_value(
+            serde_json::from_value::<prism_protocol::DaemonEvent>(sampled.clone()).unwrap()
+        )
+        .unwrap(),
+        sampled
     );
 
     daemon.gpus.update("GPU-123", |gpu| {

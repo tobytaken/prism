@@ -19,12 +19,12 @@ use prism_drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriv
 use prism_gpu::cooling::{ApplyCoolingRequest, CoolingApplication};
 use prism_gpu::fan_curve::{FanCurvePreview, PreviewFanCurveRequest};
 use prism_gpu::{
-    GpuCommandError, GpuCommandErrorCode, GpuInventoryResponse, GpuPerformanceResponse,
-    GpuTargetRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
+    GpuCommandError, GpuCommandErrorCode, GpuInventoryResponse, GpuTargetRequest,
+    SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
 
 mod session;
-pub use session::{SessionNotification, start_session};
+pub use session::{ConnectError, Connected, Session, SessionSender, connect};
 
 /// Why a request to prismd failed: prismd didn't answer, or the request failed with one of the
 /// codes prismd itself reports, whether prismd sent it or the client hit it locally.
@@ -246,14 +246,6 @@ pub fn get_inventory() -> Result<GpuInventoryResponse, RequestError> {
     }
 }
 
-pub fn get_performance() -> Result<GpuPerformanceResponse, RequestError> {
-    match send_request(DaemonRequest::GetPerformance)? {
-        DaemonResponse::Performance(performance) => Ok(performance),
-        DaemonResponse::Error(error) => Err(error.into()),
-        _ => Err(unexpected_response_error("performance")),
-    }
-}
-
 pub fn get_daemon_status() -> GpuDaemonStatus {
     match send_request(DaemonRequest::GetDaemonStatus) {
         Ok(DaemonResponse::DaemonStatus(status)) => status,
@@ -387,18 +379,6 @@ fn request_timeout(request: &DaemonRequest) -> Duration {
 }
 
 fn send_request(request: DaemonRequest) -> Result<DaemonResponse, RequestError> {
-    if !matches!(
-        request,
-        DaemonRequest::GetDaemonStatus
-            | DaemonRequest::GetDriverStatus
-            | DaemonRequest::StartDriverAction(_)
-            | DaemonRequest::GetDriverJob(_)
-            | DaemonRequest::CancelDriverJob(_)
-            | DaemonRequest::RequestHostReboot
-    ) && let Some(session) = session::SESSION.get()
-    {
-        return session.request(request);
-    }
     let mut stream = UnixStream::connect(socket_path()).map_err(map_io_error)?;
     stream
         .set_read_timeout(Some(request_timeout(&request)))
@@ -441,7 +421,8 @@ fn send_command_request(request: DaemonRequest) -> Result<(), RequestError> {
     }
 }
 
-fn socket_path() -> String {
+/// Where prismd listens: `PRISM_SOCKET_PATH`, or the installed service's socket.
+pub fn socket_path() -> String {
     env::var("PRISM_SOCKET_PATH").unwrap_or_else(|_| DEFAULT_SOCKET_PATH.to_string())
 }
 

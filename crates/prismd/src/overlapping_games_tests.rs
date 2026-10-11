@@ -440,8 +440,7 @@ fn apply_cooling(session: &FakeSession, configuration: &Value) {
 }
 
 fn cooling(session: &FakeSession) -> Value {
-    ok(session.send_json(json!({ "type": "get_performance" })))["gpus"][0]["cooling"]["control"]
-        .clone()
+    session.performance_json()["gpus"][0]["cooling"]["control"].clone()
 }
 
 fn link_cooling(session: &FakeSession, app_id: u32, id: &str, configuration: Value) {
