@@ -6,10 +6,11 @@ use std::error::Error;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
-use slint::winit_030::WinitWindowAccessor;
+use slint::winit_030::winit::event::WindowEvent;
 use slint::winit_030::winit::raw_window_handle::{
     HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
+use slint::winit_030::{EventResult, WinitWindowAccessor};
 
 use crate::environment::WindowActivation;
 
@@ -40,6 +41,15 @@ impl WindowActivation for DesktopActivation {
         if let Some(Err(error)) = activated {
             eprintln!("prism: can't raise the window: {error}");
         }
+    }
+
+    fn watch_focus(&self, window: &slint::Window, changed: Box<dyn Fn(bool)>) {
+        window.on_winit_window_event(move |_, event| {
+            if let WindowEvent::Focused(focused) = event {
+                changed(*focused);
+            }
+            EventResult::Propagate
+        });
     }
 }
 

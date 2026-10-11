@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use prism_gpu::GpuProviders;
 
 use crate::activation::DesktopActivation;
+use crate::notifications::{DesktopNotifier, Notifier};
 use crate::prismd::{PrismdConnector, SocketConnector};
 use crate::prismd_host::{HostPrismdService, PrismdService};
 use crate::settings::{SettingsFile, SettingsStore};
@@ -46,16 +47,19 @@ pub struct HostServices {
     pub launches: Box<dyn Launches>,
     /// How the window is raised and focused.
     pub activation: Box<dyn WindowActivation>,
+    /// Where desktop notifications go.
+    pub notifier: Box<dyn Notifier>,
 }
 
 impl Default for HostServices {
-    /// The host's systemd and os-release, no later launch reaches this Prism, and the window is
-    /// raised through the desktop.
+    /// The host's systemd and os-release, no later launch reaches this Prism, the window is
+    /// raised through the desktop, and notifications go to the session's notification server.
     fn default() -> Self {
         Self {
             prismd: Box::new(HostPrismdService::production()),
             launches: Box::new(NoLaunches),
             activation: Box::new(DesktopActivation),
+            notifier: Box::new(DesktopNotifier::session()),
         }
     }
 }
@@ -74,11 +78,14 @@ impl Launches for NoLaunches {
     fn listen(&self, _: Box<dyn Fn(Option<String>) + Send + Sync>) {}
 }
 
-/// Asks the desktop to focus the window.
+/// Asks the desktop to focus the window, and hears when it gains or loses focus.
 pub trait WindowActivation {
     /// Focuses `window`, which is already shown, with the activation token that lets the desktop
     /// do so, if there is one.
     fn activate(&self, window: &slint::Window, activation_token: Option<&str>);
+
+    /// Calls `changed` on the UI thread whenever `window` gains or loses focus.
+    fn watch_focus(&self, window: &slint::Window, changed: Box<dyn Fn(bool)>);
 }
 
 /// The GUI's monotonic clock.

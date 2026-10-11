@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 pub mod audit;
+pub mod bus;
 pub mod prismd;
 pub mod screenshot;
 
@@ -17,7 +18,10 @@ use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
 use prism::settings::{GuiSettings, SettingsStore};
-use prism::{App, Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
+use prism::{
+    App, Clock, Environment, HostServices, Launches, NotificationEvent, Notifier, Sampling,
+    WindowActivation,
+};
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{
     GpuInventoryProvider, GpuInventoryResponse, GpuPerformanceResponse, GpuProviders,
@@ -25,7 +29,7 @@ use prism_gpu::{
 };
 
 use self::prismd::{DaemonState, FakeHost, FakePrismd};
-use prism_ui::{AppearanceMode, PrismdInstall, UnitState};
+use prism_ui::{AppearanceMode, Notification, NotificationId, PrismdInstall, UnitState};
 use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
 
@@ -90,19 +94,100 @@ impl Drop for FakeName {
     }
 }
 
-/// Records each time the window is focused through the desktop, with the activation token.
+/// Records each time the window is focused through the desktop, with the activation token, and
+/// lets the test say when the window gains or loses focus.
 #[derive(Clone, Default)]
-pub struct RecordedActivation(Rc<RefCell<Vec<Option<String>>>>);
+pub struct RecordedActivation(Rc<RefCell<Activation>>);
+
+#[derive(Default)]
+struct Activation {
+    tokens: Vec<Option<String>>,
+    focus_changed: Option<Box<dyn Fn(bool)>>,
+}
 
 impl RecordedActivation {
     pub fn tokens(&self) -> Vec<Option<String>> {
-        self.0.borrow().clone()
+        self.0.borrow().tokens.clone()
+    }
+
+    /// The window gains or loses focus, as the desktop would say.
+    pub fn set_focused(&self, focused: bool) {
+        let activation = self.0.borrow();
+        let changed = activation
+            .focus_changed
+            .as_ref()
+            .expect("Prism watches the window's focus");
+        changed(focused);
     }
 }
 
 impl WindowActivation for RecordedActivation {
     fn activate(&self, _: &slint::Window, activation_token: Option<&str>) {
-        self.0.borrow_mut().push(activation_token.map(String::from));
+        self.0
+            .borrow_mut()
+            .tokens
+            .push(activation_token.map(String::from));
+    }
+
+    fn watch_focus(&self, _: &slint::Window, changed: Box<dyn Fn(bool)>) {
+        self.0.borrow_mut().focus_changed = Some(changed);
+    }
+}
+
+/// The desktop's notification server, as Prism's notifier would reach it.
+#[derive(Clone, Default)]
+pub struct FakeNotifier(Arc<Mutex<Notifications>>);
+
+#[derive(Default)]
+struct Notifications {
+    listener: Option<Arc<dyn Fn(NotificationEvent) + Send + Sync>>,
+    sent: Vec<Notification>,
+    /// The notifications showing, by Prism's id.
+    live: Vec<NotificationId>,
+}
+
+impl FakeNotifier {
+    /// Every notification Prism sent, oldest first.
+    pub fn sent(&self) -> Vec<Notification> {
+        self.0.lock().unwrap().sent.clone()
+    }
+
+    /// The notifications showing.
+    pub fn live(&self) -> Vec<NotificationId> {
+        self.0.lock().unwrap().live.clone()
+    }
+
+    /// The user clicks the notification `id`, which the server closes, handing over
+    /// `activation_token`.
+    pub fn click(&self, id: NotificationId, activation_token: Option<&str>) {
+        let mut notifications = self.0.lock().unwrap();
+        assert!(notifications.live.contains(&id), "{id:?} isn't showing");
+        notifications.live.retain(|live| *live != id);
+        let listener = notifications.listener.clone().expect("Prism listens");
+        drop(notifications);
+        listener(NotificationEvent::Clicked {
+            id,
+            activation_token: activation_token.map(String::from),
+        });
+    }
+}
+
+impl Notifier for FakeNotifier {
+    fn listen(&self, event: Box<dyn Fn(NotificationEvent) + Send + Sync>) {
+        self.0.lock().unwrap().listener = Some(Arc::from(event));
+    }
+
+    fn notify(&self, notification: Notification) {
+        let mut notifications = self.0.lock().unwrap();
+        notifications
+            .live
+            .retain(|live| Some(*live) != notification.replaces);
+        notifications.live.push(notification.id);
+        notifications.sent.push(notification);
+    }
+
+    fn withdraw(&self, id: NotificationId) {
+        self.0.lock().unwrap().live.retain(|live| *live != id);
     }
 }
 
@@ -110,6 +195,7 @@ pub struct Harness {
     pub app: App,
     pub launches: FakeLaunches,
     pub activation: RecordedActivation,
+    pub notifier: FakeNotifier,
     pub prismd: FakePrismd,
     pub host: FakeHost,
     clock: Arc<ManualClock>,
@@ -208,6 +294,7 @@ impl Harness {
         let clock = Arc::new(ManualClock::default());
         let launches = FakeLaunches::default();
         let activation = RecordedActivation::default();
+        let notifier = FakeNotifier::default();
         let prismd = FakePrismd::new(daemon);
         let host = FakeHost::new(install, prismd.clone());
         let in_process_reads = Arc::default();
@@ -224,6 +311,7 @@ impl Harness {
                 prismd: host.service(),
                 launches: launches.name(),
                 activation: Box::new(activation.clone()),
+                notifier: Box::new(notifier.clone()),
             },
             settings: Box::new(FixedSettings(GuiSettings { appearance })),
             clock: clock.clone(),
@@ -238,6 +326,7 @@ impl Harness {
             app,
             launches,
             activation,
+            notifier,
             prismd,
             host,
             clock,
@@ -245,10 +334,11 @@ impl Harness {
         }
     }
 
-    /// Lets a second pass, then takes in what was posted and, while Prism samples in-process,
-    /// reads every GPU once.
+    /// Lets a second pass, running Slint's timers, then takes in what was posted and, while
+    /// Prism samples in-process, reads every GPU once.
     pub fn tick(&self) {
         self.clock.advance(Duration::from_secs(1));
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
         self.app.receive_posted();
         self.app.sample_gpus();
     }
@@ -262,6 +352,7 @@ impl Harness {
     /// Lets a second pass with prismd pushing `gpus` as its telemetry.
     pub fn prismd_tick(&self, gpus: GpuPerformanceResponse) {
         self.clock.advance(Duration::from_secs(1));
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
         self.prismd.sample(gpus);
         self.app.receive_posted();
         self.app.sample_gpus();

@@ -10,7 +10,7 @@ use prism_protocol::{
 };
 use prism_ui::{
     AppearanceMode, Content, Core, Effect, GpuWorkspace, Input, PrismdConnection, SessionFailure,
-    TelemetrySource,
+    TelemetrySource, Timer,
 };
 
 fn tunable() -> SimulatedGpus {
@@ -172,7 +172,14 @@ fn losing_the_session_samples_in_process_again_and_history_continues_as_one_seri
 
     assert_eq!(
         core.handle(not_running()),
-        [Effect::StartSampler, Effect::CheckPrismdHost]
+        [
+            Effect::StartSampler,
+            Effect::CheckPrismdHost,
+            Effect::StartTimer {
+                timer: Timer::ConnectionLost,
+                after: Duration::from_secs(10),
+            },
+        ]
     );
     // The sampler reads the inventory first, which keeps each GPU's history.
     core.handle(Input::InventoryRead(tunable().inventory()));
@@ -191,7 +198,8 @@ fn losing_the_session_samples_in_process_again_and_history_continues_as_one_seri
         connected(&mut core),
         [
             Effect::SendToPrismd(DaemonRequest::SubscribeTelemetry),
-            Effect::StopSampler
+            Effect::StopSampler,
+            Effect::StopTimer(Timer::ConnectionLost),
         ]
     );
     prismd_sample(&mut core, 80, 4);
