@@ -7,13 +7,14 @@ use std::time::{Duration, Instant};
 use prism_gpu::GpuProviders;
 
 use crate::activation::DesktopActivation;
+use crate::prismd::{PrismdConnector, SocketConnector};
 use crate::settings::{SettingsFile, SettingsStore};
 
 /// Everything [`App`](crate::App) reaches outside itself through.
 pub struct Environment {
     /// Where in-process GPU inventory and telemetry come from.
     pub gpus: GpuProviders,
-    pub prismd: PrismdConnector,
+    pub prismd: Box<dyn PrismdConnector>,
     pub host: HostServices,
     pub settings: Box<dyn SettingsStore>,
     pub clock: Arc<dyn Clock>,
@@ -21,26 +22,18 @@ pub struct Environment {
 }
 
 impl Environment {
-    /// The real GPUs through NVML, the user's settings file and the system clock.
+    /// prismd's socket, the real GPUs through NVML, the user's settings file and the system
+    /// clock.
     pub fn production() -> Self {
         Self {
             gpus: GpuProviders::nvml(),
-            prismd: PrismdConnector::Placeholder,
+            prismd: Box::new(SocketConnector::production()),
             host: HostServices::default(),
             settings: Box::new(SettingsFile::in_user_config()),
             clock: Arc::new(SystemClock::default()),
             sampling: Sampling::Every(Duration::from_secs(1)),
         }
     }
-}
-
-/// How Prism reaches prismd.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum PrismdConnector {
-    /// Never connects, so Prism always monitors in-process. The real connector arrives with the
-    /// GUI connection (#120, step 7).
-    #[default]
-    Placeholder,
 }
 
 /// The host's desktop services, such as the systemctl probe, notifications and the
@@ -114,7 +107,7 @@ impl Clock for SystemClock {
 pub enum Sampling {
     /// On its own thread, once every interval.
     Every(Duration),
-    /// Only when [`App::sample_gpus`](crate::App::sample_gpus) is called, on the calling thread,
-    /// so a test decides when each sample arrives.
+    /// Only when [`App::sample_gpus`](crate::App::sample_gpus) is called while the core has
+    /// sampling on, on the calling thread, so a test decides when each sample arrives.
     OnDemand,
 }

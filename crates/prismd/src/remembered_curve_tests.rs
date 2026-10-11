@@ -19,9 +19,7 @@ fn apply(session: &FakeSession, configuration: Value) -> Value {
 }
 
 fn remembered(session: &FakeSession) -> Value {
-    session.send_json(json!({"type": "get_performance"}))["payload"]["gpus"][0]["cooling"]
-        ["control"]["remembered_curve"]
-        .clone()
+    session.performance_json()["gpus"][0]["cooling"]["control"]["remembered_curve"].clone()
 }
 
 #[test]
@@ -57,9 +55,7 @@ fn remembered_curves_belong_to_the_account_and_individual_gpu() {
     assert!(remembered(&daemon.user(1000, "replacement-account")).is_null());
     assert!(remembered(&daemon.user(1002, "alice")).is_null());
     assert!(
-        daemon.send_json(json!({"type": "get_performance"}))["payload"]["gpus"][0]["cooling"]
-            ["control"]["remembered_curve"]
-            .is_null()
+        daemon.performance_json()["gpus"][0]["cooling"]["control"]["remembered_curve"].is_null()
     );
     // Same model, same display index, different hardware identity.
     daemon.gpus.update("GPU-123", |gpu| {

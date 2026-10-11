@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use prism_gpu::{GpuInventoryResponse, GpuPerformanceResponse};
+use prism_protocol::{DaemonEvent, DaemonRequest, DaemonSnapshot, Incompatible, Welcome};
 
 use crate::palette::{Command, PaletteState, Shortcut};
 use crate::telemetry::{Readings, TelemetryHistory, TelemetryRange};
@@ -19,6 +20,28 @@ pub enum AppearanceMode {
 pub enum TelemetrySource {
     /// Prism read the GPUs itself, because there is no prismd connection.
     InProcess,
+    /// prismd read the GPUs and pushed the sample to this Prism's session.
+    Prismd,
+}
+
+/// Whether this Prism is connected to prismd.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum PrismdConnection {
+    /// Prism has only just started trying.
+    #[default]
+    Connecting,
+    /// A session is open, with what prismd said when it welcomed it.
+    Connected(Welcome),
+    NotConnected(NotConnected),
+}
+
+/// Why there is no session with prismd.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotConnected {
+    /// prismd isn't there or didn't answer, as `message` says.
+    Unavailable { message: String },
+    /// prismd speaks a protocol this Prism can't.
+    Incompatible(Incompatible),
 }
 
 /// A part of Prism the sidebar leads to, other than a GPU.
@@ -36,6 +59,19 @@ pub enum Input {
     Launched { appearance: AppearanceMode },
     /// The in-process GPU inventory was read.
     InventoryRead(GpuInventoryResponse),
+    /// A session with prismd opened, starting from `snapshot`.
+    PrismdConnected {
+        welcome: Welcome,
+        snapshot: DaemonSnapshot,
+    },
+    /// There is no session with prismd: an attempt failed, or the session ended.
+    PrismdNotConnected(NotConnected),
+    /// prismd pushed an event to the session, which reached the UI thread at `received_at` on
+    /// the GUI's monotonic clock.
+    PrismdEvent {
+        event: DaemonEvent,
+        received_at: Duration,
+    },
     /// Every GPU was read once, and the sample reached the UI thread at `received_at` on the
     /// GUI's monotonic clock.
     TelemetrySampled {
@@ -74,8 +110,14 @@ pub enum Intent {
 /// Something the core asks the caller to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Start reading the GPUs in-process at 1 Hz.
+    /// Start connecting to prismd, and keep reconnecting whenever there is no session.
+    ConnectPrismd,
+    /// Send this request on the session with prismd.
+    SendToPrismd(DaemonRequest),
+    /// Start reading the GPUs in-process at 1 Hz, or resume it.
     StartSampler,
+    /// Pause the in-process sampler, keeping what it loaded.
+    StopSampler,
     /// Show the window, unminimized and focused, passing on the activation token that lets the
     /// desktop focus it.
     RaiseWindow {
@@ -95,6 +137,9 @@ pub struct Core {
     pub(crate) palette: Option<PaletteState>,
     /// Commands run lately, the latest first.
     pub(crate) recent: Vec<Command>,
+    pub(crate) prismd: PrismdConnection,
+    /// Whether the in-process sampler is reading.
+    sampling: bool,
     revision: u64,
 }
 
@@ -153,28 +198,46 @@ impl Core {
         match input {
             Input::Launched { appearance } => {
                 self.appearance = appearance;
-                vec![Effect::StartSampler]
+                // The sampler waits until there's no session, so NVML is never loaded while
+                // prismd is there from the start.
+                vec![Effect::ConnectPrismd]
             }
             Input::InventoryRead(inventory) => {
-                let gpus: Vec<_> = inventory
-                    .gpus
-                    .into_iter()
-                    .map(|device| Gpu {
-                        id: device.id,
-                        name: device.name,
-                        architecture: device.architecture,
-                        bus_id: device.bus_id,
-                        history: TelemetryHistory::default(),
-                        latest: Latest::Waiting,
-                    })
-                    .collect();
-                if self.selection.is_none() {
-                    self.selection = gpus.first().map(|gpu| Selection::Gpu(gpu.id.clone()));
+                // Read before a session opened; prismd's inventory is the one in use.
+                if !self.connected() {
+                    self.found(inventory);
                 }
-                self.discovery = Discovery::Found {
-                    gpus,
-                    warnings: inventory.warnings,
-                };
+                Vec::new()
+            }
+            Input::PrismdConnected { welcome, snapshot } => {
+                self.prismd = PrismdConnection::Connected(welcome);
+                self.found(snapshot.inventory);
+                let mut effects = vec![Effect::SendToPrismd(DaemonRequest::SubscribeTelemetry)];
+                if std::mem::take(&mut self.sampling) {
+                    effects.push(Effect::StopSampler);
+                }
+                effects
+            }
+            Input::PrismdNotConnected(reason) => {
+                self.prismd = PrismdConnection::NotConnected(reason);
+                if std::mem::replace(&mut self.sampling, true) {
+                    Vec::new()
+                } else {
+                    vec![Effect::StartSampler]
+                }
+            }
+            Input::PrismdEvent { event, received_at } => {
+                match event {
+                    DaemonEvent::InventoryChanged(inventory) => self.found(inventory),
+                    DaemonEvent::TelemetrySampled(sample) => {
+                        self.take_sample(&sample, TelemetrySource::Prismd, received_at)
+                    }
+                    // Taken in as the screens that show them land.
+                    DaemonEvent::StoreHealthChanged(_)
+                    | DaemonEvent::TuningStateChanged(_)
+                    | DaemonEvent::RunningGamesChanged(_)
+                    | DaemonEvent::AutomaticSwitchingChanged(_) => {}
+                }
                 Vec::new()
             }
             Input::TelemetrySampled {
@@ -182,11 +245,10 @@ impl Core {
                 source,
                 received_at,
             } => {
-                self.sampled(&sample, received_at);
-                self.telemetry = Some(TelemetryState {
-                    source,
-                    received_at,
-                });
+                // The sampler may have read once more before it stopped.
+                if !(source == TelemetrySource::InProcess && self.connected()) {
+                    self.take_sample(&sample, source, received_at);
+                }
                 Vec::new()
             }
             Input::Intent(intent) => self.intent(intent),
@@ -194,6 +256,60 @@ impl Core {
                 vec![Effect::RaiseWindow { activation_token }]
             }
         }
+    }
+
+    fn connected(&self) -> bool {
+        matches!(self.prismd, PrismdConnection::Connected(_))
+    }
+
+    /// Takes in the GPUs an inventory lists. A GPU listed before keeps its telemetry history, so
+    /// history stays one series when the source changes.
+    fn found(&mut self, inventory: GpuInventoryResponse) {
+        let mut known = match std::mem::take(&mut self.discovery) {
+            Discovery::Found { gpus, .. } => gpus,
+            Discovery::Searching => Vec::new(),
+        };
+        let gpus: Vec<_> = inventory
+            .gpus
+            .into_iter()
+            .map(|device| {
+                let (history, latest) = match known.iter().position(|gpu| gpu.id == device.id) {
+                    Some(index) => {
+                        let gpu = known.swap_remove(index);
+                        (gpu.history, gpu.latest)
+                    }
+                    None => (TelemetryHistory::default(), Latest::Waiting),
+                };
+                Gpu {
+                    id: device.id,
+                    name: device.name,
+                    architecture: device.architecture,
+                    bus_id: device.bus_id,
+                    history,
+                    latest,
+                }
+            })
+            .collect();
+        if self.selection.is_none() {
+            self.selection = gpus.first().map(|gpu| Selection::Gpu(gpu.id.clone()));
+        }
+        self.discovery = Discovery::Found {
+            gpus,
+            warnings: inventory.warnings,
+        };
+    }
+
+    fn take_sample(
+        &mut self,
+        sample: &GpuPerformanceResponse,
+        source: TelemetrySource,
+        received_at: Duration,
+    ) {
+        self.sampled(sample, received_at);
+        self.telemetry = Some(TelemetryState {
+            source,
+            received_at,
+        });
     }
 
     fn sampled(&mut self, sample: &GpuPerformanceResponse, received_at: Duration) {
@@ -278,6 +394,10 @@ impl Core {
             }
             Command::Quit => vec![Effect::Quit],
         }
+    }
+
+    pub fn prismd(&self) -> &PrismdConnection {
+        &self.prismd
     }
 
     pub fn appearance(&self) -> AppearanceMode {

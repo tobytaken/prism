@@ -76,7 +76,9 @@ export global AppState {
     in property <ContentKind> content;
     in property <ExplainedStateView> no-gpus;
     in property <WorkspaceView> workspace;
+    // The prismd connection item: what it says, and whether there is a session.
     in property <string> connection;
+    in property <bool> connected;
     in property <string> telemetry;
     in property <bool> palette-open;
     // The commands matching the palette's query, recently run ones first.

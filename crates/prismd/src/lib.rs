@@ -43,6 +43,8 @@ mod remembered_curve_tests;
 #[cfg(test)]
 mod restore_tests;
 #[cfg(test)]
+mod session_tests;
+#[cfg(test)]
 mod startup_cooling_tests;
 #[cfg(test)]
 mod startup_tests;
@@ -71,11 +73,11 @@ use prism_drivers::DriverService;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 use prism_protocol::framing::{MAX_FRAME_BYTES, read_frame, write_frame};
 use prism_protocol::{
-    DEFAULT_SOCKET_PATH, DaemonRequest, DaemonResponse, SessionMessage, SessionRequest,
+    DEFAULT_SOCKET_PATH, DaemonRequest, DaemonResponse, SessionMessage, SessionRequest, Unsupported,
 };
 
 pub use backend::{DaemonBackend, RealDaemonBackend};
-pub use daemon_core::{CoreDependencies, DaemonCore};
+pub use daemon_core::{CoreDependencies, DaemonCore, HelloRefused, Welcomed};
 pub use host::{
     Clock, HostShutdownSignal, SystemClock, SystemUserDirectory, SystemdShutdownSignal,
     UserDirectory, read_boot_id,
@@ -149,6 +151,7 @@ pub fn run_with(backend: Arc<dyn DaemonBackend>) -> Result<(), String> {
     core.start_recognition()
         .map_err(|error| error.to_string())?;
     core.start_cooling().map_err(|error| error.to_string())?;
+    core.start_telemetry().map_err(|error| error.to_string())?;
     if let Some(interval) = host::watchdog_interval() {
         let supervised = Arc::clone(&core);
         thread::Builder::new()
@@ -309,22 +312,27 @@ fn handle_session_connection(
     let opening: SessionRequest = read_frame(&mut reader)
         .map_err(|error| error.to_string())?
         .ok_or("missing session opening request")?;
-    let admitted = if opening.request == DaemonRequest::OpenSession {
-        resolve_peer(config, stream).and_then(|peer| core.open_session(peer, config))
-    } else {
-        Err(GpuCommandError::new(
+    let admitted = match opening.request {
+        DaemonRequest::Hello(hello) => resolve_peer(config, stream)
+            .map_err(HelloRefused::NotAllowed)
+            .and_then(|peer| core.hello(peer, config, hello)),
+        _ => Err(HelloRefused::NotAllowed(GpuCommandError::new(
             GpuCommandErrorCode::InvalidArgument,
-            "the first session request must be OpenSession",
-        ))
+            "the first session request must be Hello",
+        ))),
     };
-    let mut session = match admitted {
-        Ok(session) => session,
-        Err(error) => {
+    let Welcomed {
+        welcome,
+        snapshot,
+        mut session,
+    } = match admitted {
+        Ok(welcomed) => welcomed,
+        Err(refused) => {
             write_frame(
                 stream,
                 &SessionMessage::Response {
                     id: opening.id,
-                    response: DaemonResponse::Error(error),
+                    response: refused.into(),
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -335,10 +343,12 @@ fn handle_session_connection(
         stream,
         &SessionMessage::Response {
             id: opening.id,
-            response: core.handle_session(&session, DaemonRequest::GetDaemonStatus),
+            response: DaemonResponse::Welcome(welcome),
         },
     )
     .map_err(|error| error.to_string())?;
+    write_frame(stream, &SessionMessage::Snapshot { snapshot })
+        .map_err(|error| error.to_string())?;
     stream
         .set_write_timeout(Some(std::time::Duration::from_secs(2)))
         .map_err(|error| error.to_string())?;
@@ -364,10 +374,34 @@ fn handle_session_connection(
             .shutdown(std::net::Shutdown::Both);
     });
     let result = loop {
-        match read_frame::<SessionRequest>(&mut reader) {
-            Ok(Some(request)) => {
-                // Hold updates are ordered on the connection before dispatching later writes.
-                if matches!(request.request, DaemonRequest::SetEditHolds(_)) {
+        match read_frame::<SessionFrame>(&mut reader) {
+            Ok(Some(frame)) => {
+                let request = match serde_json::from_value(frame.request) {
+                    Ok(request) => SessionRequest {
+                        id: frame.id,
+                        request,
+                    },
+                    // A request this daemon can't read, such as one from a newer Prism.
+                    Err(error) => {
+                        write_frame(
+                            &mut *writer.lock().unwrap(),
+                            &SessionMessage::Response {
+                                id: frame.id,
+                                response: DaemonResponse::Unsupported(Unsupported {
+                                    message: error.to_string(),
+                                }),
+                            },
+                        )
+                        .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                };
+                // Session-scoped requests, such as hold updates, are ordered on the connection
+                // before dispatching later writes.
+                if matches!(
+                    request.request,
+                    DaemonRequest::SetEditHolds(_) | DaemonRequest::SubscribeTelemetry
+                ) {
                     let response = core.handle_session(&session, request.request);
                     write_frame(
                         &mut *writer.lock().unwrap(),
@@ -407,6 +441,14 @@ fn handle_session_connection(
     drop(session);
     let _ = pushing.join();
     result
+}
+
+/// A session request whose id can be read, before its request is.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionFrame {
+    id: u64,
+    request: serde_json::Value,
 }
 
 /// The authorized caller, or none for a status probe, which anyone may send.

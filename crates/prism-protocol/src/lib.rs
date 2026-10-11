@@ -2,6 +2,8 @@ pub mod client;
 pub mod framing;
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +16,126 @@ use prism_gpu::{
 };
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/prism/prismd.sock";
+
+/// The version of the protocol Prism and prismd speak, as `major.minor`. Minor versions only add
+/// to it: a side ignores events it doesn't know and answers requests it doesn't know with
+/// [`DaemonResponse::Unsupported`]. Before the first release it is `0.x`, and the versions must
+/// match exactly; it becomes `1.0` at the first release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProtocolVersion {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl ProtocolVersion {
+    /// The version this build speaks.
+    pub const CURRENT: Self = Self { major: 0, minor: 1 };
+
+    /// Whether a side speaking this version can talk to one speaking `other`: the same major
+    /// version, and before the first release the same minor version too.
+    pub fn is_compatible_with(self, other: Self) -> bool {
+        self.major == other.major && (self.major > 0 || self.minor == other.minor)
+    }
+}
+
+impl fmt::Display for ProtocolVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.major, self.minor)
+    }
+}
+
+impl FromStr for ProtocolVersion {
+    type Err = String;
+
+    fn from_str(version: &str) -> Result<Self, Self::Err> {
+        let invalid = || format!("invalid protocol version {version:?}; expected major.minor");
+        let (major, minor) = version.split_once('.').ok_or_else(invalid)?;
+        let number = |part: &str| {
+            // Only plain digits, so "+1" and " 1" aren't versions.
+            if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(invalid());
+            }
+            part.parse().map_err(|_| invalid())
+        };
+        Ok(Self {
+            major: number(major)?,
+            minor: number(minor)?,
+        })
+    }
+}
+
+impl Serialize for ProtocolVersion {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProtocolVersion {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// The first request on a session connection: the protocol and Prism version the GUI speaks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HelloRequest {
+    pub protocol: ProtocolVersion,
+    pub prism_version: String,
+}
+
+impl HelloRequest {
+    /// This build's protocol, from a Prism of `prism_version`.
+    pub fn current(prism_version: impl Into<String>) -> Self {
+        Self {
+            protocol: ProtocolVersion::CURRENT,
+            prism_version: prism_version.into(),
+        }
+    }
+}
+
+/// prismd's answer to a compatible [`HelloRequest`]: the session is open, and its snapshot
+/// follows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Welcome {
+    pub protocol: ProtocolVersion,
+    pub prismd_version: String,
+    /// Whether this session may change GPU tuning.
+    pub can_tune: bool,
+    /// Why it may not, when it may not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// prismd's answer to a [`HelloRequest`] whose protocol it can't speak; the connection closes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Incompatible {
+    pub protocol: ProtocolVersion,
+    pub prismd_version: String,
+}
+
+/// What prismd answers a request it doesn't know, such as one from a newer Prism.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Unsupported {
+    pub message: String,
+}
+
+/// The daemon state a session starts from, sent once right after [`Welcome`]. After it, state
+/// changes only through events, each carrying the full new value of its scope.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DaemonSnapshot {
+    pub inventory: GpuInventoryResponse,
+    pub store_health: TuningStoreHealth,
+    pub tuning_states: Vec<GpuTuningState>,
+    pub running_games: RunningGamesState,
+    pub automatic_switching: AutomaticSwitchingStatus,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaemonCommandResponse {
@@ -642,10 +764,12 @@ pub struct SetEditHoldsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonRequest {
-    OpenSession,
+    /// The handshake, which a session connection starts with.
+    Hello(HelloRequest),
     SetEditHolds(SetEditHoldsRequest),
+    /// Opts the session in to [`DaemonEvent::TelemetrySampled`].
+    SubscribeTelemetry,
     GetInventory,
-    GetPerformance,
     GetDaemonStatus,
     ApplyProfile(ApplyGpuProfileRequest),
     SetPowerLimit(SetGpuPowerLimitRequest),
@@ -710,8 +834,10 @@ impl DaemonRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DaemonResponse {
+    Welcome(Welcome),
+    Incompatible(Incompatible),
+    Unsupported(Unsupported),
     Inventory(GpuInventoryResponse),
-    Performance(GpuPerformanceResponse),
     DaemonStatus(GpuDaemonStatus),
     Command(DaemonCommandResponse),
     ClockOffsets(ClockOffsetResponse),
@@ -745,11 +871,20 @@ pub struct SessionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionMessage {
-    Response { id: u64, response: DaemonResponse },
-    Event { event: DaemonEvent },
+    Response {
+        id: u64,
+        response: DaemonResponse,
+    },
+    /// Sent once, right after [`Welcome`].
+    Snapshot {
+        snapshot: DaemonSnapshot,
+    },
+    Event {
+        event: DaemonEvent,
+    },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(
     tag = "type",
     content = "payload",
@@ -758,6 +893,11 @@ pub enum SessionMessage {
 )]
 pub enum DaemonEvent {
     StoreHealthChanged(TuningStoreHealth),
+    /// The GPUs prismd can inspect changed, such as when one arrived or departed.
+    InventoryChanged(GpuInventoryResponse),
+    /// Every GPU read once on prismd's 1 Hz tick, with Prism's control of each GPU's fans and
+    /// what its curve requests now; only for sessions that subscribed to telemetry.
+    TelemetrySampled(GpuPerformanceResponse),
     TuningStateChanged(GpuTuningState),
     RunningGamesChanged(RunningGamesState),
     AutomaticSwitchingChanged(AutomaticSwitchingStatus),
@@ -847,6 +987,102 @@ mod daemon_status_tests {
 mod session_tests {
     use super::*;
     use crate::framing::{read_frame, write_frame};
+
+    fn version(major: u32, minor: u32) -> ProtocolVersion {
+        ProtocolVersion { major, minor }
+    }
+
+    #[test]
+    fn protocol_versions_match_on_major_and_before_the_first_release_on_minor_too() {
+        assert!(version(0, 1).is_compatible_with(version(0, 1)));
+        assert!(!version(0, 1).is_compatible_with(version(0, 2)));
+        assert!(!version(0, 2).is_compatible_with(version(0, 1)));
+        // From 1.0 on, minor versions only add, so either side's minor version works.
+        assert!(version(1, 0).is_compatible_with(version(1, 3)));
+        assert!(version(1, 3).is_compatible_with(version(1, 0)));
+        assert!(!version(1, 0).is_compatible_with(version(2, 0)));
+        assert!(!version(1, 0).is_compatible_with(version(0, 1)));
+    }
+
+    #[test]
+    fn protocol_versions_are_major_dot_minor_on_the_wire() {
+        assert_eq!(serde_json::to_value(version(0, 1)).unwrap(), "0.1");
+        assert_eq!(
+            serde_json::from_value::<ProtocolVersion>(serde_json::json!("12.30")).unwrap(),
+            version(12, 30)
+        );
+        for malformed in ["1", "1.2.3", "a.b", ".1", "1.", "+1.0", " 1.0", ""] {
+            assert!(
+                serde_json::from_value::<ProtocolVersion>(serde_json::json!(malformed)).is_err(),
+                "{malformed:?}"
+            );
+        }
+        assert!(serde_json::from_value::<ProtocolVersion>(serde_json::json!(1.0)).is_err());
+    }
+
+    #[test]
+    fn the_handshake_round_trips_the_shared_contract() {
+        let handshake: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/session-handshake.json"))
+                .unwrap();
+        let hello: SessionRequest = serde_json::from_value(handshake["hello"].clone()).unwrap();
+        assert_eq!(
+            hello.request,
+            DaemonRequest::Hello(HelloRequest::current("0.1.0"))
+        );
+        assert_eq!(serde_json::to_value(hello).unwrap(), handshake["hello"]);
+        for answer in ["welcome", "incompatible", "unsupported"] {
+            let typed: SessionMessage = serde_json::from_value(handshake[answer].clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(typed).unwrap(),
+                handshake[answer],
+                "{answer}"
+            );
+        }
+        let mut extra = handshake["hello"].clone();
+        extra["request"]["payload"]["uid"] = serde_json::json!(0);
+        assert!(serde_json::from_value::<SessionRequest>(extra).is_err());
+    }
+
+    #[test]
+    fn the_snapshot_round_trips_the_shared_contract() {
+        let snapshot: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/daemon-snapshot.json")).unwrap();
+        let typed: SessionMessage = serde_json::from_value(snapshot.clone()).unwrap();
+        assert!(matches!(typed, SessionMessage::Snapshot { .. }));
+        assert_eq!(serde_json::to_value(typed).unwrap(), snapshot);
+    }
+
+    #[test]
+    fn sampled_telemetry_and_inventory_changes_round_trip_as_pushed_events() {
+        let telemetry: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/tuning-observations.json"))
+                .unwrap();
+        let snapshot: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/daemon-snapshot.json")).unwrap();
+        for event in [
+            serde_json::json!({ "type": "telemetry_sampled", "payload": telemetry }),
+            serde_json::json!({ "type": "inventory_changed", "payload": snapshot["snapshot"]["inventory"] }),
+        ] {
+            let message = serde_json::json!({ "type": "event", "event": event });
+            let typed: SessionMessage = serde_json::from_value(message.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), message);
+        }
+        let request = serde_json::json!({ "type": "subscribe_telemetry" });
+        let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(typed, DaemonRequest::SubscribeTelemetry);
+        assert_eq!(serde_json::to_value(typed).unwrap(), request);
+    }
+
+    #[test]
+    fn the_removed_performance_read_is_no_longer_a_request() {
+        assert!(
+            serde_json::from_value::<DaemonRequest>(
+                serde_json::json!({ "type": "get_performance" })
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn session_frames_round_trip_and_keep_response_ids_separate_from_events() {

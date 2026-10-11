@@ -48,19 +48,34 @@ pub(super) struct SessionEvents(Mutex<Subscribers>);
 #[derive(Default)]
 struct Subscribers {
     next_id: u64,
-    senders: HashMap<u64, (SessionPeer, SyncSender<DaemonEvent>, BTreeSet<String>)>,
+    senders: HashMap<u64, Subscriber>,
+}
+
+/// An open session, as the daemon pushes events to it.
+struct Subscriber {
+    peer: SessionPeer,
+    sender: SyncSender<DaemonEvent>,
+    /// The GPUs it has unapplied tuning changes for.
+    holds: BTreeSet<String>,
+    /// Whether it subscribed to telemetry.
+    telemetry: bool,
 }
 
 impl SessionEvents {
-    pub fn subscribe(self: &Arc<Self>, peer: SessionPeer, initial: DaemonEvent) -> DaemonSession {
+    pub fn subscribe(self: &Arc<Self>, peer: SessionPeer) -> DaemonSession {
         let (sender, events) = mpsc::sync_channel(64);
-        sender.try_send(initial).unwrap();
         let mut subscribers = self.0.lock().unwrap();
         subscribers.next_id += 1;
         let id = subscribers.next_id;
-        subscribers
-            .senders
-            .insert(id, (peer.clone(), sender, BTreeSet::new()));
+        subscribers.senders.insert(
+            id,
+            Subscriber {
+                peer: peer.clone(),
+                sender,
+                holds: BTreeSet::new(),
+                telemetry: false,
+            },
+        );
         DaemonSession {
             id,
             peer,
@@ -75,18 +90,14 @@ impl SessionEvents {
             .unwrap()
             .senders
             .values()
-            .flat_map(|(_, _, holds)| holds.iter().cloned())
+            .flat_map(|subscriber| subscriber.holds.iter().cloned())
             .collect()
     }
 
     pub fn publish_for_users(&self, event: impl Fn(&SessionPeer) -> Option<DaemonEvent>) {
-        self.0
-            .lock()
-            .unwrap()
-            .senders
-            .retain(|_, (peer, sender, _)| {
-                event(peer).is_none_or(|event| sender.try_send(event).is_ok())
-            });
+        self.0.lock().unwrap().senders.retain(|_, subscriber| {
+            event(&subscriber.peer).is_none_or(|event| subscriber.sender.try_send(event).is_ok())
+        });
     }
 
     pub fn publish(&self, event: DaemonEvent) {
@@ -95,7 +106,24 @@ impl SessionEvents {
             .lock()
             .unwrap()
             .senders
-            .retain(|_, (_, sender, _)| sender.try_send(event.clone()).is_ok());
+            .retain(|_, subscriber| subscriber.sender.try_send(event.clone()).is_ok());
+    }
+
+    /// Whether any open session subscribed to telemetry.
+    pub fn telemetry_subscribed(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .senders
+            .values()
+            .any(|subscriber| subscriber.telemetry)
+    }
+
+    /// Pushes the event to every session that subscribed to telemetry.
+    pub fn publish_telemetry(&self, event: DaemonEvent) {
+        self.0.lock().unwrap().senders.retain(|_, subscriber| {
+            !subscriber.telemetry || subscriber.sender.try_send(event.clone()).is_ok()
+        });
     }
 }
 
@@ -109,10 +137,19 @@ pub struct DaemonSession {
 
 impl DaemonSession {
     pub fn set_edit_holds(&self, gpu_ids: Vec<String>) {
+        self.update(|subscriber| subscriber.holds = gpu_ids.into_iter().collect());
+    }
+
+    /// Opts the session in to the telemetry pushed on each tick.
+    pub fn subscribe_telemetry(&self) {
+        self.update(|subscriber| subscriber.telemetry = true);
+    }
+
+    fn update(&self, change: impl FnOnce(&mut Subscriber)) {
         if let Some(subscribers) = self.subscribers.upgrade()
-            && let Some((_, _, holds)) = subscribers.0.lock().unwrap().senders.get_mut(&self.id)
+            && let Some(subscriber) = subscribers.0.lock().unwrap().senders.get_mut(&self.id)
         {
-            *holds = gpu_ids.into_iter().collect();
+            change(subscriber);
         }
     }
 

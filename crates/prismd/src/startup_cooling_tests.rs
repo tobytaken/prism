@@ -86,8 +86,7 @@ fn completed_outcome(daemon: &Harness) -> Value {
 }
 
 fn control(daemon: &Harness) -> Value {
-    daemon.send_json(json!({"type": "get_performance"}))["payload"]["gpus"][0]["cooling"]["control"]
-        .clone()
+    daemon.performance_json()["gpus"][0]["cooling"]["control"].clone()
 }
 
 fn fan(daemon: &Harness, index: usize) -> (Option<FanControlMode>, Option<u32>) {

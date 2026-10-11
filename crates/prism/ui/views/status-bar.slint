@@ -22,7 +22,7 @@ export component StatusBar inherits Rectangle {
                 Rectangle {
                     width: Theme.size.status-dot;
                     height: Theme.size.status-dot;
-                    background: Theme.color.chrome-ink-muted;
+                    background: AppState.connected ? Theme.color.ok : Theme.color.chrome-ink-muted;
                 }
             }
 

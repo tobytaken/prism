@@ -14,6 +14,7 @@ simulated = ["prism-gpu/simulated"]
 
 [dependencies]
 prism-gpu.workspace = true
+prism-protocol.workspace = true
 prism-ui.workspace = true
 serde.workspace = true
 slint.workspace = true
@@ -31,6 +32,7 @@ slint-build.workspace = true
 i-slint-backend-testing = { workspace = true, features = ["renderer-software"] }
 png.workspace = true
 prism-gpu = { workspace = true, features = ["simulated"] }
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

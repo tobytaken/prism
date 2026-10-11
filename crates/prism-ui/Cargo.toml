@@ -10,9 +10,11 @@ publish.workspace = true
 
 [dependencies]
 prism-gpu.workspace = true
+prism-protocol.workspace = true
 
 [dev-dependencies]
 prism-gpu = { workspace = true, features = ["simulated"] }
+serde_json.workspace = true
 
 [lints]
 workspace = true

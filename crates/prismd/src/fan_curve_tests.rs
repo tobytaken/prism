@@ -13,13 +13,13 @@ fn points(points: &[(i64, i64)]) -> Value {
 
 /// The GPU's shared curve support as the daemon reports it in performance readings.
 fn curve_support(daemon: &Harness, gpu_id: &str) -> Value {
-    let response = daemon.send_json(json!({ "type": "get_performance" }));
-    response["payload"]["gpus"]
+    let performance = daemon.performance_json();
+    performance["gpus"]
         .as_array()
         .unwrap()
         .iter()
         .find(|gpu| gpu["id"] == gpu_id)
-        .unwrap_or_else(|| panic!("no GPU {gpu_id} in {response}"))["cooling"]["curve_support"]
+        .unwrap_or_else(|| panic!("no GPU {gpu_id} in {performance}"))["cooling"]["curve_support"]
         .clone()
 }
 

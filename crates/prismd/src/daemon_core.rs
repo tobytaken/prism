@@ -12,9 +12,10 @@ use prism_gpu::{
 use prism_protocol::{
     ApplyGpuProfileRequest, ClockOffsetResponse, CorrectAndApplyProfileRequest,
     CorrectedProfileApplication, DaemonCommandResponse, DaemonEvent, DaemonRequest, DaemonResponse,
-    GpuDaemonStatus, GpuTuningProfile, GpuTuningState, LiveClockOffsetsRequest, OffsetInstruction,
-    ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings,
-    SaveProfileAsNewRequest, SaveToCurrentProfileRequest,
+    DaemonSnapshot, GpuDaemonStatus, GpuTuningProfile, GpuTuningState, HelloRequest, Incompatible,
+    LiveClockOffsetsRequest, OffsetInstruction, ProfileApplicationResponse, ProfileSetting,
+    ProfileSettingKey, ProfileSettings, ProtocolVersion, SaveProfileAsNewRequest,
+    SaveToCurrentProfileRequest, Welcome,
 };
 
 use super::backend::DaemonBackend;
@@ -29,6 +30,9 @@ use super::tuning::TuningOrigin;
 use super::tuning::{apply_live_offsets, apply_profile, reset_live_offsets};
 use super::tuning_store::{TUNING_STORE_FILE_NAME, TuningDocument, TuningStore};
 use super::{DaemonSession, SessionPeer, SessionPolicy};
+
+/// How often subscribed sessions get telemetry.
+pub const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Everything the daemon core needs from the host, so tests can substitute each part.
 pub struct CoreDependencies {
@@ -62,17 +66,82 @@ pub struct DaemonCore {
     pub(super) stopping: Arc<AtomicBool>,
     pub(super) startup_operations: Mutex<Vec<PendingOperation<()>>>,
     pub(super) cooling: Arc<CoolingController>,
+    /// The GPUs, by id, in the latest inventory sessions were given.
+    inventory_ids: Mutex<Vec<String>>,
+}
+
+/// Why prismd refused a session connection's hello.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HelloRefused {
+    /// The caller speaks a protocol this daemon can't.
+    Incompatible(Incompatible),
+    /// The caller isn't allowed a session.
+    NotAllowed(GpuCommandError),
+}
+
+impl From<HelloRefused> for DaemonResponse {
+    fn from(refused: HelloRefused) -> Self {
+        match refused {
+            HelloRefused::Incompatible(incompatible) => Self::Incompatible(incompatible),
+            HelloRefused::NotAllowed(error) => Self::Error(error),
+        }
+    }
+}
+
+/// A session prismd welcomed, with the state it starts from.
+pub struct Welcomed {
+    pub welcome: Welcome,
+    pub snapshot: DaemonSnapshot,
+    pub session: DaemonSession,
 }
 
 impl DaemonCore {
-    pub fn open_session(
+    /// Answers a session connection's hello: a caller speaking a compatible protocol gets a
+    /// session and its snapshot, and any other is refused with this daemon's versions.
+    pub fn hello(
         &self,
         peer: SessionPeer,
         policy: &SessionPolicy,
-    ) -> Result<DaemonSession, GpuCommandError> {
-        policy.authorize(&peer)?;
+        hello: HelloRequest,
+    ) -> Result<Welcomed, HelloRefused> {
+        let prismd_version = env!("CARGO_PKG_VERSION").to_owned();
+        if !ProtocolVersion::CURRENT.is_compatible_with(hello.protocol) {
+            return Err(HelloRefused::Incompatible(Incompatible {
+                protocol: ProtocolVersion::CURRENT,
+                prismd_version,
+            }));
+        }
+        policy.authorize(&peer).map_err(HelloRefused::NotAllowed)?;
         self.switching.opened(&peer);
-        Ok(self.tuning_store.subscribe(peer))
+        // Subscribed before the snapshot is read, so no change between the two is lost: one
+        // already in the snapshot arrives again as an event with the same full value.
+        let session = self.tuning_store.subscribe(peer);
+        Ok(Welcomed {
+            welcome: Welcome {
+                protocol: ProtocolVersion::CURRENT,
+                prismd_version,
+                can_tune: true,
+                reason: None,
+            },
+            snapshot: self.snapshot(session.peer()),
+            session,
+        })
+    }
+
+    /// The daemon state a caller's session starts from.
+    fn snapshot(&self, peer: &SessionPeer) -> DaemonSnapshot {
+        let inventory = self.dependencies.backend.inventory();
+        *self.inventory_ids.lock().unwrap() = gpu_ids(&inventory.gpus, |gpu| &gpu.id);
+        // Each read on its own, so no lock is held into the next: switching reads recognition.
+        let running_games = self.recognition.lock().unwrap().for_uid(peer.uid);
+        let automatic_switching = self.switching.status_for(peer);
+        DaemonSnapshot {
+            inventory,
+            store_health: self.tuning_store.health(),
+            tuning_states: self.tuning_states(peer).unwrap_or_default(),
+            running_games,
+            automatic_switching,
+        }
     }
 
     pub fn handle_session(
@@ -80,12 +149,74 @@ impl DaemonCore {
         session: &DaemonSession,
         request: DaemonRequest,
     ) -> DaemonResponse {
-        if let DaemonRequest::SetEditHolds(request) = request {
-            session.set_edit_holds(request.gpu_ids);
-            self.evaluate_switching();
-            return startup_command();
+        match request {
+            DaemonRequest::SetEditHolds(request) => {
+                session.set_edit_holds(request.gpu_ids);
+                self.evaluate_switching();
+                startup_command()
+            }
+            DaemonRequest::SubscribeTelemetry => {
+                session.subscribe_telemetry();
+                startup_command()
+            }
+            request => self.handle_for_peer(session.peer(), request),
         }
-        self.handle_for_peer(session.peer(), request)
+    }
+
+    /// Runs one tick of the telemetry loop: while any session subscribed, reads every GPU once
+    /// and pushes the same sample to each subscriber, after the new inventory when GPUs arrived
+    /// or departed. With no subscriber, the GPUs aren't read.
+    pub fn sample_telemetry(&self) {
+        if !self.tuning_store.telemetry_subscribed() {
+            return;
+        }
+        let performance = self.observed_performance(None);
+        let ids = gpu_ids(&performance.gpus, |gpu| &gpu.id);
+        let changed = *self.inventory_ids.lock().unwrap() != ids;
+        if changed {
+            let inventory = self.dependencies.backend.inventory();
+            *self.inventory_ids.lock().unwrap() = ids;
+            self.tuning_store
+                .publish(DaemonEvent::InventoryChanged(inventory));
+        }
+        self.tuning_store
+            .publish_telemetry(DaemonEvent::TelemetrySampled(performance));
+    }
+
+    /// Starts the loop that pushes telemetry to subscribed sessions once a second. The curve
+    /// loop reads the GPUs on its own schedule.
+    pub fn start_telemetry(self: &Arc<Self>) -> std::io::Result<()> {
+        let core = Arc::downgrade(self);
+        std::thread::Builder::new()
+            .name("prismd-telemetry".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(TELEMETRY_INTERVAL);
+                    let Some(core) = core.upgrade() else {
+                        break;
+                    };
+                    if core.stopping.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    core.sample_telemetry();
+                }
+            })?;
+        Ok(())
+    }
+
+    /// The caller's view of each identified GPU's tuning state.
+    fn tuning_states(&self, peer: &SessionPeer) -> Result<Vec<GpuTuningState>, GpuCommandError> {
+        let performance = self.observed_performance(Some(peer));
+        self.tuning_store
+            .read(|document| {
+                performance
+                    .gpus
+                    .iter()
+                    .filter_map(|gpu| verified_gpu(&performance, gpu.stable_id.as_deref()?).ok())
+                    .map(|gpu| document.tuning_state(gpu))
+                    .collect()
+            })
+            .map_err(GpuCommandError::from)
     }
 
     /// Handles a request from an identified caller, whose own profiles it may use.
@@ -105,9 +236,6 @@ impl DaemonCore {
                 | DaemonRequest::RenameProfile(_)
         );
         let response = match request {
-            DaemonRequest::GetPerformance => {
-                Ok(DaemonResponse::Performance(self.performance(Some(peer))))
-            }
             DaemonRequest::ApplyProfile(request) => Ok(DaemonResponse::ProfileApplication(
                 self.apply_profile_settings(request, Some(peer.clone())),
             )),
@@ -151,20 +279,7 @@ impl DaemonCore {
                 .map_err(GpuCommandError::from)
                 .map(DaemonResponse::Profiles),
             DaemonRequest::GetTuningStates => {
-                let performance = self.performance(Some(peer));
-                self.tuning_store
-                    .read(|document| {
-                        performance
-                            .gpus
-                            .iter()
-                            .filter_map(|gpu| {
-                                verified_gpu(&performance, gpu.stable_id.as_deref()?).ok()
-                            })
-                            .map(|gpu| document.tuning_state(gpu))
-                            .collect()
-                    })
-                    .map_err(GpuCommandError::from)
-                    .map(DaemonResponse::TuningStates)
+                self.tuning_states(peer).map(DaemonResponse::TuningStates)
             }
             DaemonRequest::SaveProfileAsNew(request) => self
                 .save_profile_as_new(peer, request)
@@ -563,6 +678,7 @@ impl DaemonCore {
             switching,
             queues: GpuOperationQueues::default(),
             tuning_store,
+            inventory_ids: Mutex::default(),
         };
 
         core.resume_interrupted_curves();
@@ -607,16 +723,15 @@ impl DaemonCore {
     pub fn handle(&self, request: DaemonRequest) -> DaemonResponse {
         let drivers = &self.dependencies.drivers;
         match request {
-            DaemonRequest::OpenSession | DaemonRequest::SetEditHolds(_) => {
-                DaemonResponse::Error(GpuCommandError::new(
-                    GpuCommandErrorCode::InvalidArgument,
-                    "This request requires a framed session connection",
-                ))
-            }
+            DaemonRequest::Hello(_)
+            | DaemonRequest::SetEditHolds(_)
+            | DaemonRequest::SubscribeTelemetry => DaemonResponse::Error(GpuCommandError::new(
+                GpuCommandErrorCode::InvalidArgument,
+                "This request requires a framed session connection",
+            )),
             DaemonRequest::GetInventory => {
                 DaemonResponse::Inventory(self.dependencies.backend.inventory())
             }
-            DaemonRequest::GetPerformance => DaemonResponse::Performance(self.performance(None)),
             DaemonRequest::ApplyProfile(request) => {
                 DaemonResponse::ProfileApplication(self.apply_profile_settings(request, None))
             }
@@ -726,8 +841,12 @@ impl DaemonCore {
     }
 
     /// The GPUs' readings, with the daemon's judgment of the fan curves each can use and Prism's
-    /// control of each identified GPU's fans.
-    fn performance(&self, peer: Option<&SessionPeer>) -> GpuPerformanceResponse {
+    /// control of each identified GPU's fans, including the caller's remembered curves when
+    /// there is a caller.
+    pub(super) fn observed_performance(
+        &self,
+        peer: Option<&SessionPeer>,
+    ) -> GpuPerformanceResponse {
         let mut performance = self.dependencies.backend.performance();
         let remembered = peer
             .and_then(|peer| {
@@ -1222,6 +1341,11 @@ pub(super) fn tuning_state(
     let mut gpu = verified_gpu(&performance, uuid).ok()?.clone();
     gpu.cooling.control = Some(cooling.control(uuid));
     store.read(|document| document.tuning_state(&gpu)).ok()
+}
+
+/// Each GPU's id, in order.
+fn gpu_ids<T>(gpus: &[T], id: impl Fn(&T) -> &String) -> Vec<String> {
+    gpus.iter().map(|gpu| id(gpu).clone()).collect()
 }
 
 fn command_result(result: Result<(), String>) -> DaemonCommandResponse {

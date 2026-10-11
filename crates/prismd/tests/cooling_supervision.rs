@@ -18,6 +18,8 @@ use prism_gpu::{
     GpuPerformanceResponse, GpuTargetRequest, SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest,
     SetGpuFanSpeedRequest, SetGpuPowerLimitRequest,
 };
+use prism_protocol::client::{Connected, connect};
+use prism_protocol::{DaemonEvent, DaemonRequest, HelloRequest, SessionMessage};
 use prismd::DaemonBackend;
 use serde_json::{Value, json};
 
@@ -307,10 +309,30 @@ impl Host {
         record["gpus"]["GPU-123"].clone()
     }
 
-    /// Prism's control of the GPU's fans, as the running daemon reports it.
+    /// Prism's control of the GPU's fans, as the running daemon reports it in a session's next
+    /// telemetry.
     fn control(&self) -> Value {
-        self.send(json!({ "type": "get_performance" }))["payload"]["gpus"][0]["cooling"]["control"]
-            .clone()
+        let Connected { mut session, .. } = connect(
+            &self.path("run/prismd.sock"),
+            HelloRequest::current("0.1.0"),
+        )
+        .unwrap_or_else(|error| panic!("the daemon refused a session: {error:?}"));
+        session
+            .sender()
+            .send(DaemonRequest::SubscribeTelemetry)
+            .unwrap();
+        loop {
+            match session.next_message().unwrap() {
+                Some(SessionMessage::Event {
+                    event: DaemonEvent::TelemetrySampled(performance),
+                }) => {
+                    let control = &performance.gpus[0].cooling.control;
+                    break serde_json::to_value(control).unwrap();
+                }
+                Some(_) => {}
+                None => panic!("the daemon ended the session before any telemetry"),
+            }
+        }
     }
 
     /// Runs the service manager's stop command, as ExecStopPost does after any stop.
