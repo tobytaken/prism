@@ -14,9 +14,9 @@ use prism_ui::{
 use crate::{
     AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, CurvePointView,
     DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, FanCurveView,
-    FanModeView, LimitMark, MainWindow, PaletteEntryView, ReadoutView, ReviewChangeView,
-    SegmentView, ServiceAction, SettingsSection, SidebarGpuView, StepperView, Theme, TrackView,
-    TuningSetting, WorkspaceView,
+    FanModeView, LimitMark, MainWindow, ManagedProfileView, MenuEntryView, PaletteEntryView,
+    ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection, SidebarGpuView,
+    StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -70,6 +70,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 profiles_read_only: profiles.read_only.is_some(),
                 profiles_reason: profiles.read_only.as_deref().unwrap_or_default().into(),
                 current_profile: profiles.current.as_deref().unwrap_or("None").into(),
+                profiles_unsaved: profiles.unsaved,
                 changes: ChangeStripView {
                     summary: changes.summary.as_str().into(),
                     pending: changes.pending,
@@ -229,6 +230,23 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         state.set_palette_entries(model);
     }
 
+    let menu = core.profile_menu();
+    state.set_profile_menu_open(menu.is_some());
+    let entries: Vec<_> = menu
+        .map(|menu| menu.entries)
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| MenuEntryView {
+            title: entry.title.as_str().into(),
+            available: entry.unavailable.is_none(),
+            reason: entry.unavailable.as_deref().unwrap_or_default().into(),
+        })
+        .collect();
+    if let Some(model) = update_in_place(&state.get_profile_menu(), entries, PartialEq::eq) {
+        state.set_profile_menu(model);
+    }
+
+    let mut managed = Vec::new();
     let (dialog, changes) = match core.dialog() {
         None => (DialogView::default(), Vec::new()),
         Some(Dialog::Review(review)) => (
@@ -241,6 +259,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 apply_reason: review.apply_unavailable.unwrap_or_default().into(),
                 can_discard: review.discard_unavailable.is_none(),
                 discard_reason: review.discard_unavailable.unwrap_or_default().into(),
+                ..DialogView::default()
             },
             review.changes.iter().map(review_change).collect(),
         ),
@@ -271,7 +290,56 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
             },
             review.corrections.iter().map(review_change).collect(),
         ),
+        Some(Dialog::ProfileName(naming)) => (
+            DialogView {
+                kind: DialogKind::ProfileName,
+                title: naming.title.into(),
+                message: naming.message.into(),
+                name: naming.name.into(),
+                error: naming.error.unwrap_or_default().into(),
+                confirm_text: naming.confirm_text.into(),
+                can_confirm: naming.confirm_unavailable.is_none(),
+                confirm_reason: naming.confirm_unavailable.unwrap_or_default().into(),
+                ..DialogView::default()
+            },
+            Vec::new(),
+        ),
+        Some(Dialog::DeleteProfile(question)) => (
+            DialogView {
+                kind: DialogKind::DeleteProfile,
+                title: question.title.into(),
+                message: question.message.into(),
+                error: question.error.unwrap_or_default().into(),
+                can_confirm: question.confirm_unavailable.is_none(),
+                confirm_reason: question.confirm_unavailable.unwrap_or_default().into(),
+                ..DialogView::default()
+            },
+            Vec::new(),
+        ),
+        Some(Dialog::ManageProfiles(manage)) => {
+            managed = manage
+                .profiles
+                .iter()
+                .map(|profile| ManagedProfileView {
+                    name: profile.name.as_str().into(),
+                    marks: profile.marks.as_str().into(),
+                })
+                .collect();
+            (
+                DialogView {
+                    kind: DialogKind::ManageProfiles,
+                    title: manage.title.into(),
+                    message: manage.message.into(),
+                    confirm_reason: manage.actions_unavailable.unwrap_or_default().into(),
+                    ..DialogView::default()
+                },
+                Vec::new(),
+            )
+        }
     };
+    if let Some(model) = update_in_place(&state.get_managed_profiles(), managed, PartialEq::eq) {
+        state.set_managed_profiles(model);
+    }
     state.set_dialog(dialog);
     if let Some(model) = update_in_place(&state.get_review_changes(), changes, PartialEq::eq) {
         state.set_review_changes(model);

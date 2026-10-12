@@ -304,6 +304,94 @@ fn the_profile_buttons_and_their_dialogs_are_accessible() {
     harness.app.receive_posted();
     audit("tunable, read-only profiles", &harness);
     harness.find(AccessibleRole::Text, "Profiles");
+    harness
+        .find(AccessibleRole::Button, "Profile actions")
+        .invoke_accessible_default_action();
+    audit("tunable, read-only profile menu", &harness);
+    harness.find(AccessibleRole::List, "Profile actions");
+}
+
+/// Opens the `⋯` profile menu of the tunable GPU, with its Quiet and Boost profiles, and runs the
+/// entry titled `title`.
+fn run_profile_menu(harness: &Harness, title: &str) {
+    harness
+        .find(AccessibleRole::Button, "Profile actions")
+        .invoke_accessible_default_action();
+    harness
+        .find(AccessibleRole::ListItem, title)
+        .invoke_accessible_default_action();
+}
+
+fn with_profiles() -> Harness {
+    let harness = tunable();
+    harness.prismd.push(DaemonEvent::ProfilesChanged(
+        serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/profiles-state.json"
+        ))
+        .unwrap(),
+    ));
+    harness.app.receive_posted();
+    harness
+}
+
+#[test]
+fn the_profile_menu_and_its_dialogs_are_accessible() {
+    let harness = with_profiles();
+    harness
+        .find(AccessibleRole::Button, "Profile actions")
+        .invoke_accessible_default_action();
+    audit("tunable, profile menu", &harness);
+    harness.find(AccessibleRole::List, "Profile actions");
+    harness.press(&[], "\u{1b}");
+
+    run_profile_menu(&harness, "Save as new profile…");
+    harness.type_text("Quiet");
+    audit("tunable, save as a new profile, name clash", &harness);
+    harness.find(AccessibleRole::TextInput, "Profile name");
+    harness.find(AccessibleRole::Text, "Problem");
+    harness.press(&[], "\u{1b}");
+
+    run_profile_menu(&harness, "Rename profile…");
+    audit("tunable, rename a profile", &harness);
+    harness.find(AccessibleRole::Groupbox, "Rename Boost");
+    harness.press(&[], "\u{1b}");
+
+    run_profile_menu(&harness, "Delete profile…");
+    audit("tunable, delete a profile", &harness);
+    harness.find(AccessibleRole::Groupbox, "Delete Boost?");
+    harness.press(&[], "\u{1b}");
+
+    run_profile_menu(&harness, "Manage profiles…");
+    audit("tunable, manage profiles", &harness);
+    harness.find(AccessibleRole::Button, "Rename Quiet");
+    harness.find(AccessibleRole::Button, "Delete Boost");
+}
+
+#[test]
+fn a_menu_item_s_default_action_runs_it_unless_it_can_t_run() {
+    let harness = with_profiles();
+    harness
+        .find(AccessibleRole::Button, "Profile actions")
+        .invoke_accessible_default_action();
+    harness.prismd.push(DaemonEvent::ProfilesChanged(
+        prism_protocol::ProfilesState::default(),
+    ));
+    harness.app.receive_posted();
+
+    // Without a current profile, there's nothing to rename.
+    harness
+        .find(AccessibleRole::ListItem, "Rename profile…")
+        .invoke_accessible_default_action();
+    assert_eq!(harness.count(AccessibleRole::List, "Profile actions"), 1);
+
+    harness
+        .find(AccessibleRole::ListItem, "Save as new profile…")
+        .invoke_accessible_default_action();
+    assert_eq!(harness.count(AccessibleRole::List, "Profile actions"), 0);
+    assert_eq!(
+        harness.count(AccessibleRole::Groupbox, "Save as new profile"),
+        1
+    );
 }
 
 /// Every `accessible-action-*` a widget or view declares, and the test below that invokes it.
@@ -347,6 +435,11 @@ const ACTION_TESTS: &[(&str, &str, &str)] = &[
         "ListRow",
         "default",
         "a_list_row_s_default_action_activates_it",
+    ),
+    (
+        "MenuItem",
+        "default",
+        "a_menu_item_s_default_action_runs_it_unless_it_can_t_run",
     ),
     (
         "PaletteRow",
@@ -704,6 +797,7 @@ fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
             "Games",
             "Drivers",
             "Settings",
+            "Profile actions",
             "Show last 1 minute",
             "Show last 5 minutes",
             "Show last 15 minutes",

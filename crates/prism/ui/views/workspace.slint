@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Button, ButtonKind, Divider, LinkButton, Segmented, StyledText } from "../widgets.slint";
-import { AppState, ChangeStripView, Intents, SettingsSection, WorkspaceView } from "../state.slint";
+import { AppState, ChangeStripView, Intents, MenuAnchor, SettingsSection, WorkspaceView } from "../state.slint";
 import { HardwareDetails } from "hardware-details.slint";
 import { Track } from "track.slint";
 
@@ -178,6 +178,34 @@ export component Workspace inherits Rectangle {
                         value-text: root.workspace.current-profile;
                         chosen(index) => {
                             Intents.apply-profile(index);
+                        }
+                    }
+                }
+
+                // Applied values or explicit defaults that differ from the current profile.
+                if root.workspace.profiles-unsaved: StyledText {
+                    text: "not saved to profile";
+                    style: Theme.text.value;
+                    color: Theme.color.ink-muted;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                    accessible-label: "not saved to profile";
+                }
+
+                // The GPU's profile actions, such as saving and renaming.
+                VerticalLayout {
+                    alignment: center;
+
+                    more := Button {
+                        text: "⋯";
+                        label: "Profile actions";
+                        style: Theme.text.readout-unit;
+                        kind: ButtonKind.quiet;
+                        height: Theme.size.segment;
+                        activated => {
+                            MenuAnchor.right = self.absolute-position.x + self.width;
+                            MenuAnchor.top = self.absolute-position.y + self.height;
+                            Intents.toggle-profile-menu();
                         }
                     }
                 }

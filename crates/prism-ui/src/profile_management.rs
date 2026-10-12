@@ -113,6 +113,10 @@ impl Core {
         })
     }
 
+    pub fn profile_menu_open(&self) -> bool {
+        self.profile_menu().is_some()
+    }
+
     /// Opens the `⋯` profile menu on the selected GPU's workspace, or closes it again.
     pub(crate) fn toggle_profile_menu(&mut self) {
         if self.profile_menu_open {
@@ -314,16 +318,10 @@ impl Core {
         (id, vec![Effect::CommandPrismd { id, request }])
     }
 
-    fn open_profile_dialog(&mut self, dialog: DialogState) {
-        self.palette = None;
-        self.profile_menu_open = false;
-        self.dialog = Some(dialog);
-    }
-
     /// Asks for the name of a new profile of the selected GPU's applied values.
     pub(crate) fn open_save_as(&mut self) -> Vec<Effect> {
         if let Some(gpu_id) = self.selected_gpu() {
-            self.open_profile_dialog(DialogState::ProfileName {
+            self.open_dialog(DialogState::ProfileName {
                 naming: Naming::SaveAsNew { gpu_id },
                 name: String::new(),
                 error: None,
@@ -366,7 +364,7 @@ impl Core {
         }
         let name = profile.name.clone();
         let managing = managing.then(|| profile.gpu_id.clone());
-        self.open_profile_dialog(DialogState::ProfileName {
+        self.open_dialog(DialogState::ProfileName {
             naming: Naming::Rename {
                 profile_id: profile_id.into(),
             },
@@ -386,7 +384,7 @@ impl Core {
             return;
         }
         let managing = managing.then(|| profile.gpu_id.clone());
-        self.open_profile_dialog(DialogState::DeleteProfile {
+        self.open_dialog(DialogState::DeleteProfile {
             profile_id: profile_id.into(),
             error: None,
             sending: None,
@@ -396,7 +394,7 @@ impl Core {
 
     pub(crate) fn open_manage(&mut self) -> Vec<Effect> {
         if let Some(gpu_id) = self.selected_gpu() {
-            self.open_profile_dialog(DialogState::ManageProfiles { gpu_id });
+            self.open_dialog(DialogState::ManageProfiles { gpu_id });
         }
         Vec::new()
     }

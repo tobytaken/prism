@@ -2,6 +2,7 @@
 // view models in here after every input; views only lay out and draw what they're given.
 
 import { SegmentView } from "widgets/segmented.slint";
+import { MenuEntryView } from "widgets/menu.slint";
 
 // A reading as shown. `value` is the number or "—", `suffix` what follows it, such as " °C" or "%",
 // `text` both together, and `spoken` what a screen reader says.
@@ -210,6 +211,7 @@ export struct ChangeStripView {
 // `no-tuning-access` is why there's no tuning access, and empty with it. `has-profiles` says
 // whether the header shows the GPU's profiles, read-only with `profiles-reason` when
 // `profiles-read-only`, showing `current-profile`, the current profile's name, or "None".
+// `profiles-unsaved` says whether the values in effect differ from the current profile.
 export struct WorkspaceView {
     id: string,
     title: string,
@@ -218,20 +220,38 @@ export struct WorkspaceView {
     profiles-read-only: bool,
     profiles-reason: string,
     current-profile: string,
+    profiles-unsaved: bool,
     changes: ChangeStripView,
     no-tuning-access: string,
     hardware-open: bool,
 }
 
 // Which dialog is over the window, if any.
-export enum DialogKind { none, review, confirm-close, discard-for-profile, profile-corrections }
+export enum DialogKind {
+    none,
+    review,
+    confirm-close,
+    discard-for-profile,
+    profile-corrections,
+    profile-name,
+    delete-profile,
+    manage-profiles,
+}
 
 // A dialog over the window: its title and message, and whether its Apply and Discard can run and
-// why not.
+// why not. A profile dialog has a name to start its field from, what's wrong with it or why
+// prismd refused it as `error`, and its confirmation, titled `confirm-text`, which can run when
+// `can-confirm` and says why not in `confirm-reason`; Manage profiles uses `confirm-reason` for
+// why no profile can be renamed or deleted.
 export struct DialogView {
     kind: DialogKind,
     title: string,
     message: string,
+    name: string,
+    error: string,
+    confirm-text: string,
+    can-confirm: bool,
+    confirm-reason: string,
     // A review's Apply, such as "Apply again".
     apply-text: string,
     can-apply: bool,
@@ -246,6 +266,13 @@ export struct ReviewChangeView {
     name: string,
     change: string,
     yours: string,
+}
+
+// One of the GPU's profiles in Manage profiles: its name, and whether it's the current or the
+// startup profile, such as "Current profile · Startup profile".
+export struct ManagedProfileView {
+    name: string,
+    marks: string,
 }
 
 // A command in the palette. `keys` are its shortcut's keys, `reason` why it can't run when it
@@ -329,6 +356,11 @@ export global AppState {
     in property <[ReviewChangeView]> review-changes;
     // The commands matching the palette's query, recently run ones first.
     in property <[PaletteEntryView]> palette-entries;
+    // The workspace header's `⋯` profile menu, while it's open.
+    in property <bool> profile-menu-open;
+    in property <[MenuEntryView]> profile-menu;
+    // The GPU's profiles Manage profiles lists.
+    in property <[ManagedProfileView]> managed-profiles;
     // Changes with every input, so derived geometry knows when to redraw.
     in property <int> revision;
 
@@ -380,8 +412,17 @@ export global Intents {
     // Applies the profile at this index among the header's profile buttons.
     callback apply-profile(index: int);
     // Answers the open profile dialog: discards the GPU's unapplied changes and applies the
-    // profile, or adjusts the profile and applies it.
+    // profile, adjusts the profile and applies it, saves or renames it under the name typed, or
+    // deletes it.
     callback confirm-profile();
+    // Opens the `⋯` profile menu, or closes it again, and runs its entry at this index.
+    callback toggle-profile-menu();
+    callback run-profile-menu-entry(index: int);
+    // The open profile dialog's name now reads `name`.
+    callback edit-profile-name(name: string);
+    // Renames or deletes the profile at this index in Manage profiles.
+    callback rename-profile(index: int);
+    callback delete-profile(index: int);
     // Applies or discards the selected GPU's unapplied tuning changes.
     callback apply-changes();
     callback discard-changes();
@@ -391,6 +432,13 @@ export global Intents {
     // a text field has focus, a shortcut that clashes with text editing is spoken for but doesn't
     // run.
     callback key-pressed(key: KeyPress, in-text-field: bool) -> bool;
+}
+
+// Where the `⋯` profile menu opens: under the button that opened it, right-aligned to it, in
+// window coordinates.
+export global MenuAnchor {
+    in-out property <length> right;
+    in-out property <length> top;
 }
 
 // Wakes the UI thread after a worker thread has posted inputs for the core.

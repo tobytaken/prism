@@ -841,3 +841,36 @@ fn a_lost_session_ends_the_profile_dialogs_and_says_what_wasnt_answered() {
         )
     );
 }
+
+#[test]
+fn a_dialog_that_opens_closes_the_menu() {
+    let mut core = connected();
+    let (id, _) = command(&intent(&mut core, Intent::ApplyProfile("quiet".into())));
+    intent(&mut core, Intent::ToggleProfileMenu);
+
+    answer(
+        &mut core,
+        id,
+        DaemonResponse::ProfileApplication(prism_protocol::ProfileApplicationResponse {
+            rollback: None,
+            cooling: None,
+            power: None,
+            graphics: None,
+            memory: None,
+            corrections: vec![prism_protocol::ProfileRangeCorrection::Numeric(
+                prism_protocol::NumericRangeCorrection {
+                    setting: ProfileSettingKey::PowerLimitWatts,
+                    saved_value: 650,
+                    proposed_value: 600,
+                    bound: prism_protocol::RangeBound::Maximum,
+                },
+            )],
+        }),
+    );
+
+    assert!(matches!(core.dialog(), Some(Dialog::ProfileCorrections(_))));
+    assert_eq!(core.profile_menu(), None);
+    // The menu doesn't open over a dialog.
+    intent(&mut core, Intent::ToggleProfileMenu);
+    assert_eq!(core.profile_menu(), None);
+}

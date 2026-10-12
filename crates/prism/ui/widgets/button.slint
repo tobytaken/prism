@@ -1,4 +1,4 @@
-import { Theme } from "../theme.slint";
+import { Theme, TextStyle } from "../theme.slint";
 import { PressArea } from "press-area.slint";
 import { StyledText } from "styled-text.slint";
 
@@ -10,6 +10,9 @@ export enum ButtonKind { plain, accent, quiet }
 // A button. While it can't be pressed it's dimmed and does nothing, and `description` can say why.
 export component Button inherits Rectangle {
     in property <string> text;
+    // What a screen reader calls it, when its text alone doesn't say, such as "⋯".
+    in property <string> label: root.text;
+    in property <TextStyle> style: Theme.text.name;
     in property <ButtonKind> kind: ButtonKind.plain;
     in property <bool> enabled: true;
     // What a screen reader adds to the label, such as the shortcut or why it can't be pressed.
@@ -19,7 +22,7 @@ export component Button inherits Rectangle {
         : root.kind == ButtonKind.accent ? Theme.color.on-accent : Theme.color.ink;
 
     accessible-role: button;
-    accessible-label: text;
+    accessible-label: root.label;
     accessible-description: description;
     accessible-enabled: enabled;
     accessible-action-default => {
@@ -47,7 +50,7 @@ export component Button inherits Rectangle {
 
     label := StyledText {
         text: root.text;
-        style: Theme.text.name;
+        style: root.style;
         color: root.ink;
         horizontal-alignment: center;
         accessible-role: none;

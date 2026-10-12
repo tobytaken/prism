@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { Divider, PopupSurface, PressArea, StyledText } from "../widgets.slint";
+import { Divider, PopupSurface, PressArea, StyledText, TextField } from "../widgets.slint";
 import { AppState, Intents, PaletteEntryView } from "../state.slint";
 
 // A key of a shortcut, drawn as a key cap. It carries no accessible role; the command it belongs
@@ -25,60 +25,6 @@ component Kbd inherits Rectangle {
             color: Theme.color.ink-muted;
             horizontal-alignment: center;
             accessible-role: none;
-        }
-    }
-}
-
-// A single-line text field. It keeps the keys it edits with: the window's global shortcuts that
-// clash with text editing don't fire while a text field has focus (see `Intents.key-pressed`).
-// It stays here until a second screen needs one (ADR 0009).
-component TextField inherits Rectangle {
-    // What the field is for, as a screen reader says it.
-    in property <string> label;
-    in property <string> placeholder;
-    callback edited(text: string);
-    // Return was pressed.
-    callback accepted();
-    // Keys the field sees before editing with them, such as ↑ and ↓ in a list it filters.
-    callback key-pressed(event: KeyEvent) -> EventResult;
-
-    forward-focus: input;
-    height: Theme.size.text-field;
-    background: Theme.color.surface;
-    border-width: Theme.stroke.hairline;
-    border-color: input.has-focus ? Theme.color.ink : Theme.color.rule;
-
-    if input.text == "": StyledText {
-        x: Theme.space.l;
-        width: parent.width - 2 * Theme.space.l;
-        text: root.placeholder;
-        style: Theme.text.body;
-        color: Theme.color.ink-muted;
-        overflow: elide;
-        accessible-role: none;
-    }
-
-    input := TextInput {
-        x: Theme.space.l;
-        width: parent.width - 2 * Theme.space.l;
-        single-line: true;
-        vertical-alignment: center;
-        font-family: Theme.text.body.family;
-        font-size: Theme.text.body.size;
-        font-weight: Theme.text.body.weight;
-        color: Theme.color.ink;
-        selection-background-color: Theme.color.hover;
-        selection-foreground-color: Theme.color.ink;
-        accessible-label: root.label;
-        accessible-placeholder-text: root.placeholder;
-        edited => {
-            root.edited(self.text);
-        }
-        accepted => {
-            root.accepted();
-        }
-        key-pressed(event) => {
-            root.key-pressed(event)
         }
     }
 }

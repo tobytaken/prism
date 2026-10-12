@@ -390,6 +390,77 @@ mod screenshot {
         profile_corrections(AppearanceMode::Dark, "profile-corrections-dark");
     }
 
+    /// The header's `⋯` menu open under its button, with every profile action.
+    fn profile_menu(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = profiles_workspace(appearance);
+        harness
+            .find(AccessibleRole::Button, "Profile actions")
+            .invoke_accessible_default_action();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn the_profile_menu_in_light() {
+        profile_menu(AppearanceMode::Light, "profile-menu-light");
+    }
+
+    #[test]
+    fn the_profile_menu_in_dark() {
+        profile_menu(AppearanceMode::Dark, "profile-menu-dark");
+    }
+
+    /// Manage profiles: Quiet, the startup profile, and Boost, the current one, each with Rename
+    /// and Delete.
+    fn manage_profiles(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = profiles_workspace(appearance);
+        harness
+            .find(AccessibleRole::Button, "Profile actions")
+            .invoke_accessible_default_action();
+        harness
+            .find(AccessibleRole::ListItem, "Manage profiles…")
+            .invoke_accessible_default_action();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn manage_profiles_in_light() {
+        manage_profiles(AppearanceMode::Light, "manage-profiles-light");
+    }
+
+    #[test]
+    fn manage_profiles_in_dark() {
+        manage_profiles(AppearanceMode::Dark, "manage-profiles-dark");
+    }
+
+    /// Saving as a new profile under a name another profile has: the clash shows under the field.
+    fn save_as_new_profile(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = profiles_workspace(appearance);
+        harness
+            .find(AccessibleRole::Button, "Profile actions")
+            .invoke_accessible_default_action();
+        harness
+            .find(AccessibleRole::ListItem, "Save as new profile…")
+            .invoke_accessible_default_action();
+        harness.type_text("quiet");
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn saving_as_a_new_profile_in_light() {
+        save_as_new_profile(AppearanceMode::Light, "save-as-new-profile-light");
+    }
+
+    #[test]
+    fn saving_as_a_new_profile_in_dark() {
+        save_as_new_profile(AppearanceMode::Dark, "save-as-new-profile-dark");
+    }
+
     /// Closing with unapplied changes: "1 unapplied change", Discard and close, Keep editing.
     fn close_confirmation(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();

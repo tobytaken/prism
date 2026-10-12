@@ -1022,6 +1022,14 @@ impl Core {
         effects
     }
 
+    /// Opens `dialog` over the window, closing the palette and the profile menu: it takes the
+    /// keyboard until it's answered or dismissed.
+    pub(crate) fn open_dialog(&mut self, dialog: DialogState) {
+        self.palette = None;
+        self.profile_menu_open = false;
+        self.dialog = Some(dialog);
+    }
+
     /// Quits, which ends the session and with it the edit holds of any drafts.
     pub(crate) fn quit(&mut self) -> Vec<Effect> {
         // Clicking one would lead nowhere once Prism is gone.

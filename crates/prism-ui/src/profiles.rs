@@ -78,8 +78,7 @@ impl Core {
             return Vec::new();
         };
         if self.drafts.by_gpu.contains_key(&gpu_id) {
-            self.palette = None;
-            self.dialog = Some(DialogState::DiscardForProfile { profile_id });
+            self.open_dialog(DialogState::DiscardForProfile { profile_id });
             return Vec::new();
         }
         self.apply_profile(profile_id, Vec::new())
@@ -184,8 +183,7 @@ impl Core {
                          review them."
                     )
                 } else {
-                    self.palette = None;
-                    self.dialog = Some(DialogState::ProfileCorrections {
+                    self.open_dialog(DialogState::ProfileCorrections {
                         profile_id: applying.profile_id,
                         corrections: application.corrections.clone(),
                     });

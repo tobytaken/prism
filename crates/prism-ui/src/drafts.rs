@@ -542,8 +542,7 @@ impl Core {
     /// answered is open; the strip still says why.
     fn open_review(&mut self, gpu_id: String, changes: Vec<ReviewChange>) {
         if self.dialog.is_none() {
-            self.palette = None;
-            self.dialog = Some(DialogState::Review { gpu_id, changes });
+            self.open_dialog(DialogState::Review { gpu_id, changes });
         }
     }
 
@@ -587,8 +586,7 @@ impl Core {
         if self.drafts.by_gpu.is_empty() {
             return self.quit();
         }
-        self.palette = None;
-        self.dialog = Some(DialogState::ConfirmClose);
+        self.open_dialog(DialogState::ConfirmClose);
         Vec::new()
     }
 
