@@ -211,7 +211,7 @@ export struct ChangeStripView {
 // `no-tuning-access` is why there's no tuning access, and empty with it. `has-profiles` says
 // whether the header shows the GPU's profiles, read-only with `profiles-reason` when
 // `profiles-read-only`, showing `current-profile`, the current profile's name, or "None".
-// `profiles-unsaved` says whether the values in effect differ from the current profile.
+// `profiles-not-saved` says whether the values in effect differ from the current profile.
 export struct WorkspaceView {
     id: string,
     title: string,
@@ -220,7 +220,7 @@ export struct WorkspaceView {
     profiles-read-only: bool,
     profiles-reason: string,
     current-profile: string,
-    profiles-unsaved: bool,
+    profiles-not-saved: bool,
     changes: ChangeStripView,
     no-tuning-access: string,
     hardware-open: bool,

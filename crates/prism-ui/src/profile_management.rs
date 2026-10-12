@@ -113,6 +113,7 @@ impl Core {
         })
     }
 
+    /// Whether the `⋯` profile menu is open.
     pub fn profile_menu_open(&self) -> bool {
         self.profile_menu().is_some()
     }
@@ -150,8 +151,8 @@ impl Core {
         let Some(gpu_id) = gpu_id else {
             return Some(Some("No GPU selected".into()));
         };
-        if let Some(reason) = self.tuning_access().reason() {
-            return Some(Some(format!("Needs tuning access · {reason}")));
+        if let Some(reason) = self.needs_tuning_access() {
+            return Some(Some(reason));
         }
         Some(match command {
             Command::SaveAsNewProfile => self.save_blocked(&gpu_id),
@@ -177,6 +178,14 @@ impl Core {
                 .is_none()
                 .then(|| "No profiles for this GPU".into()),
         })
+    }
+
+    /// Why profiles can't be changed without tuning access, such as "Needs tuning access · not
+    /// running", or none with it.
+    fn needs_tuning_access(&self) -> Option<String> {
+        self.tuning_access()
+            .reason()
+            .map(|reason| format!("Needs tuning access · {reason}"))
     }
 
     /// The GPU's current profile, while it's one of the caller's own, or why not.
@@ -212,7 +221,9 @@ impl Core {
         if edited {
             return Some("Apply or discard the unapplied changes first".into());
         }
-        let gpu = self.gpus().iter().find(|gpu| gpu.id == gpu_id)?;
+        let Some(gpu) = self.gpus().iter().find(|gpu| gpu.id == gpu_id) else {
+            return Some("Its GPU isn't here".into());
+        };
         let Latest::Read(device) = &gpu.latest else {
             return Some("Waiting for the GPU's readings".into());
         };
@@ -240,13 +251,18 @@ impl Core {
         if !any {
             return Some("This GPU has no supported profile settings".into());
         }
-        (!self.tuning.contains_key(gpu_id)).then(|| "Waiting for prismd's tuning state".into())
+        let Some(state) = self.tuning.get(gpu_id) else {
+            return Some("Waiting for prismd's tuning state".into());
+        };
+        // prismd reports no cooling it can't capture, such as after a cooling fault.
+        (device.cooling.is_supported && state.reported.cooling.is_none())
+            .then(|| "Cooling: the current policy is unavailable".into())
     }
 
     /// Whether the GPU's applied values or explicit defaults differ from its current profile, as
     /// far as Prism knows: the profile must be the caller's own, and a value prismd can't read
     /// differs from nothing.
-    pub(crate) fn not_saved_to_profile(&self, gpu_id: &str) -> bool {
+    pub(crate) fn changes_not_saved_to_profile(&self, gpu_id: &str) -> bool {
         let Some(profile) = self.own_current_profile(gpu_id).ok() else {
             return false;
         };
@@ -305,6 +321,8 @@ impl Core {
         self.send_profile_change(gpu_id, change, request).1
     }
 
+    /// Sends `request` for a profile change on the GPU, noting it until prismd answers. What the
+    /// change strip said about the GPU no longer holds.
     fn send_profile_change(
         &mut self,
         gpu_id: String,
@@ -332,6 +350,7 @@ impl Core {
         Vec::new()
     }
 
+    /// Asks for a new name for the selected GPU's current profile.
     pub(crate) fn open_rename_current(&mut self) -> Vec<Effect> {
         if let Some(id) = self.current_profile_id() {
             self.open_rename(&id, false);
@@ -339,6 +358,7 @@ impl Core {
         Vec::new()
     }
 
+    /// Asks before deleting the selected GPU's current profile.
     pub(crate) fn open_delete_current(&mut self) -> Vec<Effect> {
         if let Some(id) = self.current_profile_id() {
             self.open_delete(&id, false);
@@ -392,6 +412,7 @@ impl Core {
         });
     }
 
+    /// Lists the selected GPU's profiles, to rename or delete any of them.
     pub(crate) fn open_manage(&mut self) -> Vec<Effect> {
         if let Some(gpu_id) = self.selected_gpu() {
             self.open_dialog(DialogState::ManageProfiles { gpu_id });
@@ -498,8 +519,8 @@ impl Core {
                         Naming::Rename { .. } => "Renaming…".into(),
                     });
                 }
-                if let Some(reason) = self.tuning_access().reason() {
-                    return Some(format!("Needs tuning access · {reason}"));
+                if let Some(reason) = self.needs_tuning_access() {
+                    return Some(reason);
                 }
                 match naming {
                     Naming::SaveAsNew { gpu_id } => self
@@ -515,9 +536,7 @@ impl Core {
                 if sending.is_some() {
                     return Some("Deleting…".into());
                 }
-                self.tuning_access()
-                    .reason()
-                    .map(|reason| format!("Needs tuning access · {reason}"))
+                self.needs_tuning_access()
             }
             _ => None,
         }
@@ -533,6 +552,8 @@ impl Core {
         self.name_clash(gpu_id, name, renaming)
     }
 
+    /// The clash, if another of the caller's profiles of the GPU than `renaming` has `name`,
+    /// whatever its letter case.
     fn name_clash(&self, gpu_id: &str, name: &str, renaming: Option<&str>) -> Option<String> {
         let name = name.trim().to_lowercase();
         self.profiles_of(gpu_id)
@@ -708,10 +729,7 @@ impl Core {
                             }
                         })
                         .collect(),
-                    actions_unavailable: self
-                        .tuning_access()
-                        .reason()
-                        .map(|reason| format!("Needs tuning access · {reason}")),
+                    actions_unavailable: self.needs_tuning_access(),
                 }))
             }
             _ => return None,

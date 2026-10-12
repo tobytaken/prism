@@ -124,11 +124,11 @@ pub(super) fn capture_settings(
                 reading.error.unwrap_or(refresh)
             )));
         };
-        let follows_default = origin == super::tuning::TuningOrigin::Manual
+        let keeps_default = origin == super::tuning::TuningOrigin::Manual
             && follows_default(&reading, last_applied, key);
         settings.set(
             key,
-            if follows_default {
+            if keeps_default {
                 ProfileSetting::Default {}
             } else {
                 ProfileSetting::Value { value: current }

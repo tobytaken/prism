@@ -161,9 +161,9 @@ pub struct ProfileSwitcher {
     pub current: Option<String>,
     /// Why no profile can be applied, when there's no tuning access.
     pub read_only: Option<String>,
-    /// Whether the values in effect or the explicit defaults applied differ from the current
-    /// profile: "not saved to profile".
-    pub unsaved: bool,
+    /// Whether there are changes not saved to profile: the values in effect or the explicit
+    /// defaults applied differ from the current profile.
+    pub not_saved_to_profile: bool,
 }
 
 /// The workspace header's open `⋯` menu of profile actions.
@@ -1330,7 +1330,7 @@ impl Core {
                 .collect(),
             current: current.map(|current| current.name.clone()),
             read_only,
-            unsaved: self.not_saved_to_profile(gpu_id),
+            not_saved_to_profile: self.changes_not_saved_to_profile(gpu_id),
         }
     }
 

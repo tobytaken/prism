@@ -738,32 +738,32 @@ fn without_tuning_access_no_profile_action_can_run() {
 fn not_saved_to_profile_shows_while_applied_values_differ_from_the_current_profile() {
     let mut core = connected();
     // Boost asks for the default power limit, +150 MHz and +500 MHz; none of it is in effect.
-    assert!(workspace(&core).profiles.unsaved);
+    assert!(workspace(&core).profiles.not_saved_to_profile);
 
     push_tuning(
         &mut core,
         [Some(575), Some(150), Some(500)],
         vec![ProfileSettingKey::PowerLimitWatts],
     );
-    assert!(!workspace(&core).profiles.unsaved);
+    assert!(!workspace(&core).profiles.not_saved_to_profile);
 
     // The default's number, applied as a number, isn't the default the profile asks for.
     push_tuning(&mut core, [Some(575), Some(150), Some(500)], Vec::new());
-    assert!(workspace(&core).profiles.unsaved);
+    assert!(workspace(&core).profiles.not_saved_to_profile);
 
     push_tuning(
         &mut core,
         [Some(575), Some(100), Some(500)],
         vec![ProfileSettingKey::PowerLimitWatts],
     );
-    assert!(workspace(&core).profiles.unsaved);
+    assert!(workspace(&core).profiles.not_saved_to_profile);
 
     // Saving to the profile clears it once prismd pushes the saved values.
     let mut boost = profiles();
     boost.profiles[1].settings.graphics_offset_mhz =
         Some(prism_protocol::ProfileSetting::Value { value: 100 });
     push(&mut core, boost);
-    assert!(!workspace(&core).profiles.unsaved);
+    assert!(!workspace(&core).profiles.not_saved_to_profile);
 }
 
 #[test]
@@ -773,7 +773,7 @@ fn not_saved_to_profile_needs_a_current_profile_whose_values_prism_knows() {
     let mut none = profiles();
     none.current_profiles.clear();
     push(&mut core, none);
-    assert!(!workspace(&core).profiles.unsaved);
+    assert!(!workspace(&core).profiles.not_saved_to_profile);
 
     let mut theirs = profiles();
     theirs.current_profiles.insert(
@@ -784,12 +784,12 @@ fn not_saved_to_profile_needs_a_current_profile_whose_values_prism_knows() {
         },
     );
     push(&mut core, theirs);
-    assert!(!workspace(&core).profiles.unsaved);
+    assert!(!workspace(&core).profiles.not_saved_to_profile);
 
     // A value prismd can't read is no difference it knows of.
     push(&mut core, profiles());
     push_tuning(&mut core, [None, Some(150), Some(500)], Vec::new());
-    assert!(!workspace(&core).profiles.unsaved);
+    assert!(!workspace(&core).profiles.not_saved_to_profile);
 }
 
 #[test]
@@ -873,4 +873,18 @@ fn a_dialog_that_opens_closes_the_menu() {
     // The menu doesn't open over a dialog.
     intent(&mut core, Intent::ToggleProfileMenu);
     assert_eq!(core.profile_menu(), None);
+}
+
+#[test]
+fn an_unknown_cooling_policy_blocks_saving() {
+    let mut core = connected();
+    assert_eq!(save_as_unavailable(&mut core), None);
+
+    // prismd couldn't tell how the fans are set, such as after a cooling fault.
+    push_tuning(&mut core, [Some(575), Some(0), Some(0)], Vec::new());
+
+    assert_eq!(
+        save_as_unavailable(&mut core).as_deref(),
+        Some("Cooling: the current policy is unavailable")
+    );
 }

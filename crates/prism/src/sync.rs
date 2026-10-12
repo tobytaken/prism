@@ -70,7 +70,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 profiles_read_only: profiles.read_only.is_some(),
                 profiles_reason: profiles.read_only.as_deref().unwrap_or_default().into(),
                 current_profile: profiles.current.as_deref().unwrap_or("None").into(),
-                profiles_unsaved: profiles.unsaved,
+                profiles_not_saved: profiles.not_saved_to_profile,
                 changes: ChangeStripView {
                     summary: changes.summary.as_str().into(),
                     pending: changes.pending,
