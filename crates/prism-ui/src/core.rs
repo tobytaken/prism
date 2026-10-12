@@ -527,6 +527,9 @@ pub struct Core {
     pub(crate) game_commands: BTreeMap<CommandId, GameCommand>,
     /// Why prismd refused the latest game change, until the next one.
     pub(crate) games_outcome: Option<String>,
+    /// Whether the file chooser opened for a program file to add hasn't answered yet. It outlives
+    /// Add program, which waits for it when opened again.
+    pub(crate) choosing_program_file: bool,
     /// The dialog over the window, while one is open.
     pub(crate) dialog: Option<DialogState>,
     revision: u64,

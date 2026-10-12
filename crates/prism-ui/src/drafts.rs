@@ -148,14 +148,13 @@ pub(crate) enum DialogState {
         error: Option<String>,
     },
     /// The caller's running programs, searched by `filter`, to add one as a game, or a program
-    /// file to choose in the file chooser while `browsing`. `adding` is the program, by host
-    /// location, being added under the command prismd hasn't answered yet, and `error` why the
-    /// last one couldn't be added.
+    /// file to choose in the file chooser. `adding` is the program, by host location, being
+    /// added under the command prismd hasn't answered yet, and `error` why the last one couldn't
+    /// be added.
     AddProgram {
         listing: Listing<RunningProgram>,
         filter: String,
         adding: Option<(CommandId, String)>,
-        browsing: bool,
         error: Option<String>,
     },
 }

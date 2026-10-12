@@ -377,7 +377,6 @@ impl Core {
             listing: Listing::Reading(id),
             filter: String::new(),
             adding: None,
-            browsing: false,
             error: None,
         });
         effects
@@ -395,15 +394,15 @@ impl Core {
         let Some(DialogState::AddProgram {
             listing: Listing::Listed(programs),
             adding: None,
-            browsing: false,
             ..
         }) = &self.dialog
         else {
             return Vec::new();
         };
-        if !programs
-            .iter()
-            .any(|program| program.path.as_ref() == Some(&path))
+        if self.choosing_program_file
+            || !programs
+                .iter()
+                .any(|program| program.path.as_ref() == Some(&path))
             || self.game(&GameId::Program { path: path.clone() }).is_some()
         {
             return Vec::new();
@@ -417,32 +416,34 @@ impl Core {
         if self.needs_tuning_access().is_some() {
             return Vec::new();
         }
+        if self.choosing_program_file {
+            return Vec::new();
+        }
         let Some(DialogState::AddProgram {
             adding: None,
-            browsing: browsing @ false,
             error,
             ..
         }) = &mut self.dialog
         else {
             return Vec::new();
         };
-        *browsing = true;
         *error = None;
+        self.choosing_program_file = true;
         vec![Effect::ChooseProgramFile]
     }
 
-    /// Takes in the file chooser's answer, adding the program file chosen, while Add program
-    /// still waits for it.
+    /// Takes in the file chooser's answer, adding the program file chosen, while Add program is
+    /// open to wait for it.
     pub(crate) fn program_file_chosen(&mut self, file: ProgramFile) -> Vec<Effect> {
+        self.choosing_program_file = false;
         let Some(DialogState::AddProgram {
-            browsing: browsing @ true,
+            adding: None,
             error,
             ..
         }) = &mut self.dialog
         else {
             return Vec::new();
         };
-        *browsing = false;
         match file {
             ProgramFile::Chosen(path) => self.add_program(path),
             ProgramFile::Canceled => Vec::new(),
@@ -591,7 +592,6 @@ impl Core {
             listing,
             filter,
             adding,
-            browsing,
             error,
         } = dialog
         else {
@@ -599,7 +599,7 @@ impl Core {
         };
         // Such as "Adding Celeste…" while a program is being added, which keeps the others from
         // being added, as the file chooser does while it's open.
-        let busy = match (adding, browsing) {
+        let busy = match (adding, self.choosing_program_file) {
             (Some((_, path)), _) => Some(format!("Adding {}…", program_name(path))),
             (None, true) => Some("Choose the program file in the file chooser…".to_owned()),
             (None, false) => None,
@@ -626,7 +626,7 @@ impl Core {
             filter: filter.clone(),
             programs,
             status: busy.or(status),
-            can_browse: adding.is_none() && !browsing,
+            can_browse: adding.is_none() && !self.choosing_program_file,
             error: error.clone(),
         })
     }

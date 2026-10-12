@@ -873,6 +873,35 @@ fn browsing_adds_the_program_file_at_the_host_location_chosen() {
 }
 
 #[test]
+fn reopened_add_program_waits_for_the_file_chooser_still_open() {
+    let mut core = connected();
+    intent(&mut core, Intent::AddProgram);
+    intent(&mut core, Intent::BrowseForProgram);
+    intent(&mut core, Intent::Dismiss);
+
+    // The file chooser opened before is still open, so another doesn't open over it.
+    intent(&mut core, Intent::AddProgram);
+    let dialog = add_program_dialog(&core);
+    assert!(!dialog.can_browse);
+    assert_eq!(
+        dialog.status.as_deref(),
+        Some("Choose the program file in the file chooser…")
+    );
+    assert_eq!(intent(&mut core, Intent::BrowseForProgram), []);
+
+    // What it chooses is what Add program waits for.
+    let (_, request) = sent_once(&core.handle(Input::ProgramFileChosen(ProgramFile::Chosen(
+        "/games/Celeste".into(),
+    ))));
+    assert_eq!(
+        request,
+        DaemonRequest::AddProgram(AddProgramRequest {
+            path: "/games/Celeste".into()
+        })
+    );
+}
+
+#[test]
 fn add_program_says_why_listing_choosing_or_adding_failed() {
     let mut core = connected();
     let (listing, _) = sent_once(&intent(&mut core, Intent::AddProgram));
