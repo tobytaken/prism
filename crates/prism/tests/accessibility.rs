@@ -311,6 +311,114 @@ fn the_profile_buttons_and_their_dialogs_are_accessible() {
     harness.find(AccessibleRole::List, "Profile actions");
 }
 
+/// The caller's games: Dota 2 linked to Quiet on the tunable GPU, and Portal 2, not installed.
+fn games() -> prism_protocol::GamesState {
+    prism_protocol::GamesState {
+        automatic_switching: true,
+        games: vec![
+            prism_protocol::GameEntry {
+                game: prism_protocol::GameId::Steam { app_id: 570 },
+                name: "Dota 2".into(),
+                installed: true,
+                profiles: [(
+                    "GPU-5a1b0000-0000-4000-8000-000000000001".to_owned(),
+                    "quiet".to_owned(),
+                )]
+                .into(),
+            },
+            prism_protocol::GameEntry {
+                game: prism_protocol::GameId::Steam { app_id: 620 },
+                name: "Portal 2".into(),
+                installed: false,
+                profiles: Default::default(),
+            },
+        ],
+    }
+}
+
+/// Games on `harness`, with the tunable GPU's profiles, the caller's games and running games that
+/// can't be recognized.
+fn show_games(harness: &Harness) {
+    harness.prismd.push(DaemonEvent::ProfilesChanged(
+        serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/profiles-state.json"
+        ))
+        .unwrap(),
+    ));
+    harness.prismd.push(DaemonEvent::GamesChanged(games()));
+    harness.prismd.push(DaemonEvent::RunningGamesChanged(
+        prism_protocol::RunningGamesState::Unavailable {
+            reason: "The first process scan has not completed.".into(),
+        },
+    ));
+    harness.app.receive_posted();
+    harness.ctrl_shift("g");
+}
+
+#[test]
+fn games_and_add_steam_game_are_accessible() {
+    let harness = tunable();
+    show_games(&harness);
+    audit("tunable, games", &harness);
+    harness.find(AccessibleRole::Switch, "Automatic switching");
+
+    harness
+        .find(AccessibleRole::Button, "Add Steam game…")
+        .invoke_accessible_default_action();
+    audit("tunable, add Steam game, reading", &harness);
+    harness.prismd.answer(DaemonResponse::SteamApps(vec![
+        prism_protocol::SteamApp {
+            app_id: 570,
+            name: "Dota 2".into(),
+        },
+        prism_protocol::SteamApp {
+            app_id: 1145360,
+            name: "Hades".into(),
+        },
+    ]));
+    harness.app.receive_posted();
+    audit("tunable, add Steam game", &harness);
+    harness.find(AccessibleRole::Button, "Add Hades");
+
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::ReadOnly);
+    harness.prismd_tick(
+        SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
+    );
+    show_games(&harness);
+    audit("tunable, read-only games", &harness);
+    harness.find(AccessibleRole::Button, "Remove Dota 2");
+}
+
+#[test]
+fn a_switch_s_default_action_toggles_it_unless_it_s_read_only() {
+    let harness = tunable();
+    show_games(&harness);
+
+    harness
+        .find(AccessibleRole::Switch, "Automatic switching")
+        .invoke_accessible_default_action();
+
+    assert_eq!(
+        harness.prismd.requests().last(),
+        Some(&prism_protocol::DaemonRequest::SetAutomaticSwitching(
+            prism_protocol::SetAutomaticSwitchingRequest { enabled: false }
+        ))
+    );
+
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::ReadOnly);
+    harness.prismd_tick(
+        SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
+    );
+    show_games(&harness);
+    let requests = harness.prismd.requests().len();
+
+    harness
+        .find(AccessibleRole::Switch, "Automatic switching")
+        .invoke_accessible_default_action();
+
+    assert_eq!(harness.prismd.requests().len(), requests);
+}
+
 /// Opens the `⋯` profile menu of the tunable GPU, with its Quiet and Boost profiles, and runs the
 /// entry titled `title`.
 fn run_profile_menu(harness: &Harness, title: &str) {
@@ -461,6 +569,11 @@ const ACTION_TESTS: &[(&str, &str, &str)] = &[
         "Stepper",
         "set-value(text)",
         "a_stepper_s_set_value_action_sets_it_within_its_range",
+    ),
+    (
+        "Switch",
+        "default",
+        "a_switch_s_default_action_toggles_it_unless_it_s_read_only",
     ),
     (
         "WindowButton",

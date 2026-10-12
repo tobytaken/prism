@@ -6,13 +6,15 @@ use prism_gpu::{
 use std::collections::BTreeMap;
 
 use prism_protocol::{
-    DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GpuCoolingControl, GpuTuningState,
-    Incompatible, ProfileSettingKey, ProfilesState, Welcome,
+    DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GameId, GamesState,
+    GpuCoolingControl, GpuTuningState, Incompatible, ProfileSettingKey, ProfilesState,
+    RunningGamesState, Welcome,
 };
 
 use crate::cooling::FanMode;
 use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::drafts::{DialogState, Drafts};
+use crate::games::GameCommand;
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
 use crate::notifications::{Notification, NotificationId, Notifications, Subject};
 use crate::palette::{Command, PaletteState, Shortcut};
@@ -387,6 +389,22 @@ pub enum Intent {
     ApplyChanges,
     /// Drop the selected GPU's unapplied tuning changes.
     DiscardChanges,
+    /// Turn the caller's automatic switching on or off.
+    SetAutomaticSwitching(bool),
+    /// Link the game to this profile of the GPU, by id, or to none, which leaves the GPU
+    /// unchanged while the game runs.
+    LinkGame {
+        game: GameId,
+        gpu_id: String,
+        profile_id: Option<String>,
+    },
+    RemoveGame(GameId),
+    /// Show Games, and open Add Steam game over it.
+    AddSteamGame,
+    /// Add Steam game's search now reads this.
+    FilterSteamApps(String),
+    /// Add the Steam app with this id, from Add Steam game.
+    AddSteamApp(u32),
     /// Close Prism, dropping every GPU's unapplied tuning changes, as the close confirmation
     /// offers.
     DiscardAndClose,
@@ -486,6 +504,16 @@ pub struct Core {
     pub(crate) profile_commands: BTreeMap<CommandId, ProfileCommand>,
     /// Whether the workspace header's `⋯` profile menu is open.
     pub(crate) profile_menu_open: bool,
+    /// The caller's games and automatic switching opt-in, as prismd last pushed them, while there
+    /// is a session.
+    pub(crate) games: GamesState,
+    /// The caller's running games as prismd last pushed them, or why it can't recognize them,
+    /// while there is a session.
+    pub(crate) running_games: Option<RunningGamesState>,
+    /// Each game change sent to prismd that hasn't been answered.
+    pub(crate) game_commands: BTreeMap<CommandId, GameCommand>,
+    /// Why prismd refused the latest game change, until the next one.
+    pub(crate) games_outcome: Option<String>,
     /// The dialog over the window, while one is open.
     pub(crate) dialog: Option<DialogState>,
     revision: u64,
@@ -640,6 +668,8 @@ impl Core {
                     .map(|control| (control.gpu_id.clone(), control))
                     .collect();
                 self.profiles = snapshot.profiles;
+                self.games = snapshot.games;
+                self.running_games = Some(snapshot.running_games);
                 let mut effects = vec![Effect::SendToPrismd(DaemonRequest::SubscribeTelemetry)];
                 // The new session holds edits only once told.
                 effects.extend(self.sync_edit_holds());
@@ -667,6 +697,7 @@ impl Core {
                 self.cooling.clear();
                 self.drafts_lost_session();
                 self.profiles_lost_session();
+                self.games_lost_session();
                 let mut effects = Vec::new();
                 if !std::mem::replace(&mut self.sampling, true) {
                     effects.push(Effect::StartSampler);
@@ -722,9 +753,12 @@ impl Core {
                         self.cooling.insert(control.gpu_id.clone(), control);
                     }
                     DaemonEvent::ProfilesChanged(profiles) => self.profiles_pushed(profiles),
+                    DaemonEvent::GamesChanged(games) => self.games = games,
+                    DaemonEvent::RunningGamesChanged(running) => {
+                        self.running_games = Some(running);
+                    }
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)
-                    | DaemonEvent::RunningGamesChanged(_)
                     | DaemonEvent::AutomaticSwitchingChanged(_) => {}
                 }
                 Vec::new()
@@ -947,6 +981,21 @@ impl Core {
             }
             Intent::ApplyChanges => self.perform(Command::ApplyChanges),
             Intent::DiscardChanges => self.perform(Command::DiscardChanges),
+            Intent::SetAutomaticSwitching(enabled) => {
+                self.perform(Command::SetAutomaticSwitching(enabled))
+            }
+            Intent::LinkGame {
+                game,
+                gpu_id,
+                profile_id,
+            } => self.link_game(game, gpu_id, profile_id),
+            Intent::RemoveGame(game) => self.remove_game(game),
+            Intent::AddSteamGame => self.perform(Command::AddSteamGame),
+            Intent::FilterSteamApps(query) => {
+                self.filter_steam_apps(query);
+                Vec::new()
+            }
+            Intent::AddSteamApp(app_id) => self.add_steam_app(app_id),
             Intent::DiscardAndClose => self.quit(),
         }
     }
@@ -1010,6 +1059,8 @@ impl Core {
             Command::DeleteProfile => self.open_delete_current(),
             Command::UseAsStartupProfile => self.use_as_startup_profile(),
             Command::ManageProfiles => self.open_manage(),
+            Command::SetAutomaticSwitching(enabled) => self.set_automatic_switching(enabled),
+            Command::AddSteamGame => self.open_add_steam_game(),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }

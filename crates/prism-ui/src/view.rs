@@ -530,6 +530,88 @@ pub enum Dialog {
     DeleteProfile(ConfirmDelete),
     /// The GPU's profiles, each to rename or delete.
     ManageProfiles(ManageProfiles),
+    /// The caller's Steam apps, each to add as a game.
+    AddSteamGame(AddSteamGame),
+}
+
+/// The caller's installed Steam apps, searched, to add one as a game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddSteamGame {
+    pub title: String,
+    pub message: String,
+    /// The search as typed.
+    pub filter: String,
+    /// The apps that match the search, ordered by name.
+    pub apps: Vec<SteamAppChoice>,
+    /// What the list waits for, or why it's empty, such as "Reading your Steam libraries…"; or
+    /// which app is being added.
+    pub status: Option<String>,
+    /// Why prismd refused to add the last app chosen.
+    pub error: Option<String>,
+}
+
+/// One of the caller's Steam apps in Add Steam game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SteamAppChoice {
+    /// The app's id, which adding it sends.
+    pub app_id: u32,
+    pub name: String,
+    /// Why it can't be added now, such as it being added already.
+    pub unavailable: Option<String>,
+}
+
+/// The Games section: the automatic switching toggle, then the caller's games.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GamesSection {
+    /// Whether the caller turned automatic switching on; unknown without a session.
+    pub automatic_switching: Option<bool>,
+    /// Why nothing here can be changed, such as "Needs tuning access · not running"; none with
+    /// tuning access.
+    pub read_only: Option<String>,
+    /// Why prismd can't recognize running games, so automatic switching can't follow them.
+    pub recognition_problem: Option<String>,
+    /// Why prismd refused the latest change, until the next one.
+    pub outcome: Option<String>,
+    /// The caller's games, in the order prismd lists them.
+    pub games: Vec<GameRow>,
+    /// What the list says while it has no games, such as that there are none yet.
+    pub empty: String,
+}
+
+/// One of the caller's games, with its link on each GPU here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameRow {
+    /// What identifies the game, which changing it sends.
+    pub game: prism_protocol::GameId,
+    pub name: String,
+    /// What it is, such as "Steam app 570" or the program's location, and whether it's missing,
+    /// such as "Steam app 620 · Not installed".
+    pub detail: String,
+    /// The game's link on each GPU here, in sidebar order.
+    pub links: Vec<GameLink>,
+}
+
+/// A game's link to at most one of the caller's profiles of a GPU.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameLink {
+    pub gpu_id: String,
+    /// Such as "GPU 0 · RTX 5090 · 01:00.0".
+    pub gpu: String,
+    /// The linked profile's name, "None", or "Unknown profile" for a link to none of the caller's
+    /// profiles.
+    pub linked: String,
+    /// None, then the caller's profiles of the GPU, in the order prismd lists them.
+    pub choices: Vec<LinkChoice>,
+}
+
+/// None, or one of the GPU's profiles, as a game's link can be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkChoice {
+    /// The profile's id, which linking it sends; none for None.
+    pub profile_id: Option<String>,
+    pub name: String,
+    /// Whether the game is linked to it on the GPU.
+    pub linked: bool,
 }
 
 /// The name of a new profile, or a profile's new name, in a text field.
@@ -654,6 +736,9 @@ impl Core {
         if let Some(dialog) = self.profile_change_dialog(state) {
             return dialog;
         }
+        if let Some(dialog) = self.add_steam_game_dialog(state) {
+            return Some(Dialog::AddSteamGame(dialog));
+        }
         Some(match state {
             DialogState::Review { gpu_id, changes } => {
                 let gpu = self
@@ -717,7 +802,8 @@ impl Core {
             }),
             DialogState::ProfileName { .. }
             | DialogState::DeleteProfile { .. }
-            | DialogState::ManageProfiles { .. } => return None,
+            | DialogState::ManageProfiles { .. }
+            | DialogState::AddSteamGame { .. } => return None,
         })
     }
 

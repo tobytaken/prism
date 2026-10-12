@@ -149,6 +149,7 @@ pub struct DaemonSnapshot {
     pub tuning_states: Vec<GpuTuningState>,
     pub cooling_controls: Vec<GpuCoolingControl>,
     pub profiles: ProfilesState,
+    pub games: GamesState,
     pub running_games: RunningGamesState,
     pub automatic_switching: AutomaticSwitchingStatus,
 }
@@ -705,7 +706,7 @@ pub enum RunningGamesState {
 }
 
 /// The caller's game associations and automatic switching opt-in.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct GamesState {
     pub automatic_switching: bool,
@@ -953,6 +954,8 @@ pub enum DaemonEvent {
     CoolingControlChanged(GpuCoolingControl),
     /// The caller's profiles changed, or a GPU's startup or current profile, or its name.
     ProfilesChanged(ProfilesState),
+    /// The caller's games, their associations or the caller's automatic switching opt-in changed.
+    GamesChanged(GamesState),
     RunningGamesChanged(RunningGamesState),
     AutomaticSwitchingChanged(AutomaticSwitchingStatus),
 }
@@ -1343,6 +1346,17 @@ mod session_tests {
                 "{malformed}"
             );
         }
+    }
+
+    #[test]
+    fn games_round_trip_the_shared_contract_as_a_pushed_event() {
+        let games: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/games-state.json")).unwrap();
+        let event = serde_json::json!({
+            "type": "event", "event": { "type": "games_changed", "payload": games }
+        });
+        let typed: SessionMessage = serde_json::from_value(event.clone()).unwrap();
+        assert_eq!(serde_json::to_value(typed).unwrap(), event);
     }
 
     #[test]

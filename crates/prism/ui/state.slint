@@ -236,13 +236,15 @@ export enum DialogKind {
     profile-name,
     delete-profile,
     manage-profiles,
+    add-steam-game,
 }
 
 // A dialog over the window: its title and message, and whether its Apply and Discard can run and
 // why not. A profile dialog has a name to start its field from, what's wrong with it or why
 // prismd refused it as `error`, and its confirmation, titled `confirm-text`, which can run when
 // `can-confirm` and says why not in `confirm-reason`; Manage profiles uses `confirm-reason` for
-// why no profile can be renamed or deleted.
+// why no profile can be renamed or deleted. Add Steam game has its search as `name`, what its
+// list waits for or why it's empty as `status`, and why prismd refused an app as `error`.
 export struct DialogView {
     kind: DialogKind,
     title: string,
@@ -258,6 +260,46 @@ export struct DialogView {
     apply-reason: string,
     can-discard: bool,
     discard-reason: string,
+    status: string,
+}
+
+// The Games section, apart from its games: whether automatic switching is known and on, why
+// nothing can be changed (`read-only`, with the reason), why running games can't be recognized,
+// why prismd refused the latest change, each empty when there's nothing to say, and what the list
+// says while it has no games.
+export struct GamesView {
+    switching-known: bool,
+    automatic-switching: bool,
+    read-only: bool,
+    reason: string,
+    recognition-problem: string,
+    outcome: string,
+    empty: string,
+}
+
+// A game's link to at most one of the caller's profiles of a GPU: the group's label, such as
+// "Dota 2 on GPU 0 · RTX 5090 · 01:00.0", the GPU, the linked profile's name or "None", and None
+// then the GPU's profiles as segments, the linked one picked.
+export struct GameLinkView {
+    label: string,
+    gpu: string,
+    linked: string,
+    choices: [SegmentView],
+}
+
+// One of the caller's games: its name, what it is, such as "Steam app 570 · Not installed", and
+// its link on each GPU here.
+export struct GameView {
+    name: string,
+    detail: string,
+    links: [GameLinkView],
+}
+
+// One of the caller's Steam apps in Add Steam game, and why it can't be added, when it can't.
+export struct SteamAppView {
+    name: string,
+    available: bool,
+    reason: string,
 }
 
 // A current tuning value a review says changed: the setting, from what to what, and what the
@@ -361,6 +403,10 @@ export global AppState {
     in property <[MenuEntryView]> profile-menu;
     // The GPU's profiles Manage profiles lists.
     in property <[ManagedProfileView]> managed-profiles;
+    // The Games section, its games, and the Steam apps Add Steam game lists.
+    in property <GamesView> games-section;
+    in property <[GameView]> games;
+    in property <[SteamAppView]> steam-apps;
     // Changes with every input, so derived geometry knows when to redraw.
     in property <int> revision;
 
@@ -423,6 +469,17 @@ export global Intents {
     // Renames or deletes the profile at this index in Manage profiles.
     callback rename-profile(index: int);
     callback delete-profile(index: int);
+    // Turns automatic switching on or off.
+    callback set-automatic-switching(enabled: bool);
+    // Links the game at this index, on the GPU of its link at this index, to the choice at this
+    // index: None, then the GPU's profiles.
+    callback link-game(game: int, link: int, choice: int);
+    // Removes the game at this index.
+    callback remove-game(game: int);
+    // Opens Add Steam game, searches it for `query`, and adds the app at this index in its list.
+    callback add-steam-game();
+    callback filter-steam-apps(query: string);
+    callback add-steam-app(index: int);
     // Applies or discards the selected GPU's unapplied tuning changes.
     callback apply-changes();
     callback discard-changes();

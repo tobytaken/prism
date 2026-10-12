@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Button, ButtonKind, Dialog, StyledText, TextField } from "../widgets.slint";
-import { AppState, Intents, ManagedProfileView, ReviewChangeView } from "../state.slint";
+import { AppState, Intents, ManagedProfileView, ReviewChangeView, SteamAppView } from "../state.slint";
 
 // A current tuning value that changed under the draft: the setting, from what to what, and what
 // the draft stages for it.
@@ -371,6 +371,103 @@ export component ManageProfilesDialog inherits Dialog {
             init => {
                 self.focus();
             }
+            activated => {
+                Intents.dismiss();
+            }
+        }
+    }
+}
+
+// One of the caller's Steam apps in Add Steam game: its name, then Add, dimmed with why when it
+// can't be added, such as when it's added already.
+component SteamApp inherits Rectangle {
+    in property <SteamAppView> app;
+    callback add();
+
+    height: row.preferred-height;
+
+    row := HorizontalLayout {
+        spacing: Theme.space.m;
+
+        StyledText {
+            horizontal-stretch: 1;
+            text: root.app.name;
+            style: Theme.text.body;
+            color: root.app.available ? Theme.color.ink : Theme.color.ink-muted;
+            overflow: elide;
+            accessible-role: none;
+        }
+
+        if !root.app.available: StyledText {
+            text: root.app.reason;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        Button {
+            text: "Add";
+            label: "Add \{root.app.name}";
+            kind: ButtonKind.quiet;
+            enabled: root.app.available;
+            description: root.app.reason;
+            activated => {
+                root.add();
+            }
+        }
+    }
+}
+
+// The caller's installed Steam apps, searched as typed, each with Add; it closes once prismd adds
+// the one chosen. What the list waits for, or why it's empty, shows in its place, and why prismd
+// refused an app under it. Close or Escape closes it.
+export component AddSteamGameDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    TextField {
+        label: "Search Steam games";
+        placeholder: "Search Steam games";
+        text: AppState.dialog.name;
+        init => {
+            self.focus();
+        }
+        edited(query) => {
+            Intents.filter-steam-apps(query);
+        }
+    }
+
+    if AppState.dialog.status != "": StyledText {
+        text: AppState.dialog.status;
+        style: Theme.text.body;
+        color: Theme.color.ink-muted;
+        wrap: word-wrap;
+    }
+
+    apps := Flickable {
+        height: min(list.preferred-height, Theme.size.dialog-list);
+        content-height: list.preferred-height;
+
+        list := VerticalLayout {
+            spacing: Theme.space.xs;
+
+            for app[index] in AppState.steam-apps: SteamApp {
+                app: app;
+                add => {
+                    Intents.add-steam-app(index);
+                }
+            }
+        }
+    }
+
+    if AppState.dialog.error != "": Problem {
+        text: AppState.dialog.error;
+    }
+
+    Actions {
+        Button {
+            text: "Close";
+            kind: ButtonKind.quiet;
             activated => {
                 Intents.dismiss();
             }

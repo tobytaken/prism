@@ -7,16 +7,17 @@ use prism_ui::format::{Readout, UNKNOWN};
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
     AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanCurveEditor, FanModeControl,
-    ReviewChange, Section as CoreSection, ServiceAction as CoreServiceAction,
+    GameRow, ReviewChange, Section as CoreSection, ServiceAction as CoreServiceAction,
     SettingsSection as CoreSettingsSection, Stepper, Track, Tunable,
 };
 
 use crate::{
     AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, CurvePointView,
     DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, FanCurveView,
-    FanModeView, LimitMark, MainWindow, ManagedProfileView, MenuEntryView, PaletteEntryView,
-    ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection, SidebarGpuView,
-    StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
+    FanModeView, GameLinkView, GameView, GamesView, LimitMark, MainWindow, ManagedProfileView,
+    MenuEntryView, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction,
+    SettingsSection, SidebarGpuView, SteamAppView, StepperView, Theme, TrackView, TuningSetting,
+    WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -205,6 +206,31 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         state.set_daemon_facts(model);
     }
 
+    let section = core.games();
+    state.set_games_section(GamesView {
+        switching_known: section.automatic_switching.is_some(),
+        automatic_switching: section.automatic_switching.unwrap_or_default(),
+        read_only: section.read_only.is_some(),
+        reason: section.read_only.as_deref().unwrap_or_default().into(),
+        recognition_problem: section
+            .recognition_problem
+            .as_deref()
+            .unwrap_or_default()
+            .into(),
+        outcome: section.outcome.as_deref().unwrap_or_default().into(),
+        empty: section.empty.as_str().into(),
+    });
+    let current = state.get_games();
+    let games: Vec<_> = section
+        .games
+        .iter()
+        .enumerate()
+        .map(|(index, game)| game_view(current.row_data(index), game))
+        .collect();
+    if let Some(model) = update_in_place(&current, games, PartialEq::eq) {
+        state.set_games(model);
+    }
+
     let palette = core.palette();
     state.set_palette_open(palette.is_some());
     let entries: Vec<_> = palette
@@ -247,6 +273,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     }
 
     let mut managed = Vec::new();
+    let mut steam_apps = Vec::new();
     let (dialog, changes) = match core.dialog() {
         None => (DialogView::default(), Vec::new()),
         Some(Dialog::Review(review)) => (
@@ -336,9 +363,35 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 Vec::new(),
             )
         }
+        Some(Dialog::AddSteamGame(add)) => {
+            steam_apps = add
+                .apps
+                .iter()
+                .map(|app| SteamAppView {
+                    name: app.name.as_str().into(),
+                    available: app.unavailable.is_none(),
+                    reason: app.unavailable.as_deref().unwrap_or_default().into(),
+                })
+                .collect();
+            (
+                DialogView {
+                    kind: DialogKind::AddSteamGame,
+                    title: add.title.into(),
+                    message: add.message.into(),
+                    name: add.filter.into(),
+                    error: add.error.unwrap_or_default().into(),
+                    status: add.status.unwrap_or_default().into(),
+                    ..DialogView::default()
+                },
+                Vec::new(),
+            )
+        }
     };
     if let Some(model) = update_in_place(&state.get_managed_profiles(), managed, PartialEq::eq) {
         state.set_managed_profiles(model);
+    }
+    if let Some(model) = update_in_place(&state.get_steam_apps(), steam_apps, PartialEq::eq) {
+        state.set_steam_apps(model);
     }
     state.set_dialog(dialog);
     if let Some(model) = update_in_place(&state.get_review_changes(), changes, PartialEq::eq) {
@@ -352,6 +405,45 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     state.set_edit_hold(status.edit_hold);
     // Slint's int is 32 bits; wrapping still changes the value on every input.
     state.set_revision(core.revision() as i32);
+}
+
+/// A game as the Games section shows it. Its links and their choices go into the models `current`
+/// has, if any, so Slint keeps their elements and the focus of the choice just made.
+fn game_view(current: Option<GameView>, game: &GameRow) -> GameView {
+    let current_links = current.map(|current| current.links);
+    let links = game
+        .links
+        .iter()
+        .enumerate()
+        .map(|(index, link)| {
+            let choices = link
+                .choices
+                .iter()
+                .map(|choice| SegmentView {
+                    text: choice.name.as_str().into(),
+                    label: choice.name.as_str().into(),
+                    selected: choice.linked,
+                    unavailable_reason: SharedString::new(),
+                    mark: SharedString::new(),
+                })
+                .collect();
+            let current_choices = current_links
+                .as_ref()
+                .and_then(|links| links.row_data(index))
+                .map(|current| current.choices);
+            GameLinkView {
+                label: format!("{} on {}", game.name, link.gpu).into(),
+                gpu: link.gpu.as_str().into(),
+                linked: link.linked.as_str().into(),
+                choices: reuse(current_choices, choices),
+            }
+        })
+        .collect();
+    GameView {
+        name: game.name.as_str().into(),
+        detail: game.detail.as_str().into(),
+        links: reuse(current_links, links),
+    }
 }
 
 /// A changed value as a review shows it, with what the draft stages for it, if anything.

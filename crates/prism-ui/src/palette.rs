@@ -40,6 +40,10 @@ pub(crate) enum Command {
     UseAsStartupProfile,
     /// List the selected GPU's profiles, to rename or delete any of them.
     ManageProfiles,
+    /// Turn the caller's automatic switching on or off.
+    SetAutomaticSwitching(bool),
+    /// Show Games, and open Add Steam game over it.
+    AddSteamGame,
     Quit,
 }
 
@@ -239,7 +243,8 @@ impl Core {
                 | DialogState::ProfileCorrections { .. }
                 | DialogState::ProfileName { .. }
                 | DialogState::DeleteProfile { .. }
-                | DialogState::ManageProfiles { .. },
+                | DialogState::ManageProfiles { .. }
+                | DialogState::AddSteamGame { .. },
             ) => true,
         }
     }
@@ -306,6 +311,9 @@ impl Core {
         if let Some(reason) = self.profile_action_unavailable(command) {
             return reason;
         }
+        if let Some(reason) = self.game_command_unavailable(command) {
+            return reason;
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
@@ -326,6 +334,8 @@ impl Core {
             | Command::DeleteProfile
             | Command::UseAsStartupProfile
             | Command::ManageProfiles
+            | Command::SetAutomaticSwitching(_)
+            | Command::AddSteamGame
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
@@ -424,6 +434,10 @@ impl Core {
                     .flat_map(|gpu_id| self.profile_actions(gpu_id))
                     .map(|(command, title)| (command, title, None)),
             );
+        let games = self
+            .game_palette_commands()
+            .into_iter()
+            .map(|(command, title)| (command, title, None));
         // Telemetry ranges only matter while there are GPUs to chart.
         let ranges = TelemetryRange::ALL
             .into_iter()
@@ -447,6 +461,7 @@ impl Core {
             .chain(settings)
             .chain(tuning)
             .chain(profiles)
+            .chain(games)
             .chain(ranges)
             .chain(prismd)
             .chain(app)
@@ -493,7 +508,7 @@ impl Core {
 }
 
 /// Whether the query's characters, ignoring case and whitespace, appear in order in `title`.
-fn fuzzy_match(query: &str, title: &str) -> bool {
+pub(crate) fn fuzzy_match(query: &str, title: &str) -> bool {
     let mut title = title.chars().flat_map(char::to_lowercase);
     query
         .chars()

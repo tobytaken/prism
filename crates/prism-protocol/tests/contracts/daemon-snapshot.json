@@ -105,6 +105,10 @@
       "startup_profiles": {},
       "current_profiles": {}
     },
+    "games": {
+      "automatic_switching": false,
+      "games": []
+    },
     "running_games": {
       "status": "available",
       "games": []
