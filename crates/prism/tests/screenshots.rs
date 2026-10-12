@@ -120,6 +120,50 @@ mod screenshot {
         pending_workspace(AppearanceMode::Dark, "workspace-pending-dark");
     }
 
+    /// Drivers after a driver job left the host needing a restart: the job's outcome, its log and
+    /// Reboot, then the recommended driver plan with its warnings, and the host.
+    fn drivers(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        let status: prism_drivers::DriverStatusResponse = serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/driver-status.json"
+        ))
+        .unwrap();
+        let jobs: Vec<prism_drivers::DriverJob> = serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/driver-jobs.json"
+        ))
+        .unwrap();
+        harness.ctrl_shift("d");
+        harness
+            .prismd
+            .answer(prism_protocol::DaemonResponse::DriverStatus(status.clone()));
+        let ended = jobs
+            .into_iter()
+            .find(|job| job.status == prism_drivers::DriverJobStatus::RebootRequired)
+            .unwrap();
+        harness
+            .prismd
+            .push(prism_protocol::DaemonEvent::DriverJobChanged(ended));
+        harness.app.receive_posted();
+        // The job ending reads the plan again.
+        harness
+            .prismd
+            .answer(prism_protocol::DaemonResponse::DriverStatus(status));
+        harness.app.receive_posted();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn drivers_after_a_driver_job_in_light() {
+        drivers(AppearanceMode::Light, "drivers-reboot-required-light");
+    }
+
+    #[test]
+    fn drivers_after_a_driver_job_in_dark() {
+        drivers(AppearanceMode::Dark, "drivers-reboot-required-dark");
+    }
+
     /// The workspace with fixed fan speed pending: the Fans track's fan control mode with the mode
     /// pending, and the fixed speed's stepper with the speed pending.
     fn pending_cooling(appearance: AppearanceMode, name: &str) {

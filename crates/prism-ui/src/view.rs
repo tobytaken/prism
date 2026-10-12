@@ -591,6 +591,10 @@ pub enum Dialog {
     AddSteamGame(AddSteamGame),
     /// The caller's running programs, each to add as a game, or a program file to browse for.
     AddProgram(AddProgram),
+    /// Running the recommended driver plan: "Run" or "Cancel".
+    RunDriverPlan(DriverConfirmation),
+    /// Restarting the host: "Reboot" or "Cancel".
+    Reboot(DriverConfirmation),
 }
 
 /// The caller's installed Steam apps, searched, to add one as a game.
@@ -705,6 +709,83 @@ pub struct LinkChoice {
     pub name: String,
     /// Whether the game is linked to it on the GPU.
     pub linked: bool,
+}
+
+/// Drivers: the host's NVIDIA driver, the recommended driver plan and the latest driver job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriversSection {
+    /// Why nothing here can run, such as "Needs tuning access · bob isn't in group wheel"; none
+    /// with tuning access, or without a session, which `status` explains.
+    pub read_only: Option<String>,
+    /// What the section says in place of the host's driver status, such as that prismd is
+    /// checking it, or why it can't.
+    pub status: Option<String>,
+    /// The host's distribution, kernel, package manager, Secure Boot, NVIDIA driver and GPUs.
+    pub host: Vec<Fact>,
+    /// What to know about the host before changing its driver, such as an NVIDIA runfile
+    /// installation.
+    pub warnings: Vec<String>,
+    pub plan: Option<DriverPlanView>,
+    /// The latest driver job of this host boot, if any.
+    pub job: Option<DriverJobView>,
+    /// Why prismd refused the latest request, until the next one.
+    pub outcome: Option<String>,
+}
+
+/// The recommended driver plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverPlanView {
+    /// Such as "Install recommended NVIDIA driver".
+    pub title: String,
+    /// What keeps it from running.
+    pub blockers: Vec<String>,
+    pub warnings: Vec<String>,
+    /// What's left to do once its package operations finish, such as restarting.
+    pub manual_steps: Vec<String>,
+    /// Why Run can't open its confirmation now, when it can't.
+    pub run_unavailable: Option<String>,
+}
+
+/// A driver job, with its progress, log and outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverJobView {
+    /// The driver action it runs, such as "Install recommended NVIDIA driver".
+    pub title: String,
+    /// Such as "Running" or "Reboot required".
+    pub state: String,
+    /// Whether it's queued or running.
+    pub active: bool,
+    /// Whether it failed.
+    pub failed: bool,
+    /// The step running now, such as "Installing NVIDIA driver packages", while it's active.
+    pub step: Option<String>,
+    /// What its state means, such as that the host needs a restart to load the driver.
+    pub explanation: Vec<String>,
+    /// Its log's last lines, oldest first.
+    pub log: Vec<String>,
+    /// Why it can't be canceled now, when it can't.
+    pub cancel_unavailable: Option<String>,
+    /// Whether it left the host needing a restart, which Reboot offers.
+    pub reboot: bool,
+    /// Why Reboot can't open its confirmation now, when it can't.
+    pub reboot_unavailable: Option<String>,
+}
+
+/// The question running the recommended driver plan, or restarting the host, asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverConfirmation {
+    /// Such as "Install recommended NVIDIA driver?".
+    pub title: String,
+    /// What confirming does.
+    pub message: String,
+    /// The plan's warnings and what's left to do after it, one per line.
+    pub details: Vec<String>,
+    /// "Run" or "Reboot".
+    pub confirm_text: &'static str,
+    /// Why it can't be confirmed now, when it can't.
+    pub confirm_unavailable: Option<String>,
+    /// Why prismd refused it.
+    pub error: Option<String>,
 }
 
 /// The Activity panel: current problems first, then this boot's startup outcomes not yet
@@ -877,6 +958,9 @@ impl Core {
         if let Some(dialog) = self.add_program_dialog(state) {
             return Some(Dialog::AddProgram(dialog));
         }
+        if let Some(dialog) = self.driver_dialog(state) {
+            return Some(dialog);
+        }
         Some(match state {
             DialogState::Review { gpu_id, changes } => {
                 let gpu = self
@@ -942,7 +1026,9 @@ impl Core {
             | DialogState::DeleteProfile { .. }
             | DialogState::ManageProfiles { .. }
             | DialogState::AddSteamGame { .. }
-            | DialogState::AddProgram { .. } => return None,
+            | DialogState::AddProgram { .. }
+            | DialogState::RunDriverPlan { .. }
+            | DialogState::Reboot { .. } => return None,
         })
     }
 

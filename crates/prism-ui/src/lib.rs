@@ -11,6 +11,7 @@ mod core;
 mod curve;
 mod daemon;
 mod drafts;
+mod drivers;
 pub mod format;
 mod games;
 mod host;
@@ -37,9 +38,10 @@ pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
     ActivityButton, ActivityItem, ActivityPanel, AddProgram, AddSteamGame, ChangeStrip,
     ConfirmClose, ConfirmDelete, Content, CoolingProblem, CurveMarker, CurvePoint, Detail, Dialog,
-    DiscardForProfile, ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor,
-    FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace, HardwareDetails,
-    LinkChoice, ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice, ProfileCorrections,
-    ProfileMenu, ProfileNameDialog, ProfileSwitcher, ProgramChoice, Review, Sidebar, SidebarGpu,
-    StatusBar, SteamAppChoice, Stepper, SwitchingStatus, Track, TrackChart, TrackKind, Tunable,
+    DiscardForProfile, DriverConfirmation, DriverJobView, DriverPlanView, DriversSection,
+    ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor, FanModeChoice,
+    FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace, HardwareDetails, LinkChoice,
+    ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice, ProfileCorrections, ProfileMenu,
+    ProfileNameDialog, ProfileSwitcher, ProgramChoice, Review, Sidebar, SidebarGpu, StatusBar,
+    SteamAppChoice, Stepper, SwitchingStatus, Track, TrackChart, TrackKind, Tunable,
 };

@@ -5,12 +5,13 @@ pub mod nvidia;
 pub mod ubuntu;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::fedora::fedora_plans;
 use crate::host::{DriverHostInfo, PackageManager, collect_host_info};
-use crate::job::DriverJobStore;
+use crate::job::{DriverJobStore, JobCompletion, JobProgress};
 use crate::nvidia::{NvidiaDriverStatus, collect_nvidia_status};
 use crate::ubuntu::ubuntu_plans;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
@@ -84,20 +85,51 @@ pub struct DriverJobRequest {
     pub job_id: String,
 }
 
+/// The host's side of driver management, which tests stand in for.
+pub trait DriverHost: Send + Sync {
+    /// The host's driver status with every driver plan, and no job.
+    fn status(&self) -> DriverStatusResponse;
+    /// Runs the driver action's package operations, reporting each step and its output to `job`
+    /// and stopping early once it's canceled, and says how they finished, or why they didn't.
+    fn run(&self, action: DriverAction, job: &JobProgress) -> Result<JobCompletion, String>;
+    /// Asks the host to restart.
+    fn reboot(&self) -> Result<(), GpuCommandError>;
+}
+
+/// The real host: its package manager, its NVIDIA driver and systemd.
+pub struct SystemDriverHost;
+
 #[derive(Clone)]
 pub struct DriverService {
+    host: Arc<dyn DriverHost>,
     jobs: DriverJobStore,
 }
 
 impl DriverService {
-    pub fn new(state_path: PathBuf) -> Self {
+    /// Driver management on `host`, with its jobs kept at `state_path`, for a daemon running in the
+    /// host boot `boot_id`.
+    pub fn new(state_path: PathBuf, boot_id: impl Into<String>, host: Arc<dyn DriverHost>) -> Self {
         Self {
-            jobs: DriverJobStore::load(state_path),
+            jobs: DriverJobStore::load(state_path, boot_id.into(), Arc::clone(&host)),
+            host,
         }
     }
 
     pub fn status(&self) -> DriverStatusResponse {
-        collect_driver_status(self.jobs.active_job())
+        DriverStatusResponse {
+            active_job: self.jobs.active_job(),
+            ..self.host.status()
+        }
+    }
+
+    /// The driver job started last in this host boot, whether or not it has finished.
+    pub fn latest_job(&self) -> Option<DriverJob> {
+        self.jobs.latest_job()
+    }
+
+    /// Has `listener` hear about every later change to a driver job, in order.
+    pub fn on_job_changed(&self, listener: impl Fn(DriverJob) + Send + Sync + 'static) {
+        self.jobs.on_job_changed(listener);
     }
 
     pub fn start_action(
@@ -111,7 +143,7 @@ impl DriverService {
             ));
         }
 
-        let status = collect_driver_status(None);
+        let status = self.host.status();
         let plan = status
             .nvidia
             .plans
@@ -151,9 +183,14 @@ impl DriverService {
             )
         })
     }
+
+    pub fn reboot(&self) -> Result<(), GpuCommandError> {
+        self.host.reboot()
+    }
 }
 
-pub fn collect_driver_status(active_job: Option<DriverJob>) -> DriverStatusResponse {
+/// The host's driver status with every driver plan, and no job.
+pub fn collect_driver_status() -> DriverStatusResponse {
     let mut warnings = Vec::new();
     let mut host = collect_host_info();
     let mut nvidia = collect_nvidia_status();
@@ -189,7 +226,7 @@ pub fn collect_driver_status(active_job: Option<DriverJob>) -> DriverStatusRespo
     DriverStatusResponse {
         host,
         nvidia,
-        active_job,
+        active_job: None,
         warnings,
     }
 }
@@ -276,7 +313,7 @@ mod tests {
 
     #[test]
     fn status_collection_never_panics_on_test_host() {
-        let status = collect_driver_status(None);
+        let status = collect_driver_status();
         assert!(!status.host.kernel_release.is_empty());
     }
 }

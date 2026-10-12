@@ -272,6 +272,49 @@ export component DeleteProfileDialog inherits Dialog {
     }
 }
 
+// Running the recommended driver plan, or restarting the host: what it does and what to know
+// first, then its confirmation ("Run" or "Reboot") and Cancel, which Escape also does. Run waits
+// for the plan when it hasn't been read yet, and a refusal shows why.
+export component DriverConfirmationDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    for detail in AppState.dialog-details: StyledText {
+        text: detail;
+        style: Theme.text.body;
+        wrap: word-wrap;
+        accessible-role: text;
+        accessible-label: detail;
+    }
+
+    if AppState.dialog.error != "": Problem {
+        text: AppState.dialog.error;
+    }
+
+    Actions {
+        Button {
+            text: AppState.dialog.confirm-text;
+            kind: ButtonKind.plain;
+            enabled: AppState.dialog.can-confirm;
+            description: AppState.dialog.confirm-reason;
+            activated => {
+                Intents.confirm-driver-dialog();
+            }
+        }
+
+        Button {
+            text: "Cancel";
+            kind: ButtonKind.accent;
+            init => {
+                self.focus();
+            }
+            activated => {
+                Intents.dismiss();
+            }
+        }
+    }
+}
+
 // One of the GPU's profiles in Manage profiles: its name and marks, then Rename and Delete.
 component ManagedProfile inherits Rectangle {
     in property <ManagedProfileView> profile;

@@ -1,0 +1,16 @@
+import { Theme } from "../theme.slint";
+import { StyledText } from "styled-text.slint";
+
+// A line about the section as a whole, labeled for a screen reader, such as why running games
+// can't be recognized; in the danger color when something is wrong.
+export component Notice inherits StyledText {
+    in property <string> label;
+    in property <bool> danger;
+
+    style: Theme.text.body;
+    color: root.danger ? Theme.color.danger : Theme.color.ink-muted;
+    wrap: word-wrap;
+    accessible-role: text;
+    accessible-label: root.label;
+    accessible-value: self.text;
+}

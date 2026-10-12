@@ -30,6 +30,8 @@ mod cooling_tests;
 #[cfg(test)]
 mod current_profile_tests;
 #[cfg(test)]
+mod driver_job_tests;
+#[cfg(test)]
 mod fan_curve_tests;
 #[cfg(test)]
 mod games_changed_tests;
@@ -78,7 +80,7 @@ use serde::{Deserialize, Serialize};
 use users::os::unix::UserExt;
 use users::{get_group_by_gid, get_group_by_name, get_user_by_uid, get_user_groups};
 
-use prism_drivers::DriverService;
+use prism_drivers::{DriverService, SystemDriverHost};
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 use prism_protocol::framing::{MAX_FRAME_BYTES, read_frame, write_frame};
 use prism_protocol::{
@@ -143,12 +145,17 @@ pub fn run_with(backend: Arc<dyn DaemonBackend>) -> Result<(), String> {
     let paths = DaemonPaths::from_environment();
     let config = load_config(&paths).map_err(|error| error.to_string())?;
     let listener = bind_listener(&paths).map_err(|error| error.to_string())?;
+    let boot_id = read_boot_id();
     let core = DaemonCore::start(CoreDependencies {
         backend,
-        drivers: DriverService::new(paths.driver_jobs_path.clone()),
+        drivers: DriverService::new(
+            paths.driver_jobs_path.clone(),
+            boot_id.clone(),
+            Arc::new(SystemDriverHost),
+        ),
         persistent_dir: paths.persistent_dir.clone(),
         boot_dir: paths.boot_dir.clone(),
-        boot_id: read_boot_id(),
+        boot_id,
         clock: Arc::new(SystemClock),
         host_shutting_down: Arc::new(SystemdShutdownSignal),
         socket_path: paths.socket_path.clone(),

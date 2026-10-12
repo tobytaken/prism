@@ -15,7 +15,10 @@ use super::{
     Clock, CoreDependencies, DaemonBackend, DaemonCore, DaemonSession, HostShutdownSignal,
     SessionPeer, SessionPolicy, UserDirectory,
 };
-use prism_drivers::DriverService;
+use prism_drivers::job::{JobCompletion, JobProgress};
+use prism_drivers::{
+    DriverAction, DriverHost, DriverJob, DriverJobStatus, DriverService, DriverStatusResponse,
+};
 use prism_gpu::{
     ClockInfo, ComputeInfo, ControlSupport, FanControlInfo, FanControlMode, GpuCommandError,
     GpuControlInfo, GpuDevice, GpuInventoryResponse, GpuPerformanceDevice, GpuPerformanceResponse,
@@ -437,6 +440,114 @@ impl Gate {
     }
 }
 
+/// The host's driver management as the test drives it: its driver status from the shared
+/// contract, and each driver action running until the test ends it.
+pub struct FakeDriverHost(Mutex<FakeDrivers>, Condvar);
+
+struct FakeDrivers {
+    status: DriverStatusResponse,
+    /// What the running action does next, oldest first.
+    steps: std::collections::VecDeque<FakeDriverStep>,
+    reboots: usize,
+}
+
+enum FakeDriverStep {
+    /// Starts a step, such as running a package-manager command, with its output.
+    Progress {
+        label: String,
+        output: Vec<String>,
+    },
+    Finish(Result<JobCompletion, String>),
+}
+
+impl Default for FakeDriverHost {
+    fn default() -> Self {
+        let status = serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/driver-status.json"
+        ))
+        .unwrap();
+        Self(
+            Mutex::new(FakeDrivers {
+                status,
+                steps: Default::default(),
+                reboots: 0,
+            }),
+            Condvar::new(),
+        )
+    }
+}
+
+impl FakeDriverHost {
+    /// Blocks every driver plan with `blocker`.
+    pub fn block_plans(&self, blocker: &str) {
+        for plan in &mut self.0.lock().unwrap().status.nvidia.plans {
+            plan.blockers = vec![blocker.into()];
+        }
+    }
+
+    /// The running action starts a step labeled `label` with this output.
+    pub fn progress(&self, label: &str, output: &[&str]) {
+        self.next(FakeDriverStep::Progress {
+            label: label.into(),
+            output: output.iter().map(|line| (*line).into()).collect(),
+        });
+    }
+
+    /// The running action's package operations finish, leaving a reboot outstanding.
+    pub fn finish_needing_reboot(&self) {
+        self.next(FakeDriverStep::Finish(Ok(JobCompletion::reboot_required())));
+    }
+
+    /// The running action fails with `error`.
+    pub fn fail(&self, error: &str) {
+        self.next(FakeDriverStep::Finish(Err(error.into())));
+    }
+
+    /// How many times prismd asked the host to restart.
+    pub fn reboots(&self) -> usize {
+        self.0.lock().unwrap().reboots
+    }
+
+    fn next(&self, step: FakeDriverStep) {
+        self.0.lock().unwrap().steps.push_back(step);
+        self.1.notify_all();
+    }
+}
+
+impl DriverHost for FakeDriverHost {
+    fn status(&self) -> DriverStatusResponse {
+        self.0.lock().unwrap().status.clone()
+    }
+
+    fn run(&self, _: DriverAction, job: &JobProgress) -> Result<JobCompletion, String> {
+        loop {
+            job.stop_if_canceled()?;
+            let (mut drivers, _) = self
+                .1
+                .wait_timeout_while(
+                    self.0.lock().unwrap(),
+                    Duration::from_millis(10),
+                    |drivers| drivers.steps.is_empty(),
+                )
+                .unwrap();
+            match drivers.steps.pop_front() {
+                None => {}
+                Some(FakeDriverStep::Progress { label, output }) => {
+                    drop(drivers);
+                    job.step(&label, &format!("Running {label}"));
+                    job.log(output);
+                }
+                Some(FakeDriverStep::Finish(outcome)) => return outcome,
+            }
+        }
+    }
+
+    fn reboot(&self) -> Result<(), GpuCommandError> {
+        self.0.lock().unwrap().reboots += 1;
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 pub struct FakeClock(AtomicU64);
 
@@ -479,6 +590,7 @@ impl UserDirectory for FakeUsers {
 pub struct Harness {
     pub gpus: Arc<FakeGpuBackend>,
     pub clock: Arc<FakeClock>,
+    pub drivers: Arc<FakeDriverHost>,
     host_shutting_down: Arc<FakeHostShutdown>,
     persistent_dir: TempDir,
     boot_dir: TempDir,
@@ -503,6 +615,7 @@ impl Harness {
         let mut harness = Self {
             gpus: Arc::new(gpus),
             clock: Arc::default(),
+            drivers: Arc::default(),
             host_shutting_down: Arc::default(),
             persistent_dir,
             boot_dir: tempfile::tempdir().unwrap(),
@@ -579,7 +692,11 @@ impl Harness {
         let persistent_dir = self.persistent_dir.path().to_path_buf();
         self.core = Some(Arc::new(DaemonCore::start(CoreDependencies {
             backend: Arc::clone(&self.gpus) as Arc<dyn DaemonBackend>,
-            drivers: DriverService::new(persistent_dir.join("driver-jobs.json")),
+            drivers: DriverService::new(
+                persistent_dir.join("driver-jobs.json"),
+                self.boot_id.clone(),
+                Arc::clone(&self.drivers) as Arc<dyn DriverHost>,
+            ),
             persistent_dir,
             boot_dir: self.boot_dir.path().to_path_buf(),
             boot_id: self.boot_id.clone(),
@@ -810,6 +927,22 @@ impl Harness {
     /// Waits until every GPU's operation queue has run what was queued so far.
     pub fn settle(&self) {
         self.core().queues.settle();
+    }
+
+    /// Waits until the latest driver job this boot is in `status`, and returns it.
+    pub fn wait_for_driver_job(&self, status: DriverJobStatus) -> DriverJob {
+        let deadline = std::time::Instant::now() + RESPONSE_DEADLINE;
+        loop {
+            let job = self.core().dependencies.drivers.latest_job();
+            if let Some(job) = job.filter(|job| job.status == status) {
+                return job;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the driver job never became {status:?}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 }
 

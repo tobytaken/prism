@@ -156,6 +156,8 @@ pub struct DaemonSnapshot {
     pub startup: StartupState,
     /// What prismd did this boot that the caller may see, oldest first.
     pub activity: Vec<ActivityEntry>,
+    /// The driver job started last this host boot, whether or not it has finished.
+    pub driver_job: Option<DriverJob>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1023,6 +1025,8 @@ pub enum DaemonEvent {
     StartupStateChanged(StartupState),
     /// prismd did something the caller may see.
     ActivityRecorded(ActivityEntry),
+    /// A driver job started, made progress or ended, with its state, log and outcome now.
+    DriverJobChanged(DriverJob),
 }
 
 #[cfg(test)]
@@ -1544,6 +1548,31 @@ mod session_tests {
             let typed: SessionMessage = serde_json::from_value(event.clone()).unwrap();
             assert_eq!(serde_json::to_value(typed).unwrap(), event);
         }
+    }
+
+    #[test]
+    fn driver_jobs_round_trip_the_shared_contract_as_responses_and_session_events() {
+        let jobs: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../tests/contracts/driver-jobs.json")).unwrap();
+        for job in jobs {
+            let typed: DriverJob = serde_json::from_value(job.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(DaemonResponse::DriverJob(typed)).unwrap(),
+                serde_json::json!({ "type": "driver_job", "payload": job })
+            );
+            let event = serde_json::json!({
+                "type": "event", "event": { "type": "driver_job_changed", "payload": job }
+            });
+            let typed: SessionMessage = serde_json::from_value(event.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), event);
+        }
+        let status: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/driver-status.json")).unwrap();
+        let typed: DriverStatusResponse = serde_json::from_value(status.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(DaemonResponse::DriverStatus(typed)).unwrap(),
+            serde_json::json!({ "type": "driver_status", "payload": status })
+        );
     }
 
     #[test]

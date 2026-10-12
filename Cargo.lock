@@ -3499,6 +3499,7 @@ dependencies = [
  "i-slint-backend-testing",
  "i-slint-core",
  "png",
+ "prism-drivers",
  "prism-gpu",
  "prism-protocol",
  "prism-ui",
@@ -3551,6 +3552,7 @@ dependencies = [
 name = "prism-ui"
 version = "0.1.0"
 dependencies = [
+ "prism-drivers",
  "prism-gpu",
  "prism-protocol",
  "serde_json",

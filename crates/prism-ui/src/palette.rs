@@ -56,6 +56,10 @@ pub(crate) enum Command {
     },
     /// Try this GPU's failed automatic switching again, by id.
     RetrySwitching(String),
+    /// Show Drivers, and ask before running the recommended driver plan.
+    RunDriverPlan,
+    /// Ask before restarting the host.
+    RebootHost,
     Quit,
 }
 
@@ -265,7 +269,9 @@ impl Core {
                 | DialogState::DeleteProfile { .. }
                 | DialogState::ManageProfiles { .. }
                 | DialogState::AddSteamGame { .. }
-                | DialogState::AddProgram { .. },
+                | DialogState::AddProgram { .. }
+                | DialogState::RunDriverPlan { .. }
+                | DialogState::Reboot { .. },
             ) => true,
         }
     }
@@ -342,6 +348,9 @@ impl Core {
         if let Some(reason) = self.switching_command_unavailable(command) {
             return reason;
         }
+        if let Some(reason) = self.driver_command_unavailable(command) {
+            return reason;
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
@@ -369,6 +378,8 @@ impl Core {
             | Command::RetryCooling(_)
             | Command::SetSwitchingPaused { .. }
             | Command::RetrySwitching(_)
+            | Command::RunDriverPlan
+            | Command::RebootHost
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
@@ -471,6 +482,10 @@ impl Core {
             .game_palette_commands()
             .into_iter()
             .map(|(command, title)| (command, title, None));
+        let drivers = self
+            .driver_commands()
+            .into_iter()
+            .map(|(command, title)| (command, title, None));
         // Telemetry ranges only matter while there are GPUs to chart.
         let ranges = TelemetryRange::ALL
             .into_iter()
@@ -508,6 +523,7 @@ impl Core {
             .chain(tuning)
             .chain(profiles)
             .chain(games)
+            .chain(drivers)
             .chain(ranges)
             .chain(prismd)
             .chain(app)

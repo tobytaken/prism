@@ -125,6 +125,7 @@
       "outcomes": [],
       "possibly_stale": []
     },
-    "activity": []
+    "activity": [],
+    "driver_job": null
   }
 }

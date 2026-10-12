@@ -206,7 +206,13 @@ fn the_sidebar_rows_lead_to_their_sections() {
             .accessible_item_selected(),
         Some(false)
     );
-    assert!(harness.shows("This section isn't built yet."));
+    assert_eq!(
+        harness
+            .find(Text, "Driver status")
+            .accessible_value()
+            .as_deref(),
+        Some("Driver management needs prismd · not running")
+    );
     assert_eq!(harness.count(Groupbox, "Temperature"), 0);
 }
 

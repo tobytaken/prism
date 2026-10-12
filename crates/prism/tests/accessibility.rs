@@ -484,6 +484,68 @@ fn games_add_steam_game_and_add_program_are_accessible() {
     harness.find(AccessibleRole::Button, "Remove Dota 2");
 }
 
+/// The contract's driver job in `status`.
+fn driver_job(status: prism_drivers::DriverJobStatus) -> prism_drivers::DriverJob {
+    let jobs: Vec<prism_drivers::DriverJob> = serde_json::from_str(include_str!(
+        "../../prism-protocol/tests/contracts/driver-jobs.json"
+    ))
+    .unwrap();
+    jobs.into_iter().find(|job| job.status == status).unwrap()
+}
+
+/// Shows Drivers with the contract's driver status, then pushes each of `jobs`.
+fn show_drivers(harness: &Harness, jobs: &[prism_drivers::DriverJobStatus]) {
+    harness.ctrl_shift("d");
+    harness.prismd.answer(DaemonResponse::DriverStatus(
+        serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/driver-status.json"
+        ))
+        .unwrap(),
+    ));
+    for status in jobs {
+        harness
+            .prismd
+            .push(DaemonEvent::DriverJobChanged(driver_job(*status)));
+    }
+    harness.app.receive_posted();
+}
+
+#[test]
+fn drivers_and_its_confirmations_are_accessible() {
+    use prism_drivers::DriverJobStatus::{RebootRequired, Running};
+
+    let harness = tunable();
+    show_drivers(&harness, &[]);
+    audit("tunable, drivers", &harness);
+    harness
+        .find(AccessibleRole::Button, "Run recommended driver plan…")
+        .invoke_accessible_default_action();
+    audit("tunable, drivers, run confirmation", &harness);
+    harness.press(&[], slint::platform::Key::Escape);
+
+    harness
+        .prismd
+        .push(DaemonEvent::DriverJobChanged(driver_job(Running)));
+    harness.app.receive_posted();
+    audit("tunable, drivers, job running", &harness);
+    harness
+        .prismd
+        .push(DaemonEvent::DriverJobChanged(driver_job(RebootRequired)));
+    harness.app.receive_posted();
+    audit("tunable, drivers, reboot required", &harness);
+    harness
+        .find(AccessibleRole::Button, "Reboot now…")
+        .invoke_accessible_default_action();
+    audit("tunable, drivers, reboot confirmation", &harness);
+
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::ReadOnly);
+    harness.prismd_tick(
+        SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
+    );
+    show_drivers(&harness, &[Running]);
+    audit("tunable, read-only drivers", &harness);
+}
+
 #[test]
 fn a_switch_s_default_action_toggles_it_unless_it_s_read_only() {
     let harness = tunable();

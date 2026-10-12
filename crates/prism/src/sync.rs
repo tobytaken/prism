@@ -6,19 +6,20 @@ use prism_protocol::ProfileSettingKey;
 use prism_ui::format::{Readout, UNKNOWN};
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    ActivityItem, AppearanceMode as CoreAppearance, Content, CoolingProblem, Core, Dialog, Fact,
-    FanCurveEditor, FanModeControl, GameRow, ReviewChange, Section as CoreSection,
-    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Stepper,
-    SwitchingStatus, Track, Tunable,
+    ActivityItem, AppearanceMode as CoreAppearance, Content, CoolingProblem, Core, Dialog,
+    DriverConfirmation, Fact, FanCurveEditor, FanModeControl, GameRow, ReviewChange,
+    Section as CoreSection, ServiceAction as CoreServiceAction,
+    SettingsSection as CoreSettingsSection, Stepper, SwitchingStatus, Track, Tunable,
 };
 
 use crate::{
     ActivityItemView, AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind,
     CoolingProblemView, CurvePointView, DaemonView, DetailView, DialogKind, DialogView,
-    ExplainedStateView, FactView, FanCurveView, FanModeView, GameLinkView, GameView, GamesView,
-    LimitMark, MainWindow, ManagedProfileView, MenuEntryView, PaletteEntryView, ProgramView,
-    ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection, SidebarGpuView,
-    SteamAppView, StepperView, SwitchingView, Theme, TrackView, TuningSetting, WorkspaceView,
+    DriversView, ExplainedStateView, FactView, FanCurveView, FanModeView, GameLinkView, GameView,
+    GamesView, LimitMark, MainWindow, ManagedProfileView, MenuEntryView, PaletteEntryView,
+    ProgramView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection,
+    SidebarGpuView, SteamAppView, StepperView, SwitchingView, Theme, TrackView, TuningSetting,
+    WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -241,6 +242,93 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         state.set_games(model);
     }
 
+    let drivers = core.drivers();
+    let plan = drivers.plan.as_ref();
+    let job = drivers.job.as_ref();
+    state.set_drivers(DriversView {
+        read_only: drivers.read_only.is_some(),
+        reason: drivers.read_only.as_deref().unwrap_or_default().into(),
+        status: drivers.status.as_deref().unwrap_or_default().into(),
+        outcome: drivers.outcome.as_deref().unwrap_or_default().into(),
+        has_plan: plan.is_some(),
+        plan_title: plan
+            .map(|plan| plan.title.as_str())
+            .unwrap_or_default()
+            .into(),
+        can_run: plan.is_some_and(|plan| plan.run_unavailable.is_none()),
+        run_reason: plan
+            .and_then(|plan| plan.run_unavailable.as_deref())
+            .unwrap_or_default()
+            .into(),
+        has_job: job.is_some(),
+        job_title: job.map(|job| job.title.as_str()).unwrap_or_default().into(),
+        job_state: job.map(|job| job.state.as_str()).unwrap_or_default().into(),
+        job_active: job.is_some_and(|job| job.active),
+        job_failed: job.is_some_and(|job| job.failed),
+        job_step: job
+            .and_then(|job| job.step.as_deref())
+            .unwrap_or_default()
+            .into(),
+        job_explanation: job
+            .map(|job| job.explanation.join(" "))
+            .unwrap_or_default()
+            .into(),
+        can_cancel: job.is_some_and(|job| job.cancel_unavailable.is_none()),
+        cancel_reason: job
+            .and_then(|job| job.cancel_unavailable.as_deref())
+            .unwrap_or_default()
+            .into(),
+        reboot: job.is_some_and(|job| job.reboot),
+        can_reboot: job.is_some_and(|job| job.reboot_unavailable.is_none()),
+        reboot_reason: job
+            .and_then(|job| job.reboot_unavailable.as_deref())
+            .unwrap_or_default()
+            .into(),
+    });
+    if let Some(model) = update_in_place(
+        &state.get_driver_facts(),
+        facts(&drivers.host),
+        PartialEq::eq,
+    ) {
+        state.set_driver_facts(model);
+    }
+    if let Some(model) = update_in_place(
+        &state.get_driver_warnings(),
+        strings(&drivers.warnings),
+        PartialEq::eq,
+    ) {
+        state.set_driver_warnings(model);
+    }
+    if let Some(model) = update_in_place(
+        &state.get_plan_blockers(),
+        plan.map(|plan| strings(&plan.blockers)).unwrap_or_default(),
+        PartialEq::eq,
+    ) {
+        state.set_plan_blockers(model);
+    }
+    if let Some(model) = update_in_place(
+        &state.get_plan_warnings(),
+        plan.map(|plan| strings(&plan.warnings)).unwrap_or_default(),
+        PartialEq::eq,
+    ) {
+        state.set_plan_warnings(model);
+    }
+    if let Some(model) = update_in_place(
+        &state.get_plan_steps(),
+        plan.map(|plan| strings(&plan.manual_steps))
+            .unwrap_or_default(),
+        PartialEq::eq,
+    ) {
+        state.set_plan_steps(model);
+    }
+    if let Some(model) = update_in_place(
+        &state.get_driver_log(),
+        job.map(|job| strings(&job.log)).unwrap_or_default(),
+        PartialEq::eq,
+    ) {
+        state.set_driver_log(model);
+    }
+
     let palette = core.palette();
     state.set_palette_open(palette.is_some());
     let entries: Vec<_> = palette
@@ -285,6 +373,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     let mut managed = Vec::new();
     let mut steam_apps = Vec::new();
     let mut programs = Vec::new();
+    let mut details = Vec::new();
     let (dialog, changes) = match core.dialog() {
         None => (DialogView::default(), Vec::new()),
         Some(Dialog::Review(review)) => (
@@ -423,7 +512,24 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 Vec::new(),
             )
         }
+        Some(Dialog::RunDriverPlan(confirmation)) => {
+            details = strings(&confirmation.details);
+            (
+                driver_confirmation(DialogKind::RunDriverPlan, confirmation),
+                Vec::new(),
+            )
+        }
+        Some(Dialog::Reboot(confirmation)) => {
+            details = strings(&confirmation.details);
+            (
+                driver_confirmation(DialogKind::Reboot, confirmation),
+                Vec::new(),
+            )
+        }
     };
+    if let Some(model) = update_in_place(&state.get_dialog_details(), details, PartialEq::eq) {
+        state.set_dialog_details(model);
+    }
     if let Some(model) = update_in_place(&state.get_managed_profiles(), managed, PartialEq::eq) {
         state.set_managed_profiles(model);
     }
@@ -481,6 +587,20 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     state.set_activity_empty(empty.into());
     // Slint's int is 32 bits; wrapping still changes the value on every input.
     state.set_revision(core.revision() as i32);
+}
+
+/// The Run or Reboot confirmation as its dialog shows it, apart from its details.
+fn driver_confirmation(kind: DialogKind, confirmation: DriverConfirmation) -> DialogView {
+    DialogView {
+        kind,
+        title: confirmation.title.into(),
+        message: confirmation.message.into(),
+        error: confirmation.error.unwrap_or_default().into(),
+        confirm_text: confirmation.confirm_text.into(),
+        can_confirm: confirmation.confirm_unavailable.is_none(),
+        confirm_reason: confirmation.confirm_unavailable.unwrap_or_default().into(),
+        ..DialogView::default()
+    }
 }
 
 /// A GPU's automatic switching status as its workspace shows it.
