@@ -161,6 +161,24 @@ pub struct ProfileSwitcher {
     pub current: Option<String>,
     /// Why no profile can be applied, when there's no tuning access.
     pub read_only: Option<String>,
+    /// Whether the values in effect or the explicit defaults applied differ from the current
+    /// profile: "not saved to profile".
+    pub unsaved: bool,
+}
+
+/// The workspace header's open `⋯` menu of profile actions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileMenu {
+    pub entries: Vec<MenuEntry>,
+}
+
+/// An action in a menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuEntry {
+    /// Such as "Save to current profile".
+    pub title: String,
+    /// Why it can't run now, when it can't. It stays listed, dimmed.
+    pub unavailable: Option<String>,
 }
 
 /// One of the GPU's profiles in the workspace header.
@@ -506,6 +524,64 @@ pub enum Dialog {
     DiscardForProfile(DiscardForProfile),
     /// A profile's values out of the GPU's range: "Adjust profile and apply" or "Cancel".
     ProfileCorrections(ProfileCorrections),
+    /// Naming a new profile, or a profile's new name.
+    ProfileName(ProfileNameDialog),
+    /// Deleting a profile: "Delete" or "Cancel".
+    DeleteProfile(ConfirmDelete),
+    /// The GPU's profiles, each to rename or delete.
+    ManageProfiles(ManageProfiles),
+}
+
+/// The name of a new profile, or a profile's new name, in a text field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileNameDialog {
+    /// Such as "Save as new profile" or "Rename Quiet".
+    pub title: String,
+    pub message: String,
+    /// The name as typed.
+    pub name: String,
+    /// What's wrong with the name, such as another profile of the GPU having it, or why prismd
+    /// refused it.
+    pub error: Option<String>,
+    /// Such as "Save" or "Rename".
+    pub confirm_text: &'static str,
+    /// Why the name can't be sent now, when it can't.
+    pub confirm_unavailable: Option<String>,
+}
+
+/// The question deleting a profile asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmDelete {
+    /// Such as "Delete Quiet?".
+    pub title: String,
+    /// What deleting it does.
+    pub message: String,
+    /// Why prismd refused to delete it.
+    pub error: Option<String>,
+    /// Why it can't be deleted now, when it can't.
+    pub confirm_unavailable: Option<String>,
+}
+
+/// The GPU's profiles, to rename or delete any of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManageProfiles {
+    pub title: String,
+    pub message: String,
+    /// The caller's profiles of the GPU, in the order prismd lists them.
+    pub profiles: Vec<ManagedProfile>,
+    /// Why no profile can be renamed or deleted now, when none can.
+    pub actions_unavailable: Option<String>,
+}
+
+/// One of the GPU's profiles in Manage profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedProfile {
+    /// The profile's id, which renaming or deleting it sends.
+    pub id: String,
+    pub name: String,
+    /// Whether it's the current or the startup profile, such as "Current profile · Startup
+    /// profile", or empty.
+    pub marks: String,
 }
 
 /// The question choosing a profile over unapplied tuning changes asks.
@@ -574,7 +650,11 @@ impl Core {
 
     /// The dialog over the window, while one is open.
     pub fn dialog(&self) -> Option<Dialog> {
-        Some(match self.dialog.as_ref()? {
+        let state = self.dialog.as_ref()?;
+        if let Some(dialog) = self.profile_change_dialog(state) {
+            return dialog;
+        }
+        Some(match state {
             DialogState::Review { gpu_id, changes } => {
                 let gpu = self
                     .gpus()
@@ -635,6 +715,9 @@ impl Core {
                     .into(),
                 corrections: corrections.iter().map(correction_change).collect(),
             }),
+            DialogState::ProfileName { .. }
+            | DialogState::DeleteProfile { .. }
+            | DialogState::ManageProfiles { .. } => return None,
         })
     }
 
@@ -1247,6 +1330,7 @@ impl Core {
                 .collect(),
             current: current.map(|current| current.name.clone()),
             read_only,
+            unsaved: self.not_saved_to_profile(gpu_id),
         }
     }
 
