@@ -47,8 +47,9 @@ component Actions inherits HorizontalLayout {
     padding-top: Theme.space.s;
 }
 
-// prismd refused an Apply because the GPU's tuning state changed since the draft was made: what
-// changed, then Discard, or Apply again over the new state. Escape keeps editing.
+// The GPU's tuning state changed since the draft was made, so prismd refused its Apply or the
+// draft would replace a cooling change the user hasn't seen: what changed, then Discard, or Apply
+// over the new state. Escape keeps editing.
 export component ReviewDialog inherits Dialog {
     title: AppState.dialog.title;
     message: AppState.dialog.message;
@@ -73,7 +74,7 @@ export component ReviewDialog inherits Dialog {
         }
 
         apply := Button {
-            text: "Apply again";
+            text: AppState.dialog.apply-text;
             kind: ButtonKind.accent;
             enabled: AppState.dialog.can-apply;
             description: AppState.dialog.can-apply ? "Ctrl+Enter" : AppState.dialog.apply-reason;

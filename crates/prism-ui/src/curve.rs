@@ -1,12 +1,13 @@
 //! The fan curve editor: the curve a GPU's fans follow or the one pending in its place, its points
 //! moved by dragging or with the keyboard, what keeps a pending curve from being applied, and
-//! where the GPU's temperature and fan speed are now.
+//! where the GPU's temperature and fan speed are now. While each fan has its own settings, it
+//! edits the picked fan's curve.
 
 use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
 use prism_gpu::fan_curve::{self, FanCurvePoint, FanCurveProblem, FanCurveSupport};
 
-use crate::cooling::{cooling_read, shared, shared_setting};
-use crate::core::{Core, Effect, Gpu, Latest, TuningControl};
+use crate::cooling::{Fans, cooling_read, setting_of, speed_now};
+use crate::core::{Core, Effect, Gpu, Latest};
 use crate::format::Readout;
 use crate::telemetry::ChartPoint;
 use crate::view::{CurveMarker, CurvePoint, FanCurveEditor};
@@ -17,9 +18,12 @@ const AXIS: Axis = Axis { from: 20, to: 100 };
 /// The step a widened axis snaps to, so its ends are round numbers.
 const AXIS_STEP: i64 = 10;
 
-/// The points of the curve every fan follows in `configuration`, if they follow one.
-fn curve_of(configuration: &CoolingConfiguration) -> Option<&[FanCurvePoint]> {
-    match shared_setting(configuration)? {
+/// Why a pending curve can't be checked without a reading of the GPU's fans.
+const NO_READING: &str = "Prism needs a reading of the GPU's fans to check the curve.";
+
+/// The points of the curve `fans` follow in `configuration`, if they follow one.
+fn curve_of(configuration: &CoolingConfiguration, fans: Fans) -> Option<&[FanCurvePoint]> {
+    match setting_of(configuration, fans)? {
         FanSetting::Curve { points } => Some(points),
         FanSetting::Automatic {} | FanSetting::Fixed { .. } => None,
     }
@@ -98,20 +102,22 @@ impl Axis {
 }
 
 impl Core {
-    /// The curve the GPU's fans follow, if they follow one.
+    /// The curve the fans the GPU's controls set follow, if they follow one.
     fn curve_in_effect(&self, gpu: &Gpu) -> Option<Vec<FanCurvePoint>> {
-        curve_of(&self.cooling_in_effect(gpu)?).map(<[_]>::to_vec)
+        curve_of(&self.cooling_in_effect(gpu)?, self.controlled_fans(gpu)).map(<[_]>::to_vec)
     }
 
-    /// The curve the GPU's draft stages, if it stages one.
-    fn staged_curve(&self, gpu_id: &str) -> Option<&[FanCurvePoint]> {
-        curve_of(self.staged_cooling(gpu_id)?)
+    /// The curve the GPU's draft stages for the fans its controls set, if it stages one other
+    /// than the curve they follow.
+    fn staged_curve(&self, gpu: &Gpu) -> Option<&[FanCurvePoint]> {
+        let staged = curve_of(self.staged_cooling(&gpu.id)?, self.controlled_fans(gpu))?;
+        (self.curve_in_effect(gpu).as_deref() != Some(staged)).then_some(staged)
     }
 
     /// The curve the editor shows: the one pending, or else the one in effect, unless other
     /// cooling is pending.
     fn shown_curve(&self, gpu: &Gpu) -> Option<Vec<FanCurvePoint>> {
-        curve_of(&self.shown_cooling(gpu)?).map(<[_]>::to_vec)
+        curve_of(&self.shown_cooling(gpu)?, self.controlled_fans(gpu)).map(<[_]>::to_vec)
     }
 
     /// The temperatures the editor's axis covers for the GPU: at least 20–100 °C, and widened
@@ -138,22 +144,61 @@ impl Core {
         }
     }
 
-    /// What keeps the curve the GPU's draft stages from being applied; none while it stages
-    /// none. Without a reading of the GPU's fans, there's nothing to check it against.
-    pub(crate) fn curve_problems(&self, gpu_id: &str) -> Vec<FanCurveProblem> {
-        let Some(points) = self.staged_curve(gpu_id) else {
-            return Vec::new();
+    /// What keeps the curves the GPU's draft stages from being applied, each fan's own curve's
+    /// problems naming the fan; none while it stages none. Without a reading of the GPU's fans,
+    /// there's nothing to check them against.
+    pub(crate) fn curve_problems(&self, gpu_id: &str) -> Vec<String> {
+        let curves: Vec<(Fans, &[FanCurvePoint])> = match self.staged_cooling(gpu_id) {
+            Some(CoolingConfiguration::Shared {
+                setting: FanSetting::Curve { points },
+            }) => vec![(Fans::Every, points)],
+            Some(CoolingConfiguration::PerFan { fans }) => fans
+                .iter()
+                .filter_map(|fan| match &fan.setting {
+                    FanSetting::Curve { points } => Some((Fans::One(fan.fan_index), &points[..])),
+                    FanSetting::Automatic {} | FanSetting::Fixed { .. } => None,
+                })
+                .collect(),
+            Some(CoolingConfiguration::Shared { .. }) | None => Vec::new(),
         };
-        match self
+        if curves.is_empty() {
+            return Vec::new();
+        }
+        let Some(cooling) = self
             .gpus()
             .iter()
             .find(|gpu| gpu.id == gpu_id)
             .and_then(cooling_read)
-        {
-            Some(cooling) => fan_curve::validate(cooling, points),
+        else {
+            return vec![NO_READING.into()];
+        };
+        curves
+            .into_iter()
+            .flat_map(|(fans, points)| {
+                fan_curve::validate_for(cooling, &fans.indexes(cooling), points)
+                    .into_iter()
+                    .map(move |problem| match fans {
+                        Fans::Every => problem.message,
+                        Fans::One(index) => format!("Fan {index}: {}", problem.message),
+                    })
+            })
+            .collect()
+    }
+
+    /// What keeps the curve pending in the editor from being applied; none while none is pending.
+    fn shown_curve_problems(&self, gpu: &Gpu) -> Vec<FanCurveProblem> {
+        let Some(points) = self.staged_curve(gpu) else {
+            return Vec::new();
+        };
+        match cooling_read(gpu) {
+            Some(cooling) => fan_curve::validate_for(
+                cooling,
+                &self.controlled_fans(gpu).indexes(cooling),
+                points,
+            ),
             None => vec![FanCurveProblem {
                 point: None,
-                message: "Prism needs a reading of the GPU's fans to check the curve.".into(),
+                message: NO_READING.into(),
             }],
         }
     }
@@ -162,9 +207,10 @@ impl Core {
     pub(crate) fn fan_curve(&self, gpu: &Gpu) -> Option<FanCurveEditor> {
         let shown = self.shown_curve(gpu)?;
         let axis = self.curve_axis(gpu);
-        let pending = self.staged_curve(&gpu.id).is_some();
-        let problems = self.curve_problems(&gpu.id);
-        let support = self.curve_support(gpu);
+        let fans = self.controlled_fans(gpu);
+        let pending = self.staged_curve(gpu).is_some();
+        let problems = self.shown_curve_problems(gpu);
+        let support = self.curve_support(gpu, fans);
         let read_only = self.cooling_read_only(gpu).or_else(|| match &support {
             Some(FanCurveSupport::Unavailable { reason }) => Some(reason.clone()),
             Some(FanCurveSupport::Available { .. }) | None => None,
@@ -186,22 +232,26 @@ impl Core {
                 faulty: problems.iter().any(|problem| problem.point == Some(index)),
             })
             .collect();
-        let readings = match &gpu.latest {
-            Latest::Read(device) => Some(&device.telemetry),
+        let temperature = match &gpu.latest {
+            Latest::Read(device) => device.telemetry.temperature_c.map(i64::from),
             Latest::Waiting | Latest::Missing { .. } => None,
         };
-        let marker = readings.and_then(|telemetry| {
-            let temperature = i64::from(telemetry.temperature_c?);
-            let speed = i64::from(telemetry.fan_speed_percent?);
-            Some(CurveMarker {
-                at: axis.drawn_at(temperature, speed),
-                text: format!(
-                    "Now {}, fans at {}",
-                    celsius(temperature).text(),
-                    percent(speed).text()
-                ),
-            })
-        });
+        let marker = temperature
+            .zip(speed_now(gpu, fans))
+            .map(|(temperature, speed)| {
+                let fans = match fans {
+                    Fans::Every => "fans".to_owned(),
+                    Fans::One(index) => format!("fan {index}"),
+                };
+                CurveMarker {
+                    at: axis.drawn_at(temperature, speed),
+                    text: format!(
+                        "Now {}, {fans} at {}",
+                        celsius(temperature).text(),
+                        percent(speed).text()
+                    ),
+                }
+            });
         Some(FanCurveEditor {
             open: !self.fan_curve_collapsed,
             points,
@@ -254,40 +304,32 @@ impl Core {
         index: usize,
         to: impl FnOnce(FanCurvePoint, Axis) -> FanCurvePoint,
     ) -> Vec<Effect> {
-        let Some(gpu) = self.stageable(TuningControl::Cooling) else {
-            return Vec::new();
-        };
-        let Some(limits) = Limits::of(self.curve_support(gpu)) else {
-            return Vec::new();
-        };
-        let Some(mut points) = self.shown_curve(gpu) else {
-            return Vec::new();
-        };
-        let Some(&point) = points.get(index) else {
-            return Vec::new();
-        };
-        let wanted = to(point, self.curve_axis(gpu));
-        let coolest = index
-            .checked_sub(1)
-            .map_or(0, |previous| points[previous].temperature_c + 1);
-        let hottest = points
-            .get(index + 1)
-            .map_or(limits.max_operating_temperature_c, |next| {
-                next.temperature_c - 1
-            })
-            .min(limits.max_operating_temperature_c);
-        points[index] = FanCurvePoint::new(
-            if coolest <= hottest {
-                wanted.temperature_c.clamp(coolest, hottest)
-            } else {
-                point.temperature_c
-            },
-            wanted
-                .speed_percent
-                .clamp(limits.min_speed_percent, limits.max_speed_percent),
-        );
-        let id = gpu.id.clone();
-        self.stage_cooling(id, shared(FanSetting::Curve { points }))
+        self.stage_fan_setting(|core, gpu, _, fans| {
+            let limits = Limits::of(core.curve_support(gpu, fans))?;
+            let mut points = core.shown_curve(gpu)?;
+            let point = *points.get(index)?;
+            let wanted = to(point, core.curve_axis(gpu));
+            let coolest = index
+                .checked_sub(1)
+                .map_or(0, |previous| points[previous].temperature_c + 1);
+            let hottest = points
+                .get(index + 1)
+                .map_or(limits.max_operating_temperature_c, |next| {
+                    next.temperature_c - 1
+                })
+                .min(limits.max_operating_temperature_c);
+            points[index] = FanCurvePoint::new(
+                if coolest <= hottest {
+                    wanted.temperature_c.clamp(coolest, hottest)
+                } else {
+                    point.temperature_c
+                },
+                wanted
+                    .speed_percent
+                    .clamp(limits.min_speed_percent, limits.max_speed_percent),
+            );
+            Some(FanSetting::Curve { points })
+        })
     }
 
     /// Collapses the fan curve editor, or opens it again.

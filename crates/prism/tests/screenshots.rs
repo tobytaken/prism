@@ -145,6 +145,53 @@ mod screenshot {
         pending_cooling(AppearanceMode::Dark, "workspace-cooling-pending-dark");
     }
 
+    /// The workspace with fan 1's own fixed speed pending, after another session changed the
+    /// GPU's cooling: the fan picker with per-fan settings pending, and the change strip asking
+    /// for a review before Apply.
+    fn per_fan_review(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        let mut state = crate::support::prismd::snapshot().tuning_states[0].clone();
+        state.reported.cooling = Some(prism_gpu::cooling::CoolingConfiguration::Shared {
+            setting: prism_gpu::cooling::FanSetting::Automatic {},
+        });
+        harness
+            .prismd
+            .push(prism_protocol::DaemonEvent::TuningStateChanged(
+                state.clone(),
+            ));
+        harness.app.receive_posted();
+        harness
+            .find(AccessibleRole::Button, "Fan 1")
+            .invoke_accessible_default_action();
+        harness
+            .find(AccessibleRole::Button, "Fixed speed")
+            .invoke_accessible_default_action();
+        harness
+            .find(AccessibleRole::Spinbox, "Fan 1 fixed speed")
+            .set_accessible_value("55");
+        state.revision = "elsewhere".into();
+        state.reported.cooling = Some(prism_gpu::cooling::CoolingConfiguration::Shared {
+            setting: prism_gpu::cooling::FanSetting::Fixed { speed_percent: 70 },
+        });
+        harness
+            .prismd
+            .push(prism_protocol::DaemonEvent::TuningStateChanged(state));
+        harness.app.receive_posted();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn per_fan_settings_held_for_a_cooling_review_in_light() {
+        per_fan_review(AppearanceMode::Light, "workspace-per-fan-review-light");
+    }
+
+    #[test]
+    fn per_fan_settings_held_for_a_cooling_review_in_dark() {
+        per_fan_review(AppearanceMode::Dark, "workspace-per-fan-review-dark");
+    }
+
     /// The workspace with a fan curve in effect and an edit of it pending: the Fans track's curve
     /// editor with the curve in effect behind the pending one, the full-speed boundary, the live
     /// marker, and the fan speed history beside it, or in its place when `size` is narrow.

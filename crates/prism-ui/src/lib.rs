@@ -16,7 +16,7 @@ mod palette;
 pub mod telemetry;
 mod view;
 
-pub use crate::cooling::FanMode;
+pub use crate::cooling::{FanArrangement, FanMode};
 pub use crate::core::{
     AppearanceMode, CommandId, Core, Effect, Input, Intent, NotConnected, PrismdConnection,
     Section, SessionFailure, SettingsSection, TelemetrySource, Timer, TuningAccess, TuningControl,
@@ -28,6 +28,7 @@ pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
     ChangeStrip, ConfirmClose, Content, CurveMarker, CurvePoint, Detail, Dialog, ExplainedState,
-    FanCurveEditor, FanModeChoice, FanModeControl, GpuWorkspace, HardwareDetails, Review, Sidebar,
-    SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind, Tunable,
+    FanArrangementControl, FanChoice, FanCurveEditor, FanModeChoice, FanModeControl, GpuWorkspace,
+    HardwareDetails, Review, Sidebar, SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind,
+    Tunable,
 };

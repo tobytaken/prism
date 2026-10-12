@@ -12,7 +12,7 @@ use prism_protocol::{
     ReportedTuningValues, SetEditHoldsRequest,
 };
 
-use crate::cooling::cooling_read;
+use crate::cooling::{cooling_read, cooling_text};
 use crate::core::{CommandId, Core, Effect, Gpu, Latest, Selection, TuningControl};
 use crate::format::Readout;
 
@@ -27,6 +27,9 @@ pub(crate) struct Draft {
     /// The GPU's fans as the user saw them when staging cooling, which prismd checks before it
     /// writes the cooling setting.
     fan_indexes: Vec<u32>,
+    /// The cooling in effect as prismd reported it when the draft started staging cooling, or
+    /// last moved onto a tuning state: a change from it is one the user hasn't reviewed.
+    cooling_seen: Option<CoolingConfiguration>,
     /// Each staged setting the last Apply didn't put into effect, with why if prismd said, until
     /// it's staged again.
     pub(crate) failed: BTreeMap<Staged, Option<String>>,
@@ -159,7 +162,7 @@ fn reported(values: &ReportedTuningValues, key: ProfileSettingKey) -> Option<i64
 
 impl Core {
     /// The selected GPU's id, while the workspace shows one.
-    fn selected_gpu(&self) -> Option<String> {
+    pub(crate) fn selected_gpu(&self) -> Option<String> {
         match &self.selection {
             Some(Selection::Gpu(id)) => Some(id.clone()),
             _ => None,
@@ -258,7 +261,14 @@ impl Core {
             .and_then(cooling_read)
             .map(|cooling| cooling.fans.iter().map(|fan| fan.index).collect())
             .unwrap_or_default();
+        let reported = self
+            .tuning
+            .get(&id)
+            .and_then(|state| state.reported.cooling.clone());
         self.edit_draft(id, Staged::Cooling, |draft| {
+            if draft.settings.cooling.is_none() {
+                draft.cooling_seen = reported;
+            }
             draft.settings.cooling = configuration;
             draft.fan_indexes = fan_indexes;
         })
@@ -281,6 +291,7 @@ impl Core {
             base,
             settings: ProfileSettings::default(),
             fan_indexes: Vec::new(),
+            cooling_seen: None,
             failed: BTreeMap::new(),
             outcome: None,
             follow: None,
@@ -313,15 +324,37 @@ impl Core {
         let Some(id) = self.changes_gpu() else {
             return Vec::new();
         };
-        let Some(draft) = self.drafts.by_gpu.get(&id) else {
+        if !self.drafts.by_gpu.contains_key(&id) {
             return Vec::new();
-        };
+        }
         if self.drafts.applying.contains_key(&id)
             || self.tuning_access().reason().is_some()
             || !self.curve_problems(&id).is_empty()
         {
             return Vec::new();
         }
+        // Cooling changed under the draft replaces that change only once the user saw it: Apply
+        // opens the review, and Apply in the review moves the draft onto the change.
+        if self.cooling_changed_under(&id) {
+            let reviewing =
+                matches!(&self.dialog, Some(DialogState::Review { gpu_id, .. }) if *gpu_id == id);
+            let Some(state) = self.tuning.get(&id).cloned() else {
+                return Vec::new();
+            };
+            let Some(draft) = self.drafts.by_gpu.get_mut(&id) else {
+                return Vec::new();
+            };
+            if !reviewing {
+                let changes =
+                    review_changes(draft.base.as_ref(), Some(&state.reported), &draft.settings);
+                self.open_review(id, changes);
+                return Vec::new();
+            }
+            follow(draft, &state);
+        }
+        let Some(draft) = self.drafts.by_gpu.get(&id) else {
+            return Vec::new();
+        };
         self.drafts.next_command += 1;
         let command = CommandId(self.drafts.next_command);
         let request = DaemonRequest::ApplyProfile(ApplyGpuProfileRequest {
@@ -430,9 +463,20 @@ impl Core {
         let Some(state) = self.tuning.get(gpu_id).cloned() else {
             return;
         };
+        let competing = self.cooling_changed_under(gpu_id);
         let Some(draft) = self.drafts.by_gpu.get_mut(gpu_id) else {
             return;
         };
+        // An open review of cooling changed under the draft shows the latest change.
+        if competing
+            && let Some(DialogState::Review {
+                gpu_id: reviewed,
+                changes,
+            }) = &mut self.dialog
+            && reviewed == gpu_id
+        {
+            *changes = review_changes(draft.base.as_ref(), Some(&state.reported), &draft.settings);
+        }
         let Some(how) = draft.follow else {
             return;
         };
@@ -515,10 +559,7 @@ impl Core {
     /// if it stages one that can't be.
     pub(crate) fn changes_curve_problem(&self) -> Option<String> {
         let id = self.changes_gpu()?;
-        self.curve_problems(&id)
-            .into_iter()
-            .next()
-            .map(|problem| problem.message)
+        self.curve_problems(&id).into_iter().next()
     }
 
     /// Whether the Apply of the draft Apply and Discard act on is waiting for prismd's answer.
@@ -532,6 +573,28 @@ impl Core {
         self.drafts.applying.contains_key(gpu_id)
     }
 
+    /// Whether the cooling in effect on the GPU changed under the cooling its draft stages, such as
+    /// in another session: the draft replaces that change only once the user reviewed it (ADR
+    /// 0006). A curve's changing output isn't a change to the cooling in effect, cooling prismd
+    /// can't report, such as after a cooling fault, can't be compared, and while an Apply waits
+    /// for prismd's answer, any change is its own write.
+    pub(crate) fn cooling_changed_under(&self, gpu_id: &str) -> bool {
+        let Some(draft) = self.drafts.by_gpu.get(gpu_id) else {
+            return false;
+        };
+        if draft.settings.cooling.is_none() || draft.follow.is_some() || self.applying(gpu_id) {
+            return false;
+        }
+        let now = self
+            .tuning
+            .get(gpu_id)
+            .and_then(|state| state.reported.cooling.as_ref());
+        match (&draft.cooling_seen, now) {
+            (Some(seen), Some(now)) => seen != now,
+            _ => false,
+        }
+    }
+
     /// Whether any GPU has unapplied tuning changes, which put it under an edit hold.
     pub fn edit_hold(&self) -> bool {
         !self.drafts.by_gpu.is_empty()
@@ -543,6 +606,7 @@ fn follow(draft: &mut Draft, state: &GpuTuningState) -> Vec<ReviewChange> {
     let changes = review_changes(draft.base.as_ref(), Some(&state.reported), &draft.settings);
     draft.revision = state.revision.clone();
     draft.base = Some(state.reported.clone());
+    draft.cooling_seen = state.reported.cooling.clone();
     draft.follow = None;
     changes
 }
@@ -588,6 +652,11 @@ fn settle(draft: &mut Draft, application: &ProfileApplicationResponse) -> bool {
             });
             outcome.push(not_applied("Cooling not applied", why.as_deref()));
             draft.failed.insert(Staged::Cooling, why);
+            // Fans that took their setting changed the cooling in effect all the same.
+            applied |= cooling
+                .fans
+                .iter()
+                .any(|fan| fan.outcome.status == TuningOutcomeStatus::Succeeded);
         }
     }
     // Only a partial Apply leaves a draft to say this on.
@@ -632,12 +701,17 @@ fn review_changes(
             })
         })
         .collect();
-    let cooling = |values: Option<&ReportedTuningValues>| values.and_then(|v| v.cooling.clone());
+    fn cooling(values: Option<&ReportedTuningValues>) -> Option<&CoolingConfiguration> {
+        values?.cooling.as_ref()
+    }
     if cooling(base) != cooling(now) {
+        let text = |cooling: Option<&CoolingConfiguration>| {
+            cooling.map_or_else(|| "unknown".into(), cooling_text)
+        };
         changes.push(ReviewChange {
             name: "Cooling".into(),
-            change: "Changed".into(),
-            yours: settings.cooling.as_ref().map(|_| "changed".into()),
+            change: format!("{} → {}", text(cooling(base)), text(cooling(now))),
+            yours: settings.cooling.as_ref().map(cooling_text),
         });
     }
     changes

@@ -23,6 +23,8 @@ pub(crate) enum Command {
     ApplyChanges,
     /// Discard the selected GPU's unapplied tuning changes.
     DiscardChanges,
+    /// Stage the selected GPU's remembered fan curve, with its fan arrangement.
+    RecallRememberedCurve,
     Quit,
 }
 
@@ -267,6 +269,9 @@ impl Core {
         if let Command::ApplyChanges | Command::DiscardChanges = command {
             return self.changes_unavailable(command);
         }
+        if let Command::RecallRememberedCurve = command {
+            return self.recall_unavailable();
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
@@ -279,6 +284,7 @@ impl Core {
             | Command::CopyPrismdSetup
             | Command::ApplyChanges
             | Command::DiscardChanges
+            | Command::RecallRememberedCurve
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
@@ -350,6 +356,11 @@ impl Core {
                 Command::DiscardChanges,
                 "Discard unapplied changes".to_owned(),
                 Some(Shortcut::Discard),
+            ),
+            (
+                Command::RecallRememberedCurve,
+                "Recall remembered fan curve".to_owned(),
+                None,
             ),
         ]
         .into_iter()

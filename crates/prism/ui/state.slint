@@ -97,12 +97,17 @@ export struct ChartView {
     handle-y: float,
 }
 
-// The fan control mode every fan of the GPU shares: automatic cooling, a fixed speed or a fan
-// curve as segments, with the cooling pending next to them, such as "→ fixed", `failure` when the
-// last Apply didn't put it into effect, and why it's read-only, when it is. `note` is what the user
-// should know about the GPU's cooling, such as why fan curves are unavailable, and
-// `has-fixed-speed` whether the track's details have the fixed speed's stepper.
-// `mode` is the mode picked as shown, such as "Auto", and `mode-text` as a screen reader says it.
+// The fan control mode of every fan of the GPU, or of the fan picked while each has its own
+// settings: automatic cooling, a fixed speed or a fan curve as segments, with the mode pending next
+// to them, such as "→ fixed", `failure` when the last Apply didn't put it into effect, and why it's
+// read-only, when it is. `note` is what the user should know about the GPU's cooling, such as why
+// fan curves are unavailable, and `has-fixed-speed` whether the track's details have the fixed
+// speed's stepper. `mode` is the mode picked as shown, such as "Auto", and `mode-text` as a screen
+// reader says it.
+// With more than one fan, `has-arrangement` says whether `fans` picks every fan together or one
+// fan for the controls to set, with a change between one shared configuration and per-fan settings
+// pending next to it as `arrangement-pending`, such as "→ per fan". `can-recall` says whether the
+// remembered fan curve can be recalled into the draft now.
 export struct FanModeView {
     modes: [SegmentView],
     mode: string,
@@ -113,6 +118,10 @@ export struct FanModeView {
     read-only: bool,
     reason: string,
     note: string,
+    has-arrangement: bool,
+    arrangement-pending: string,
+    fans: [SegmentView],
+    can-recall: bool,
 }
 
 // One of the fan curve's points: where it's drawn, from the left (0) to the right (1) and from the
@@ -189,6 +198,9 @@ export struct ChangeStripView {
     summary: string,
     pending: bool,
     outcome: string,
+    // What changed under the changes that needs a review before Apply replaces it; Apply becomes
+    // Review while it's there.
+    review: string,
     can-apply: bool,
     apply-reason: string,
     can-discard: bool,
@@ -214,6 +226,8 @@ export struct DialogView {
     kind: DialogKind,
     title: string,
     message: string,
+    // A review's Apply, such as "Apply again".
+    apply-text: string,
     can-apply: bool,
     apply-reason: string,
     can-discard: bool,
@@ -341,6 +355,10 @@ export global Intents {
     callback use-default(setting: TuningSetting);
     // Stages the fan control mode at this index among the fan control mode's segments.
     callback stage-fan-mode(index: int);
+    // Picks the fans at this index among the fan picker's segments: every fan, then each fan.
+    callback pick-fans(index: int);
+    // Stages the selected GPU's remembered fan curve, with its fan arrangement.
+    callback recall-remembered-curve();
     // Stages the power limit drawn at `y` on the power chart, from the top (0) to the bottom (1).
     callback drag-power-limit(y: float);
     // Stages the fan curve with this point moved to where it's drawn at `x` across and `y` down

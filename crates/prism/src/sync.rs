@@ -69,6 +69,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                     summary: changes.summary.as_str().into(),
                     pending: changes.pending,
                     outcome: changes.outcome.as_deref().unwrap_or_default().into(),
+                    review: changes.review.as_deref().unwrap_or_default().into(),
                     can_apply: changes.apply_unavailable.is_none(),
                     apply_reason: changes
                         .apply_unavailable
@@ -211,6 +212,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 kind: DialogKind::Review,
                 title: review.title.into(),
                 message: review.message.into(),
+                apply_text: review.apply_text.into(),
                 can_apply: review.apply_unavailable.is_none(),
                 apply_reason: review.apply_unavailable.unwrap_or_default().into(),
                 can_discard: review.discard_unavailable.is_none(),
@@ -404,8 +406,27 @@ fn fan_mode_view(
         })
         .collect();
     let picked = fan_mode.modes.iter().find(|choice| choice.selected);
+    let arrangement = fan_mode.arrangement.as_ref();
+    let fans = arrangement
+        .map(|arrangement| {
+            arrangement
+                .choices
+                .iter()
+                .map(|choice| SegmentView {
+                    text: choice.text.as_str().into(),
+                    label: choice.name.as_str().into(),
+                    selected: choice.selected,
+                    unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let (current_modes, current_fans) = match current {
+        Some(current) => (Some(current.modes), Some(current.fans)),
+        None => (None, None),
+    };
     FanModeView {
-        modes: reuse(current.map(|current| current.modes), modes),
+        modes: reuse(current_modes, modes),
         mode: picked
             .map_or(UNKNOWN, |choice| choice.mode.short_name())
             .into(),
@@ -420,6 +441,13 @@ fn fan_mode_view(
         read_only: fan_mode.read_only.is_some(),
         reason: fan_mode.read_only.as_deref().unwrap_or_default().into(),
         note: fan_mode.note.as_deref().unwrap_or_default().into(),
+        has_arrangement: arrangement.is_some(),
+        arrangement_pending: arrangement
+            .and_then(|arrangement| arrangement.pending.as_deref())
+            .unwrap_or_default()
+            .into(),
+        fans: reuse(current_fans, fans),
+        can_recall: fan_mode.can_recall,
     }
 }
 

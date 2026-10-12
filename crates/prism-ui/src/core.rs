@@ -337,10 +337,17 @@ pub enum Intent {
     /// Stage the power limit drawn at this height on the selected GPU's power chart, from the top
     /// (0) to the bottom (1), as dragging its line does.
     DragPowerLimit(f32),
-    /// Stage this fan control mode for every fan of the selected GPU.
+    /// Stage this fan control mode for the fans the selected GPU's cooling controls set: every
+    /// fan, or the one picked while each fan has its own settings.
     StageFanMode(FanMode),
-    /// Stage this fixed speed, in percent, for every fan of the selected GPU.
+    /// Stage this fixed speed, in percent, for the fans the selected GPU's cooling controls set.
     StageFanSpeed(i64),
+    /// Show and set this fan of the selected GPU on its own, by index, which gives it its own
+    /// settings once one changes; or, with none, every fan together, which stages one shared
+    /// cooling configuration in place of per-fan settings.
+    PickFans(Option<u32>),
+    /// Stage the selected GPU's remembered fan curve, with its fan arrangement.
+    RecallRememberedCurve,
     /// Stage the selected GPU's fan curve with this point moved to where it's drawn at `x` across
     /// and `y` down the fan curve editor, from 0 to 1, as dragging it does.
     DragCurvePoint {
@@ -424,6 +431,9 @@ pub struct Core {
     pub(crate) hardware_open: bool,
     /// Whether the user collapsed the fan curve editor; it starts open.
     pub(crate) fan_curve_collapsed: bool,
+    /// The fan the cooling controls show and set on their own, by index, until every fan is
+    /// picked again.
+    pub(crate) picked_fan: Option<u32>,
     pub(crate) palette: Option<PaletteState>,
     /// Commands run lately, the latest first.
     pub(crate) recent: Vec<Command>,
@@ -870,6 +880,8 @@ impl Core {
             Intent::DragPowerLimit(y) => self.drag_power_limit(y),
             Intent::StageFanMode(mode) => self.stage_fan_mode(mode),
             Intent::StageFanSpeed(speed_percent) => self.stage_fan_speed(speed_percent),
+            Intent::PickFans(index) => self.pick_fans(index),
+            Intent::RecallRememberedCurve => self.perform(Command::RecallRememberedCurve),
             Intent::DragCurvePoint { point, x, y } => self.drag_curve_point(point, x, y),
             Intent::MoveCurvePoint {
                 point,
@@ -901,6 +913,10 @@ impl Core {
         let effects = match command {
             Command::GoToGpu(id) => {
                 if self.gpus().iter().any(|gpu| gpu.id == id) {
+                    // Another GPU's controls start with every fan.
+                    if self.selection.as_ref() != Some(&Selection::Gpu(id.clone())) {
+                        self.picked_fan = None;
+                    }
                     self.selection = Some(Selection::Gpu(id));
                 }
                 Vec::new()
@@ -929,6 +945,7 @@ impl Core {
             }
             Command::ApplyChanges => self.apply_changes(),
             Command::DiscardChanges => self.discard_changes(),
+            Command::RecallRememberedCurve => self.recall_remembered_curve(),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }

@@ -166,8 +166,21 @@ component TuningDetail inherits VerticalLayout {
     }
 }
 
-// The fan control mode every fan shares, with what the user should know about the GPU's cooling
-// under it.
+// With more than one fan, whether the cooling controls set every fan together or one fan on its
+// own, with a change between one shared configuration and per-fan settings pending next to it.
+component FanPicker inherits Segmented {
+    in property <FanModeView> fan-mode;
+
+    label: "Fan arrangement";
+    segments: root.fan-mode.fans;
+    pending: root.fan-mode.arrangement-pending;
+    chosen(index) => {
+        Intents.pick-fans(index);
+    }
+}
+
+// The fan control mode of the fans the fan picker picked, what the user should know about the
+// GPU's cooling under it, and Recall remembered curve while it can run.
 component FanMode inherits VerticalLayout {
     in property <FanModeView> fan-mode;
     // In a short track, its lines close up.
@@ -211,6 +224,19 @@ component FanMode inherits VerticalLayout {
         accessible-role: text;
         accessible-label: "Cooling";
         accessible-value: root.fan-mode.note;
+    }
+
+    if root.fan-mode.can-recall: HorizontalLayout {
+        alignment: start;
+
+        LinkButton {
+            text: "Recall remembered curve";
+            label: "Recall remembered fan curve";
+            style: Theme.text.value;
+            activated => {
+                Intents.recall-remembered-curve();
+            }
+        }
     }
 }
 
@@ -579,43 +605,58 @@ export component Track inherits Rectangle {
                     }
                 }
 
-                Rectangle {
-                    accessible-role: text;
-                    accessible-label: root.track.readout-label;
-                    accessible-value: root.track.readout.spoken;
-                    accessible-description: root.track.unknown-reason;
-                    height: readout.preferred-height;
+                // The fan picker sits beside the readout, so it takes no line of its own.
+                HorizontalLayout {
+                    spacing: Theme.space.m;
 
-                    readout := HorizontalLayout {
-                        alignment: start;
-                        spacing: Theme.space.m;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        accessible-role: text;
+                        accessible-label: root.track.readout-label;
+                        accessible-value: root.track.readout.spoken;
+                        accessible-description: root.track.unknown-reason;
+                        height: readout.preferred-height;
 
-                        HorizontalLayout {
-                            StyledText {
-                                text: root.track.readout.value;
-                                style: Theme.text.readout;
-                                vertical-alignment: bottom;
-                                accessible-role: none;
+                        readout := HorizontalLayout {
+                            alignment: start;
+                            spacing: Theme.space.m;
+
+                            HorizontalLayout {
+                                StyledText {
+                                    text: root.track.readout.value;
+                                    style: Theme.text.readout;
+                                    vertical-alignment: bottom;
+                                    accessible-role: none;
+                                }
+
+                                if root.track.readout.known: StyledText {
+                                    text: root.track.readout.suffix;
+                                    style: Theme.text.readout-unit;
+                                    color: Theme.color.ink-muted;
+                                    vertical-alignment: bottom;
+                                    accessible-role: none;
+                                }
                             }
 
-                            if root.track.readout.known: StyledText {
-                                text: root.track.readout.suffix;
-                                style: Theme.text.readout-unit;
+                            // Why the reading is unknown, beside its dash.
+                            if root.track.unknown-reason != "": StyledText {
+                                horizontal-stretch: 1;
+                                text: root.track.unknown-reason;
+                                style: Theme.text.value;
                                 color: Theme.color.ink-muted;
-                                vertical-alignment: bottom;
+                                wrap: word-wrap;
+                                overflow: elide;
                                 accessible-role: none;
                             }
                         }
+                    }
 
-                        // Why the reading is unknown, beside its dash.
-                        if root.track.unknown-reason != "": StyledText {
-                            horizontal-stretch: 1;
-                            text: root.track.unknown-reason;
-                            style: Theme.text.value;
-                            color: Theme.color.ink-muted;
-                            wrap: word-wrap;
-                            overflow: elide;
-                            accessible-role: none;
+                    if root.track.has-fan-mode && root.track.fan-mode.has-arrangement: VerticalLayout {
+                        alignment: end;
+
+                        FanPicker {
+                            fan-mode: root.track.fan-mode;
+                            compact: true;
                         }
                     }
                 }

@@ -61,7 +61,7 @@ component ChangeStrip inherits Rectangle {
 
     accessible-role: groupbox;
     accessible-label: "Unapplied changes";
-    accessible-description: changes.outcome;
+    accessible-description: changes.review != "" ? changes.review : changes.outcome;
     height: Theme.size.notice;
 
     if root.changes.pending: Rectangle {
@@ -82,10 +82,11 @@ component ChangeStrip inherits Rectangle {
             vertical-alignment: center;
         }
 
-        // What the last Apply applied and what it left unapplied, and why.
+        // What needs a review before Apply, or else what the last Apply applied and what it left
+        // unapplied, and why.
         StyledText {
             horizontal-stretch: 1;
-            text: root.changes.outcome;
+            text: root.changes.review != "" ? root.changes.review : root.changes.outcome;
             style: Theme.text.body;
             color: Theme.color.ink-muted;
             vertical-alignment: center;
@@ -111,8 +112,9 @@ component ChangeStrip inherits Rectangle {
         if root.changes.pending: VerticalLayout {
             alignment: center;
 
+            // While a change under them needs a review, Apply opens it.
             Button {
-                text: "Apply";
+                text: root.changes.review != "" ? "Review" : "Apply";
                 height: Theme.size.segment;
                 kind: ButtonKind.accent;
                 enabled: root.changes.can-apply;

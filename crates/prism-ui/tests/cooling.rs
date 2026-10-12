@@ -4,8 +4,8 @@
 use std::time::Duration;
 
 use prism_gpu::cooling::{
-    CoolingApplication, CoolingConfiguration, CurveSuspension, FanOutcome, FanSetting,
-    SuspensionKind,
+    CoolingApplication, CoolingConfiguration, CurveSuspension, FanConfiguration, FanOutcome,
+    FanSetting, SuspensionKind,
 };
 use prism_gpu::fan_curve::{self, FanCurvePoint, FanCurveSupport};
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
@@ -16,8 +16,9 @@ use prism_protocol::{
     SessionMessage, SetEditHoldsRequest, Welcome,
 };
 use prism_ui::{
-    AppearanceMode, CommandId, Content, Core, Effect, FanCurveEditor, FanMode, FanModeControl,
-    GpuWorkspace, Input, Intent, Stepper,
+    AppearanceMode, CommandId, Content, Core, Dialog, Effect, FanArrangement,
+    FanArrangementControl, FanCurveEditor, FanMode, FanModeControl, GpuWorkspace, Input, Intent,
+    Review, ReviewChange, Stepper,
 };
 
 const GPU: &str = "GPU-5a1b0000-0000-4000-8000-000000000001";
@@ -815,4 +816,514 @@ fn a_pending_curve_cant_be_applied_while_the_gpus_fans_go_unread() {
         applies(&intent(&mut core, Intent::ApplyChanges)),
         Vec::new()
     );
+}
+
+fn per_fan(settings: &[(u32, FanSetting)]) -> CoolingConfiguration {
+    CoolingConfiguration::PerFan {
+        fans: settings
+            .iter()
+            .map(|(fan_index, setting)| FanConfiguration {
+                fan_index: *fan_index,
+                setting: setting.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn arrangement(core: &Core) -> FanArrangementControl {
+    fan_mode(core)
+        .arrangement
+        .expect("a GPU with two fans offers to pick them")
+}
+
+/// The fan the controls set on its own, or none for every fan.
+fn picked_fan(core: &Core) -> Option<u32> {
+    arrangement(core)
+        .choices
+        .iter()
+        .find(|choice| choice.selected)
+        .expect("a choice is picked")
+        .fan
+}
+
+fn pick(core: &mut Core, fan: Option<u32>) -> Vec<Effect> {
+    intent(core, Intent::PickFans(fan))
+}
+
+#[test]
+fn a_gpu_with_two_fans_shares_one_configuration_until_a_fan_gets_its_own_setting() {
+    let mut core = connected();
+    let control = arrangement(&core);
+    assert_eq!(control.arrangement, FanArrangement::Shared);
+    assert_eq!(
+        control
+            .choices
+            .iter()
+            .map(|choice| (choice.text.as_str(), choice.name.as_str()))
+            .collect::<Vec<_>>(),
+        [("all", "Shared"), ("0", "Fan 0"), ("1", "Fan 1")]
+    );
+    assert_eq!(picked_fan(&core), None);
+
+    // Picking a fan shows what it follows, and changes nothing yet.
+    assert_eq!(pick(&mut core, Some(1)), Vec::new());
+    assert_eq!(picked_fan(&core), Some(1));
+    assert_eq!(picked(&core), Some(FanMode::Automatic));
+    assert_eq!(changes(&core), "No unapplied changes");
+
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+
+    let control = arrangement(&core);
+    assert_eq!(control.arrangement, FanArrangement::PerFan);
+    assert_eq!(control.pending.as_deref(), Some("→ per fan"));
+    assert_eq!(fan_mode(&core).pending.as_deref(), Some("→ fixed"));
+    assert_eq!(changes(&core), "1 unapplied change");
+
+    // Fan 0 keeps the automatic cooling they shared.
+    pick(&mut core, Some(0));
+    assert_eq!(picked(&core), Some(FanMode::Automatic));
+    assert_eq!(fan_mode(&core).pending, None);
+}
+
+#[test]
+fn picking_every_fan_again_shares_the_setting_shown() {
+    let mut core = connected();
+    pick(&mut core, Some(1));
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+    intent(&mut core, Intent::StageFanSpeed(60));
+
+    pick(&mut core, None);
+
+    assert_eq!(picked_fan(&core), None);
+    assert_eq!(arrangement(&core).arrangement, FanArrangement::Shared);
+    assert_eq!(arrangement(&core).pending, None);
+    assert_eq!(fixed_speed(&core).unwrap().value, 60);
+    assert_eq!(core_staged_cooling(&mut core), Some(fixed(60)));
+}
+
+#[test]
+fn per_fan_settings_stage_each_fans_own_mode_and_apply_with_every_reviewed_fan() {
+    let mut core = connected_reading(|cooling| cooling.fans[1].min_speed_percent = Some(40));
+
+    pick(&mut core, Some(1));
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+    intent(&mut core, Intent::StageFanSpeed(20));
+
+    assert_eq!(picked(&core), Some(FanMode::Fixed));
+    let stepper = fixed_speed(&core).expect("fan 1 has a fixed speed");
+    assert_eq!(stepper.name, "Fan 1 fixed speed");
+    // Fan 1's own range, not the one both fans share.
+    assert_eq!((stepper.min, stepper.max), (40, 100));
+    assert_eq!(stepper.value, 40);
+
+    pick(&mut core, Some(0));
+    assert_eq!(fixed_speed(&core), None);
+
+    let sent = applies(&intent(&mut core, Intent::ApplyChanges));
+    assert_eq!(
+        sent.into_iter()
+            .map(|(_, request)| request)
+            .collect::<Vec<_>>(),
+        [ApplyGpuProfileRequest {
+            gpu_id: GPU.into(),
+            settings: ProfileSettings {
+                cooling: Some(per_fan(&[
+                    (0, FanSetting::Automatic {}),
+                    (1, FanSetting::Fixed { speed_percent: 40 }),
+                ])),
+                ..ProfileSettings::default()
+            },
+            expected_revision: REVISION.into(),
+            fan_indexes: Some(vec![0, 1]),
+        }]
+    );
+}
+
+#[test]
+fn a_fans_own_curve_is_edited_and_checked_against_that_fan_alone() {
+    let mut core = connected_reading(|cooling| cooling.fans[1].min_speed_percent = Some(45));
+    pick(&mut core, Some(1));
+
+    intent(&mut core, Intent::StageFanMode(FanMode::Curve));
+
+    // Fan 1's starter curve starts at its own lowest speed.
+    assert_eq!(curve_points(&core)[0], (45, 45));
+    move_point(&mut core, 1, 0, 5);
+    let fan_1 = curve_points(&core);
+
+    pick(&mut core, Some(0));
+    assert_eq!(fan_curve(&core), None, "fan 0 follows automatic cooling");
+    pick(&mut core, Some(1));
+    assert_eq!(curve_points(&core), fan_1);
+
+    // A point below fan 1's lowest speed can't be dragged there.
+    move_point(&mut core, 0, 0, -20);
+    assert_eq!(curve_points(&core)[0], (45, 45));
+    assert_eq!(workspace(&core).changes.apply_unavailable, None);
+}
+
+#[test]
+fn a_per_fan_configuration_in_effect_shows_each_fans_setting() {
+    let mut snapshot = snapshot();
+    snapshot.tuning_states[0].reported.cooling = Some(per_fan(&[
+        (0, FanSetting::Fixed { speed_percent: 60 }),
+        (1, FanSetting::Automatic {}),
+    ]));
+    let mut core = connected_with(snapshot, reading(SimulatedFixture::TunableGpu), true);
+
+    assert_eq!(arrangement(&core).arrangement, FanArrangement::PerFan);
+    assert_eq!(arrangement(&core).pending, None);
+    // The first fan shows until another is picked.
+    assert_eq!(picked_fan(&core), Some(0));
+    assert_eq!(picked(&core), Some(FanMode::Fixed));
+    assert_eq!(fixed_speed(&core).unwrap().value, 60);
+
+    pick(&mut core, Some(1));
+    assert_eq!(picked(&core), Some(FanMode::Automatic));
+
+    // Every fan shares fan 1's setting.
+    pick(&mut core, None);
+    assert_eq!(arrangement(&core).pending.as_deref(), Some("→ shared"));
+    assert_eq!(
+        core_staged_cooling(&mut core),
+        Some(shared(FanSetting::Automatic {}))
+    );
+}
+
+#[test]
+fn without_tuning_access_per_fan_settings_in_effect_can_still_be_looked_at() {
+    let mut snapshot = snapshot();
+    snapshot.tuning_states[0].reported.cooling = Some(per_fan(&[
+        (0, FanSetting::Fixed { speed_percent: 60 }),
+        (1, FanSetting::Automatic {}),
+    ]));
+    let mut core = connected_with(snapshot, reading(SimulatedFixture::TunableGpu), false);
+
+    let every = &arrangement(&core).choices[0];
+    assert_eq!(
+        every.unavailable.as_deref(),
+        Some("bob isn't in group wheel")
+    );
+    pick(&mut core, Some(1));
+    assert_eq!(picked(&core), Some(FanMode::Automatic));
+    assert_eq!(pick(&mut core, None), Vec::new());
+    assert_eq!(changes(&core), "No unapplied changes");
+
+    // Without tuning access, shared cooling has nothing to pick.
+    let core = connected_with(
+        self::snapshot(),
+        reading(SimulatedFixture::TunableGpu),
+        false,
+    );
+    assert_eq!(fan_mode(&core).arrangement, None);
+}
+
+/// The cooling the selected GPU's Apply would send now.
+fn core_staged_cooling(core: &mut Core) -> Option<CoolingConfiguration> {
+    let sent = applies(&intent(core, Intent::ApplyChanges));
+    sent.first()
+        .and_then(|(_, request)| request.settings.cooling.clone())
+}
+
+#[test]
+fn a_gpu_with_one_fan_offers_no_arrangement() {
+    let core = connected_reading(|cooling| {
+        cooling.fans.truncate(1);
+        cooling.fan_count = 1;
+    });
+
+    assert_eq!(fan_mode(&core).arrangement, None);
+}
+
+/// prismd pushed that `remembered` is the caller's remembered fan curve for the GPU, while
+/// `applied` is the configuration in effect.
+fn remember(core: &mut Core, remembered: Option<CoolingConfiguration>) {
+    core.handle(Input::PrismdEvent {
+        event: DaemonEvent::CoolingControlChanged(GpuCoolingControl {
+            gpu_id: GPU.into(),
+            revision: 4,
+            applied: None,
+            suspension: None,
+            recovery: None,
+            remembered_curve: remembered,
+        }),
+        received_at: Duration::from_secs(2),
+    });
+}
+
+fn recall(core: &mut Core) -> Vec<Effect> {
+    intent(core, Intent::RecallRememberedCurve)
+}
+
+#[test]
+fn recalling_the_remembered_curve_creates_a_draft_with_its_arrangement_and_sends_nothing_else() {
+    let mut core = connected();
+    let remembered = per_fan(&[
+        (0, FanSetting::Automatic {}),
+        (
+            1,
+            FanSetting::Curve {
+                points: vec![FanCurvePoint::new(45, 30), FanCurvePoint::new(85, 100)],
+            },
+        ),
+    ]);
+    remember(&mut core, Some(remembered.clone()));
+    assert!(fan_mode(&core).can_recall);
+
+    let effects = recall(&mut core);
+
+    // Only the edit hold reaches prismd: recalling it applies nothing.
+    assert_eq!(
+        effects,
+        [Effect::SendToPrismd(DaemonRequest::SetEditHolds(
+            SetEditHoldsRequest {
+                gpu_ids: vec![GPU.into()]
+            }
+        ))]
+    );
+    assert_eq!(changes(&core), "1 unapplied change");
+    assert_eq!(arrangement(&core).arrangement, FanArrangement::PerFan);
+    pick(&mut core, Some(1));
+    assert_eq!(curve_points(&core), [(45, 30), (85, 100)]);
+    assert!(!fan_mode(&core).can_recall, "it's pending already");
+
+    let sent = applies(&intent(&mut core, Intent::ApplyChanges));
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].1.settings.cooling, Some(remembered));
+}
+
+#[test]
+fn the_palette_recalls_the_remembered_curve_and_says_when_there_is_none() {
+    let mut core = connected();
+    let entry = |core: &mut Core| {
+        intent(core, Intent::OpenPalette);
+        intent(core, Intent::FilterPalette("recall remembered".into()));
+        let entry = core
+            .palette()
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.title == "Recall remembered fan curve")
+            .expect("the palette lists it");
+        intent(core, Intent::Dismiss);
+        entry
+    };
+    assert_eq!(
+        entry(&mut core).unavailable.as_deref(),
+        Some("No remembered fan curve")
+    );
+
+    remember(&mut core, Some(curve(&STARTER)));
+    assert_eq!(entry(&mut core).unavailable, None);
+    intent(&mut core, Intent::OpenPalette);
+    intent(&mut core, Intent::FilterPalette("recall remembered".into()));
+    intent(&mut core, Intent::RunHighlighted);
+
+    assert_eq!(curve_points(&core), STARTER);
+    assert!(fan_curve(&core).unwrap().pending);
+}
+
+#[test]
+fn the_remembered_curve_in_effect_cant_be_recalled() {
+    let mut core = connected_with_curve(&STARTER);
+    remember(&mut core, Some(curve(&STARTER)));
+
+    assert!(!fan_mode(&core).can_recall);
+    assert_eq!(recall(&mut core), Vec::new());
+    assert_eq!(changes(&core), "No unapplied changes");
+}
+
+/// prismd pushed the GPU's tuning state at `revision` with `cooling` in effect.
+fn cooling_changed(core: &mut Core, revision: &str, cooling: Option<CoolingConfiguration>) {
+    let mut state = snapshot().tuning_states[0].clone();
+    state.revision = revision.into();
+    state.reported.cooling = cooling;
+    core.handle(Input::PrismdEvent {
+        event: DaemonEvent::TuningStateChanged(state),
+        received_at: Duration::from_secs(2),
+    });
+}
+
+fn review(core: &Core) -> Option<Review> {
+    match core.dialog() {
+        Some(Dialog::Review(review)) => Some(review),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_cooling_change_elsewhere_keeps_the_draft_but_apply_reviews_it_first() {
+    let mut snapshot = snapshot();
+    snapshot.tuning_states[0].reported.cooling = Some(shared(FanSetting::Automatic {}));
+    let mut core = connected_with(snapshot, reading(SimulatedFixture::TunableGpu), true);
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+    intent(&mut core, Intent::StageFanSpeed(55));
+
+    cooling_changed(&mut core, "elsewhere", Some(fixed(70)));
+
+    // The draft stays as it was.
+    assert_eq!(changes(&core), "1 unapplied change");
+    assert_eq!(fixed_speed(&core).unwrap().value, 55);
+    let strip = workspace(&core).changes;
+    assert!(strip.review.is_some(), "{strip:?}");
+    assert_eq!(strip.apply_unavailable, None, "Apply opens the review");
+
+    // Apply opens the review instead of sending.
+    assert_eq!(
+        applies(&intent(&mut core, Intent::ApplyChanges)),
+        Vec::new()
+    );
+    let opened = review(&core).expect("the review opens");
+    assert_eq!(opened.apply_text, "Apply");
+    assert_eq!(
+        opened.changes,
+        [ReviewChange {
+            name: "Cooling".into(),
+            change: "automatic → fixed 70%".into(),
+            yours: Some("fixed 55%".into()),
+        }]
+    );
+
+    // Escape keeps editing, still unreviewed.
+    intent(&mut core, Intent::Dismiss);
+    assert!(workspace(&core).changes.review.is_some());
+    assert_eq!(
+        applies(&intent(&mut core, Intent::ApplyChanges)),
+        Vec::new()
+    );
+
+    // Applying from the review replaces the change it showed.
+    let sent = applies(&intent(&mut core, Intent::ApplyChanges));
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].1.expected_revision, "elsewhere");
+    assert_eq!(sent[0].1.settings.cooling, Some(fixed(55)));
+    assert_eq!(review(&core), None);
+}
+
+#[test]
+fn a_draft_without_cooling_isnt_held_for_a_cooling_review() {
+    let mut core = connected();
+    intent(
+        &mut core,
+        Intent::Stage(prism_protocol::ProfileSettingKey::PowerLimitWatts, 450),
+    );
+
+    cooling_changed(&mut core, "elsewhere", Some(fixed(70)));
+
+    assert_eq!(workspace(&core).changes.review, None);
+    assert_eq!(applies(&intent(&mut core, Intent::ApplyChanges)).len(), 1);
+}
+
+#[test]
+fn curve_output_changes_arent_competing_edits() {
+    let mut core = connected_with_curve(&STARTER);
+    move_point(&mut core, 1, 0, 5);
+
+    // The curve in effect keeps requesting new speeds as the temperature changes.
+    for (second, temperature, speed) in [(2, 50, 40), (3, 70, 75), (4, 80, 90)] {
+        let mut sample = reading(SimulatedFixture::TunableGpu);
+        let gpu = &mut sample.gpus[0];
+        gpu.telemetry.temperature_c = Some(temperature);
+        gpu.telemetry.fan_speed_percent = Some(speed);
+        for fan in &mut gpu.cooling.fans {
+            fan.current_speed_percent = Some(speed);
+            fan.mode = Some(prism_gpu::FanControlMode::Manual);
+        }
+        gpu.cooling.control = Some(prism_gpu::cooling::CoolingControl {
+            applied: Some(curve(&STARTER)),
+            requested: (0..2)
+                .map(|fan_index| prism_gpu::cooling::FanRequest {
+                    fan_index,
+                    speed_percent: speed.into(),
+                })
+                .collect(),
+            curve_temperature_c: Some(temperature.into()),
+            ..Default::default()
+        });
+        core.handle(Input::PrismdEvent {
+            event: DaemonEvent::TelemetrySampled(sample),
+            received_at: Duration::from_secs(second),
+        });
+    }
+    // Nor is prismd saying the same curve is still applied.
+    cooling_changed(&mut core, REVISION, Some(curve(&STARTER)));
+
+    assert_eq!(workspace(&core).changes.review, None);
+    let sent = applies(&intent(&mut core, Intent::ApplyChanges));
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(review(&core), None);
+}
+
+#[test]
+fn the_state_an_own_apply_pushed_isnt_a_competing_change() {
+    let mut core = connected();
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+    let (id, _) = applies(&intent(&mut core, Intent::ApplyChanges))[0].clone();
+
+    // Its write arrives before the answer, which says cooling only partly took.
+    cooling_changed(&mut core, "own", Some(fixed(30)));
+    let DaemonResponse::ProfileApplication(mut application) =
+        cooling_outcome(TuningOutcomeStatus::Failed, Some("Fan 1 refused"))
+    else {
+        unreachable!()
+    };
+    let cooling = application.cooling.as_mut().unwrap();
+    cooling.fans[0].outcome = TuningOutcome {
+        status: TuningOutcomeStatus::Succeeded,
+        error: None,
+    };
+    core.handle(Input::PrismdAnswered {
+        id,
+        response: DaemonResponse::ProfileApplication(application),
+    });
+
+    assert_eq!(changes(&core), "1 unapplied change");
+    assert_eq!(workspace(&core).changes.review, None);
+    let sent = applies(&intent(&mut core, Intent::ApplyChanges));
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].1.expected_revision, "own");
+}
+
+#[test]
+fn putting_a_fans_own_setting_back_leaves_cooling_unchanged() {
+    let mut core = connected();
+    pick(&mut core, Some(1));
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+    assert_eq!(changes(&core), "1 unapplied change");
+
+    intent(&mut core, Intent::StageFanMode(FanMode::Automatic));
+
+    assert_eq!(changes(&core), "No unapplied changes");
+    assert_eq!(arrangement(&core).pending, None);
+}
+
+#[test]
+fn a_cooling_change_seen_before_cooling_was_staged_needs_no_review() {
+    let mut snapshot = snapshot();
+    snapshot.tuning_states[0].reported.cooling = Some(shared(FanSetting::Automatic {}));
+    let mut core = connected_with(snapshot, reading(SimulatedFixture::TunableGpu), true);
+    intent(
+        &mut core,
+        Intent::Stage(prism_protocol::ProfileSettingKey::PowerLimitWatts, 450),
+    );
+    cooling_changed(&mut core, "elsewhere", Some(fixed(70)));
+
+    // The change shows in the fan control mode before cooling is staged over it.
+    intent(&mut core, Intent::StageFanSpeed(55));
+
+    assert_eq!(workspace(&core).changes.review, None);
+}
+
+#[test]
+fn cooling_that_becomes_known_or_unknown_isnt_a_competing_change() {
+    let mut core = connected();
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+
+    // prismd couldn't report the configured cooling before, and then can.
+    cooling_changed(&mut core, "known", Some(shared(FanSetting::Automatic {})));
+    assert_eq!(workspace(&core).changes.review, None);
+
+    // A cooling fault leaves it unknown again.
+    cooling_changed(&mut core, "fault", None);
+    assert_eq!(workspace(&core).changes.review, None);
 }
