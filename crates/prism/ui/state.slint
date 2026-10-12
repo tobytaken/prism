@@ -534,9 +534,9 @@ export global Intents {
     callback discard-changes();
     // Closes Prism, dropping every GPU's unapplied tuning changes.
     callback discard-and-close();
-    // Opens Activity, and does what the button of the item at this index in one of its lists
-    // does.
+    // Opens Activity.
     callback open-activity();
+    // Does what the button of the item at this index in one of Activity's lists does.
     callback run-activity-action(list: ActivityList, index: int);
     // Runs the global shortcut `key` presses, if any, and says whether the key was spoken for. While
     // a text field has focus, a shortcut that clashes with text editing is spoken for but doesn't

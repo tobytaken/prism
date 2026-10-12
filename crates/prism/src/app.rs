@@ -870,8 +870,6 @@ fn use_default_intent(setting: TuningSetting) -> Option<Intent> {
     Some(Intent::UseDefault(key))
 }
 
-/// The id of the profile at `index` in the open Manage profiles, which lists them in the order the
-/// core gives them.
 /// What the button of the item at `index` in one of Activity's lists does.
 fn activity_action(core: &Core, list: ActivityList, index: i32) -> Option<ActivityAction> {
     let panel = core.activity()?;
@@ -884,6 +882,8 @@ fn activity_action(core: &Core, list: ActivityList, index: i32) -> Option<Activi
     item.action.map(|button| button.action)
 }
 
+/// The id of the profile at `index` in the open Manage profiles, which lists them in the order the
+/// core gives them.
 fn managed_profile_id(core: &Core, index: i32) -> Option<String> {
     let Some(Dialog::ManageProfiles(manage)) = core.dialog() else {
         return None;

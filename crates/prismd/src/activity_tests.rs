@@ -279,3 +279,25 @@ fn an_automatic_switch_and_its_restoration_are_recorded_for_the_games_user_only(
     );
     assert_eq!(pushed_activity(&bob), Vec::<Value>::new());
 }
+
+#[test]
+fn startup_outcomes_outlast_the_oldest_entries_activity_drops() {
+    let daemon = started_with_quiet();
+    let alice = daemon.user(1000, "alice");
+    for _ in 0..205 {
+        apply_quiet(&alice);
+    }
+
+    let activity = snapshot_activity(&daemon.user(1000, "alice"));
+    // The oldest applications go, and the startup outcome stays for the whole boot, so one not
+    // yet dismissed can still be shown.
+    assert_eq!(activity.len(), 201);
+    assert_eq!(kinds(&activity)[0], "startup_ran");
+    assert_eq!(
+        kinds(&activity)
+            .iter()
+            .filter(|kind| **kind == "profile_applied")
+            .count(),
+        200
+    );
+}

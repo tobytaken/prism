@@ -15,12 +15,12 @@ use super::host::Clock;
 use super::session::SessionPeer;
 use super::tuning_store::{TuningStore, write_atomically};
 use prism_gpu::TuningOutcomeStatus;
-use prism_protocol::{ActivityEntry, ActivityEvent, DaemonEvent, ProfileApplicationResponse};
+use prism_protocol::{
+    ActivityEntry, ActivityEvent, DaemonEvent, ProfileApplicationResponse, trim_activity,
+};
 
 pub(super) const ACTIVITY_FILE_NAME: &str = "activity.json";
 const SCHEMA_VERSION: u64 = 1;
-/// How many entries are kept; the oldest go first.
-const LIMIT: usize = 200;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -131,8 +131,7 @@ impl Activity {
             user: user.clone(),
             entry: entry.clone(),
         });
-        let excess = document.entries.len().saturating_sub(LIMIT);
-        document.entries.drain(..excess);
+        trim_activity(&mut document.entries, |stored| &stored.entry);
         // Kept in memory even when it can't be written: only a daemon restart loses it then.
         if let Some(path) = &self.path
             && let Err(error) =

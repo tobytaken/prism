@@ -847,6 +847,8 @@ impl Switching {
         retry: bool,
     ) {
         activation.gpu_absent = false;
+        // A retried restoration no longer knows whose game it followed, so every user sees it, as
+        // they see the tuning state it changes.
         let user = activation.driving.take().map(|game| game.user());
         activation.failure = None;
         let mut restored = None;

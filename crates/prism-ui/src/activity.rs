@@ -14,7 +14,7 @@ use prism_gpu::{TuningOutcome, TuningOutcomeStatus};
 use prism_protocol::{
     ActivityEntry, ActivityEvent, DaemonRequest, DaemonResponse, DaemonSnapshot,
     ProfileApplicationResponse, ProfileSettingKey, StartupGpuRequest, StartupOutcome,
-    StartupOutcomeStatus, StartupState, TuningStoreHealth, TuningStoreProblem,
+    StartupOutcomeStatus, StartupState, TuningStoreHealth, TuningStoreProblem, trim_activity,
 };
 
 use crate::core::{CommandId, Core, Effect};
@@ -22,9 +22,8 @@ use crate::drafts::{not_applied, setting_name};
 use crate::palette::Command;
 use crate::view::{ActivityButton, ActivityItem, ActivityPanel};
 
-/// How many of Prism's own entries Activity keeps, and of prismd's, as prismd does.
+/// How many of Prism's own entries Activity keeps.
 const OWN_LIMIT: usize = 50;
-const DAEMON_LIMIT: usize = 200;
 
 /// Something an Activity item's button does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,8 +126,8 @@ impl Core {
         if let Err(index) = daemon.binary_search_by_key(&entry.id, |known| known.id) {
             daemon.insert(index, entry);
         }
-        let excess = daemon.len().saturating_sub(DAEMON_LIMIT);
-        daemon.drain(..excess);
+        // Kept as prismd keeps them.
+        trim_activity(daemon, |entry| entry);
     }
 
     fn record_own(&mut self, title: String, detail: Vec<String>) {
@@ -486,7 +485,7 @@ fn duration(length: Duration) -> String {
     }
 }
 
-/// `text` ending in a full stop.
+/// `text` ending in a period.
 fn sentence(text: &str) -> String {
     if text.ends_with('.') {
         text.into()

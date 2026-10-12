@@ -677,6 +677,25 @@ pub enum ActivityEvent {
     StartupRan { outcome: StartupOutcome },
 }
 
+/// How many Activity entries are kept, apart from startup outcomes.
+pub const ACTIVITY_LIMIT: usize = 200;
+
+/// Drops the oldest of `entries` beyond [`ACTIVITY_LIMIT`]. Startup outcomes stay for the whole
+/// boot, one per GPU at most, so an outcome not yet dismissed can still be shown.
+pub fn trim_activity<T>(entries: &mut Vec<T>, entry: impl Fn(&T) -> &ActivityEntry) {
+    let startup = |item: &T| matches!(entry(item).event, ActivityEvent::StartupRan { .. });
+    let mut excess = entries
+        .iter()
+        .filter(|item| !startup(item))
+        .count()
+        .saturating_sub(ACTIVITY_LIMIT);
+    entries.retain(|item| {
+        let drop = excess > 0 && !startup(item);
+        excess -= usize::from(drop);
+        !drop
+    });
+}
+
 /// A fully installed Steam app from the caller's Steam libraries.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

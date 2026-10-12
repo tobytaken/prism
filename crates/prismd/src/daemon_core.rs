@@ -299,8 +299,6 @@ impl DaemonCore {
                 | DaemonRequest::DeleteProfile(_)
                 | DaemonRequest::RenameProfile(_)
         );
-        // These can change the caller's games, their links or the opt-in, or read the Steam
-        // libraries that say whether their games are installed.
         // These can change the caller's startup state, or the startup profiles' names.
         let changes_startup = matches!(
             request,
@@ -310,6 +308,8 @@ impl DaemonCore {
                 | DaemonRequest::RenameProfile(_)
                 | DaemonRequest::DeleteProfile(_)
         );
+        // These can change the caller's games, their links or the opt-in, or read the Steam
+        // libraries that say whether their games are installed.
         let refreshes_games = matches!(
             request,
             DaemonRequest::ListSteamApps
