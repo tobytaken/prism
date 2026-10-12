@@ -46,6 +46,7 @@ pub(crate) enum Command {
     AddSteamGame,
     /// Show Games, and open Add program over it.
     AddProgram,
+    OpenActivity,
     Quit,
 }
 
@@ -125,6 +126,8 @@ pub enum Shortcut {
     Apply,
     /// Ctrl+Shift+Backspace: discard them.
     Discard,
+    /// Ctrl+Shift+A: open Activity, or close it again.
+    ToggleActivity,
 }
 
 const ESCAPE: &str = "\u{1b}";
@@ -147,6 +150,7 @@ impl Shortcut {
             (true, false, ",") => Self::GoTo(Section::Settings),
             (true, true, "g") => Self::GoTo(Section::Games),
             (true, true, "d") => Self::GoTo(Section::Drivers),
+            (true, true, "a") => Self::ToggleActivity,
             (true, false, digit) => match digit.parse::<usize>() {
                 Ok(number @ 1..=9) => Self::GoToGpu(number - 1),
                 _ => return None,
@@ -173,6 +177,7 @@ impl Shortcut {
             Self::Dismiss => &["Esc"],
             Self::Apply => &["Ctrl", "Enter"],
             Self::Discard => &["Ctrl", "Shift", "Backspace"],
+            Self::ToggleActivity => &["Ctrl", "Shift", "A"],
         };
         keys.iter().map(|&key| key.to_owned()).collect()
     }
@@ -219,8 +224,8 @@ impl Core {
         }
     }
 
-    /// Closes the topmost overlay: the palette, the profile menu, or else the dialog, which keeps
-    /// editing. A dialog opened from Manage profiles goes back to it.
+    /// Closes the topmost overlay: the palette, the profile menu, the dialog, which keeps
+    /// editing, or else Activity. A dialog opened from Manage profiles goes back to it.
     pub(crate) fn dismiss(&mut self) {
         if self.palette.take().is_some() {
             return;
@@ -228,7 +233,11 @@ impl Core {
         if std::mem::take(&mut self.profile_menu_open) {
             return;
         }
-        self.close_dialog();
+        if self.dialog.is_some() {
+            self.close_dialog();
+            return;
+        }
+        self.close_activity();
     }
 
     /// Whether an open dialog keeps a shortcut from running `command`: only its own answers run
@@ -290,6 +299,7 @@ impl Core {
             Shortcut::Quit => Some(Command::Quit),
             Shortcut::Apply => Some(Command::ApplyChanges),
             Shortcut::Discard => Some(Command::DiscardChanges),
+            Shortcut::ToggleActivity => Some(Command::OpenActivity),
             Shortcut::OpenPalette | Shortcut::Dismiss => None,
         }
     }
@@ -324,6 +334,7 @@ impl Core {
                 self.selection == Some(Selection::Section(Section::Settings))
                     && self.settings_section == *section
             }
+            Command::OpenActivity => self.activity_open(),
             Command::ShowRange(_)
             | Command::RunService(_)
             | Command::CopyPrismdSetup
@@ -459,10 +470,16 @@ impl Core {
                     None,
                 )
             }));
+        let activity = [(
+            Command::OpenActivity,
+            "Open Activity".to_owned(),
+            Some(Shortcut::ToggleActivity),
+        )];
         let app = [(Command::Quit, "Quit Prism".to_owned(), Some(Shortcut::Quit))];
         navigation
             .chain(sections)
             .chain(settings)
+            .chain(activity)
             .chain(tuning)
             .chain(profiles)
             .chain(games)

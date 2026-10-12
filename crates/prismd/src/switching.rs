@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use super::activity::{Activity, ActivityUser, attempted};
 use super::automatic_tuning::ProfileApplicationOutcomes;
 use super::automatic_tuning::apply as apply_automatic_profile;
 use super::backend::DaemonBackend;
@@ -25,9 +26,9 @@ use super::tuning_store::{TuningDocument, TuningStore, write_atomically};
 use prism_gpu::cooling::{CoolingConfiguration, SuspensionKind};
 use prism_gpu::{GpuPerformanceDevice, TuningOutcomeStatus};
 use prism_protocol::{
-    AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId, GpuSwitchingState,
-    GpuSwitchingStatus, ProfileApplicationResponse, ProfileSetting, ProfileSettingKey,
-    ProfileSettings, RollbackStatus, SwitchingCondition,
+    ActivityEvent, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
+    GpuSwitchingState, GpuSwitchingStatus, ProfileApplicationResponse, ProfileSetting,
+    ProfileSettingKey, ProfileSettings, RollbackStatus, SwitchingCondition,
 };
 
 pub(super) const SWITCHING_STATE_FILE_NAME: &str = "switching-state.json";
@@ -44,6 +45,27 @@ struct DrivingGame {
     username: String,
     game: GameId,
     profile_id: String,
+}
+
+impl DrivingGame {
+    fn user(&self) -> ActivityUser {
+        ActivityUser {
+            uid: self.uid,
+            username: self.username.clone(),
+        }
+    }
+}
+
+/// The name the game's user gave the game, or what identifies it.
+fn game_name(document: &TuningDocument, driving: &DrivingGame) -> String {
+    document
+        .user(driving.uid, &driving.username)
+        .and_then(|user| user.games.iter().find(|linked| linked.game == driving.game))
+        .map(|linked| linked.name.clone())
+        .unwrap_or_else(|| match &driving.game {
+            GameId::Steam { app_id } => format!("Steam app {app_id}"),
+            GameId::Program { path } => path.clone(),
+        })
 }
 
 /// Automation's hold on one GPU, from its first automatic write until full restoration.
@@ -195,6 +217,7 @@ pub(super) struct Switching {
     state: Arc<SwitchingState>,
     clock: Arc<dyn Clock>,
     grace_until_ms: u64,
+    activity: Arc<Activity>,
 }
 
 impl Switching {
@@ -242,6 +265,7 @@ impl Switching {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         boot_dir: &Path,
         boot_id: &str,
@@ -250,6 +274,7 @@ impl Switching {
         recognition: Arc<Mutex<Recognition>>,
         users: Arc<dyn UserDirectory>,
         clock: Arc<dyn Clock>,
+        activity: Arc<Activity>,
     ) -> Self {
         let path = boot_dir.join(SWITCHING_STATE_FILE_NAME);
         let activations = load(&path, boot_id).map_err(|error| {
@@ -294,6 +319,7 @@ impl Switching {
             cooling,
             recognition,
             users,
+            activity,
             state: Arc::new(SwitchingState {
                 path,
                 boot_id: boot_id.into(),
@@ -744,10 +770,22 @@ impl Switching {
         }
         // A fully applied game profile becomes current; a partly applied one leaves no
         // current profile. Neither is recorded as last applied tuning values.
-        if outcomes
-            .outcomes()
-            .any(|o| o.status != TuningOutcomeStatus::Unattempted)
-        {
+        if attempted(&outcomes) {
+            self.activity.record(
+                Some(game.user()),
+                gpu_id,
+                ActivityEvent::GameProfileApplied {
+                    game: game.game.clone(),
+                    game_name: game_name(document, &game),
+                    profile: CurrentProfile {
+                        id: game.profile_id.clone(),
+                        name: document
+                            .any_profile(&game.profile_id)
+                            .map_or_else(|| game.profile_id.clone(), |p| p.name.clone()),
+                    },
+                    application: outcomes.clone(),
+                },
+            );
             self.set_current_profile(gpu_id, full.then_some(game.profile_id));
         }
         activation.application = Some(outcomes);
@@ -809,7 +847,9 @@ impl Switching {
         retry: bool,
     ) {
         activation.gpu_absent = false;
-        activation.driving = None;
+        // A retried restoration no longer knows whose game it followed, so every user sees it, as
+        // they see the tuning state it changes.
+        let user = activation.driving.take().map(|game| game.user());
         activation.failure = None;
         let mut restored = None;
         if !activation.baseline.is_empty() || activation.cooling_baseline.is_some() {
@@ -837,6 +877,15 @@ impl Switching {
                     .as_ref()
                     .map(|_| &activation.cooling_baseline_fans),
             );
+            if attempted(&outcomes) {
+                self.activity.record(
+                    user,
+                    gpu_id,
+                    ActivityEvent::PreGameValuesRestored {
+                        application: outcomes.clone(),
+                    },
+                );
+            }
             if !outcomes.all_settings_succeeded() {
                 if outcomes
                     .outcomes()
@@ -1192,15 +1241,7 @@ impl Snapshot {
                             let profile = document.any_profile(&driving.profile_id)?;
                             GpuSwitchingState::Active {
                                 game: driving.game.clone(),
-                                game_name: user
-                                    .and_then(|user| {
-                                        user.games.iter().find(|linked| linked.game == driving.game)
-                                    })
-                                    .map(|linked| linked.name.clone())
-                                    .unwrap_or_else(|| match &driving.game {
-                                        GameId::Steam { app_id } => format!("Steam app {app_id}"),
-                                        GameId::Program { path } => path.clone(),
-                                    }),
+                                game_name: game_name(document, driving),
                                 profile: CurrentProfile {
                                     id: profile.id.clone(),
                                     name: profile.name.clone(),

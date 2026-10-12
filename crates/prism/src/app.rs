@@ -11,9 +11,10 @@ use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, 
 use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    Content, Core, Dialog, Effect, FanCurveEditor, FanMode, Input, Intent, Key, PrismdHost,
-    ProgramFile, Section as CoreSection, ServiceAction as CoreServiceAction, ServiceOutcome,
-    SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer, TrackChart,
+    ActivityAction, Content, Core, Dialog, Effect, FanCurveEditor, FanMode, Input, Intent, Key,
+    PrismdHost, ProgramFile, Section as CoreSection, ServiceAction as CoreServiceAction,
+    ServiceOutcome, SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer,
+    TrackChart,
 };
 
 use crate::chart::{area_commands, limit_commands, line_commands, series_commands};
@@ -26,8 +27,8 @@ use crate::sampler::{Sampler, SamplerReading, SamplerSwitch};
 use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{
-    AppState, ChartId, ChartPart, CurvePart, Inbox, Intents, KeyPress, MainWindow, Section,
-    ServiceAction, SettingsSection, TuningSetting,
+    ActivityList, AppState, ChartId, ChartPart, CurvePart, Inbox, Intents, KeyPress, MainWindow,
+    Section, ServiceAction, SettingsSection, TuningSetting,
 };
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
@@ -145,6 +146,7 @@ impl App {
         );
         inner.handle(Input::Launched {
             appearance: settings.load().appearance,
+            started_unix_ms: inner.clock.started_unix_ms(),
         });
         Ok(Self { inner })
     }
@@ -281,6 +283,16 @@ impl Inner {
         intents.on_apply_changes(to_core(Intent::ApplyChanges));
         intents.on_discard_changes(to_core(Intent::DiscardChanges));
         intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
+        intents.on_open_activity(to_core(Intent::OpenActivity));
+        let inner = Rc::downgrade(this);
+        intents.on_run_activity_action(move |list, index| {
+            with_inner(&inner, |inner| {
+                let action = activity_action(&inner.core.borrow(), list, index);
+                if let Some(action) = action {
+                    inner.handle(Input::Intent(Intent::RunActivityAction(action)));
+                }
+            });
+        });
         intents.on_toggle_fan_curve(to_core(Intent::ToggleFanCurve));
         intents.on_recall_remembered_curve(to_core(Intent::RecallRememberedCurve));
         intents.on_confirm_profile(to_core(Intent::ConfirmProfile));
@@ -632,10 +644,13 @@ impl Inner {
         })
     }
 
-    /// Whether the palette or a dialog is over the window.
+    /// Whether the palette, a dialog or Activity is over the window.
     fn overlay_open(&self) -> bool {
         let core = self.core.borrow();
-        core.palette_open() || core.dialog_open() || core.profile_menu_open()
+        core.palette_open()
+            || core.dialog_open()
+            || core.profile_menu_open()
+            || core.activity_open()
     }
 
     /// Runs the global shortcut `key` presses, if any, and says whether the key was spoken for.
@@ -853,6 +868,18 @@ fn use_default_intent(setting: TuningSetting) -> Option<Intent> {
         TuningSetting::FanSpeed => return None,
     };
     Some(Intent::UseDefault(key))
+}
+
+/// What the button of the item at `index` in one of Activity's lists does.
+fn activity_action(core: &Core, list: ActivityList, index: i32) -> Option<ActivityAction> {
+    let panel = core.activity()?;
+    let items = match list {
+        ActivityList::Problems => panel.problems,
+        ActivityList::Startup => panel.startup,
+        ActivityList::Recent => panel.recent,
+    };
+    let item = items.into_iter().nth(usize::try_from(index).ok()?)?;
+    item.action.map(|button| button.action)
 }
 
 /// The id of the profile at `index` in the open Manage profiles, which lists them in the order the

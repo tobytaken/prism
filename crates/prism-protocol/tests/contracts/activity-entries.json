@@ -1,0 +1,66 @@
+[
+  {
+    "id": 1,
+    "at_unix_ms": 1791800000000,
+    "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+    "event": {
+      "kind": "startup_ran",
+      "outcome": {
+        "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+        "behavior": "startup_profiles",
+        "profile": { "id": "quiet", "name": "Quiet" },
+        "status": "failed",
+        "reason": "Driver rejected the offset.",
+        "application": {
+          "power": { "status": "succeeded", "error": null },
+          "graphics": { "status": "failed", "error": "Driver rejected the offset." },
+          "memory": null
+        }
+      }
+    }
+  },
+  {
+    "id": 2,
+    "at_unix_ms": 1791800600000,
+    "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+    "event": {
+      "kind": "profile_applied",
+      "profile": { "id": "boost", "name": "Boost" },
+      "application": {
+        "power": { "status": "succeeded", "error": null },
+        "graphics": null,
+        "memory": null
+      }
+    }
+  },
+  {
+    "id": 3,
+    "at_unix_ms": 1791801200000,
+    "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+    "event": {
+      "kind": "game_profile_applied",
+      "game": { "kind": "steam", "app_id": 570 },
+      "game_name": "Dota 2",
+      "profile": { "id": "quiet", "name": "Quiet" },
+      "application": {
+        "rollback": { "status": "not_needed", "power": null, "graphics": null, "memory": null, "cooling": null },
+        "power": { "status": "succeeded", "error": null },
+        "graphics": null,
+        "memory": null
+      }
+    }
+  },
+  {
+    "id": 4,
+    "at_unix_ms": 1791804800000,
+    "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+    "event": {
+      "kind": "pre_game_values_restored",
+      "application": {
+        "power": { "status": "succeeded", "error": null },
+        "graphics": null,
+        "memory": null
+      }
+    }
+  }
+]

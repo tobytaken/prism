@@ -30,6 +30,7 @@ fn unavailable(install: PrismdInstall) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
         message: "No such file or directory (os error 2)".into(),

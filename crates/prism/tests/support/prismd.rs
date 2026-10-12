@@ -36,6 +36,8 @@ struct Fake {
     requests: Vec<DaemonRequest>,
     /// The commands Prism sent that the test hasn't answered yet, oldest first.
     unanswered: Vec<CommandId>,
+    /// The snapshot a session starts from.
+    snapshot: DaemonSnapshot,
 }
 
 impl FakePrismd {
@@ -45,7 +47,14 @@ impl FakePrismd {
             report: None,
             requests: Vec::new(),
             unanswered: Vec::new(),
+            snapshot: snapshot(),
         })))
+    }
+
+    /// Makes the next session start from `snapshot`, such as one with Activity from while Prism
+    /// was closed.
+    pub fn set_snapshot(&self, snapshot: DaemonSnapshot) {
+        self.0.lock().unwrap().snapshot = snapshot;
     }
 
     /// The side Prism holds.
@@ -111,9 +120,10 @@ impl FakePrismd {
         // A session that ends leaves its commands unanswered.
         fake.unanswered.clear();
         let report = fake.report.clone();
+        let snapshot = fake.snapshot.clone();
         drop(fake);
         if let Some(report) = report {
-            report(report_for(state));
+            report(report_for(state, snapshot));
         }
     }
 }
@@ -124,8 +134,9 @@ impl PrismdConnector for FakePrismd {
         let mut fake = self.0.lock().unwrap();
         fake.report = Some(report.clone());
         let state = fake.state;
+        let snapshot = fake.snapshot.clone();
         drop(fake);
-        report(report_for(state));
+        report(report_for(state, snapshot));
     }
 
     fn send(&self, request: DaemonRequest) {
@@ -151,8 +162,8 @@ impl DaemonState {
     }
 }
 
-/// What connecting to a daemon in `state` reports.
-fn report_for(state: DaemonState) -> PrismdReport {
+/// What connecting to a daemon in `state`, whose session starts from `snapshot`, reports.
+fn report_for(state: DaemonState, snapshot: DaemonSnapshot) -> PrismdReport {
     let handshake = contract(include_str!(
         "../../../prism-protocol/tests/contracts/session-handshake.json"
     ));
@@ -175,7 +186,7 @@ fn report_for(state: DaemonState) -> PrismdReport {
             };
             PrismdReport::Connected {
                 welcome,
-                snapshot: snapshot(),
+                snapshot,
                 socket: "/run/prism/prismd.sock".into(),
             }
         }

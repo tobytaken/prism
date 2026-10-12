@@ -1,3 +1,4 @@
+mod activity;
 mod automatic_tuning;
 mod backend;
 mod boot_state;
@@ -18,6 +19,8 @@ mod switching;
 mod tuning;
 mod tuning_store;
 
+#[cfg(test)]
+mod activity_tests;
 #[cfg(test)]
 mod apply_tests;
 #[cfg(test)]

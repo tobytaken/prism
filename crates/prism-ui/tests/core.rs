@@ -16,6 +16,7 @@ fn launched(fixture: SimulatedFixture) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core.handle(Input::InventoryRead(simulated(fixture).inventory()));
     core
@@ -225,6 +226,7 @@ fn prism_shows_that_it_is_looking_for_gpus_until_the_inventory_is_read() {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
 
     assert_eq!(core.content(), Content::Searching);

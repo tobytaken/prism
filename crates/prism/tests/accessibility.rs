@@ -246,6 +246,59 @@ fn the_review_and_the_close_confirmation_are_accessible() {
     harness.find(AccessibleRole::Button, "Discard and close");
 }
 
+/// Activity with an unhealthy tuning store, a startup outcome to dismiss and recent events.
+fn with_activity(daemon: DaemonState) -> Harness {
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, daemon);
+    harness.prismd_tick(
+        SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
+    );
+    let gpu = support::prismd::snapshot().inventory.gpus[0].id.clone();
+    let mut startup: prism_protocol::StartupState = serde_json::from_str(include_str!(
+        "../../prism-protocol/tests/contracts/startup-state.json"
+    ))
+    .unwrap();
+    startup.outcomes[0].gpu_id = gpu;
+    let entries: Vec<prism_protocol::ActivityEntry> = serde_json::from_str(include_str!(
+        "../../prism-protocol/tests/contracts/activity-entries.json"
+    ))
+    .unwrap();
+    let events = [
+        DaemonEvent::StoreHealthChanged(prism_protocol::TuningStoreHealth::Unhealthy {
+            problem: prism_protocol::TuningStoreProblem::Unreadable,
+            path: "/var/lib/prism/tuning-store.json".into(),
+            detail: "expected value at line 1 column 1".into(),
+        }),
+        DaemonEvent::StartupStateChanged(startup),
+    ]
+    .into_iter()
+    .chain(entries.into_iter().map(DaemonEvent::ActivityRecorded));
+    for event in events {
+        harness.prismd.push(event);
+    }
+    harness.app.receive_posted();
+    harness.ctrl_shift("a");
+    harness
+}
+
+#[test]
+fn activity_is_accessible_with_and_without_tuning_access() {
+    let harness = with_activity(DaemonState::Running);
+    audit("tunable, Activity", &harness);
+    harness.find(AccessibleRole::Groupbox, "Activity");
+    harness.find(
+        AccessibleRole::Button,
+        "Dismiss · Startup applied Quiet in part",
+    );
+
+    let harness = with_activity(DaemonState::ReadOnly);
+    audit("tunable, Activity, read-only", &harness);
+    let dismiss = harness.find(
+        AccessibleRole::Button,
+        "Dismiss · Startup applied Quiet in part",
+    );
+    assert_eq!(dismiss.accessible_enabled(), Some(false));
+}
+
 #[test]
 fn the_profile_buttons_and_their_dialogs_are_accessible() {
     let profiles: prism_protocol::ProfilesState = serde_json::from_str(include_str!(
@@ -596,6 +649,11 @@ const ACTION_TESTS: &[(&str, &str, &str)] = &[
         "default",
         "a_palette_row_s_default_action_runs_its_command",
     ),
+    (
+        "ProblemIndicator",
+        "default",
+        "the_problem_indicator_s_default_action_opens_activity",
+    ),
     ("Segment", "default", "a_segment_s_default_action_picks_it"),
     (
         "Stepper",
@@ -756,6 +814,19 @@ fn the_connection_item_s_default_action_opens_settings_daemon() {
             .accessible_item_selected(),
         Some(true)
     );
+}
+
+#[test]
+fn the_problem_indicator_s_default_action_opens_activity() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+
+    harness
+        .find(AccessibleRole::Button, "NO PROBLEMS")
+        .invoke_accessible_default_action();
+
+    assert!(harness.app.core().activity_open());
+    assert_eq!(harness.count(AccessibleRole::Groupbox, "Activity"), 1);
 }
 
 #[test]
@@ -963,6 +1034,7 @@ fn the_audit_sees_the_window_s_interactive_elements_and_chart_parts() {
             "Memory clock offset",
             "Hardware details",
             "PRISMD · NOT RUNNING",
+            "NO PROBLEMS",
         ]
     );
     // Each part appears, with no role.

@@ -152,6 +152,10 @@ pub struct DaemonSnapshot {
     pub games: GamesState,
     pub running_games: RunningGamesState,
     pub automatic_switching: AutomaticSwitchingStatus,
+    /// The startup choices, with this boot's startup outcomes the caller hasn't dismissed.
+    pub startup: StartupState,
+    /// What prismd did this boot that the caller may see, oldest first.
+    pub activity: Vec<ActivityEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -627,7 +631,7 @@ pub struct StartupOutcome {
     pub application: Option<ProfileApplicationResponse>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct StartupState {
     pub behavior: StartupBehavior,
@@ -636,6 +640,60 @@ pub struct StartupState {
     /// GPU UUIDs whose last applied tuning values miss a manual write that couldn't be recorded.
     #[serde(default)]
     pub possibly_stale: Vec<String>,
+}
+
+/// Something prismd did on its own or for a user during this boot, kept until the host restarts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityEntry {
+    /// Grows with each entry this boot, so a session can tell an entry it already has.
+    pub id: u64,
+    pub at_unix_ms: u64,
+    /// The GPU's UUID.
+    pub gpu_id: String,
+    pub event: ActivityEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ActivityEvent {
+    /// The caller applied a profile, or with none, their unapplied tuning changes.
+    ProfileApplied {
+        profile: Option<CurrentProfile>,
+        application: ProfileApplicationResponse,
+    },
+    /// Automatic switching applied the profile the caller linked to their running game.
+    GameProfileApplied {
+        game: GameId,
+        game_name: String,
+        profile: CurrentProfile,
+        application: ProfileApplicationResponse,
+    },
+    /// Automatic switching put the pre-game tuning values back after the caller's game ended.
+    PreGameValuesRestored {
+        application: ProfileApplicationResponse,
+    },
+    /// Startup behavior ran on the GPU when the host started.
+    StartupRan { outcome: StartupOutcome },
+}
+
+/// How many Activity entries are kept, apart from startup outcomes.
+pub const ACTIVITY_LIMIT: usize = 200;
+
+/// Drops the oldest of `entries` beyond [`ACTIVITY_LIMIT`]. Startup outcomes stay for the whole
+/// boot, one per GPU at most, so an outcome not yet dismissed can still be shown.
+pub fn trim_activity<T>(entries: &mut Vec<T>, entry: impl Fn(&T) -> &ActivityEntry) {
+    let startup = |item: &T| matches!(entry(item).event, ActivityEvent::StartupRan { .. });
+    let mut excess = entries
+        .iter()
+        .filter(|item| !startup(item))
+        .count()
+        .saturating_sub(ACTIVITY_LIMIT);
+    entries.retain(|item| {
+        let drop = excess > 0 && !startup(item);
+        excess -= usize::from(drop);
+        !drop
+    });
 }
 
 /// A fully installed Steam app from the caller's Steam libraries.
@@ -934,6 +992,8 @@ pub enum SessionMessage {
     },
 }
 
+// Events are short-lived frames, so their size doesn't warrant boxing every payload.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(
     tag = "type",
@@ -958,6 +1018,11 @@ pub enum DaemonEvent {
     GamesChanged(GamesState),
     RunningGamesChanged(RunningGamesState),
     AutomaticSwitchingChanged(AutomaticSwitchingStatus),
+    /// The startup choices changed, or the caller's startup outcomes, such as when one finished or
+    /// was dismissed.
+    StartupStateChanged(StartupState),
+    /// prismd did something the caller may see.
+    ActivityRecorded(ActivityEntry),
 }
 
 #[cfg(test)]
@@ -1194,6 +1259,25 @@ mod session_tests {
         ] {
             let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
             assert_eq!(serde_json::to_value(typed).unwrap(), request);
+        }
+    }
+
+    #[test]
+    fn activity_and_startup_state_round_trip_as_pushed_events() {
+        let entries: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/activity-entries.json")).unwrap();
+        let startup: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/startup-state.json")).unwrap();
+        let events = entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| serde_json::json!({ "type": "activity_recorded", "payload": entry }))
+            .chain([serde_json::json!({ "type": "startup_state_changed", "payload": startup })]);
+        for event in events {
+            let message = serde_json::json!({ "type": "event", "event": event });
+            let typed: SessionMessage = serde_json::from_value(message.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), message);
         }
     }
 

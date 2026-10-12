@@ -88,6 +88,7 @@ fn connected_with(can_tune: bool, change: impl FnOnce(&mut DaemonSnapshot)) -> C
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     let mut snapshot = snapshot();
     snapshot.profiles = profiles();

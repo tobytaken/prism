@@ -118,6 +118,13 @@
         "status": "off"
       },
       "gpus": []
-    }
+    },
+    "startup": {
+      "behavior": "off",
+      "profiles": [],
+      "outcomes": [],
+      "possibly_stale": []
+    },
+    "activity": []
   }
 }

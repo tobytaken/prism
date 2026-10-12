@@ -44,15 +44,61 @@ component ConnectionItem inherits Rectangle {
     }
 }
 
-// The status bar: the prismd connection, where telemetry comes from, and EDIT HOLD while any
-// GPU has unapplied tuning changes.
+// The problem indicator, such as "2 PROBLEMS", which opens Activity. It's quiet until there's a
+// problem.
+component ProblemIndicator inherits Rectangle {
+    property <bool> problems: AppState.problems > 0;
+
+    accessible-role: button;
+    accessible-label: AppState.problem-indicator;
+    accessible-description: "Opens Activity · Ctrl+Shift+A";
+    accessible-action-default => {
+        Intents.open-activity();
+    }
+    forward-focus: press;
+    width: item.preferred-width + 2 * Theme.space.xs;
+    background: press.has-hover ? Theme.color.chrome-hover : transparent;
+
+    press := PressArea {
+        ring-color: Theme.color.chrome-ink;
+        activated => {
+            Intents.open-activity();
+        }
+    }
+
+    item := HorizontalLayout {
+        x: Theme.space.xs;
+        spacing: Theme.space.s;
+
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: Theme.size.status-dot;
+                height: Theme.size.status-dot;
+                background: root.problems ? Theme.color.danger : Theme.color.chrome-ink-muted;
+            }
+        }
+
+        StyledText {
+            text: AppState.problem-indicator;
+            style: Theme.text.status;
+            color: root.problems ? Theme.color.chrome-ink-strong
+                : press.has-hover ? Theme.color.chrome-ink : Theme.color.chrome-ink-muted;
+            accessible-role: none;
+        }
+    }
+}
+
+// The status bar: the prismd connection, where telemetry comes from, EDIT HOLD while any GPU has
+// unapplied tuning changes, and the problem indicator.
 export component StatusBar inherits Rectangle {
     height: Theme.size.status-bar;
     background: Theme.color.chrome;
 
     HorizontalLayout {
         padding-left: Theme.space.xl - Theme.space.xs;
-        padding-right: Theme.space.xl;
+        padding-right: Theme.space.xl - Theme.space.xs;
         spacing: Theme.space.xxl;
 
         ConnectionItem {
@@ -74,6 +120,10 @@ export component StatusBar inherits Rectangle {
 
         Rectangle {
             horizontal-stretch: 1;
+        }
+
+        ProblemIndicator {
+            horizontal-stretch: 0;
         }
     }
 }

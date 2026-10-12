@@ -9,13 +9,15 @@ use prism_gpu::{
     TuningOutcomeStatus,
 };
 use prism_protocol::{
-    ApplyGpuProfileRequest, CorrectAndApplyProfileRequest, CorrectedProfileApplication,
-    DaemonCommandResponse, DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GamesState,
-    GpuCoolingControl, GpuDaemonStatus, GpuTuningProfile, GpuTuningState, HelloRequest,
-    Incompatible, ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings,
-    ProtocolVersion, SaveProfileAsNewRequest, SaveToCurrentProfileRequest, Welcome,
+    ActivityEvent, ApplyGpuProfileRequest, CorrectAndApplyProfileRequest,
+    CorrectedProfileApplication, CurrentProfile, DaemonCommandResponse, DaemonEvent, DaemonRequest,
+    DaemonResponse, DaemonSnapshot, GamesState, GpuCoolingControl, GpuDaemonStatus,
+    GpuTuningProfile, GpuTuningState, HelloRequest, Incompatible, ProfileApplicationResponse,
+    ProfileSetting, ProfileSettingKey, ProfileSettings, ProtocolVersion, SaveProfileAsNewRequest,
+    SaveToCurrentProfileRequest, Welcome,
 };
 
+use super::activity::{Activity, ActivityUser, attempted};
 use super::backend::DaemonBackend;
 use super::cooling::{
     CoolingApplicationSource, CoolingController, EVALUATION_INTERVAL_MS, recover_abandoned_curves,
@@ -24,6 +26,7 @@ use super::host::{Clock, HostShutdownSignal, UserDirectory};
 use super::possibly_stale::{POSSIBLY_STALE_FILE_NAME, PossiblyStale};
 use super::profiles::{capture_settings, new_profile_id, profile_name, verified_gpu};
 use super::queue::{GpuOperationQueues, PendingOperation};
+use super::startup::StartupStates;
 use super::tuning::{TuningOrigin, TuningRequest, apply_profile};
 use super::tuning_store::{TUNING_STORE_FILE_NAME, TuningDocument, TuningStore};
 use super::{DaemonSession, SessionPeer, SessionPolicy};
@@ -58,6 +61,8 @@ pub struct DaemonCore {
     pub(super) tuning_store: Arc<TuningStore>,
     pub(super) boot_state: Arc<super::boot_state::BootState>,
     possibly_stale: Arc<PossiblyStale>,
+    pub(super) activity: Arc<Activity>,
+    pub(super) startup_states: Arc<StartupStates>,
     pub(super) recognition: Arc<Mutex<super::recognition::Recognition>>,
     pub(super) switching: super::switching::Switching,
     pub(super) stopping: Arc<AtomicBool>,
@@ -150,6 +155,8 @@ impl DaemonCore {
             games: self.known_games(peer),
             running_games,
             automatic_switching,
+            startup: self.startup_states.known(peer),
+            activity: self.activity.entries_for(peer),
         }
     }
 
@@ -292,6 +299,15 @@ impl DaemonCore {
                 | DaemonRequest::DeleteProfile(_)
                 | DaemonRequest::RenameProfile(_)
         );
+        // These can change the caller's startup state, or the startup profiles' names.
+        let changes_startup = matches!(
+            request,
+            DaemonRequest::SetStartupBehavior(_)
+                | DaemonRequest::SetStartupProfile(_)
+                | DaemonRequest::DismissStartupOutcome(_)
+                | DaemonRequest::RenameProfile(_)
+                | DaemonRequest::DeleteProfile(_)
+        );
         // These can change the caller's games, their links or the opt-in, or read the Steam
         // libraries that say whether their games are installed.
         let refreshes_games = matches!(
@@ -310,17 +326,9 @@ impl DaemonCore {
                 .apply_staged(request, Some(peer.clone()))
                 .map(DaemonResponse::ProfileApplication),
             DaemonRequest::GetStartupState => self
-                .tuning_store
-                .read(|document| {
-                    let mut state = document.startup_state();
-                    state.possibly_stale = self.possibly_stale.gpus(document.last_applied.keys());
-                    state
-                })
-                .map_err(GpuCommandError::from)
-                .and_then(|mut state| {
-                    state.outcomes = self.boot_state.outcomes(peer)?;
-                    Ok(DaemonResponse::StartupState(state))
-                }),
+                .startup_states
+                .read(peer)
+                .map(DaemonResponse::StartupState),
             DaemonRequest::SetStartupBehavior(request) => self
                 .tuning_store
                 .update(|document| {
@@ -436,6 +444,9 @@ impl DaemonCore {
         };
         if refreshes_games {
             self.push_games(peer);
+        }
+        if changes_startup {
+            self.startup_states.push();
         }
         if reevaluate {
             self.evaluate_switching();
@@ -594,11 +605,18 @@ impl DaemonCore {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
         let cooling = Arc::clone(&self.cooling);
+        let activity = Arc::clone(&self.activity);
         let peer = peer.clone();
         self.manual_write(&profile.gpu_id, move |backend| {
             // A profile can be deleted or edited while this application waits on the GPU's queue.
             let profile = store.read(|document| document.profile_of(&peer, &profile.id))??;
-            Ok(apply_recorded_profile(
+            let applied = CurrentProfile {
+                id: profile.id.clone(),
+                name: profile.name.clone(),
+            };
+            let gpu_id = profile.gpu_id.clone();
+            let user = ActivityUser::of(&peer);
+            let application = apply_recorded_profile(
                 backend,
                 &cooling,
                 &store,
@@ -607,7 +625,9 @@ impl DaemonCore {
                 Some(profile.id),
                 TuningOrigin::Manual,
                 Some(peer),
-            ))
+            );
+            record_application(&activity, Some(user), &gpu_id, Some(applied), &application);
+            Ok(application)
         })
     }
 
@@ -621,6 +641,7 @@ impl DaemonCore {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
         let cooling = Arc::clone(&self.cooling);
+        let activity = Arc::clone(&self.activity);
         let pending = self.switching.manual_requested(&request.gpu_id);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
             // A GPU whose state can't be read is refused by the application itself.
@@ -633,7 +654,9 @@ impl DaemonCore {
                 ));
             }
             pending.started();
-            Ok(apply_recorded_profile(
+            let user = peer.as_ref().map(ActivityUser::of);
+            let gpu_id = request.gpu_id.clone();
+            let application = apply_recorded_profile(
                 backend,
                 &cooling,
                 &store,
@@ -646,7 +669,9 @@ impl DaemonCore {
                 None,
                 TuningOrigin::Manual,
                 peer,
-            ))
+            );
+            record_application(&activity, user, &gpu_id, None, &application);
+            Ok(application)
         })
     }
 
@@ -705,6 +730,17 @@ impl DaemonCore {
         let possibly_stale = Arc::new(PossiblyStale::open(
             dependencies.persistent_dir.join(POSSIBLY_STALE_FILE_NAME),
         ));
+        let activity = Arc::new(Activity::open(
+            &dependencies.boot_dir,
+            &dependencies.boot_id,
+            Arc::clone(&dependencies.clock),
+            Arc::clone(&tuning_store),
+        ));
+        let startup_states = Arc::new(StartupStates::new(
+            Arc::clone(&tuning_store),
+            Arc::clone(&boot_state),
+            Arc::clone(&possibly_stale),
+        ));
         // Fans an earlier daemon left following a curve return to automatic cooling first.
         recover_abandoned_curves(
             dependencies.backend.as_ref(),
@@ -726,12 +762,15 @@ impl DaemonCore {
             Arc::clone(&recognition),
             Arc::clone(&dependencies.users),
             Arc::clone(&dependencies.clock),
+            Arc::clone(&activity),
         );
         let core = Self {
             dependencies,
             cooling,
             boot_state,
             possibly_stale,
+            activity,
+            startup_states,
             stopping: Arc::default(),
             startup_operations: Mutex::default(),
             recognition,
@@ -1107,6 +1146,27 @@ pub(super) fn apply_recorded_profile(
         not_recorded(&mut response);
     }
     response
+}
+
+/// Records a user's profile application, or with no profile their unapplied tuning changes, in
+/// Activity, unless it wrote nothing.
+fn record_application(
+    activity: &Activity,
+    user: Option<ActivityUser>,
+    gpu_id: &str,
+    profile: Option<CurrentProfile>,
+    application: &ProfileApplicationResponse,
+) {
+    if attempted(application) {
+        activity.record(
+            user,
+            gpu_id,
+            ActivityEvent::ProfileApplied {
+                profile,
+                application: application.clone(),
+            },
+        );
+    }
 }
 
 /// What a profile application does to the GPU's current profile.

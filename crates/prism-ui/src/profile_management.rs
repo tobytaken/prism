@@ -737,7 +737,7 @@ impl Core {
     }
 
     /// The GPU as the user knows it, such as "GPU 0 · RTX 5090 · 01:00.0".
-    fn gpu_name(&self, gpu_id: &str) -> String {
+    pub(crate) fn gpu_name(&self, gpu_id: &str) -> String {
         self.gpus()
             .iter()
             .enumerate()

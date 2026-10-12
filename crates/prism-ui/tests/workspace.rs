@@ -19,6 +19,7 @@ fn launched(fixture: SimulatedFixture) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core.handle(Input::InventoryRead(simulated(fixture).inventory()));
     core

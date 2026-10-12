@@ -6,18 +6,19 @@ use prism_protocol::ProfileSettingKey;
 use prism_ui::format::{Readout, UNKNOWN};
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanCurveEditor, FanModeControl,
-    GameRow, ReviewChange, Section as CoreSection, ServiceAction as CoreServiceAction,
-    SettingsSection as CoreSettingsSection, Stepper, Track, Tunable,
+    ActivityItem, AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanCurveEditor,
+    FanModeControl, GameRow, ReviewChange, Section as CoreSection,
+    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Stepper, Track,
+    Tunable,
 };
 
 use crate::{
-    AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, CurvePointView,
-    DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, FanCurveView,
-    FanModeView, GameLinkView, GameView, GamesView, LimitMark, MainWindow, ManagedProfileView,
-    MenuEntryView, PaletteEntryView, ProgramView, ReadoutView, ReviewChangeView, SegmentView,
-    ServiceAction, SettingsSection, SidebarGpuView, SteamAppView, StepperView, Theme, TrackView,
-    TuningSetting, WorkspaceView,
+    ActivityItemView, AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind,
+    CurvePointView, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView,
+    FanCurveView, FanModeView, GameLinkView, GameView, GamesView, LimitMark, MainWindow,
+    ManagedProfileView, MenuEntryView, PaletteEntryView, ProgramView, ReadoutView,
+    ReviewChangeView, SegmentView, ServiceAction, SettingsSection, SidebarGpuView, SteamAppView,
+    StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -433,8 +434,73 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     state.set_connected(status.connected);
     state.set_telemetry(status.telemetry.into());
     state.set_edit_hold(status.edit_hold);
+    state.set_problems(status.problems.try_into().unwrap_or(i32::MAX));
+    state.set_problem_indicator(status.problem_indicator.into());
+
+    let activity = core.activity();
+    state.set_activity_open(activity.is_some());
+    let (problems, startup, recent, outcome, empty) = activity
+        .map(|panel| {
+            (
+                panel.problems,
+                panel.startup,
+                panel.recent,
+                panel.outcome.unwrap_or_default(),
+                panel.empty.unwrap_or_default(),
+            )
+        })
+        .unwrap_or_default();
+    let items = |items: Vec<ActivityItem>| items.iter().map(activity_item_view).collect::<Vec<_>>();
+    if let Some(model) = update_in_place(
+        &state.get_activity_problems(),
+        items(problems),
+        PartialEq::eq,
+    ) {
+        state.set_activity_problems(model);
+    }
+    if let Some(model) =
+        update_in_place(&state.get_activity_startup(), items(startup), PartialEq::eq)
+    {
+        state.set_activity_startup(model);
+    }
+    if let Some(model) = update_in_place(&state.get_activity_recent(), items(recent), PartialEq::eq)
+    {
+        state.set_activity_recent(model);
+    }
+    state.set_activity_outcome(outcome.into());
+    state.set_activity_empty(empty.into());
     // Slint's int is 32 bits; wrapping still changes the value on every input.
     state.set_revision(core.revision() as i32);
+}
+
+/// A problem or an event as Activity shows it.
+fn activity_item_view(item: &ActivityItem) -> ActivityItemView {
+    let detail = item.detail.join("\n");
+    let button = item.action.as_ref();
+    ActivityItemView {
+        title: item.title.as_str().into(),
+        spoken: [
+            item.when.clone().unwrap_or_default(),
+            item.detail.join(" · "),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
+        .into(),
+        detail: detail.into(),
+        when: item.when.as_deref().unwrap_or_default().into(),
+        has_action: button.is_some(),
+        action_title: button
+            .map(|button| button.title.as_str())
+            .unwrap_or_default()
+            .into(),
+        action_available: button.is_some_and(|button| button.unavailable.is_none()),
+        action_reason: button
+            .and_then(|button| button.unavailable.as_deref())
+            .unwrap_or_default()
+            .into(),
+    }
 }
 
 /// A game as the Games section shows it. Its links and their choices go into the models `current`

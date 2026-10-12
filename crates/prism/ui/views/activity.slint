@@ -1,0 +1,207 @@
+import { Theme } from "../theme.slint";
+import { Button, Divider, PopupSurface, StyledText } from "../widgets.slint";
+import { ActivityItemView, ActivityList, AppState, Intents } from "../state.slint";
+
+// A problem or an event: its title, how long ago it happened and its button, then its lines. A
+// problem is marked in the danger color.
+component ActivityRow inherits Rectangle {
+    in property <ActivityItemView> item;
+    in property <bool> problem;
+    callback act();
+
+    accessible-role: list-item;
+    accessible-label: item.title;
+    accessible-description: item.spoken;
+
+    if root.problem: Rectangle {
+        x: 0;
+        width: Theme.stroke.selection;
+        background: Theme.color.danger;
+    }
+
+    VerticalLayout {
+        padding-top: Theme.space.m;
+        padding-bottom: Theme.space.m;
+        padding-left: Theme.stroke.selection + Theme.space.m;
+        spacing: Theme.space.xxs;
+
+        HorizontalLayout {
+            spacing: Theme.space.m;
+
+            StyledText {
+                text: item.title;
+                style: Theme.text.name;
+                overflow: elide;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+
+            if item.when != "": StyledText {
+                text: item.when;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                vertical-alignment: center;
+                horizontal-stretch: 0;
+                accessible-role: none;
+            }
+
+            if item.has-action: Button {
+                text: item.action-title;
+                label: item.action-title + " · " + item.title;
+                enabled: item.action-available;
+                description: item.action-reason;
+                activated => {
+                    root.act();
+                }
+            }
+        }
+
+        if item.detail != "": StyledText {
+            text: item.detail;
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            wrap: word-wrap;
+            accessible-role: none;
+        }
+    }
+}
+
+// One of Activity's lists under its label, such as PROBLEMS, with a rule between its rows.
+component ActivitySection inherits VerticalLayout {
+    in property <string> label;
+    in property <[ActivityItemView]> items;
+    in property <bool> problems;
+    callback act(index: int);
+
+    StyledText {
+        text: root.label;
+        style: Theme.text.label;
+        color: Theme.color.ink-muted;
+        accessible-role: none;
+    }
+
+    Rectangle {
+        accessible-role: list;
+        accessible-label: root.label;
+        height: rows.preferred-height;
+
+        rows := VerticalLayout {
+            for item[index] in root.items: VerticalLayout {
+                ActivityRow {
+                    item: item;
+                    problem: root.problems;
+                    act => {
+                        root.act(index);
+                    }
+                }
+
+                if index < root.items.length - 1: Divider { }
+            }
+        }
+    }
+}
+
+// Activity (Ctrl+Shift+A), over the content above the status bar's problem indicator: current
+// problems first, then startup outcomes not yet dismissed, then recent events, newest first.
+// Escape, Close or a click outside closes it.
+export component ActivityPanel inherits Rectangle {
+    // Clicks outside the panel close it.
+    TouchArea {
+        clicked => {
+            Intents.dismiss();
+        }
+    }
+
+    PopupSurface {
+        width: Theme.size.activity-width;
+        height: min(
+            Theme.size.activity-height,
+            parent.height - Theme.size.title-bar - Theme.size.status-bar - 2 * Theme.space.xl);
+        x: parent.width - self.width - Theme.space.xl;
+        y: parent.height - self.height - Theme.size.status-bar - Theme.space.m;
+        accessible-role: groupbox;
+        accessible-label: "Activity";
+
+        // Clicks inside the panel stay there.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space.xl;
+            spacing: Theme.space.m;
+
+            HorizontalLayout {
+                spacing: Theme.space.m;
+
+                StyledText {
+                    text: "Activity";
+                    style: Theme.text.heading;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                Button {
+                    text: "Close";
+                    description: "Esc";
+                    activated => {
+                        Intents.dismiss();
+                    }
+                }
+            }
+
+            if AppState.activity-outcome != "": StyledText {
+                text: AppState.activity-outcome;
+                style: Theme.text.body;
+                color: Theme.color.danger;
+                wrap: word-wrap;
+                accessible-label: "Problem";
+                accessible-value: AppState.activity-outcome;
+            }
+
+            Divider { }
+
+            if AppState.activity-empty != "": StyledText {
+                text: AppState.activity-empty;
+                style: Theme.text.body;
+                color: Theme.color.ink-muted;
+                wrap: word-wrap;
+            }
+
+            list := Flickable {
+                vertical-stretch: 1;
+                content-height: max(self.height, sections.preferred-height);
+
+                sections := VerticalLayout {
+                    height: list.content-height;
+                    alignment: start;
+                    spacing: 2 * Theme.space.m;
+
+                    if AppState.activity-problems.length > 0: ActivitySection {
+                        label: "PROBLEMS";
+                        items: AppState.activity-problems;
+                        problems: true;
+                        act(index) => {
+                            Intents.run-activity-action(ActivityList.problems, index);
+                        }
+                    }
+
+                    if AppState.activity-startup.length > 0: ActivitySection {
+                        label: "STARTUP";
+                        items: AppState.activity-startup;
+                        act(index) => {
+                            Intents.run-activity-action(ActivityList.startup, index);
+                        }
+                    }
+
+                    if AppState.activity-recent.length > 0: ActivitySection {
+                        label: "RECENT";
+                        items: AppState.activity-recent;
+                        act(index) => {
+                            Intents.run-activity-action(ActivityList.recent, index);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
