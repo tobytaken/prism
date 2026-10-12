@@ -246,6 +246,66 @@ fn the_review_and_the_close_confirmation_are_accessible() {
     harness.find(AccessibleRole::Button, "Discard and close");
 }
 
+#[test]
+fn the_profile_buttons_and_their_dialogs_are_accessible() {
+    let profiles: prism_protocol::ProfilesState = serde_json::from_str(include_str!(
+        "../../prism-protocol/tests/contracts/profiles-state.json"
+    ))
+    .unwrap();
+    let harness = tunable();
+    harness
+        .prismd
+        .push(DaemonEvent::ProfilesChanged(profiles.clone()));
+    harness.app.receive_posted();
+    audit("tunable, profiles", &harness);
+    harness.find(AccessibleRole::Button, "Apply profile Quiet");
+
+    harness
+        .find(AccessibleRole::Spinbox, "Power limit")
+        .set_accessible_value("450");
+    harness
+        .find(AccessibleRole::Button, "Apply profile Quiet")
+        .invoke_accessible_default_action();
+    audit("tunable, discard for a profile", &harness);
+    harness
+        .find(AccessibleRole::Button, "Discard and apply")
+        .invoke_accessible_default_action();
+
+    let unattempted = Some(prism_gpu::TuningOutcome {
+        status: prism_gpu::TuningOutcomeStatus::Unattempted,
+        error: Some("out of range".into()),
+    });
+    harness.prismd.answer(DaemonResponse::ProfileApplication(
+        prism_protocol::ProfileApplicationResponse {
+            rollback: None,
+            cooling: None,
+            power: unattempted.clone(),
+            graphics: unattempted.clone(),
+            memory: unattempted,
+            corrections: vec![prism_protocol::ProfileRangeCorrection::Numeric(
+                prism_protocol::NumericRangeCorrection {
+                    setting: prism_protocol::ProfileSettingKey::PowerLimitWatts,
+                    saved_value: 650,
+                    proposed_value: 600,
+                    bound: prism_protocol::RangeBound::Maximum,
+                },
+            )],
+        },
+    ));
+    harness.app.receive_posted();
+    audit("tunable, profile corrections", &harness);
+    harness.find(AccessibleRole::Button, "Adjust profile and apply");
+
+    let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::ReadOnly);
+    harness.prismd_tick(
+        SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
+    );
+    harness.prismd.push(DaemonEvent::ProfilesChanged(profiles));
+    harness.app.receive_posted();
+    audit("tunable, read-only profiles", &harness);
+    harness.find(AccessibleRole::Text, "Profiles");
+}
+
 /// Every `accessible-action-*` a widget or view declares, and the test below that invokes it.
 const ACTION_TESTS: &[(&str, &str, &str)] = &[
     (

@@ -7,7 +7,7 @@ use prism_ui::format::{Readout, UNKNOWN};
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
     AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanCurveEditor, FanModeControl,
-    Section as CoreSection, ServiceAction as CoreServiceAction,
+    ReviewChange, Section as CoreSection, ServiceAction as CoreServiceAction,
     SettingsSection as CoreSettingsSection, Stepper, Track, Tunable,
 };
 
@@ -61,10 +61,15 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         Content::NoGpus(_) => ContentKind::NoGpus,
         Content::Gpu(workspace) => {
             let changes = &workspace.changes;
+            let profiles = &workspace.profiles;
             state.set_workspace(WorkspaceView {
                 id: workspace.id.as_str().into(),
                 title: workspace.title.as_str().into(),
                 subtitle: workspace.subtitle.as_str().into(),
+                has_profiles: !profiles.choices.is_empty() || profiles.current.is_some(),
+                profiles_read_only: profiles.read_only.is_some(),
+                profiles_reason: profiles.read_only.as_deref().unwrap_or_default().into(),
+                current_profile: profiles.current.as_deref().unwrap_or("None").into(),
                 changes: ChangeStripView {
                     summary: changes.summary.as_str().into(),
                     pending: changes.pending,
@@ -107,10 +112,29 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                     label: range.command().into(),
                     selected: range == workspace.range,
                     unavailable_reason: SharedString::new(),
+                    mark: SharedString::new(),
                 })
                 .collect();
             if let Some(model) = update_in_place(&state.get_ranges(), ranges, PartialEq::eq) {
                 state.set_ranges(model);
+            }
+            let choices: Vec<_> = profiles
+                .choices
+                .iter()
+                .map(|choice| SegmentView {
+                    text: choice.name.as_str().into(),
+                    label: format!("Apply profile {}", choice.name).into(),
+                    selected: choice.current,
+                    unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
+                    mark: if choice.startup {
+                        "Startup profile".into()
+                    } else {
+                        SharedString::new()
+                    },
+                })
+                .collect();
+            if let Some(model) = update_in_place(&state.get_profiles(), choices, PartialEq::eq) {
+                state.set_profiles(model);
             }
             if let Some(model) = update_in_place(
                 &state.get_hardware_inventory(),
@@ -218,20 +242,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 can_discard: review.discard_unavailable.is_none(),
                 discard_reason: review.discard_unavailable.unwrap_or_default().into(),
             },
-            review
-                .changes
-                .iter()
-                .map(|change| ReviewChangeView {
-                    name: change.name.as_str().into(),
-                    change: change.change.as_str().into(),
-                    yours: change
-                        .yours
-                        .as_ref()
-                        .map(|yours| format!("Yours: {yours}"))
-                        .unwrap_or_default()
-                        .into(),
-                })
-                .collect(),
+            review.changes.iter().map(review_change).collect(),
         ),
         Some(Dialog::ConfirmClose(confirm)) => (
             DialogView {
@@ -241,6 +252,24 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 ..DialogView::default()
             },
             Vec::new(),
+        ),
+        Some(Dialog::DiscardForProfile(question)) => (
+            DialogView {
+                kind: DialogKind::DiscardForProfile,
+                title: question.title.into(),
+                message: question.message.into(),
+                ..DialogView::default()
+            },
+            Vec::new(),
+        ),
+        Some(Dialog::ProfileCorrections(review)) => (
+            DialogView {
+                kind: DialogKind::ProfileCorrections,
+                title: review.title.into(),
+                message: review.message.into(),
+                ..DialogView::default()
+            },
+            review.corrections.iter().map(review_change).collect(),
         ),
     };
     state.set_dialog(dialog);
@@ -255,6 +284,20 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     state.set_edit_hold(status.edit_hold);
     // Slint's int is 32 bits; wrapping still changes the value on every input.
     state.set_revision(core.revision() as i32);
+}
+
+/// A changed value as a review shows it, with what the draft stages for it, if anything.
+fn review_change(change: &ReviewChange) -> ReviewChangeView {
+    ReviewChangeView {
+        name: change.name.as_str().into(),
+        change: change.change.as_str().into(),
+        yours: change
+            .yours
+            .as_ref()
+            .map(|yours| format!("Yours: {yours}"))
+            .unwrap_or_default()
+            .into(),
+    }
 }
 
 /// A track as the view shows it. Its details and charts go into the models `current` has, if any,
@@ -403,6 +446,7 @@ fn fan_mode_view(
             label: choice.name.into(),
             selected: choice.selected,
             unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
+            mark: SharedString::new(),
         })
         .collect();
     let picked = fan_mode.modes.iter().find(|choice| choice.selected);
@@ -417,6 +461,7 @@ fn fan_mode_view(
                     label: choice.name.as_str().into(),
                     selected: choice.selected,
                     unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
+                    mark: SharedString::new(),
                 })
                 .collect()
         })

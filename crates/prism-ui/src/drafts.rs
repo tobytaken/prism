@@ -8,8 +8,8 @@ use prism_gpu::cooling::CoolingConfiguration;
 use prism_gpu::{GpuCommandErrorCode, TuningOutcome, TuningOutcomeStatus};
 use prism_protocol::{
     ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, GpuTuningState,
-    ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings,
-    ReportedTuningValues, SetEditHoldsRequest,
+    ProfileApplicationResponse, ProfileRangeCorrection, ProfileSetting, ProfileSettingKey,
+    ProfileSettings, ReportedTuningValues, SetEditHoldsRequest,
 };
 
 use crate::cooling::{cooling_read, cooling_text};
@@ -89,6 +89,14 @@ pub(crate) struct Drafts {
     next_command: u64,
 }
 
+impl Drafts {
+    /// A new id for a command sent to prismd, for telling its answer apart.
+    pub(crate) fn next_command(&mut self) -> CommandId {
+        self.next_command += 1;
+        CommandId(self.next_command)
+    }
+}
+
 /// A dialog over the whole window, which takes the keyboard until it's answered or dismissed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DialogState {
@@ -100,6 +108,15 @@ pub(crate) enum DialogState {
     },
     /// Closing with unapplied tuning changes: discard them and close, or keep editing.
     ConfirmClose,
+    /// Applying the profile would discard the unapplied tuning changes on its GPU: discard them
+    /// and apply it, or keep editing.
+    DiscardForProfile { profile_id: String },
+    /// Applying the profile needs every one of these range corrections: adjust the profile and
+    /// apply it, or cancel, which changes nothing.
+    ProfileCorrections {
+        profile_id: String,
+        corrections: Vec<ProfileRangeCorrection>,
+    },
 }
 
 /// A current tuning value that changed under a draft.
@@ -282,6 +299,8 @@ impl Core {
         staged: Staged,
         edit: impl FnOnce(&mut Draft),
     ) -> Vec<Effect> {
+        // What a profile application said no longer holds once the GPU is edited again.
+        self.profile_outcomes.remove(&id);
         let (revision, base) = match self.tuning.get(&id) {
             Some(state) => (state.revision.clone(), Some(state.reported.clone())),
             None => (String::new(), None),
@@ -352,11 +371,10 @@ impl Core {
             }
             follow(draft, &state);
         }
+        let command = self.drafts.next_command();
         let Some(draft) = self.drafts.by_gpu.get(&id) else {
             return Vec::new();
         };
-        self.drafts.next_command += 1;
-        let command = CommandId(self.drafts.next_command);
         let request = DaemonRequest::ApplyProfile(ApplyGpuProfileRequest {
             gpu_id: id.clone(),
             settings: draft.settings.clone(),
@@ -398,6 +416,9 @@ impl Core {
     /// unapplied, and why, and a refusal for review opens one. The values in effect come only from
     /// prismd's events.
     pub(crate) fn answered(&mut self, command: CommandId, response: DaemonResponse) -> Vec<Effect> {
+        if self.profile_answered(command, &response) {
+            return Vec::new();
+        }
         let Some(id) = self
             .drafts
             .applying

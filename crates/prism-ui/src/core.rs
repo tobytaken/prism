@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use prism_protocol::{
     DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GpuCoolingControl, GpuTuningState,
-    Incompatible, ProfileSettingKey, Welcome,
+    Incompatible, ProfileSettingKey, ProfilesState, Welcome,
 };
 
 use crate::cooling::FanMode;
@@ -16,6 +16,7 @@ use crate::drafts::{DialogState, Drafts};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
 use crate::notifications::{Notification, NotificationId, Notifications, Subject};
 use crate::palette::{Command, PaletteState, Shortcut};
+use crate::profiles::ProfileApplying;
 use crate::telemetry::{Readings, TelemetryHistory, TelemetryRange};
 
 /// The user's choice of System, Light or Dark; System follows the desktop's preference.
@@ -364,6 +365,12 @@ pub enum Intent {
     },
     /// Collapse the fan curve editor, or open it again.
     ToggleFanCurve,
+    /// Apply this profile, by id, at once: unless its GPU has unapplied tuning changes, which
+    /// Prism first asks to discard.
+    ApplyProfile(String),
+    /// Answer the open profile dialog: discard the GPU's unapplied tuning changes and apply the
+    /// profile, or adjust the profile's out-of-range values and apply it.
+    ConfirmProfile,
     /// Send the selected GPU's unapplied tuning changes to prismd as one Apply.
     ApplyChanges,
     /// Drop the selected GPU's unapplied tuning changes.
@@ -455,6 +462,14 @@ pub struct Core {
     /// session.
     pub(crate) cooling: BTreeMap<String, GpuCoolingControl>,
     pub(crate) drafts: Drafts,
+    /// The caller's profiles, with each GPU's startup and current profile, as prismd last pushed
+    /// them, while there is a session.
+    pub(crate) profiles: ProfilesState,
+    /// The profile application waiting for prismd's answer, on each GPU that has one.
+    pub(crate) profile_applications: BTreeMap<String, ProfileApplying>,
+    /// What the latest profile application on each GPU put into effect and what it left, until
+    /// the GPU is edited or another profile is chosen.
+    pub(crate) profile_outcomes: BTreeMap<String, String>,
     /// The dialog over the window, while one is open.
     pub(crate) dialog: Option<DialogState>,
     revision: u64,
@@ -608,6 +623,7 @@ impl Core {
                     .into_iter()
                     .map(|control| (control.gpu_id.clone(), control))
                     .collect();
+                self.profiles = snapshot.profiles;
                 let mut effects = vec![Effect::SendToPrismd(DaemonRequest::SubscribeTelemetry)];
                 // The new session holds edits only once told.
                 effects.extend(self.sync_edit_holds());
@@ -634,6 +650,7 @@ impl Core {
                 self.tuning.clear();
                 self.cooling.clear();
                 self.drafts_lost_session();
+                self.profiles_lost_session();
                 let mut effects = Vec::new();
                 if !std::mem::replace(&mut self.sampling, true) {
                     effects.push(Effect::StartSampler);
@@ -688,9 +705,9 @@ impl Core {
                     DaemonEvent::CoolingControlChanged(control) => {
                         self.cooling.insert(control.gpu_id.clone(), control);
                     }
+                    DaemonEvent::ProfilesChanged(profiles) => self.profiles = profiles,
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)
-                    | DaemonEvent::ProfilesChanged(_)
                     | DaemonEvent::RunningGamesChanged(_)
                     | DaemonEvent::AutomaticSwitchingChanged(_) => {}
                 }
@@ -890,6 +907,8 @@ impl Core {
                 speed_by,
             } => self.move_curve_point(point, temperature_by, speed_by),
             Intent::ToggleFanCurve => self.toggle_fan_curve(),
+            Intent::ApplyProfile(profile_id) => self.perform(Command::ApplyProfile(profile_id)),
+            Intent::ConfirmProfile => self.confirm_profile(),
             Intent::ApplyChanges => self.perform(Command::ApplyChanges),
             Intent::DiscardChanges => self.perform(Command::DiscardChanges),
             Intent::DiscardAndClose => self.quit(),
@@ -947,6 +966,7 @@ impl Core {
             Command::ApplyChanges => self.apply_changes(),
             Command::DiscardChanges => self.discard_changes(),
             Command::RecallRememberedCurve => self.recall_remembered_curve(),
+            Command::ApplyProfile(profile_id) => self.choose_profile(profile_id),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }

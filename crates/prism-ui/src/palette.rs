@@ -25,6 +25,9 @@ pub(crate) enum Command {
     DiscardChanges,
     /// Stage the selected GPU's remembered fan curve, with its fan arrangement.
     RecallRememberedCurve,
+    /// Apply this profile of the selected GPU, by id, asking first as choosing it in the header
+    /// does.
+    ApplyProfile(String),
     Quit,
 }
 
@@ -213,6 +216,9 @@ impl Core {
                 !matches!(command, Command::ApplyChanges | Command::DiscardChanges)
             }
             Some(DialogState::ConfirmClose) => *command != Command::Quit,
+            Some(
+                DialogState::DiscardForProfile { .. } | DialogState::ProfileCorrections { .. },
+            ) => true,
         }
     }
 
@@ -272,6 +278,9 @@ impl Core {
         if let Command::RecallRememberedCurve = command {
             return self.recall_unavailable();
         }
+        if let Command::ApplyProfile(profile_id) = command {
+            return self.profile_unavailable(profile_id);
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
@@ -285,6 +294,7 @@ impl Core {
             | Command::ApplyChanges
             | Command::DiscardChanges
             | Command::RecallRememberedCurve
+            | Command::ApplyProfile(_)
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
@@ -365,6 +375,18 @@ impl Core {
         ]
         .into_iter()
         .filter(|_| matches!(self.selection, Some(Selection::Gpu(_))));
+        // The selected GPU's profiles; another GPU's are applied from its own workspace.
+        let selected = self.selected_gpu();
+        let profiles = selected
+            .iter()
+            .flat_map(|gpu_id| self.profiles_of(gpu_id))
+            .map(|profile| {
+                (
+                    Command::ApplyProfile(profile.id.clone()),
+                    format!("Apply profile {}", profile.name),
+                    None,
+                )
+            });
         // Telemetry ranges only matter while there are GPUs to chart.
         let ranges = TelemetryRange::ALL
             .into_iter()
@@ -387,6 +409,7 @@ impl Core {
             .chain(sections)
             .chain(settings)
             .chain(tuning)
+            .chain(profiles)
             .chain(ranges)
             .chain(prismd)
             .chain(app)

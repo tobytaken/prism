@@ -115,3 +115,68 @@ export component CloseDialog inherits Dialog {
         }
     }
 }
+
+// Choosing a profile over the GPU's unapplied tuning changes: "Discard N unapplied changes and
+// apply Quiet?", then Discard and apply, or Keep editing, which Escape also does.
+export component DiscardForProfileDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    Actions {
+        Button {
+            text: "Discard and apply";
+            kind: ButtonKind.quiet;
+            activated => {
+                Intents.confirm-profile();
+            }
+        }
+
+        Button {
+            text: "Keep editing";
+            kind: ButtonKind.accent;
+            init => {
+                self.focus();
+            }
+            activated => {
+                Intents.dismiss();
+            }
+        }
+    }
+}
+
+// A profile's values outside what the GPU allows now: each from its saved value to the one it
+// would become, then Cancel, which Escape also does and which changes nothing, or Adjust profile
+// and apply.
+export component ProfileCorrectionsDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    VerticalLayout {
+        spacing: Theme.space.xs;
+
+        for change in AppState.review-changes: Change {
+            change: change;
+        }
+    }
+
+    Actions {
+        Button {
+            text: "Cancel";
+            kind: ButtonKind.quiet;
+            activated => {
+                Intents.dismiss();
+            }
+        }
+
+        Button {
+            text: "Adjust profile and apply";
+            kind: ButtonKind.accent;
+            init => {
+                self.focus();
+            }
+            activated => {
+                Intents.confirm-profile();
+            }
+        }
+    }
+}

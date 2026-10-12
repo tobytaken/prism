@@ -296,6 +296,100 @@ mod screenshot {
         review(AppearanceMode::Dark, "review-dark");
     }
 
+    /// The workspace with the GPU's profiles in its header: Boost current and Quiet, the startup
+    /// profile, with its dot.
+    fn profiles_workspace(appearance: AppearanceMode) -> Harness {
+        let harness = tunable_workspace(appearance);
+        harness
+            .prismd
+            .push(prism_protocol::DaemonEvent::ProfilesChanged(
+                serde_json::from_str(include_str!(
+                    "../../prism-protocol/tests/contracts/profiles-state.json"
+                ))
+                .unwrap(),
+            ));
+        harness.app.receive_posted();
+        harness
+    }
+
+    fn profiles(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = profiles_workspace(appearance);
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn the_workspace_with_profiles_in_light() {
+        profiles(AppearanceMode::Light, "workspace-profiles-light");
+    }
+
+    #[test]
+    fn the_workspace_with_profiles_in_dark() {
+        profiles(AppearanceMode::Dark, "workspace-profiles-dark");
+    }
+
+    /// The one review of a profile's out-of-range values: Cancel, Adjust profile and apply.
+    fn profile_corrections(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = profiles_workspace(appearance);
+        harness
+            .find(AccessibleRole::Button, "Apply profile Quiet")
+            .invoke_accessible_default_action();
+        let unattempted = Some(prism_gpu::TuningOutcome {
+            status: prism_gpu::TuningOutcomeStatus::Unattempted,
+            error: Some("out of range".into()),
+        });
+        let correction = |setting, saved_value, proposed_value, bound| {
+            prism_protocol::ProfileRangeCorrection::Numeric(
+                prism_protocol::NumericRangeCorrection {
+                    setting,
+                    saved_value,
+                    proposed_value,
+                    bound,
+                },
+            )
+        };
+        harness
+            .prismd
+            .answer(prism_protocol::DaemonResponse::ProfileApplication(
+                prism_protocol::ProfileApplicationResponse {
+                    rollback: None,
+                    cooling: None,
+                    power: unattempted.clone(),
+                    graphics: unattempted.clone(),
+                    memory: unattempted,
+                    corrections: vec![
+                        correction(
+                            prism_protocol::ProfileSettingKey::PowerLimitWatts,
+                            650,
+                            600,
+                            prism_protocol::RangeBound::Maximum,
+                        ),
+                        correction(
+                            prism_protocol::ProfileSettingKey::GraphicsOffsetMhz,
+                            -1200,
+                            -1000,
+                            prism_protocol::RangeBound::Minimum,
+                        ),
+                    ],
+                },
+            ));
+        harness.app.receive_posted();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn the_profile_correction_review_in_light() {
+        profile_corrections(AppearanceMode::Light, "profile-corrections-light");
+    }
+
+    #[test]
+    fn the_profile_correction_review_in_dark() {
+        profile_corrections(AppearanceMode::Dark, "profile-corrections-dark");
+    }
+
     /// Closing with unapplied changes: "1 unapplied change", Discard and close, Keep editing.
     fn close_confirmation(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();

@@ -129,6 +129,8 @@ export struct Sizes {
     short-workspace: length,
     // A range picker's segment, and the key next to a detail that says how its line is drawn.
     segment: length,
+    // The dot after a segment's text that marks it, such as the startup profile's.
+    segment-mark: length,
     swatch: length,
     // The marker that says whether a collapsible part is open.
     disclosure-icon: length,
@@ -279,6 +281,7 @@ export global Theme {
         narrow-workspace: 900px,
         short-workspace: 600px,
         segment: 22px,
+        segment-mark: 5px,
         swatch: 12px,
         disclosure-icon: 8px,
         explained-state: 420px,
