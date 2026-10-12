@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Area, Button, CurveLine, DisclosureMarker, Divider, Grid, LimitLine, LinkButton, PressArea, Segmented, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
-import { AppState, ChartPart, ChartView, CurvePart, CurvePointView, DetailView, FanCurveView, FanModeView, Intents, LimitMark, ReadoutView, StepperView, TrackView, TuningSetting } from "../state.slint";
+import { AppState, ChartPart, ChartView, CoolingProblemView, CurvePart, CurvePointView, DetailView, FanCurveView, FanModeView, Intents, LimitMark, ReadoutView, StepperView, TrackView, TuningSetting } from "../state.slint";
 
 component Statistic inherits Rectangle {
     in property <string> name;
@@ -245,12 +245,11 @@ component FanMode inherits VerticalLayout {
 // control, with Retry or Resume, and why prismd didn't apply the latest one. It's marked in the
 // danger color, as Activity marks problems.
 component CoolingProblem inherits Rectangle {
-    in property <FanModeView> fan-mode;
-    in property <string> gpu-id;
+    in property <CoolingProblemView> problem;
 
     accessible-role: groupbox;
-    accessible-label: root.fan-mode.problem-title;
-    accessible-description: root.fan-mode.problem-detail;
+    accessible-label: root.problem.title;
+    accessible-description: root.problem.detail;
 
     Divider {
         y: 0;
@@ -273,7 +272,7 @@ component CoolingProblem inherits Rectangle {
             spacing: Theme.space.m;
 
             StyledText {
-                text: root.fan-mode.problem-title;
+                text: root.problem.title;
                 style: Theme.text.name;
                 color: Theme.color.danger;
                 vertical-alignment: center;
@@ -282,32 +281,32 @@ component CoolingProblem inherits Rectangle {
             }
 
             Button {
-                text: root.fan-mode.problem-action;
-                label: root.fan-mode.problem-action + " · " + root.fan-mode.problem-title;
-                enabled: root.fan-mode.problem-available;
-                description: root.fan-mode.problem-reason;
+                text: root.problem.action;
+                label: root.problem.action + " · " + root.problem.title;
+                enabled: root.problem.available;
+                description: root.problem.reason;
                 activated => {
-                    Intents.retry-cooling(root.gpu-id);
+                    Intents.retry-cooling(AppState.workspace.id);
                 }
             }
         }
 
         StyledText {
-            text: root.fan-mode.problem-detail;
+            text: root.problem.detail;
             style: Theme.text.value;
             color: Theme.color.ink-muted;
             wrap: word-wrap;
             accessible-role: none;
         }
 
-        if root.fan-mode.problem-outcome != "": StyledText {
-            text: root.fan-mode.problem-outcome;
+        if root.problem.outcome != "": StyledText {
+            text: root.problem.outcome;
             style: Theme.text.value;
             color: Theme.color.danger;
             wrap: word-wrap;
             accessible-role: text;
             accessible-label: "Outcome";
-            accessible-value: root.fan-mode.problem-outcome;
+            accessible-value: root.problem.outcome;
         }
     }
 }
@@ -640,8 +639,6 @@ component CurveToggle inherits Rectangle {
 // shorter.
 export component Track inherits Rectangle {
     in property <TrackView> track;
-    // The GPU whose track it is, by id.
-    in property <string> gpu-id;
     in property <bool> narrow;
     in property <bool> short;
     property <bool> shows-fan-curve: root.track.has-fan-curve && root.track.fan-curve.open;
@@ -838,8 +835,7 @@ export component Track inherits Rectangle {
             vertical-stretch: 0;
 
             if root.track.has-fan-mode && root.track.fan-mode.has-problem: CoolingProblem {
-                fan-mode: root.track.fan-mode;
-                gpu-id: root.gpu-id;
+                problem: root.track.fan-mode.problem;
             }
         }
     }

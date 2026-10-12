@@ -118,6 +118,9 @@ pub struct GpuWorkspace {
     /// One track per metric, top to bottom in [`TrackKind::ALL`]'s order.
     pub tracks: Vec<Track>,
     pub hardware: HardwareDetails,
+    /// Changes each time the workspace should scroll its Fans track into view, such as when a
+    /// notification about the GPU's failure pause was clicked.
+    pub reveal_fans: u64,
 }
 
 impl GpuWorkspace {
@@ -1059,6 +1062,7 @@ impl Core {
                 inventory: inventory_facts(&gpu.device),
                 capabilities: capability_facts(gpu),
             },
+            reveal_fans: self.fans_revealed,
         }
     }
 

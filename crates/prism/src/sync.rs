@@ -6,19 +6,19 @@ use prism_protocol::ProfileSettingKey;
 use prism_ui::format::{Readout, UNKNOWN};
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    ActivityItem, AppearanceMode as CoreAppearance, Content, Core, Dialog, Fact, FanCurveEditor,
-    FanModeControl, GameRow, ReviewChange, Section as CoreSection,
+    ActivityItem, AppearanceMode as CoreAppearance, Content, CoolingProblem, Core, Dialog, Fact,
+    FanCurveEditor, FanModeControl, GameRow, ReviewChange, Section as CoreSection,
     ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Stepper, Track,
     Tunable,
 };
 
 use crate::{
     ActivityItemView, AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind,
-    CurvePointView, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView,
-    FanCurveView, FanModeView, GameLinkView, GameView, GamesView, LimitMark, MainWindow,
-    ManagedProfileView, MenuEntryView, PaletteEntryView, ProgramView, ReadoutView,
-    ReviewChangeView, SegmentView, ServiceAction, SettingsSection, SidebarGpuView, SteamAppView,
-    StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
+    CoolingProblemView, CurvePointView, DaemonView, DetailView, DialogKind, DialogView,
+    ExplainedStateView, FactView, FanCurveView, FanModeView, GameLinkView, GameView, GamesView,
+    LimitMark, MainWindow, ManagedProfileView, MenuEntryView, PaletteEntryView, ProgramView,
+    ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection, SidebarGpuView,
+    SteamAppView, StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -98,6 +98,8 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                     .unwrap_or_default()
                     .into(),
                 hardware_open: workspace.hardware.open,
+                // Slint's int is 32 bits; wrapping still changes the value with every request.
+                reveal_fans: workspace.reveal_fans as i32,
             });
             let current = state.get_tracks();
             let tracks: Vec<_> = workspace
@@ -723,7 +725,6 @@ fn fan_mode_view(
                 .collect()
         })
         .unwrap_or_default();
-    let problem = fan_mode.problem.as_ref();
     let (current_modes, current_fans) = match current {
         Some(current) => (Some(current.modes), Some(current.fans)),
         None => (None, None),
@@ -751,28 +752,24 @@ fn fan_mode_view(
             .into(),
         fans: reuse(current_fans, fans),
         can_recall: fan_mode.can_recall,
-        has_problem: problem.is_some(),
-        problem_title: problem
-            .map(|problem| problem.title.as_str())
-            .unwrap_or_default()
-            .into(),
-        problem_detail: problem
-            .map(|problem| problem.detail.join(" "))
-            .unwrap_or_default()
-            .into(),
-        problem_action: problem
-            .map(|problem| problem.action.as_str())
-            .unwrap_or_default()
-            .into(),
-        problem_available: problem.is_some_and(|problem| problem.unavailable.is_none()),
-        problem_reason: problem
-            .and_then(|problem| problem.unavailable.as_deref())
-            .unwrap_or_default()
-            .into(),
-        problem_outcome: problem
-            .and_then(|problem| problem.outcome.as_deref())
-            .unwrap_or_default()
-            .into(),
+        has_problem: fan_mode.problem.is_some(),
+        problem: fan_mode
+            .problem
+            .as_ref()
+            .map(cooling_problem_view)
+            .unwrap_or_default(),
+    }
+}
+
+/// Why Prism stopped following a GPU's fan curve, as the Fans track shows it.
+fn cooling_problem_view(problem: &CoolingProblem) -> CoolingProblemView {
+    CoolingProblemView {
+        title: problem.title.as_str().into(),
+        detail: problem.detail.join(" ").into(),
+        action: problem.action.as_str().into(),
+        available: problem.unavailable.is_none(),
+        reason: problem.unavailable.as_deref().unwrap_or_default().into(),
+        outcome: problem.outcome.as_deref().unwrap_or_default().into(),
     }
 }
 

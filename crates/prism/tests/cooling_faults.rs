@@ -238,3 +238,28 @@ fn a_cooling_fault_notifies_while_unfocused_and_the_click_opens_the_fans_track()
     assert_eq!(harness.count(Groupbox, "Fans"), 1);
     assert_eq!(harness.count(Groupbox, "Fan curve paused"), 1);
 }
+
+#[test]
+fn the_click_scrolls_the_fans_track_into_view_in_a_short_window() {
+    let harness = connected();
+    harness.resize(support::MINIMUM_SIZE);
+    harness.activation.set_focused(false);
+    harness.ctrl_shift("g");
+    push(&harness, suspended(SuspensionKind::Fault));
+    let [notification] = harness.notifier.sent().try_into().unwrap();
+
+    harness.notifier.click(notification.id, None);
+    harness.tick();
+    // The workspace shown anew scrolls once it's laid out, as drawing it does.
+    assert_eq!(harness.count(Groupbox, "Fans"), 1);
+    harness.tick();
+
+    let retry = harness.find(Button, "Retry · Fan curve paused");
+    let status_bar = harness.find(Button, "1 PROBLEM");
+    let bottom = retry.absolute_position().y + retry.size().height;
+    assert!(
+        bottom <= status_bar.absolute_position().y,
+        "Retry ends at {bottom}, under the status bar at {}",
+        status_bar.absolute_position().y
+    );
+}

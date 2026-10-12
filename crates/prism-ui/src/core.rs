@@ -497,6 +497,8 @@ pub struct Core {
     /// The fan the cooling controls show and set on their own, by index, until every fan is
     /// picked again.
     pub(crate) picked_fan: Option<u32>,
+    /// How many times the workspace was asked to bring its Fans track into view.
+    pub(crate) fans_revealed: u64,
     pub(crate) palette: Option<PaletteState>,
     /// Commands run lately, the latest first.
     pub(crate) recent: Vec<Command>,
@@ -852,7 +854,11 @@ impl Core {
                     Some(Subject::Prismd) => {
                         self.perform(Command::GoToSettings(SettingsSection::Daemon))
                     }
-                    Some(Subject::Gpu(id)) => self.perform(Command::GoToGpu(id)),
+                    // About its failure pause, which the Fans track explains.
+                    Some(Subject::Gpu(id)) => {
+                        self.fans_revealed += 1;
+                        self.perform(Command::GoToGpu(id))
+                    }
                     // Withdrawn on its way in: the window is still what the user asked for.
                     None => Vec::new(),
                 };

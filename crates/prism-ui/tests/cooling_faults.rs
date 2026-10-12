@@ -403,6 +403,24 @@ fn the_palette_offers_retry_for_a_gpu_with_a_cooling_fault() {
 }
 
 #[test]
+fn retry_is_unavailable_while_prism_has_no_configuration_to_apply_again() {
+    let mut core = connected();
+    push(
+        &mut core,
+        GpuCoolingControl {
+            applied: None,
+            ..fault()
+        },
+    );
+
+    assert_eq!(
+        inline(&core).unwrap().unavailable.as_deref(),
+        Some("Prism has no cooling configuration to apply again")
+    );
+    assert_eq!(retry(&mut core), []);
+}
+
+#[test]
 fn retry_needs_tuning_access() {
     let mut core = connected_with(false);
     push(&mut core, fault());
@@ -478,6 +496,10 @@ fn a_cooling_fault_notifies_while_unfocused_and_clicking_opens_the_gpu() {
         format!("{REASON} Prism returned its fans to automatic cooling.")
     );
 
+    let before = match core.content() {
+        Content::Gpu(workspace) => workspace.reveal_fans,
+        _ => 0,
+    };
     let effects = core.handle(Input::NotificationClicked {
         id: notification.id,
         activation_token: Some("token".into()),
@@ -487,6 +509,14 @@ fn a_cooling_fault_notifies_while_unfocused_and_clicking_opens_the_gpu() {
         activation_token: Some("token".into())
     }));
     assert!(inline(&core).is_some(), "Prism shows the GPU's Fans track");
+    let Content::Gpu(workspace) = core.content() else {
+        panic!("expected the GPU workspace")
+    };
+    assert_eq!(
+        workspace.reveal_fans,
+        before + 1,
+        "and scrolls it into view"
+    );
 }
 
 #[test]

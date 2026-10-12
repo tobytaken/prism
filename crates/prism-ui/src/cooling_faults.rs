@@ -30,34 +30,46 @@ pub(crate) struct CoolingFaults {
     outcomes: BTreeMap<String, String>,
 }
 
-/// What a suspension's button is called and does, as one word.
-fn verb(suspension: &CurveSuspension) -> &'static str {
-    match suspension.kind {
-        SuspensionKind::Fault => "Retry",
-        SuspensionKind::ExternalControl => "Resume",
-    }
+/// How Prism words a suspension of one kind.
+struct Wording {
+    /// Such as "Fan curve paused".
+    title: &'static str,
+    /// What the button is called and does: "Retry" or "Resume".
+    verb: &'static str,
+    /// What the button says while prismd hasn't answered it.
+    waiting: &'static str,
+    /// What prismd's refusal says.
+    refused: &'static str,
+    /// What brings the curve back.
+    next: &'static str,
 }
 
-fn title(suspension: &CurveSuspension) -> &'static str {
-    match suspension.kind {
-        SuspensionKind::Fault => "Fan curve paused",
-        SuspensionKind::ExternalControl => "Fan curve suspended",
+fn wording(kind: SuspensionKind) -> Wording {
+    match kind {
+        SuspensionKind::Fault => Wording {
+            title: "Fan curve paused",
+            verb: "Retry",
+            waiting: "Retrying…",
+            refused: "Not retried",
+            next: "Prism kept the curve, but won't follow it again until you retry.",
+        },
+        SuspensionKind::ExternalControl => Wording {
+            title: "Fan curve suspended",
+            verb: "Resume",
+            waiting: "Resuming…",
+            refused: "Not resumed",
+            next: "Prism left the other tool's fan control alone. Resume when you want Prism to \
+                   follow the curve again.",
+        },
     }
 }
 
 /// Why the curve stopped, how each fan fell back, and what brings the curve back.
 fn explained(suspension: &CurveSuspension) -> Vec<String> {
-    let next = match suspension.kind {
-        SuspensionKind::Fault => "Prism kept the curve, but won't follow it again until you retry.",
-        SuspensionKind::ExternalControl => {
-            "Prism left the other tool's fan control alone. Resume when you want Prism to follow \
-             the curve again."
-        }
-    };
     [sentence(&suspension.reason)]
         .into_iter()
         .chain(suspension.restoration.iter().map(fallback))
-        .chain([next.to_owned()])
+        .chain([wording(suspension.kind).next.to_owned()])
         .collect()
 }
 
@@ -89,10 +101,11 @@ impl Core {
     /// The GPU's suspended fan curve as the Fans track explains it, if Prism stopped following it.
     pub(crate) fn cooling_problem(&self, gpu_id: &str) -> Option<CoolingProblem> {
         let suspension = self.suspension(gpu_id)?;
+        let wording = wording(suspension.kind);
         Some(CoolingProblem {
-            title: title(suspension).into(),
+            title: wording.title.into(),
             detail: explained(suspension),
-            action: verb(suspension).into(),
+            action: wording.verb.into(),
             unavailable: self.retry_unavailable(gpu_id),
             outcome: self.cooling_faults.outcomes.get(gpu_id).cloned(),
         })
@@ -131,7 +144,11 @@ impl Core {
                 let suspension = self.suspension(&gpu.id)?;
                 Some((
                     Command::RetryCooling(gpu.id.clone()),
-                    format!("{} {}", verb(suspension), gpu_label(index, gpu)),
+                    format!(
+                        "{} {}",
+                        wording(suspension.kind).verb,
+                        gpu_label(index, gpu)
+                    ),
                 ))
             })
             .collect()
@@ -142,6 +159,14 @@ impl Core {
         let Some(suspension) = self.suspension(gpu_id) else {
             return Some("Prism follows the fan curve".into());
         };
+        if self
+            .cooling
+            .get(gpu_id)
+            .and_then(|control| control.applied.as_ref())
+            .is_none()
+        {
+            return Some("Prism has no cooling configuration to apply again".into());
+        }
         if let Some(reason) = self.tuning_access().reason() {
             return Some(format!("Needs tuning access · {reason}"));
         }
@@ -150,10 +175,7 @@ impl Core {
             return Some(reason);
         }
         if self.cooling_faults.retrying.values().any(|id| id == gpu_id) {
-            return Some(match suspension.kind {
-                SuspensionKind::Fault => "Retrying…".into(),
-                SuspensionKind::ExternalControl => "Resuming…".into(),
-            });
+            return Some(wording(suspension.kind).waiting.into());
         }
         if self.applying(gpu_id) {
             return Some("Applying…".into());
@@ -217,10 +239,11 @@ impl Core {
             _ => None,
         };
         if let Some(why) = why {
-            let what = match self.suspension(&gpu_id).map(|suspension| suspension.kind) {
-                Some(SuspensionKind::ExternalControl) => "Not resumed",
-                _ => "Not retried",
-            };
+            let kind = self
+                .suspension(&gpu_id)
+                .map(|suspension| suspension.kind)
+                .unwrap_or_default();
+            let what = wording(kind).refused;
             let why = (!why.is_empty()).then_some(why.as_str());
             self.cooling_faults
                 .outcomes
