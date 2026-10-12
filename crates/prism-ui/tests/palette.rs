@@ -19,6 +19,7 @@ fn launched(fixture: SimulatedFixture) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     let gpus = SimulatedGpus::new(fixture, || Duration::ZERO);
     core.handle(Input::InventoryRead(gpus.inventory()));
@@ -89,6 +90,7 @@ fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_tuning_r
             "Go to Settings: Notifications",
             "Go to Settings: Daemon",
             "Go to Settings: About",
+            "Open Activity",
             "Apply unapplied changes",
             "Discard unapplied changes",
             "Recall remembered fan curve",
@@ -133,6 +135,7 @@ fn each_command_shows_its_shortcut() {
             "",
             "",
             "",
+            "Ctrl+Shift+A",
             "Ctrl+Enter",
             "Ctrl+Shift+Backspace",
             // Recall remembered fan curve and the profile actions.
@@ -305,6 +308,7 @@ fn recently_run_commands_come_first() {
             "Go to Settings: Notifications",
             "Go to Settings: Daemon",
             "Go to Settings: About",
+            "Open Activity",
             "Turn automatic switching on",
             "Add Steam game…",
             "Add program…",
@@ -349,6 +353,7 @@ fn gpu_and_range_commands_are_left_out_when_the_host_has_no_gpus() {
             "Go to Settings: Notifications",
             "Go to Settings: Daemon",
             "Go to Settings: About",
+            "Open Activity",
             "Turn automatic switching on",
             "Add Steam game…",
             "Add program…",
@@ -368,7 +373,7 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 27);
+    assert_eq!(titles(&core).len(), 28);
 }
 
 #[test]

@@ -515,6 +515,44 @@ mod screenshot {
         games(AppearanceMode::Dark, "games-dark");
     }
 
+    /// Activity over the workspace: a startup outcome that applied in part, then prismd's recent
+    /// events.
+    fn activity(appearance: AppearanceMode, name: &str) {
+        use prism_protocol::{ActivityEntry, DaemonEvent, StartupState};
+
+        init_rendering_backend();
+        let harness = profiles_workspace(appearance);
+        let mut startup: StartupState = serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/startup-state.json"
+        ))
+        .unwrap();
+        startup.outcomes[0].gpu_id = "GPU-5a1b0000-0000-4000-8000-000000000001".into();
+        let entries: Vec<ActivityEntry> = serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/activity-entries.json"
+        ))
+        .unwrap();
+        harness
+            .prismd
+            .push(DaemonEvent::StartupStateChanged(startup));
+        for entry in entries {
+            harness.prismd.push(DaemonEvent::ActivityRecorded(entry));
+        }
+        harness.app.receive_posted();
+        harness.ctrl_shift("a");
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn activity_in_light() {
+        activity(AppearanceMode::Light, "activity-light");
+    }
+
+    #[test]
+    fn activity_in_dark() {
+        activity(AppearanceMode::Dark, "activity-dark");
+    }
+
     /// Add Steam game over Games, with Dota 2 and Portal 2 already added.
     fn add_steam_game(appearance: AppearanceMode, name: &str) {
         use prism_protocol::{DaemonResponse, SteamApp};

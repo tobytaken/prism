@@ -265,6 +265,7 @@ impl Switching {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         boot_dir: &Path,
         boot_id: &str,

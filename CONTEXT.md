@@ -230,6 +230,16 @@ _Avoid_: Driver loaded, verified installation
 A driver job outcome indicating that package operations finished with user completion work outstanding, such as firmware key enrollment, in addition to a reboot.
 _Avoid_: Failed job, fully completed installation
 
+### Activity
+
+**Activity**:
+The record of what prismd and Prism did during the current host boot, such as profile applications, automatic switches and startup outcomes, including what prismd did while Prism was closed; each user sees their own entries and the host-wide ones, and it's cleared when the host restarts.
+_Avoid_: Log, history, notifications
+
+**Problem**:
+A current condition that needs the user's attention, such as an unhealthy tuning store or a startup outcome that didn't apply in full, shown in Activity with its action and counted by the status bar's problem indicator; it lasts until the condition ends or the user dismisses it, unlike an Activity entry, which records something that happened.
+_Avoid_: Error, alert, warning
+
 ### Appearance
 
 **Appearance mode**:

@@ -468,6 +468,7 @@ impl Core {
         if self.profile_answered(command, &response)
             || self.profile_command_answered(command, &response)
             || self.game_answered(command, &response)
+            || self.activity_answered(command, &response)
         {
             return Vec::new();
         }

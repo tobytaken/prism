@@ -41,6 +41,7 @@ fn connected(focused: bool) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     connect(&mut core);
     core.handle(Input::WindowFocusChanged(focused));
@@ -156,6 +157,7 @@ fn a_window_that_never_reported_focus_counts_as_unfocused() {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     connect(&mut core);
     lose(&mut core);
@@ -168,6 +170,7 @@ fn no_prismd_from_the_start_isnt_a_lost_connection() {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core.handle(Input::WindowFocusChanged(false));
 

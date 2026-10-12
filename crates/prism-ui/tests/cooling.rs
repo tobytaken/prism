@@ -60,6 +60,7 @@ fn connected_with(
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core.handle(Input::PrismdConnected {
         welcome: welcome(can_tune),
@@ -446,6 +447,7 @@ fn no_mode_is_staged_before_the_gpus_fans_have_been_read() {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core.handle(Input::PrismdConnected {
         welcome: welcome(true),

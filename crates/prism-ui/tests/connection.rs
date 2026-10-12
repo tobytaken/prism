@@ -43,6 +43,7 @@ fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core
 }
@@ -97,6 +98,7 @@ fn prism_connects_to_prismd_before_reading_any_gpu_itself() {
 
     let effects = core.handle(Input::Launched {
         appearance: AppearanceMode::Dark,
+        started_unix_ms: 0,
     });
 
     assert_eq!(effects, [Effect::ConnectPrismd]);

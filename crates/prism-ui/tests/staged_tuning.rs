@@ -56,6 +56,7 @@ fn connected_to(fixture: SimulatedFixture, snapshot: DaemonSnapshot, can_tune: b
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core.handle(Input::PrismdConnected {
         welcome: welcome(can_tune),
@@ -432,6 +433,7 @@ fn without_tuning_access_the_power_limit_is_read_only_with_the_reason() {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
         message: "No such file or directory (os error 2)".into(),

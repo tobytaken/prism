@@ -6,6 +6,7 @@ use prism_gpu::fan_curve::FanCurveSupport;
 use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
 use prism_protocol::{ProfileSetting, ProfileSettingKey};
 
+use crate::activity::ActivityAction;
 use crate::cooling::{
     FanArrangement, FanMode, Fans, cooling_read, fixed_speed_of, fixed_speed_range, mode_of,
     setting_of, speed_now,
@@ -650,6 +651,41 @@ pub struct LinkChoice {
     pub linked: bool,
 }
 
+/// The Activity panel: current problems first, then this boot's startup outcomes not yet
+/// dismissed, then recent events from prismd and Prism itself, newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityPanel {
+    pub problems: Vec<ActivityItem>,
+    /// Startup outcomes that applied in full; those that didn't are problems.
+    pub startup: Vec<ActivityItem>,
+    pub recent: Vec<ActivityItem>,
+    /// Why prismd refused the latest action, until the next one.
+    pub outcome: Option<String>,
+    /// What the panel says while it lists nothing.
+    pub empty: Option<String>,
+}
+
+/// A problem or an event in Activity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityItem {
+    /// Such as "Quiet applied in part".
+    pub title: String,
+    /// Its lines, such as the GPU it happened to and each setting's outcome.
+    pub detail: Vec<String>,
+    /// How long ago it happened, such as "5 min ago"; none for a current problem.
+    pub when: Option<String>,
+    pub action: Option<ActivityButton>,
+}
+
+/// An Activity item's action, such as Dismiss or Open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityButton {
+    pub title: String,
+    pub action: ActivityAction,
+    /// Why it can't run now, when it can't.
+    pub unavailable: Option<String>,
+}
+
 /// The name of a new profile, or a profile's new name, in a text field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileNameDialog {
@@ -758,6 +794,10 @@ pub struct StatusBar {
     pub telemetry: String,
     /// Whether any GPU has unapplied tuning changes, which hold automatic changes: EDIT HOLD.
     pub edit_hold: bool,
+    /// How many current problems Activity lists.
+    pub problems: usize,
+    /// The problem indicator, which opens Activity, such as "2 PROBLEMS".
+    pub problem_indicator: String,
 }
 
 impl Core {
@@ -875,6 +915,7 @@ impl Core {
     }
 
     pub fn status_bar(&self) -> StatusBar {
+        let problems = self.problems().len();
         StatusBar {
             connection: self.connection_item(),
             connected: self.connected(),
@@ -889,6 +930,12 @@ impl Core {
             }
             .into(),
             edit_hold: self.edit_hold(),
+            problems,
+            problem_indicator: match problems {
+                0 => "NO PROBLEMS".into(),
+                1 => "1 PROBLEM".into(),
+                count => format!("{count} PROBLEMS"),
+            },
         }
     }
 

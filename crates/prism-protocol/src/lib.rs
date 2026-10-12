@@ -973,6 +973,8 @@ pub enum SessionMessage {
     },
 }
 
+// Events are short-lived frames, so their size doesn't warrant boxing every payload.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(
     tag = "type",

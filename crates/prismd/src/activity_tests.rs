@@ -169,8 +169,8 @@ fn startup_outcomes_reach_activity_and_the_snapshot_while_prism_was_closed() {
         assert_eq!(outcome["status"], "applied");
         assert_eq!(outcome["profile"]["name"], "Quiet");
         assert_eq!(outcome["application"]["power"]["status"], "succeeded");
-        assert_eq!(startup_outcomes(session), [outcome.clone()]);
-        assert_eq!(session.snapshot().startup.behavior.is_off(), false);
+        assert_eq!(startup_outcomes(session), std::slice::from_ref(outcome));
+        assert!(!session.snapshot().startup.behavior.is_off());
     }
 }
 

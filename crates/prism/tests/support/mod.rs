@@ -51,9 +51,16 @@ impl ManualClock {
     }
 }
 
+/// When Prism starts in view tests, as a wall clock time in Unix milliseconds.
+pub const STARTED_UNIX_MS: u64 = 1_791_804_860_000;
+
 impl Clock for ManualClock {
     fn now(&self) -> Duration {
         Duration::from_millis(self.0.load(Ordering::SeqCst))
+    }
+
+    fn started_unix_ms(&self) -> u64 {
+        STARTED_UNIX_MS
     }
 }
 

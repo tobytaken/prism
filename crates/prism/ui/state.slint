@@ -374,6 +374,23 @@ export struct DaemonView {
     error: string,
 }
 
+// A problem or an event in Activity: its title, its lines, how long ago it happened, and both as
+// a screen reader adds them to the title (`spoken`). `has-action` says whether it has a button,
+// titled `action-title`, and `action-reason` why it can't be pressed, when it can't.
+export struct ActivityItemView {
+    title: string,
+    detail: string,
+    when: string,
+    spoken: string,
+    has-action: bool,
+    action-title: string,
+    action-available: bool,
+    action-reason: string,
+}
+
+// Activity's lists: current problems, startup outcomes and recent events.
+export enum ActivityList { problems, startup, recent }
+
 export enum ContentKind { searching, no-gpus, gpu, games, drivers, settings }
 
 export global AppState {
@@ -396,6 +413,17 @@ export global AppState {
     in property <string> telemetry;
     // Whether any GPU has unapplied tuning changes, which hold automatic changes.
     in property <bool> edit-hold;
+    // The problem indicator: how many current problems there are, and what it says.
+    in property <int> problems;
+    in property <string> problem-indicator;
+    // Activity, while it's open: its lists, why prismd refused the latest action, and what it
+    // says while it lists nothing, each empty when there's nothing to say.
+    in property <bool> activity-open;
+    in property <[ActivityItemView]> activity-problems;
+    in property <[ActivityItemView]> activity-startup;
+    in property <[ActivityItemView]> activity-recent;
+    in property <string> activity-outcome;
+    in property <string> activity-empty;
     in property <SettingsSection> settings-section;
     // The open section's name, such as "Appearance".
     in property <string> settings-section-name;
@@ -506,6 +534,10 @@ export global Intents {
     callback discard-changes();
     // Closes Prism, dropping every GPU's unapplied tuning changes.
     callback discard-and-close();
+    // Opens Activity, and does what the button of the item at this index in one of its lists
+    // does.
+    callback open-activity();
+    callback run-activity-action(list: ActivityList, index: int);
     // Runs the global shortcut `key` presses, if any, and says whether the key was spoken for. While
     // a text field has focus, a shortcut that clashes with text editing is spoken for but doesn't
     // run.

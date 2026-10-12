@@ -814,6 +814,8 @@ impl Harness {
 }
 
 /// How the daemon answered a session connection's hello.
+// Test-only and short-lived, so the session's size doesn't warrant boxing it.
+#[allow(clippy::large_enum_variant)]
 pub enum Handshake {
     Welcomed(FakeSession),
     Refused(DaemonResponse),

@@ -11,6 +11,7 @@ use prism_protocol::{
     RunningGamesState, Welcome,
 };
 
+use crate::activity::{ActivityAction, ActivityState};
 use crate::cooling::FanMode;
 use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::drafts::{DialogState, Drafts};
@@ -244,8 +245,12 @@ pub enum Timer {
 /// Something that happened, for the core to take in.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    /// Prism started, with the appearance mode loaded from its settings.
-    Launched { appearance: AppearanceMode },
+    /// Prism started, with the appearance mode loaded from its settings, at this wall clock time
+    /// in Unix milliseconds. Every later input's time counts from it.
+    Launched {
+        appearance: AppearanceMode,
+        started_unix_ms: u64,
+    },
     /// The in-process GPU inventory was read.
     InventoryRead(GpuInventoryResponse),
     /// A session with prismd opened on `socket`, starting from `snapshot`.
@@ -418,6 +423,10 @@ pub enum Intent {
     /// Close Prism, dropping every GPU's unapplied tuning changes, as the close confirmation
     /// offers.
     DiscardAndClose,
+    /// Open Activity, as the status bar's problem indicator does.
+    OpenActivity,
+    /// Do what an Activity item's button does.
+    RunActivityAction(ActivityAction),
 }
 
 /// Something the core asks the caller to do.
@@ -532,6 +541,7 @@ pub struct Core {
     pub(crate) choosing_program_file: bool,
     /// The dialog over the window, while one is open.
     pub(crate) dialog: Option<DialogState>,
+    pub(crate) activity: ActivityState,
     revision: u64,
 }
 
@@ -650,8 +660,12 @@ impl Core {
     pub fn handle(&mut self, input: Input) -> Vec<Effect> {
         self.revision += 1;
         match input {
-            Input::Launched { appearance } => {
+            Input::Launched {
+                appearance,
+                started_unix_ms,
+            } => {
                 self.appearance = appearance;
+                self.activity.started(started_unix_ms);
                 // The sampler waits until there's no session, so NVML is never loaded while
                 // prismd is there from the start.
                 vec![Effect::ConnectPrismd]
@@ -668,6 +682,7 @@ impl Core {
                 snapshot,
                 socket,
             } => {
+                self.activity_connected(&snapshot);
                 self.session = Session::Open { welcome, socket };
                 // A session overrides whatever the host said.
                 self.host = None;
@@ -714,6 +729,7 @@ impl Core {
                 self.drafts_lost_session();
                 self.profiles_lost_session();
                 self.games_lost_session();
+                self.activity_lost_session(lost);
                 let mut effects = Vec::new();
                 if !std::mem::replace(&mut self.sampling, true) {
                     effects.push(Effect::StartSampler);
@@ -755,6 +771,7 @@ impl Core {
                 Vec::new()
             }
             Input::PrismdEvent { event, received_at } => {
+                self.activity.arrived(received_at);
                 match event {
                     DaemonEvent::InventoryChanged(inventory) => self.found(inventory),
                     DaemonEvent::TelemetrySampled(sample) => {
@@ -773,9 +790,11 @@ impl Core {
                     DaemonEvent::RunningGamesChanged(running) => {
                         self.running_games = Some(running);
                     }
+                    DaemonEvent::StoreHealthChanged(health) => self.store_health_pushed(health),
+                    DaemonEvent::StartupStateChanged(startup) => self.startup_pushed(startup),
+                    DaemonEvent::ActivityRecorded(entry) => self.activity_recorded(entry),
                     // Taken in as the screens that show them land.
-                    DaemonEvent::StoreHealthChanged(_)
-                    | DaemonEvent::AutomaticSwitchingChanged(_) => {}
+                    DaemonEvent::AutomaticSwitchingChanged(_) => {}
                 }
                 Vec::new()
             }
@@ -784,6 +803,7 @@ impl Core {
                 source,
                 received_at,
             } => {
+                self.activity.arrived(received_at);
                 // The sampler may have read once more before it stopped.
                 if !(source == TelemetrySource::InProcess && self.connected()) {
                     self.take_sample(&sample, source, received_at);
@@ -954,6 +974,10 @@ impl Core {
                 self.dismiss();
                 Vec::new()
             }
+            Intent::Press(Shortcut::ToggleActivity) if self.activity_open() => {
+                self.close_activity();
+                Vec::new()
+            }
             Intent::Press(shortcut) => self.run(self.shortcut_command(shortcut)),
             Intent::ShowRange(range) => self.perform(Command::ShowRange(range)),
             Intent::ToggleHardwareDetails => {
@@ -1021,6 +1045,8 @@ impl Core {
             Intent::AddRunningProgram(path) => self.add_running_program(path),
             Intent::BrowseForProgram => self.browse_for_program(),
             Intent::DiscardAndClose => self.quit(),
+            Intent::OpenActivity => self.run(Some(Command::OpenActivity)),
+            Intent::RunActivityAction(action) => self.run_activity_action(action),
         }
     }
 
@@ -1038,7 +1064,7 @@ impl Core {
         self.perform(command)
     }
 
-    fn perform(&mut self, command: Command) -> Vec<Effect> {
+    pub(crate) fn perform(&mut self, command: Command) -> Vec<Effect> {
         let daemon_was_open = self.daemon_open();
         let effects = match command {
             Command::GoToGpu(id) => {
@@ -1086,6 +1112,7 @@ impl Core {
             Command::SetAutomaticSwitching(enabled) => self.set_automatic_switching(enabled),
             Command::AddSteamGame => self.open_add_steam_game(),
             Command::AddProgram => self.open_add_program(),
+            Command::OpenActivity => self.open_activity(),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }

@@ -40,6 +40,7 @@ fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
         appearance: AppearanceMode::System,
+        started_unix_ms: 0,
     });
     core
 }

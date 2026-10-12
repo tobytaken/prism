@@ -2,7 +2,7 @@
 //! simulator wire fakes.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use prism_gpu::GpuProviders;
 
@@ -97,18 +97,25 @@ pub trait WindowActivation {
 pub trait Clock: Send + Sync {
     /// The time since Prism started.
     fn now(&self) -> Duration;
+
+    /// The wall clock when Prism started, in Unix milliseconds, which Activity tells times from.
+    fn started_unix_ms(&self) -> u64;
 }
 
 /// The system's monotonic clock, counting from when it was made.
 #[derive(Debug, Clone, Copy)]
 pub struct SystemClock {
     started: Instant,
+    started_unix_ms: u64,
 }
 
 impl Default for SystemClock {
     fn default() -> Self {
         Self {
             started: Instant::now(),
+            started_unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_millis().try_into().unwrap_or(u64::MAX)),
         }
     }
 }
@@ -116,6 +123,10 @@ impl Default for SystemClock {
 impl Clock for SystemClock {
     fn now(&self) -> Duration {
         self.started.elapsed()
+    }
+
+    fn started_unix_ms(&self) -> u64 {
+        self.started_unix_ms
     }
 }
 

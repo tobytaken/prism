@@ -4,6 +4,7 @@
 //! [`Core::handle`], which returns the [`Effect`]s the caller performs. The view reads the
 //! resulting state through the core's view models.
 
+mod activity;
 mod cooling;
 mod core;
 mod curve;
@@ -19,6 +20,7 @@ mod profiles;
 pub mod telemetry;
 mod view;
 
+pub use crate::activity::ActivityAction;
 pub use crate::cooling::{FanArrangement, FanMode};
 pub use crate::core::{
     AppearanceMode, CommandId, Core, Effect, Input, Intent, NotConnected, PrismdConnection,
@@ -31,11 +33,11 @@ pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
-    AddProgram, AddSteamGame, ChangeStrip, ConfirmClose, ConfirmDelete, Content, CurveMarker,
-    CurvePoint, Detail, Dialog, DiscardForProfile, ExplainedState, FanArrangementControl,
-    FanChoice, FanCurveEditor, FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection,
-    GpuWorkspace, HardwareDetails, LinkChoice, ManageProfiles, ManagedProfile, MenuEntry,
-    ProfileChoice, ProfileCorrections, ProfileMenu, ProfileNameDialog, ProfileSwitcher,
-    ProgramChoice, Review, Sidebar, SidebarGpu, StatusBar, SteamAppChoice, Stepper, Track,
-    TrackChart, TrackKind, Tunable,
+    ActivityButton, ActivityItem, ActivityPanel, AddProgram, AddSteamGame, ChangeStrip,
+    ConfirmClose, ConfirmDelete, Content, CurveMarker, CurvePoint, Detail, Dialog,
+    DiscardForProfile, ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor,
+    FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace, HardwareDetails,
+    LinkChoice, ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice, ProfileCorrections,
+    ProfileMenu, ProfileNameDialog, ProfileSwitcher, ProgramChoice, Review, Sidebar, SidebarGpu,
+    StatusBar, SteamAppChoice, Stepper, Track, TrackChart, TrackKind, Tunable,
 };
