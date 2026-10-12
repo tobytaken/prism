@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use prism_protocol::{
     DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GameId, GamesState,
     GpuCoolingControl, GpuTuningState, Incompatible, ProfileSettingKey, ProfilesState,
-    RunningGamesState, Welcome,
+    RunningGamesState, StartupBehavior, Welcome,
 };
 
 use crate::activity::{ActivityAction, ActivityState};
@@ -24,6 +24,7 @@ use crate::palette::{Command, PaletteState, Shortcut};
 use crate::profile_management::ProfileCommand;
 use crate::profiles::ProfileApplying;
 use crate::settings::{GuiSettings, Link};
+use crate::startup::StartupChange;
 use crate::switching::Switching;
 use crate::telemetry::{Readings, TelemetryHistory, TelemetryRange};
 
@@ -416,6 +417,13 @@ pub enum Intent {
         profile_id: Option<String>,
     },
     RemoveGame(GameId),
+    /// Set the host-wide startup behavior.
+    SetStartupBehavior(StartupBehavior),
+    /// Make this profile of the GPU, by id, its startup profile, or leave the GPU with none.
+    SetStartupProfile {
+        gpu_id: String,
+        profile_id: Option<String>,
+    },
     /// Show Games, and open Add Steam game over it.
     AddSteamGame,
     /// Add Steam game's search now reads this.
@@ -578,6 +586,10 @@ pub struct Core {
     pub(crate) game_commands: BTreeMap<CommandId, GameCommand>,
     /// Why prismd refused the latest game change, until the next one.
     pub(crate) games_outcome: Option<String>,
+    /// Each startup change sent to prismd that hasn't been answered.
+    pub(crate) startup_commands: BTreeMap<CommandId, StartupChange>,
+    /// Why prismd refused the latest startup change, until the next one.
+    pub(crate) startup_outcome: Option<String>,
     /// Whether the file chooser opened for a program file to add hasn't answered yet. It outlives
     /// Add program, which waits for it when opened again.
     pub(crate) choosing_program_file: bool,
@@ -776,6 +788,7 @@ impl Core {
                 self.drafts_lost_session();
                 self.profiles_lost_session();
                 self.games_lost_session();
+                self.startup_lost_session();
                 self.switching_lost_session();
                 self.drivers_lost_session();
                 self.activity_lost_session(lost);
@@ -1107,6 +1120,10 @@ impl Core {
                 profile_id,
             } => self.link_game(game, gpu_id, profile_id),
             Intent::RemoveGame(game) => self.remove_game(game),
+            Intent::SetStartupBehavior(behavior) => self.set_startup_behavior(behavior),
+            Intent::SetStartupProfile { gpu_id, profile_id } => {
+                self.set_startup_profile(gpu_id, profile_id)
+            }
             Intent::AddSteamGame => self.perform(Command::AddSteamGame),
             Intent::FilterSteamApps(query) => {
                 self.filter_steam_apps(query);

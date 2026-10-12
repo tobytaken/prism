@@ -992,6 +992,45 @@ mod screenshot {
         settings_section("About", AppearanceMode::Dark, "settings-about-dark");
     }
 
+    /// Settings → Startup with startup profiles chosen and Quiet the tunable GPU's startup
+    /// profile, its restore warning and boot note.
+    fn settings_startup(appearance: AppearanceMode, name: &str) {
+        use prism_protocol::{DaemonEvent, StartupState};
+
+        init_rendering_backend();
+        let harness = profiles_workspace(appearance);
+        let mut startup: StartupState = serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/startup-state.json"
+        ))
+        .unwrap();
+        startup.profiles[0].gpu_id = "GPU-5a1b0000-0000-4000-8000-000000000001".into();
+        startup.outcomes.clear();
+        startup.possibly_stale.clear();
+        harness
+            .prismd
+            .push(DaemonEvent::StartupStateChanged(startup));
+        harness.app.receive_posted();
+        harness.tick();
+        harness.ctrl(",");
+        harness.tick();
+        harness
+            .find(AccessibleRole::ListItem, "Startup")
+            .invoke_accessible_default_action();
+        harness.tick();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn settings_startup_in_light() {
+        settings_startup(AppearanceMode::Light, "settings-startup-light");
+    }
+
+    #[test]
+    fn settings_startup_in_dark() {
+        settings_startup(AppearanceMode::Dark, "settings-startup-dark");
+    }
+
     mod popup_surface {
         use super::*;
 

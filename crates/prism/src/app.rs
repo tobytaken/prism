@@ -12,9 +12,9 @@ use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
     ActivityAction, AppearanceMode, Content, Core, Dialog, Effect, FanCurveEditor, FanMode, Input,
-    Intent, Key, Link as CoreLink, PrismdHost, ProgramFile, Section as CoreSection,
-    ServiceAction as CoreServiceAction, ServiceOutcome, SettingsSection as CoreSettingsSection,
-    Shortcut, TelemetrySource, Timer, TrackChart,
+    Intent, Key, Link as CoreLink, PrismdHost, ProgramFile, STARTUP_BEHAVIORS,
+    Section as CoreSection, ServiceAction as CoreServiceAction, ServiceOutcome,
+    SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer, TrackChart,
 };
 
 use crate::chart::{area_commands, limit_commands, line_commands, series_commands};
@@ -284,6 +284,39 @@ impl Inner {
         intents.on_set_desktop_notifications(move |enabled| {
             with_inner(&inner, |inner| {
                 inner.handle(Input::Intent(Intent::SetDesktopNotifications(enabled)))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_set_startup_behavior(move |index| {
+            let behavior = usize::try_from(index)
+                .ok()
+                .and_then(|index| STARTUP_BEHAVIORS.get(index));
+            if let Some(&behavior) = behavior {
+                with_inner(&inner, |inner| {
+                    inner.handle(Input::Intent(Intent::SetStartupBehavior(behavior)))
+                });
+            }
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_set_startup_profile(move |gpu, choice| {
+            with_inner(&inner, |inner| {
+                // The rows list GPUs and choices in the order the core gives them.
+                let intent = {
+                    let section = inner.core.borrow().startup_settings();
+                    let at = |index: i32| usize::try_from(index).ok();
+                    at(gpu)
+                        .and_then(|gpu| section.gpus.get(gpu))
+                        .and_then(|gpu| {
+                            let choice = gpu.choices.get(at(choice)?)?;
+                            Some(Intent::SetStartupProfile {
+                                gpu_id: gpu.gpu_id.clone(),
+                                profile_id: choice.profile_id.clone(),
+                            })
+                        })
+                };
+                if let Some(intent) = intent {
+                    inner.handle(Input::Intent(intent));
+                }
             });
         });
         let inner = Rc::downgrade(this);

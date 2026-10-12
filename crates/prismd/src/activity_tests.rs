@@ -1,7 +1,8 @@
 //! Seam 1: the daemon's boot-scoped Activity: profile applications, automatic switches and
 //! startup outcomes, in each session's snapshot and pushed as `ActivityRecorded`, kept across a
-//! daemon restart and cleared at reboot. Also each user's startup state, pushed as
-//! `StartupStateChanged` when an outcome finishes or is dismissed.
+//! daemon restart and cleared at reboot. Also each user's startup state, in their snapshot and
+//! pushed as `StartupStateChanged` when an outcome finishes or is dismissed, or the startup
+//! behavior or a startup profile changes.
 
 use serde_json::{Value, json};
 
@@ -231,6 +232,114 @@ fn changing_the_startup_behavior_pushes_the_new_startup_state_to_everyone() {
         assert_eq!(pushed.len(), 1, "{pushed:?}");
         assert_eq!(pushed[0]["payload"]["behavior"], "restore_last_applied");
     }
+}
+
+/// The startup states pushed to the session since it last looked.
+fn pushed_startup(session: &FakeSession) -> Vec<Value> {
+    session
+        .pushed_events_of("startup_state_changed")
+        .into_iter()
+        .map(|event| event["payload"].clone())
+        .collect()
+}
+
+fn designate(session: &FakeSession, profile_id: Option<&str>) -> Value {
+    ok(
+        session.send_json(json!({ "type": "set_startup_profile", "payload": {
+        "gpu_id": GPU, "profile_id": profile_id
+    } })),
+    )
+}
+
+#[test]
+fn designating_and_clearing_a_startup_profile_pushes_it_by_name_to_everyone() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    let bob = daemon.user(1001, "bob");
+    seed_quiet(&alice);
+
+    designate(&alice, Some("quiet"));
+
+    let quiet = json!([{ "gpu_id": GPU, "profile": { "id": "quiet", "name": "Quiet" } }]);
+    for session in [&alice, &bob] {
+        let pushed = pushed_startup(session);
+        assert_eq!(pushed.len(), 1, "{pushed:?}");
+        assert_eq!(pushed[0]["profiles"], quiet);
+    }
+
+    // Bob clears Alice's designation: startup choices are host-wide.
+    designate(&bob, None);
+
+    for session in [&alice, &bob] {
+        let pushed = pushed_startup(session);
+        assert_eq!(pushed.len(), 1, "{pushed:?}");
+        assert_eq!(pushed[0]["profiles"], json!([]));
+    }
+}
+
+#[test]
+fn renaming_or_deleting_the_startup_profile_pushes_the_startup_state_again() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    let bob = daemon.user(1001, "bob");
+    seed_quiet(&alice);
+    designate(&alice, Some("quiet"));
+    pushed_startup(&alice);
+    pushed_startup(&bob);
+
+    ok(
+        alice.send_json(json!({ "type": "rename_profile", "payload": {
+        "profile_id": "quiet", "name": "Silent"
+    } })),
+    );
+
+    for session in [&alice, &bob] {
+        let pushed = pushed_startup(session);
+        assert_eq!(pushed.len(), 1, "{pushed:?}");
+        assert_eq!(pushed[0]["profiles"][0]["profile"]["name"], "Silent");
+    }
+
+    ok(alice.send_json(json!({ "type": "delete_profile", "payload": { "profile_id": "quiet" } })));
+
+    // The GPU is left without a startup profile.
+    for session in [&alice, &bob] {
+        let pushed = pushed_startup(session);
+        assert_eq!(pushed.len(), 1, "{pushed:?}");
+        assert_eq!(pushed[0]["profiles"], json!([]));
+    }
+}
+
+#[test]
+fn a_new_sessions_snapshot_carries_the_startup_choices() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    seed_quiet(&alice);
+    designate(&alice, Some("quiet"));
+    ok(
+        alice.send_json(json!({ "type": "set_startup_behavior", "payload": {
+        "behavior": "startup_profiles"
+    } })),
+    );
+
+    let startup = serde_json::to_value(&daemon.user(1001, "bob").snapshot().startup).unwrap();
+
+    assert_eq!(startup["behavior"], "startup_profiles");
+    assert_eq!(
+        startup["profiles"],
+        json!([{ "gpu_id": GPU, "profile": { "id": "quiet", "name": "Quiet" } }])
+    );
+}
+
+#[test]
+fn a_startup_change_that_changes_nothing_pushes_nothing() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+
+    ok(alice
+        .send_json(json!({ "type": "set_startup_behavior", "payload": { "behavior": "off" } })));
+    designate(&alice, None);
+
+    assert_eq!(pushed_startup(&alice), Vec::<Value>::new());
 }
 
 const LINKED: &str = "GPU-A";

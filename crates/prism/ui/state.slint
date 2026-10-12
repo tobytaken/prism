@@ -409,6 +409,31 @@ export struct AboutView {
     slint-website: string,
 }
 
+// Settings → Startup, apart from its lists: the startup behavior chosen as shown, or "Unknown"
+// without a session, why nothing can be changed (`read-only`, with the reason), why startup
+// behavior won't run at the next boot, which GPUs' last applied tuning values may miss a change,
+// why prismd refused the latest change, and what the section says in place of the GPUs, each empty
+// when there's nothing to say.
+export struct StartupView {
+    behavior: string,
+    read-only: bool,
+    reason: string,
+    suspended: string,
+    possibly-stale: string,
+    outcome: string,
+    empty: string,
+}
+
+// A GPU's startup profile: the group's label, such as "Startup profile of GPU 0 · RTX 5090 ·
+// 01:00.0", the GPU, the startup profile's name or "None", and None then the GPU's profiles as
+// segments, the startup profile picked.
+export struct StartupGpuView {
+    label: string,
+    gpu: string,
+    startup: string,
+    choices: [SegmentView],
+}
+
 // A labeled fact about the prismd connection, such as the socket path.
 export struct FactView {
     label: string,
@@ -511,8 +536,6 @@ export global AppState {
     in property <string> activity-outcome;
     in property <string> activity-empty;
     in property <SettingsSection> settings-section;
-    // The open section's name, such as "Appearance".
-    in property <string> settings-section-name;
     in property <DaemonView> daemon;
     // Settings → Daemon's paragraphs, commands to copy and facts, in order.
     in property <[string]> daemon-paragraphs;
@@ -522,6 +545,11 @@ export global AppState {
     in property <[SegmentView]> appearance-modes;
     // Whether Prism sends desktop notifications at all.
     in property <bool> desktop-notifications;
+    // Settings → Startup, its startup behaviors as segments, the one chosen picked, and each GPU's
+    // startup profile, in sidebar order.
+    in property <StartupView> startup;
+    in property <[SegmentView]> startup-behaviors;
+    in property <[StartupGpuView]> startup-gpus;
     in property <AboutView> about;
     in property <bool> palette-open;
     in property <DialogView> dialog;
@@ -574,6 +602,11 @@ export global Intents {
     callback set-appearance(index: int);
     // Turns desktop notifications on or off.
     callback set-desktop-notifications(enabled: bool);
+    // Sets the startup behavior at this index among Settings → Startup's segments.
+    callback set-startup-behavior(index: int);
+    // Makes the choice at this index, None then the GPU's profiles, the startup profile of the GPU
+    // at this index in Settings → Startup.
+    callback set-startup-profile(gpu: int, choice: int);
     // Opens `link` in the desktop's app for it.
     callback open(link: Link);
     callback minimize-window();

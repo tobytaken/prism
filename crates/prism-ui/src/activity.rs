@@ -53,9 +53,9 @@ pub(crate) struct ActivityState {
     /// Prism's own entries, oldest first.
     own: Vec<OwnEntry>,
     /// Whether prismd can use its tuning store, while there is a session.
-    store_health: Option<TuningStoreHealth>,
+    pub(crate) store_health: Option<TuningStoreHealth>,
     /// The startup choices and the caller's startup outcomes, while there is a session.
-    startup: Option<StartupState>,
+    pub(crate) startup: Option<StartupState>,
     /// When the session was lost, while it hasn't come back.
     lost_at: Option<Duration>,
     /// Each dismissal sent to prismd that it hasn't answered, with its GPU's id.

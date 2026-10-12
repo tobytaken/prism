@@ -1,7 +1,6 @@
 import { Theme } from "../theme.slint";
-import { Button, Fact, LinkButton, ListRow, Segmented, StyledText, Switch, VerticalDivider } from "../widgets.slint";
+import { Button, Fact, LinkButton, ListRow, Notice, Segmented, StyledText, Switch, VerticalDivider } from "../widgets.slint";
 import { AppState, Intents, Link, SettingsSection } from "../state.slint";
-import { ExplainedState } from "explained-state.slint";
 
 component SectionRow inherits ListRow {
     in property <string> text;
@@ -97,6 +96,110 @@ component Appearance inherits Rectangle {
 
         Paragraph {
             text: "System follows your desktop's light or dark preference and changes with it.";
+        }
+    }
+}
+
+// Settings → Startup: the host-wide startup behavior, with the risk of restoring last applied
+// tuning values, then each GPU's startup profile. Without tuning access it's read-only, with the
+// reason.
+component Startup inherits Rectangle {
+    Page {
+        title: "Startup";
+
+        Paragraph {
+            text: "What Prism puts into effect on each GPU when the host starts. Everyone who can tune GPUs on this host shares these choices, and the latest change wins.";
+        }
+
+        HorizontalLayout {
+            alignment: start;
+
+            Segmented {
+                label: "Startup behavior";
+                segments: AppState.startup-behaviors;
+                read-only: AppState.startup.read-only;
+                reason: AppState.startup.reason;
+                value: AppState.startup.behavior;
+                value-text: AppState.startup.behavior;
+                chosen(index) => {
+                    Intents.set-startup-behavior(index);
+                }
+            }
+        }
+
+        Notice {
+            label: "Restoring last applied tuning values";
+            text: "Last applied tuning values restores each setting's latest manual value, including cooling and changes not saved to a profile. An unstable value could crash the host at every boot, so after an unclean shutdown that followed a restore, Prism skips the restore once. Startup profiles were chosen for startup, so they're never skipped.";
+        }
+
+        if AppState.startup.possibly-stale != "": Notice {
+            label: "Possibly stale";
+            text: AppState.startup.possibly-stale;
+            danger: true;
+        }
+
+        if AppState.startup.suspended != "": Notice {
+            label: "Suspended";
+            text: AppState.startup.suspended;
+            danger: true;
+        }
+
+        if AppState.startup.read-only: Notice {
+            label: "Read-only";
+            text: AppState.startup.reason;
+        }
+
+        if AppState.startup.outcome != "": Notice {
+            label: "Problem";
+            text: AppState.startup.outcome;
+            danger: true;
+        }
+
+        Notice {
+            label: "At boot";
+            text: "prismd applies it at boot, before anyone logs in, without Prism open. Prism doesn't start itself when you log in; to open it then, add it in your desktop's autostart settings.";
+        }
+
+        StyledText {
+            text: "Startup profiles";
+            style: Theme.text.name;
+        }
+
+        Paragraph {
+            text: "While startup behavior is Startup profiles, boot applies each GPU's startup profile. Saving, renaming or deleting it changes what the next boot applies.";
+        }
+
+        if AppState.startup.empty != "": StyledText {
+            text: AppState.startup.empty;
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            wrap: word-wrap;
+        }
+
+        for gpu[index] in AppState.startup-gpus: HorizontalLayout {
+            spacing: Theme.space.m;
+            alignment: start;
+
+            StyledText {
+                width: Theme.size.hardware-fact-label;
+                text: gpu.gpu;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                overflow: elide;
+                accessible-role: none;
+            }
+
+            Segmented {
+                label: gpu.label;
+                segments: gpu.choices;
+                read-only: AppState.startup.read-only;
+                reason: AppState.startup.reason;
+                value: gpu.startup;
+                value-text: gpu.startup;
+                chosen(choice) => {
+                    Intents.set-startup-profile(index, choice);
+                }
+            }
         }
     }
 }
@@ -246,7 +349,7 @@ component Daemon inherits Rectangle {
     }
 }
 
-// Settings: its sections, then the open one. Startup isn't built yet.
+// Settings: its sections, then the open one.
 export component Settings inherits Rectangle {
     HorizontalLayout {
         Rectangle {
@@ -291,10 +394,7 @@ export component Settings inherits Rectangle {
             if AppState.settings-section == SettingsSection.notifications: Notifications { }
             if AppState.settings-section == SettingsSection.daemon: Daemon { }
             if AppState.settings-section == SettingsSection.about: About { }
-            if AppState.settings-section == SettingsSection.startup: ExplainedState {
-                title: AppState.settings-section-name;
-                reason: "This section isn't built yet.";
-            }
+            if AppState.settings-section == SettingsSection.startup: Startup { }
         }
     }
 }
