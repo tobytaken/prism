@@ -287,6 +287,30 @@ fn a_manual_step_left_outstanding_is_explained() {
 }
 
 #[test]
+fn a_reboot_or_manual_step_left_outstanding_shows_as_a_problem_in_activity() {
+    for (status, title) in [
+        (DriverJobStatus::RebootRequired, "Reboot required"),
+        (DriverJobStatus::ManualStepRequired, "Manual step required"),
+    ] {
+        let harness = connected();
+        push(&harness, job(status));
+
+        harness
+            .find(Button, "1 PROBLEM")
+            .invoke_accessible_default_action();
+
+        let problem = harness.find(ListItem, title);
+        assert!(
+            problem
+                .accessible_description()
+                .is_some_and(|detail| detail.contains("Install recommended NVIDIA driver")),
+            "{title}"
+        );
+        harness.find(Button, &format!("Open Drivers · {title}"));
+    }
+}
+
+#[test]
 fn reboot_asks_first_and_then_asks_prismd() {
     let harness = connected();
     open_drivers(&harness);

@@ -139,7 +139,8 @@ export component Sidebar inherits Rectangle {
                     }
                 }
 
-                if AppState.content == ContentKind.no-gpus: VerticalLayout {
+                // Whatever the content shows, such as Drivers, which Prism opens into then.
+                if AppState.no-gpus.title != "": VerticalLayout {
                     padding: Theme.space.xl;
                     spacing: Theme.space.xs;
 
@@ -150,6 +151,13 @@ export component Sidebar inherits Rectangle {
 
                     StyledText {
                         text: AppState.no-gpus.reason;
+                        style: Theme.text.value;
+                        color: Theme.color.ink-muted;
+                        wrap: word-wrap;
+                    }
+
+                    StyledText {
+                        text: AppState.no-gpus.hint;
                         style: Theme.text.value;
                         color: Theme.color.ink-muted;
                         wrap: word-wrap;

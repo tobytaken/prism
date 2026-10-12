@@ -52,13 +52,18 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     if let Some(model) = update_in_place(&state.get_gpus(), gpus, PartialEq::eq) {
         state.set_gpus(model);
     }
-    if let Some(no_gpus) = &sidebar.no_gpus {
-        state.set_no_gpus(ExplainedStateView {
-            title: no_gpus.title.as_str().into(),
-            reason: no_gpus.reason.as_str().into(),
-            hint: no_gpus.hint.as_str().into(),
-        });
-    }
+    // Empty while there are GPUs, or before the inventory is read.
+    state.set_no_gpus(
+        sidebar
+            .no_gpus
+            .as_ref()
+            .map(|no_gpus| ExplainedStateView {
+                title: no_gpus.title.as_str().into(),
+                reason: no_gpus.reason.as_str().into(),
+                hint: no_gpus.hint.as_str().into(),
+            })
+            .unwrap_or_default(),
+    );
 
     state.set_content(match core.content() {
         Content::Searching => ContentKind::Searching,

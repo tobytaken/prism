@@ -1053,9 +1053,10 @@ impl Core {
             Some(Selection::Section(section)) => Content::Section(*section),
             Some(Selection::Gpu(id)) => match self.gpus().iter().position(|gpu| &gpu.id == id) {
                 Some(index) => Content::Gpu(Box::new(self.workspace(index, &self.gpus()[index]))),
-                None => Content::Searching,
+                // The GPU left the inventory.
+                None => self.no_gpus().map_or(Content::Searching, Content::NoGpus),
             },
-            None => self.no_gpus().map_or(Content::Searching, Content::NoGpus),
+            None => Content::Searching,
         }
     }
 

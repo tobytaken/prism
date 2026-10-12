@@ -504,6 +504,10 @@ pub struct Core {
     pub(crate) appearance: AppearanceMode,
     pub(crate) discovery: Discovery,
     pub(crate) selection: Option<Selection>,
+    /// Whether Prism opened into Drivers because the inventory had no GPUs, and the user hasn't
+    /// gone anywhere since. An empty inventory alone doesn't mean the host has no GPU, so GPUs
+    /// found later, such as by prismd where NVML can't read them in-process, open instead.
+    opened_into_drivers: bool,
     /// The section Settings shows, kept while Settings is closed.
     pub(crate) settings_section: SettingsSection,
     pub(crate) telemetry: Option<TelemetryState>,
@@ -938,8 +942,17 @@ impl Core {
                 }
             })
             .collect();
-        if self.selection.is_none() {
-            self.selection = gpus.first().map(|gpu| Selection::Gpu(gpu.id.clone()));
+        match gpus.first() {
+            Some(gpu) if self.selection.is_none() || self.opened_into_drivers => {
+                self.selection = Some(Selection::Gpu(gpu.id.clone()));
+                self.opened_into_drivers = false;
+            }
+            // Without a GPU to show, Drivers is where to start fixing that.
+            None if self.selection.is_none() => {
+                self.selection = Some(Selection::Section(Section::Drivers));
+                self.opened_into_drivers = true;
+            }
+            _ => {}
         }
         self.discovery = Discovery::Found {
             gpus,
@@ -1128,16 +1141,16 @@ impl Core {
                     if self.selection.as_ref() != Some(&Selection::Gpu(id.clone())) {
                         self.picked_fan = None;
                     }
-                    self.selection = Some(Selection::Gpu(id));
+                    self.select(Selection::Gpu(id));
                 }
                 Vec::new()
             }
             Command::GoTo(section) => {
-                self.selection = Some(Selection::Section(section));
+                self.select(Selection::Section(section));
                 Vec::new()
             }
             Command::GoToSettings(section) => {
-                self.selection = Some(Selection::Section(Section::Settings));
+                self.select(Selection::Section(Section::Settings));
                 self.settings_section = section;
                 Vec::new()
             }
@@ -1189,6 +1202,12 @@ impl Core {
             return [effects, self.read_driver_status()].concat();
         }
         effects
+    }
+
+    /// Shows `selection`, where the user asked to go.
+    pub(crate) fn select(&mut self, selection: Selection) {
+        self.selection = Some(selection);
+        self.opened_into_drivers = false;
     }
 
     /// Opens `dialog` over the window, closing the palette and the profile menu: it takes the

@@ -317,7 +317,7 @@ impl Core {
         if self.needs_tuning_access().is_some() {
             return Vec::new();
         }
-        self.selection = Some(Selection::Section(Section::Games));
+        self.select(Selection::Section(Section::Games));
         let (id, effects) =
             self.command_prismd_for_games(GameCommand::List, DaemonRequest::ListSteamApps);
         self.open_dialog(DialogState::AddSteamGame {
@@ -370,7 +370,7 @@ impl Core {
         if self.needs_tuning_access().is_some() {
             return Vec::new();
         }
-        self.selection = Some(Selection::Section(Section::Games));
+        self.select(Selection::Section(Section::Games));
         let (id, effects) =
             self.command_prismd_for_games(GameCommand::List, DaemonRequest::ListRunningPrograms);
         self.open_dialog(DialogState::AddProgram {

@@ -169,22 +169,90 @@ fn identical_gpus_each_get_a_block_and_selecting_one_opens_it() {
     assert!(!harness.shows("GPU 0 · 01:00.0 · Ada Lovelace"));
 }
 
+/// Asserts that Prism opened into Drivers, with the GPU list explaining why it has no GPUs.
+fn opens_into_drivers_explaining(harness: &Harness, title: &str, reason: &str) {
+    assert_eq!(
+        harness.find(ListItem, "Drivers").accessible_item_selected(),
+        Some(true)
+    );
+    // Drivers' heading.
+    assert!(harness.shows("Drivers"));
+    assert_eq!(
+        harness
+            .find(Text, "Driver status")
+            .accessible_value()
+            .as_deref(),
+        Some("Driver management needs prismd · not running")
+    );
+    // Only the GPU list explains it.
+    assert_eq!(harness.count(Text, title), 1);
+    assert_eq!(harness.count(Text, reason), 1);
+    assert_eq!(harness.count(Groupbox, "Temperature"), 0);
+}
+
 #[test]
-fn a_host_without_nvml_shows_why_there_is_no_telemetry() {
+fn a_host_without_nvml_opens_into_drivers_and_shows_why_there_is_no_telemetry() {
     let harness = Harness::new(SimulatedFixture::NvmlMissing);
     harness.tick();
 
-    let reason = "NVIDIA inventory is unavailable on this system: unable to initialize NVML: a \
-                  libloading error occurred: libnvidia-ml.so: cannot open shared object file: No \
-                  such file or directory";
-    // Once in the sidebar, once in the content.
-    assert_eq!(harness.count(Text, reason), 2);
-    assert_eq!(harness.count(Text, "No GPU telemetry"), 2);
+    opens_into_drivers_explaining(
+        &harness,
+        "No GPU telemetry",
+        "NVIDIA inventory is unavailable on this system: unable to initialize NVML: a libloading \
+         error occurred: libnvidia-ml.so: cannot open shared object file: No such file or \
+         directory",
+    );
     assert!(harness.shows(
         "Prism reads NVIDIA GPUs through NVML, which comes with the NVIDIA driver. Check that \
          the driver is installed and loaded, then restart Prism."
     ));
-    assert_eq!(harness.count(Groupbox, "Temperature"), 0);
+}
+
+#[test]
+fn an_empty_inventory_opens_into_drivers_with_an_explained_gpu_list() {
+    let harness = Harness::new(SimulatedFixture::EmptyInventory);
+    harness.tick();
+
+    opens_into_drivers_explaining(
+        &harness,
+        "No GPUs found",
+        "NVML reports no NVIDIA GPUs on this host.",
+    );
+    assert!(harness.shows(
+        "An empty list alone doesn't mean the host has no GPU. Check that the NVIDIA driver is \
+         loaded, then restart Prism."
+    ));
+}
+
+#[test]
+fn a_host_without_the_driver_loaded_opens_into_drivers_with_an_explained_gpu_list() {
+    let harness = Harness::new(SimulatedFixture::DriverNotLoaded);
+    harness.tick();
+
+    opens_into_drivers_explaining(
+        &harness,
+        "No GPU telemetry",
+        "NVIDIA inventory is unavailable on this system: unable to initialize NVML: NVIDIA \
+         driver is not loaded",
+    );
+}
+
+#[test]
+fn with_gpus_present_prism_still_opens_into_the_selected_gpu() {
+    let harness = Harness::new(SimulatedFixture::TunableGpu);
+    harness.tick();
+
+    assert_eq!(
+        harness
+            .find(ListItem, TUNABLE_GPU)
+            .accessible_item_selected(),
+        Some(true)
+    );
+    assert_eq!(
+        harness.find(ListItem, "Drivers").accessible_item_selected(),
+        Some(false)
+    );
+    harness.find(Groupbox, "Temperature");
 }
 
 #[test]

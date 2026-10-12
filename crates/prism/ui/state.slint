@@ -467,6 +467,7 @@ export enum ContentKind { searching, no-gpus, gpu, games, drivers, settings }
 export global AppState {
     in property <[SidebarGpuView]> gpus;
     in property <ContentKind> content;
+    // Why the GPU list has no GPUs, with an empty title while it has some or isn't read yet.
     in property <ExplainedStateView> no-gpus;
     in property <WorkspaceView> workspace;
     // The workspace's tracks, top to bottom, and its range picker's segments.
