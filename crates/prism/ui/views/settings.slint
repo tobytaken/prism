@@ -129,7 +129,7 @@ component Startup inherits Rectangle {
 
         Notice {
             label: "Restoring last applied tuning values";
-            text: "Last applied tuning values restores each setting's latest manual value, including cooling and changes not saved to a profile. An unstable value could crash the host at every boot, so after an unclean shutdown that followed a restore, Prism skips the restore once. Startup profiles were chosen for startup, so they're never skipped.";
+            text: "Last applied tuning values restores each setting's latest manual value, including cooling and changes not saved to a profile. An unstable value could crash the host at every boot, so after an unclean shutdown that followed a restore, Prism skips the restore once. Startup profiles were chosen for startup, so this guard doesn't apply to them.";
         }
 
         if AppState.startup.possibly-stale != "": Notice {

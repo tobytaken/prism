@@ -3,8 +3,8 @@
 //! They change only as prismd pushes them; answers only say how a change went (ADR 0010).
 
 use prism_protocol::{
-    DaemonCommandResponse, DaemonRequest, DaemonResponse, SetStartupBehaviorRequest,
-    SetStartupProfileRequest, StartupBehavior, TuningStoreHealth,
+    CurrentProfile, DaemonCommandResponse, DaemonRequest, DaemonResponse,
+    SetStartupBehaviorRequest, SetStartupProfileRequest, StartupBehavior, TuningStoreHealth,
 };
 
 use crate::core::{CommandId, Core, Effect};
@@ -117,17 +117,17 @@ impl Core {
         .chain(self.profiles_of(gpu_id).map(|profile| StartupChoice {
             profile_id: Some(profile.id.clone()),
             name: profile.name.clone(),
-            chosen: designated.is_some_and(|(id, _)| *id == profile.id),
+            chosen: designated.is_some_and(|startup| startup.id == profile.id),
             unavailable: None,
         }))
         .collect();
         // Another user's startup profile shows by name; only they can choose it.
-        if let Some((id, name)) = designated
+        if let Some(startup) = designated
             && !choices.iter().any(|choice| choice.chosen)
         {
             choices.push(StartupChoice {
-                profile_id: Some(id.clone()),
-                name: name.clone(),
+                profile_id: Some(startup.id.clone()),
+                name: startup.name.clone(),
                 chosen: true,
                 unavailable: Some("Another user's profile".into()),
             });
@@ -135,20 +135,20 @@ impl Core {
         StartupGpu {
             gpu_id: gpu_id.into(),
             gpu,
-            startup: designated.map_or_else(|| "None".into(), |(_, name)| name.clone()),
+            startup: designated.map_or_else(|| "None".into(), |startup| startup.name.clone()),
             choices,
         }
     }
 
-    /// The GPU's startup profile, as its id and name, whoever it belongs to.
-    fn startup_profile(&self, gpu_id: &str) -> Option<(&String, &String)> {
+    /// The GPU's startup profile, by id and name, whoever it belongs to.
+    fn startup_profile(&self, gpu_id: &str) -> Option<&CurrentProfile> {
         self.activity
             .startup
             .as_ref()?
             .profiles
             .iter()
             .find(|startup| startup.gpu_id == gpu_id)
-            .map(|startup| (&startup.profile.id, &startup.profile.name))
+            .map(|startup| &startup.profile)
     }
 
     /// Sets the host-wide startup behavior, with tuning access, unless it's chosen already.
@@ -173,7 +173,7 @@ impl Core {
         profile_id: Option<String>,
     ) -> Vec<Effect> {
         if self.activity.startup.is_none()
-            || self.startup_profile(&gpu_id).map(|(id, _)| id) == profile_id.as_ref()
+            || self.startup_profile(&gpu_id).map(|startup| &startup.id) == profile_id.as_ref()
         {
             return Vec::new();
         }
