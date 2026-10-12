@@ -2,10 +2,39 @@ use std::time::Duration;
 
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuInventoryProvider, GpuPerformanceResponse, GpuTelemetryProvider};
+use prism_protocol::{
+    DaemonEvent, DaemonRequest, DaemonSnapshot, ProtocolVersion, SessionMessage, Welcome,
+};
 use prism_ui::{
     AppearanceMode, Content, Core, Effect, ExplainedState, Input, Intent, Section, TelemetrySource,
     Track, TrackKind,
 };
+
+fn snapshot() -> DaemonSnapshot {
+    let message: SessionMessage = serde_json::from_str(include_str!(
+        "../../prism-protocol/tests/contracts/daemon-snapshot.json"
+    ))
+    .unwrap();
+    let SessionMessage::Snapshot { snapshot } = message else {
+        panic!("the contract holds a snapshot")
+    };
+    snapshot
+}
+
+/// Opens a session with prismd, with tuning access, starting from `snapshot`.
+fn connect(core: &mut Core, snapshot: DaemonSnapshot) -> Vec<Effect> {
+    core.handle(Input::PrismdConnected {
+        welcome: Welcome {
+            protocol: ProtocolVersion::CURRENT,
+            prismd_version: "0.1.0".into(),
+            can_tune: true,
+            reason: None,
+            authorization: None,
+        },
+        snapshot,
+        socket: "/run/prism/prismd.sock".into(),
+    })
+}
 
 fn simulated(fixture: SimulatedFixture) -> SimulatedGpus {
     SimulatedGpus::new(fixture, || Duration::ZERO)
@@ -192,7 +221,7 @@ fn a_gpu_missing_from_a_sample_is_unknown_with_the_sample_s_reason() {
 }
 
 #[test]
-fn a_host_without_nvml_explains_why_there_is_no_telemetry() {
+fn a_host_without_nvml_opens_into_drivers_and_explains_why_there_is_no_telemetry() {
     let core = launched(SimulatedFixture::NvmlMissing);
 
     let expected = ExplainedState {
@@ -205,20 +234,133 @@ fn a_host_without_nvml_explains_why_there_is_no_telemetry() {
                that the driver is installed and loaded, then restart Prism."
             .into(),
     };
-    assert_eq!(core.content(), Content::NoGpus(expected.clone()));
+    assert_eq!(core.content(), Content::Section(Section::Drivers));
+    assert_eq!(core.sidebar().section, Some(Section::Drivers));
     assert_eq!(core.sidebar().no_gpus, Some(expected));
     assert!(core.sidebar().gpus.is_empty());
 }
 
 #[test]
-fn an_empty_inventory_is_explained_without_claiming_the_host_has_no_gpu() {
+fn an_empty_inventory_opens_into_drivers_without_claiming_the_host_has_no_gpu() {
     let core = launched(SimulatedFixture::EmptyInventory);
+
+    assert_eq!(core.content(), Content::Section(Section::Drivers));
+    let state = core.sidebar().no_gpus.expect("an explained empty state");
+    assert_eq!(state.title, "No GPUs found");
+    assert_eq!(state.reason, "NVML reports no NVIDIA GPUs on this host.");
+    assert!(
+        state
+            .hint
+            .starts_with("An empty list alone doesn't mean the host has no GPU.")
+    );
+}
+
+#[test]
+fn a_host_without_the_driver_loaded_opens_into_drivers_and_says_so() {
+    let core = launched(SimulatedFixture::DriverNotLoaded);
+
+    assert_eq!(core.content(), Content::Section(Section::Drivers));
+    let state = core.sidebar().no_gpus.expect("an explained empty state");
+    assert_eq!(state.title, "No GPU telemetry");
+    assert_eq!(
+        state.reason,
+        "NVIDIA inventory is unavailable on this system: unable to initialize NVML: NVIDIA \
+         driver is not loaded"
+    );
+}
+
+#[test]
+fn gpus_found_after_opening_into_drivers_open_the_first_gpu() {
+    // NVML can't read the GPUs from here, as in a Flatpak without a matching GL.nvidia, but
+    // prismd can.
+    let mut core = launched(SimulatedFixture::NvmlMissing);
+    assert_eq!(core.content(), Content::Section(Section::Drivers));
+
+    connect(&mut core, snapshot());
+
+    assert_eq!(workspace(&core).title, "NVIDIA GeForce RTX 5090");
+    assert_eq!(core.sidebar().section, None);
+    assert_eq!(core.sidebar().no_gpus, None);
+}
+
+#[test]
+fn gpus_found_later_leave_the_user_where_they_went() {
+    let mut core = launched(SimulatedFixture::NvmlMissing);
+    core.handle(Input::Intent(Intent::GoTo(Section::Games)));
+
+    connect(&mut core, snapshot());
+
+    assert_eq!(core.content(), Content::Section(Section::Games));
+}
+
+#[test]
+fn a_session_without_gpus_opens_into_drivers_and_reads_the_host_s_driver() {
+    let mut core = Core::default();
+    core.handle(Input::Launched {
+        appearance: AppearanceMode::System,
+        started_unix_ms: 0,
+    });
+    let mut empty = snapshot();
+    empty.inventory = simulated(SimulatedFixture::EmptyInventory).inventory();
+
+    let effects = connect(&mut core, empty);
+
+    assert_eq!(core.content(), Content::Section(Section::Drivers));
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::CommandPrismd {
+            request: DaemonRequest::GetDriverStatus,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn gpus_found_while_running_the_driver_plan_leave_drivers_showing() {
+    let mut core = Core::default();
+    core.handle(Input::Launched {
+        appearance: AppearanceMode::System,
+        started_unix_ms: 0,
+    });
+    let mut empty = snapshot();
+    empty.inventory = simulated(SimulatedFixture::EmptyInventory).inventory();
+    connect(&mut core, empty);
+    core.handle(Input::Intent(Intent::RunDriverPlan));
+
+    core.handle(Input::PrismdEvent {
+        event: DaemonEvent::InventoryChanged(snapshot().inventory),
+        received_at: Duration::from_secs(1),
+    });
+
+    assert_eq!(core.content(), Content::Section(Section::Drivers));
+}
+
+#[test]
+fn with_gpus_present_the_selected_gpu_stays_open_when_the_inventory_is_read_again() {
+    let mut core = launched(SimulatedFixture::TwoIdenticalGpus);
+    let second = core.sidebar().gpus[1].id.clone();
+    core.handle(Input::Intent(Intent::SelectGpu(second.clone())));
+
+    core.handle(Input::InventoryRead(
+        simulated(SimulatedFixture::TwoIdenticalGpus).inventory(),
+    ));
+
+    assert_eq!(workspace(&core).id, second);
+}
+
+#[test]
+fn a_gpu_that_leaves_an_inventory_now_empty_is_explained_in_its_place() {
+    let mut core = launched(SimulatedFixture::TunableGpu);
+
+    core.handle(Input::InventoryRead(
+        simulated(SimulatedFixture::EmptyInventory).inventory(),
+    ));
 
     let Content::NoGpus(state) = core.content() else {
         panic!("expected an explained state, got {:?}", core.content());
     };
     assert_eq!(state.title, "No GPUs found");
-    assert_eq!(state.reason, "NVML reports no NVIDIA GPUs on this host.");
+    assert_eq!(core.sidebar().no_gpus, Some(state));
 }
 
 #[test]
