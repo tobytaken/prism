@@ -14,7 +14,7 @@ use prism_protocol::{
 use crate::cooling::FanMode;
 use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::drafts::{DialogState, Drafts};
-use crate::games::GameCommand;
+use crate::games::{GameCommand, ProgramFile};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
 use crate::notifications::{Notification, NotificationId, Notifications, Subject};
 use crate::palette::{Command, PaletteState, Shortcut};
@@ -298,6 +298,8 @@ pub enum Input {
         id: CommandId,
         response: DaemonResponse,
     },
+    /// The file chooser asked for with [`Effect::ChooseProgramFile`] closed.
+    ProgramFileChosen(ProgramFile),
 }
 
 /// Which command sent to prismd an answer belongs to.
@@ -405,6 +407,14 @@ pub enum Intent {
     FilterSteamApps(String),
     /// Add the Steam app with this id, from Add Steam game.
     AddSteamApp(u32),
+    /// Show Games, and open Add program over it.
+    AddProgram,
+    /// Add program's search now reads this.
+    FilterPrograms(String),
+    /// Add the running program at this host location, from Add program.
+    AddRunningProgram(String),
+    /// Choose the program file to add in the desktop's file chooser, from Add program.
+    BrowseForProgram,
     /// Close Prism, dropping every GPU's unapplied tuning changes, as the close confirmation
     /// offers.
     DiscardAndClose,
@@ -451,6 +461,9 @@ pub enum Effect {
     Notify(Notification),
     /// Close this notification, if the user hasn't yet.
     WithdrawNotification(NotificationId),
+    /// Open the desktop's file chooser for a program file, for [`Input::ProgramFileChosen`] with
+    /// its host location.
+    ChooseProgramFile,
     Quit,
 }
 
@@ -821,6 +834,7 @@ impl Core {
                 Vec::new()
             }
             Input::PrismdAnswered { id, response } => self.answered(id, response),
+            Input::ProgramFileChosen(file) => self.program_file_chosen(file),
         }
     }
 
@@ -996,6 +1010,13 @@ impl Core {
                 Vec::new()
             }
             Intent::AddSteamApp(app_id) => self.add_steam_app(app_id),
+            Intent::AddProgram => self.perform(Command::AddProgram),
+            Intent::FilterPrograms(query) => {
+                self.filter_programs(query);
+                Vec::new()
+            }
+            Intent::AddRunningProgram(path) => self.add_running_program(path),
+            Intent::BrowseForProgram => self.browse_for_program(),
             Intent::DiscardAndClose => self.quit(),
         }
     }
@@ -1061,6 +1082,7 @@ impl Core {
             Command::ManageProfiles => self.open_manage(),
             Command::SetAutomaticSwitching(enabled) => self.set_automatic_switching(enabled),
             Command::AddSteamGame => self.open_add_steam_game(),
+            Command::AddProgram => self.open_add_program(),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }

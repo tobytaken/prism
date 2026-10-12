@@ -532,6 +532,8 @@ pub enum Dialog {
     ManageProfiles(ManageProfiles),
     /// The caller's Steam apps, each to add as a game.
     AddSteamGame(AddSteamGame),
+    /// The caller's running programs, each to add as a game, or a program file to browse for.
+    AddProgram(AddProgram),
 }
 
 /// The caller's installed Steam apps, searched, to add one as a game.
@@ -556,6 +558,40 @@ pub struct SteamAppChoice {
     /// The app's id, which adding it sends.
     pub app_id: u32,
     pub name: String,
+    /// Why it can't be added now, such as it being added already.
+    pub unavailable: Option<String>,
+}
+
+/// The caller's running programs, searched, to add one as a game, or a program file to browse
+/// for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddProgram {
+    pub title: String,
+    pub message: String,
+    /// The search as typed.
+    pub filter: String,
+    /// The running programs that match the search, as prismd orders them, each program once.
+    pub programs: Vec<ProgramChoice>,
+    /// What the list waits for, or why it's empty, such as "Reading your running programs…"; or
+    /// which program is being added, or that the file chooser is open.
+    pub status: Option<String>,
+    /// Whether Browse can open the file chooser now: not while it's open or a program is being
+    /// added.
+    pub can_browse: bool,
+    /// Why the last program chosen couldn't be added.
+    pub error: Option<String>,
+}
+
+/// One of the caller's running programs in Add program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramChoice {
+    /// Its host location, which adding it sends; none when prismd couldn't recover it.
+    pub path: Option<String>,
+    pub name: String,
+    /// Its host location, or that it's unknown.
+    pub detail: String,
+    /// Why prismd may not recognize it by this location, such as for a script or an emulator.
+    pub warning: Option<String>,
     /// Why it can't be added now, such as it being added already.
     pub unavailable: Option<String>,
 }
@@ -739,6 +775,9 @@ impl Core {
         if let Some(dialog) = self.add_steam_game_dialog(state) {
             return Some(Dialog::AddSteamGame(dialog));
         }
+        if let Some(dialog) = self.add_program_dialog(state) {
+            return Some(Dialog::AddProgram(dialog));
+        }
         Some(match state {
             DialogState::Review { gpu_id, changes } => {
                 let gpu = self
@@ -803,7 +842,8 @@ impl Core {
             DialogState::ProfileName { .. }
             | DialogState::DeleteProfile { .. }
             | DialogState::ManageProfiles { .. }
-            | DialogState::AddSteamGame { .. } => return None,
+            | DialogState::AddSteamGame { .. }
+            | DialogState::AddProgram { .. } => return None,
         })
     }
 

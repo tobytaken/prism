@@ -100,6 +100,7 @@ fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_tuning_r
             "Manage profiles…",
             "Turn automatic switching on",
             "Add Steam game…",
+            "Add program…",
             "Show last 1 minute",
             "Show last 5 minutes",
             "Show last 15 minutes",
@@ -142,7 +143,8 @@ fn each_command_shows_its_shortcut() {
             "",
             "",
             "",
-            // Turn automatic switching on and Add Steam game.
+            // Turn automatic switching on, Add Steam game and Add program.
+            "",
             "",
             "",
             // The ranges.
@@ -305,6 +307,7 @@ fn recently_run_commands_come_first() {
             "Go to Settings: About",
             "Turn automatic switching on",
             "Add Steam game…",
+            "Add program…",
             "Show last 1 minute",
             "Show last 5 minutes",
             "Show last 15 minutes",
@@ -348,6 +351,7 @@ fn gpu_and_range_commands_are_left_out_when_the_host_has_no_gpus() {
             "Go to Settings: About",
             "Turn automatic switching on",
             "Add Steam game…",
+            "Add program…",
             "Quit Prism"
         ]
     );
@@ -364,7 +368,7 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 26);
+    assert_eq!(titles(&core).len(), 27);
 }
 
 #[test]
