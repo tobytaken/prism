@@ -93,7 +93,7 @@ fn set_up_opens_settings_daemon() {
 }
 
 #[test]
-fn settings_has_its_sections_and_only_daemon_is_built() {
+fn settings_has_its_sections_and_only_startup_isnt_built_yet() {
     let harness = native(UnitState::Inactive { enabled: false });
     harness
         .find(ListItem, "Settings")
@@ -111,6 +111,11 @@ fn settings_has_its_sections_and_only_daemon_is_built() {
         sections,
         ["Appearance", "Startup", "Notifications", "Daemon", "About"]
     );
+    assert!(!harness.shows("This section isn't built yet."));
+    harness
+        .find(ListItem, "Startup")
+        .invoke_accessible_default_action();
+    harness.tick();
     assert!(harness.shows("This section isn't built yet."));
 
     harness

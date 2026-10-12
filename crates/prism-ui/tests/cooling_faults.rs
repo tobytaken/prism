@@ -20,7 +20,7 @@ use prism_protocol::{
     SessionMessage, Welcome,
 };
 use prism_ui::{
-    ActivityAction, ActivityItem, AppearanceMode, CommandId, Content, CoolingProblem, Core, Effect,
+    ActivityAction, ActivityItem, CommandId, Content, CoolingProblem, Core, Effect, GuiSettings,
     Input, Intent, Notification, Section,
 };
 
@@ -56,7 +56,7 @@ fn welcome(can_tune: bool) -> Welcome {
 fn connected_with(can_tune: bool) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::PrismdConnected {
@@ -581,10 +581,18 @@ fn no_notification_while_focused_or_for_external_control() {
 }
 
 #[test]
+fn no_notification_with_desktop_notifications_off() {
+    let mut core = connected();
+    core.handle(Input::Intent(Intent::SetDesktopNotifications(false)));
+
+    assert_eq!(notifications(&push(&mut core, fault())), []);
+}
+
+#[test]
 fn a_fault_already_there_when_prism_connects_isnt_notified_but_is_shown() {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     let mut snapshot = snapshot();

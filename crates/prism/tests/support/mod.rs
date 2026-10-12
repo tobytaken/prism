@@ -17,10 +17,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
-use prism::settings::{GuiSettings, SettingsStore};
+use prism::settings::SettingsStore;
 use prism::{
     App, Clock, Environment, FileChooser, HostServices, Launches, NotificationEvent, Notifier,
-    Sampling, WindowActivation,
+    Opener, Sampling, WindowActivation,
 };
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{
@@ -30,7 +30,8 @@ use prism_gpu::{
 
 use self::prismd::{DaemonState, FakeHost, FakePrismd};
 use prism_ui::{
-    AppearanceMode, Notification, NotificationId, PrismdInstall, ProgramFile, UnitState,
+    AppearanceMode, GuiSettings, Link, Notification, NotificationId, PrismdInstall, ProgramFile,
+    UnitState,
 };
 use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
@@ -64,11 +65,45 @@ impl Clock for ManualClock {
     }
 }
 
-struct FixedSettings(GuiSettings);
+/// The GUI's settings file, which outlives the Prism that saves to it, so the next one loads what
+/// it saved.
+#[derive(Clone, Default)]
+pub struct FakeSettings(Arc<Mutex<GuiSettings>>);
 
-impl SettingsStore for FixedSettings {
+impl FakeSettings {
+    pub fn new(settings: GuiSettings) -> Self {
+        Self(Arc::new(Mutex::new(settings)))
+    }
+
+    /// The settings saved last, or the ones it started with.
+    pub fn saved(&self) -> GuiSettings {
+        *self.0.lock().unwrap()
+    }
+}
+
+impl SettingsStore for FakeSettings {
     fn load(&self) -> GuiSettings {
-        self.0
+        self.saved()
+    }
+
+    fn save(&self, settings: &GuiSettings) {
+        *self.0.lock().unwrap() = *settings;
+    }
+}
+
+/// What the desktop was asked to open, oldest first.
+#[derive(Clone, Default)]
+pub struct FakeOpener(Arc<Mutex<Vec<Link>>>);
+
+impl FakeOpener {
+    pub fn opened(&self) -> Vec<Link> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl Opener for FakeOpener {
+    fn open(&self, link: Link) {
+        self.0.lock().unwrap().push(link);
     }
 }
 
@@ -238,6 +273,8 @@ pub struct Harness {
     pub activation: RecordedActivation,
     pub notifier: FakeNotifier,
     pub file_chooser: FakeFileChooser,
+    pub opener: FakeOpener,
+    pub settings: FakeSettings,
     pub prismd: FakePrismd,
     pub host: FakeHost,
     clock: Arc<ManualClock>,
@@ -293,6 +330,17 @@ impl Harness {
 
     pub fn with_appearance(fixture: SimulatedFixture, appearance: AppearanceMode) -> Self {
         Self::build(appearance, DaemonState::NotRunning, simulated(fixture))
+    }
+
+    /// Prism on `fixture`, with prismd in `daemon` from the start, loading its settings from
+    /// `settings`.
+    pub fn with_settings(
+        fixture: SimulatedFixture,
+        daemon: DaemonState,
+        settings: FakeSettings,
+    ) -> Self {
+        let install = PrismdInstall::Native(UnitState::Inactive { enabled: false });
+        Self::build_with(settings, daemon, install, simulated(fixture))
     }
 
     /// Prism on the tunable fixture with its temperature sensor gone.
@@ -358,12 +406,26 @@ impl Harness {
         install: PrismdInstall,
         gpus: impl FnOnce(Arc<ManualClock>) -> GpuProviders,
     ) -> Self {
+        let settings = FakeSettings::new(GuiSettings {
+            appearance,
+            ..GuiSettings::default()
+        });
+        Self::build_with(settings, daemon, install, gpus)
+    }
+
+    fn build_with(
+        settings: FakeSettings,
+        daemon: DaemonState,
+        install: PrismdInstall,
+        gpus: impl FnOnce(Arc<ManualClock>) -> GpuProviders,
+    ) -> Self {
         init_testing_backend();
         let clock = Arc::new(ManualClock::default());
         let launches = FakeLaunches::default();
         let activation = RecordedActivation::default();
         let notifier = FakeNotifier::default();
         let file_chooser = FakeFileChooser::default();
+        let opener = FakeOpener::default();
         let prismd = FakePrismd::new(daemon);
         let host = FakeHost::new(install, prismd.clone());
         let in_process_reads = Arc::default();
@@ -382,8 +444,9 @@ impl Harness {
                 activation: Box::new(activation.clone()),
                 notifier: Box::new(notifier.clone()),
                 file_chooser: Box::new(file_chooser.clone()),
+                opener: Box::new(opener.clone()),
             },
-            settings: Box::new(FixedSettings(GuiSettings { appearance })),
+            settings: Box::new(settings.clone()),
             clock: clock.clone(),
             sampling: Sampling::OnDemand,
         })
@@ -398,6 +461,8 @@ impl Harness {
             activation,
             notifier,
             file_chooser,
+            opener,
+            settings,
             prismd,
             host,
             clock,

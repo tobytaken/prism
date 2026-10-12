@@ -18,7 +18,7 @@ use prism_protocol::{
     SessionMessage, SetGpuSwitchingPausedRequest, StartupGpuRequest, SwitchingCondition, Welcome,
 };
 use prism_ui::{
-    ActivityAction, ActivityItem, AppearanceMode, CommandId, Content, Core, Effect, Input, Intent,
+    ActivityAction, ActivityItem, CommandId, Content, Core, Effect, GuiSettings, Input, Intent,
     Notification, Section, SessionFailure, SwitchingStatus,
 };
 
@@ -52,7 +52,7 @@ fn welcome(can_tune: bool) -> Welcome {
 fn connected_from(snapshot: DaemonSnapshot, can_tune: bool) -> (Core, Vec<Effect>) {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     let effects = core.handle(Input::PrismdConnected {
@@ -738,6 +738,14 @@ fn no_notification_while_focused_or_for_a_failure_already_there_on_connecting() 
     let (core, effects) = connected_from(snapshot, true);
     assert_eq!(notifications(&effects), []);
     assert!(shown(&core).failed);
+}
+
+#[test]
+fn no_failure_pause_notification_with_desktop_notifications_off() {
+    let mut core = connected();
+    core.handle(Input::Intent(Intent::SetDesktopNotifications(false)));
+
+    assert_eq!(notifications(&push(&mut core, on_gpu(failed()))), []);
 }
 
 #[test]

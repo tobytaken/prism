@@ -6,7 +6,7 @@ use prism_protocol::{
     DaemonEvent, DaemonRequest, DaemonSnapshot, ProtocolVersion, SessionMessage, Welcome,
 };
 use prism_ui::{
-    AppearanceMode, Content, Core, Effect, ExplainedState, Input, Intent, Section, TelemetrySource,
+    Content, Core, Effect, ExplainedState, GuiSettings, Input, Intent, Section, TelemetrySource,
     Track, TrackKind,
 };
 
@@ -44,7 +44,7 @@ fn simulated(fixture: SimulatedFixture) -> SimulatedGpus {
 fn launched(fixture: SimulatedFixture) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::InventoryRead(simulated(fixture).inventory()));
@@ -297,7 +297,7 @@ fn gpus_found_later_leave_the_user_where_they_went() {
 fn a_session_without_gpus_opens_into_drivers_and_reads_the_host_s_driver() {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     let mut empty = snapshot();
@@ -319,7 +319,7 @@ fn a_session_without_gpus_opens_into_drivers_and_reads_the_host_s_driver() {
 fn gpus_found_while_running_the_driver_plan_leave_drivers_showing() {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     let mut empty = snapshot();
@@ -367,7 +367,7 @@ fn a_gpu_that_leaves_an_inventory_now_empty_is_explained_in_its_place() {
 fn prism_shows_that_it_is_looking_for_gpus_until_the_inventory_is_read() {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
 

@@ -15,7 +15,7 @@ use prism_protocol::{
 };
 use prism_ui::telemetry::LimitKind;
 use prism_ui::{
-    AppearanceMode, CommandId, Content, Core, Dialog, Effect, GpuWorkspace, Input, Intent, Key,
+    CommandId, Content, Core, Dialog, Effect, GpuWorkspace, GuiSettings, Input, Intent, Key,
     SessionFailure, Shortcut, TelemetrySource, TrackKind,
 };
 
@@ -55,7 +55,7 @@ fn welcome(can_tune: bool) -> Welcome {
 fn connected_to(fixture: SimulatedFixture, snapshot: DaemonSnapshot, can_tune: bool) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::PrismdConnected {
@@ -432,7 +432,7 @@ fn without_tuning_access_the_power_limit_is_read_only_with_the_reason() {
 
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {

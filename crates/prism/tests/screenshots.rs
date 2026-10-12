@@ -949,6 +949,49 @@ mod screenshot {
         daemon_not_allowed(AppearanceMode::Dark, "daemon-not-allowed-dark");
     }
 
+    /// The Settings section `section`, on a host whose prismd isn't running.
+    fn settings_section(section: &str, appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);
+        harness.tick();
+        harness.ctrl(",");
+        harness.tick();
+        harness
+            .find(i_slint_backend_testing::AccessibleRole::ListItem, section)
+            .invoke_accessible_default_action();
+        harness.tick();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn settings_appearance_in_light() {
+        settings_section(
+            "Appearance",
+            AppearanceMode::Light,
+            "settings-appearance-light",
+        );
+    }
+
+    #[test]
+    fn settings_appearance_in_dark() {
+        settings_section(
+            "Appearance",
+            AppearanceMode::Dark,
+            "settings-appearance-dark",
+        );
+    }
+
+    #[test]
+    fn settings_about_in_light() {
+        settings_section("About", AppearanceMode::Light, "settings-about-light");
+    }
+
+    #[test]
+    fn settings_about_in_dark() {
+        settings_section("About", AppearanceMode::Dark, "settings-about-dark");
+    }
+
     mod popup_surface {
         use super::*;
 

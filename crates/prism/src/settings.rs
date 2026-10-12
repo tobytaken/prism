@@ -1,20 +1,17 @@
 //! The GUI's own settings, kept per user in a file under the XDG config directory.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use prism_ui::AppearanceMode;
-use serde::Deserialize;
-
-/// The settings the GUI keeps for itself, apart from prismd's tuning store.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GuiSettings {
-    pub appearance: AppearanceMode,
-}
+use prism_ui::{AppearanceMode, GuiSettings};
+use serde::{Deserialize, Serialize};
 
 /// Where the GUI's settings are kept.
 pub trait SettingsStore {
     /// The saved settings, or the defaults when there are none or they can't be read.
     fn load(&self) -> GuiSettings;
+
+    /// Saves `settings` in place of the saved ones, or says why it can't on stderr.
+    fn save(&self, settings: &GuiSettings);
 }
 
 /// Settings in a TOML file, by default `$XDG_CONFIG_HOME/prism/settings.toml`.
@@ -58,24 +55,69 @@ impl SettingsStore for SettingsFile {
             }
         };
         match toml::from_str::<SettingsContents>(&contents) {
-            Ok(contents) => GuiSettings {
-                appearance: contents.appearance.into(),
-            },
+            Ok(contents) => contents.into(),
             Err(error) => {
                 eprintln!("prism: ignoring unreadable {}: {error}", path.display());
                 GuiSettings::default()
             }
         }
     }
+
+    fn save(&self, settings: &GuiSettings) {
+        let Some(path) = &self.path else {
+            eprintln!("prism: can't save settings without a config directory");
+            return;
+        };
+        if let Err(error) = write(path, &SettingsContents::from(*settings)) {
+            eprintln!("prism: can't save {}: {error}", path.display());
+        }
+    }
 }
 
-#[derive(Debug, Default, Deserialize)]
+/// Writes `contents` to `path` whole: through a file beside it that takes its place, so a crash
+/// midway leaves the old settings, not half of the new ones.
+fn write(path: &Path, contents: &SettingsContents) -> std::io::Result<()> {
+    let text = toml::to_string(contents).map_err(std::io::Error::other)?;
+    if let Some(directory) = path.parent() {
+        std::fs::create_dir_all(directory)?;
+    }
+    let mut partial = path.as_os_str().to_owned();
+    partial.push(".partial");
+    std::fs::write(&partial, text)?;
+    std::fs::rename(&partial, path)
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct SettingsContents {
     #[serde(default)]
     appearance: Appearance,
+    #[serde(default = "on")]
+    desktop_notifications: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+fn on() -> bool {
+    true
+}
+
+impl From<SettingsContents> for GuiSettings {
+    fn from(contents: SettingsContents) -> Self {
+        Self {
+            appearance: contents.appearance.into(),
+            desktop_notifications: contents.desktop_notifications,
+        }
+    }
+}
+
+impl From<GuiSettings> for SettingsContents {
+    fn from(settings: GuiSettings) -> Self {
+        Self {
+            appearance: settings.appearance.into(),
+            desktop_notifications: settings.desktop_notifications,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Appearance {
     #[default]
@@ -94,11 +136,21 @@ impl From<Appearance> for AppearanceMode {
     }
 }
 
+impl From<AppearanceMode> for Appearance {
+    fn from(appearance: AppearanceMode) -> Self {
+        match appearance {
+            AppearanceMode::System => Self::System,
+            AppearanceMode::Light => Self::Light,
+            AppearanceMode::Dark => Self::Dark,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use prism_ui::AppearanceMode;
+    use prism_ui::{AppearanceMode, GuiSettings};
 
-    use super::{GuiSettings, SettingsFile, SettingsStore};
+    use super::{SettingsFile, SettingsStore};
 
     fn settings_from(contents: Option<&str>) -> GuiSettings {
         let directory = tempfile::tempdir().expect("create a temporary directory");
@@ -135,5 +187,31 @@ mod tests {
             GuiSettings::default()
         );
         assert_eq!(settings_from(Some("not toml")), GuiSettings::default());
+    }
+
+    #[test]
+    fn the_settings_file_holds_whether_desktop_notifications_are_on() {
+        assert!(settings_from(Some("appearance = \"dark\"\n")).desktop_notifications);
+        assert!(!settings_from(Some("desktop_notifications = false\n")).desktop_notifications);
+    }
+
+    #[test]
+    fn saved_settings_load_again_from_a_new_settings_directory() {
+        let directory = tempfile::tempdir().expect("create a temporary directory");
+        let file = SettingsFile::at(directory.path().join("prism").join("settings.toml"));
+        let settings = GuiSettings {
+            appearance: AppearanceMode::Light,
+            desktop_notifications: false,
+        };
+
+        file.save(&settings);
+
+        assert_eq!(file.load(), settings);
+        let saved = GuiSettings {
+            appearance: AppearanceMode::System,
+            ..settings
+        };
+        file.save(&saved);
+        assert_eq!(file.load(), saved);
     }
 }

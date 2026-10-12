@@ -398,6 +398,17 @@ export enum SettingsSection { appearance, startup, notifications, daemon, about 
 
 export enum ServiceAction { enable, restart }
 
+// Something Prism opens in the desktop's app for it.
+export enum Link { third-party-licenses, slint-website }
+
+// Settings → About: Prism's version, its license as an SPDX expression, and where "Built with
+// Slint" leads.
+export struct AboutView {
+    version: string,
+    license: string,
+    slint-website: string,
+}
+
 // A labeled fact about the prismd connection, such as the socket path.
 export struct FactView {
     label: string,
@@ -507,6 +518,11 @@ export global AppState {
     in property <[string]> daemon-paragraphs;
     in property <[string]> daemon-commands;
     in property <[FactView]> daemon-facts;
+    // Settings → Appearance's segments, one for each appearance mode, the one in use picked.
+    in property <[SegmentView]> appearance-modes;
+    // Whether Prism sends desktop notifications at all.
+    in property <bool> desktop-notifications;
+    in property <AboutView> about;
     in property <bool> palette-open;
     in property <DialogView> dialog;
     // The current tuning values the open review says changed, or the profile values the
@@ -554,6 +570,12 @@ export global Intents {
     callback run-service(action: ServiceAction);
     // Puts `text` on the clipboard.
     callback copy(text: string);
+    // Uses the appearance mode at this index among Settings → Appearance's segments from now on.
+    callback set-appearance(index: int);
+    // Turns desktop notifications on or off.
+    callback set-desktop-notifications(enabled: bool);
+    // Opens `link` in the desktop's app for it.
+    callback open(link: Link);
     callback minimize-window();
     callback toggle-maximized();
     callback close-window();

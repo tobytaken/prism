@@ -1,7 +1,7 @@
 //! The command palette: its command catalog with each command's availability, fuzzy matching and
 //! recent-first ordering. Also the keyboard shortcuts, which run the same commands.
 
-use crate::core::{Core, Section, Selection, SettingsSection};
+use crate::core::{AppearanceMode, Core, Section, Selection, SettingsSection};
 use crate::daemon::ServiceAction;
 use crate::drafts::DialogState;
 use crate::telemetry::TelemetryRange;
@@ -19,6 +19,10 @@ pub(crate) enum Command {
     RunService(ServiceAction),
     /// Copy the one command that sets prismd up from here.
     CopyPrismdSetup,
+    /// Use this appearance mode from now on.
+    SetAppearance(AppearanceMode),
+    /// Turn desktop notifications on or off.
+    SetDesktopNotifications(bool),
     /// Apply the selected GPU's unapplied tuning changes.
     ApplyChanges,
     /// Discard the selected GPU's unapplied tuning changes.
@@ -327,6 +331,9 @@ impl Core {
         if let Command::ShowRange(range) = command {
             return (self.range == *range).then(|| "Already shown".into());
         }
+        if let Command::SetAppearance(mode) = command {
+            return (self.appearance == *mode).then(|| "Already in use".into());
+        }
         if let Command::ApplyChanges | Command::DiscardChanges = command {
             return self.changes_unavailable(command);
         }
@@ -362,6 +369,8 @@ impl Core {
             Command::ShowRange(_)
             | Command::RunService(_)
             | Command::CopyPrismdSetup
+            | Command::SetAppearance(_)
+            | Command::SetDesktopNotifications(_)
             | Command::ApplyChanges
             | Command::DiscardChanges
             | Command::RecallRememberedCurve
@@ -514,7 +523,15 @@ impl Core {
             .into_iter()
             .chain(self.switching_commands())
             .map(|(command, title)| (command, title, None));
-        let app = [(Command::Quit, "Quit Prism".to_owned(), Some(Shortcut::Quit))];
+        let appearance = self
+            .appearance_commands()
+            .into_iter()
+            .map(|(command, title)| (command, title, None));
+        let (notifications, notifications_title) = self.desktop_notifications_command();
+        let app = [
+            (notifications, notifications_title, None),
+            (Command::Quit, "Quit Prism".to_owned(), Some(Shortcut::Quit)),
+        ];
         navigation
             .chain(sections)
             .chain(settings)
@@ -525,6 +542,7 @@ impl Core {
             .chain(games)
             .chain(drivers)
             .chain(ranges)
+            .chain(appearance)
             .chain(prismd)
             .chain(app)
             .map(|(command, title, shortcut)| CatalogEntry {
@@ -567,6 +585,11 @@ impl Core {
             state.highlight = first;
         }
     }
+}
+
+/// "on" or "off", as a command that turns something on or off says it.
+pub(crate) fn on_off(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
 }
 
 /// Whether the query's characters, ignoring case and whitespace, appear in order in `title`.

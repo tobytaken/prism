@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use prism_protocol::{DaemonSnapshot, Incompatible, ProtocolVersion, SessionMessage, Welcome};
 use prism_ui::{
-    AppearanceMode, Core, Distro, Effect, Input, NotConnected, PrismdConnection, PrismdHost,
+    Core, Distro, Effect, GuiSettings, Input, NotConnected, PrismdConnection, PrismdHost,
     PrismdInstall, SessionFailure, Timer, TuningAccess, UnitState,
 };
 
@@ -64,7 +64,7 @@ fn flatpak(run_dir_visible: bool) -> PrismdHost {
 fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core

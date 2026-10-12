@@ -3,7 +3,7 @@
 
 use prism_protocol::{Authorization, DaemonSnapshot, ProtocolVersion, SessionMessage, Welcome};
 use prism_ui::{
-    AppearanceMode, Core, Distro, Effect, Input, Intent, PrismdHost, PrismdInstall, ServiceAction,
+    Core, Distro, Effect, GuiSettings, Input, Intent, PrismdHost, PrismdInstall, ServiceAction,
     ServiceOutcome, SessionFailure, UnitState,
 };
 
@@ -29,7 +29,7 @@ fn ubuntu() -> Distro {
 fn unavailable(install: PrismdInstall) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {

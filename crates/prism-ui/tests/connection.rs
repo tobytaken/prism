@@ -9,8 +9,8 @@ use prism_protocol::{
     Welcome,
 };
 use prism_ui::{
-    AppearanceMode, Content, Core, Effect, GpuWorkspace, Input, PrismdConnection, SessionFailure,
-    TelemetrySource, Timer, TrackKind,
+    AppearanceMode, Content, Core, Effect, GpuWorkspace, GuiSettings, Input, PrismdConnection,
+    SessionFailure, TelemetrySource, Timer, TrackKind,
 };
 
 fn tunable() -> SimulatedGpus {
@@ -42,7 +42,7 @@ fn welcome() -> Welcome {
 fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core
@@ -97,7 +97,10 @@ fn prism_connects_to_prismd_before_reading_any_gpu_itself() {
     let mut core = Core::default();
 
     let effects = core.handle(Input::Launched {
-        appearance: AppearanceMode::Dark,
+        settings: GuiSettings {
+            appearance: AppearanceMode::Dark,
+            ..GuiSettings::default()
+        },
         started_unix_ms: 0,
     });
 

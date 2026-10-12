@@ -1,6 +1,6 @@
-//! Desktop notifications' policy (ADR 0012): none while Prism's window has focus, at most one live
-//! about each thing, a newer one replacing it, and none with write actions. Only the running GUI
-//! notifies, so the core's triggers are all there is.
+//! Desktop notifications' policy (ADR 0012): none while the user has them off or Prism's window has
+//! focus, at most one live about each thing, a newer one replacing it, and none with write actions.
+//! Only the running GUI notifies, so the core's triggers are all there is.
 
 /// A desktop notification for the caller to send.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,9 +47,12 @@ impl Subject {
     }
 }
 
-/// The notifications Prism has live, and whether its window has focus.
+/// The notifications Prism has live, whether the user has them on, and whether its window has
+/// focus.
 #[derive(Debug, Default)]
 pub(crate) struct Notifications {
+    /// The user turned desktop notifications off. They're on by default.
+    off: bool,
     /// A window that never said otherwise counts as unfocused, so nothing is missed.
     focused: bool,
     /// At most one for each subject.
@@ -62,15 +65,31 @@ impl Notifications {
         self.focused = focused;
     }
 
-    /// The notification about `subject`, in place of the live one about it, unless the window
-    /// has focus, so the user is already looking.
+    /// Whether the user has desktop notifications on.
+    pub(crate) fn enabled(&self) -> bool {
+        !self.off
+    }
+
+    /// Turns desktop notifications on or off: the live ones to withdraw, all of them when they go
+    /// off.
+    pub(crate) fn set_enabled(&mut self, enabled: bool) -> Vec<NotificationId> {
+        self.off = !enabled;
+        if enabled {
+            Vec::new()
+        } else {
+            self.withdraw_all()
+        }
+    }
+
+    /// The notification about `subject`, in place of the live one about it, unless the user has
+    /// them off, or the window has focus, so the user is already looking.
     pub(crate) fn send(
         &mut self,
         subject: Subject,
         summary: String,
         body: String,
     ) -> Option<Notification> {
-        if self.focused {
+        if self.off || self.focused {
             return None;
         }
         self.next += 1;
@@ -189,5 +208,23 @@ mod tests {
         );
         // The live one stays until it's closed or withdrawn.
         assert_eq!(notifications.withdraw(&gpu("GPU-0")), Some(live.id));
+    }
+
+    #[test]
+    fn nothing_is_sent_while_desktop_notifications_are_off() {
+        let mut notifications = Notifications::default();
+        let live = send(&mut notifications, gpu("GPU-0"));
+
+        assert_eq!(notifications.set_enabled(false), [live.id]);
+        assert!(!notifications.enabled());
+        for subject in [gpu("GPU-0"), Subject::Prismd, Subject::Drivers] {
+            assert_eq!(
+                notifications.send(subject, "Summary".into(), "Body".into()),
+                None
+            );
+        }
+
+        assert_eq!(notifications.set_enabled(true), []);
+        assert_eq!(send(&mut notifications, gpu("GPU-0")).replaces, None);
     }
 }

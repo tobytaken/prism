@@ -15,8 +15,8 @@ use prism_protocol::{
     ProtocolVersion, SessionMessage, Welcome,
 };
 use prism_ui::{
-    ActivityAction, AppearanceMode, CommandId, Content, Core, Dialog, DriverConfirmation,
-    DriversSection, Effect, Input, Intent, Notification, Section, SessionFailure,
+    ActivityAction, CommandId, Content, Core, Dialog, DriverConfirmation, DriversSection, Effect,
+    GuiSettings, Input, Intent, Notification, Section, SessionFailure,
 };
 
 fn snapshot() -> DaemonSnapshot {
@@ -62,7 +62,7 @@ fn welcome(can_tune: bool) -> Welcome {
 fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core
@@ -720,6 +720,18 @@ fn every_ending_but_a_cancel_notifies() {
 fn a_driver_job_ending_doesnt_notify_while_the_window_has_focus() {
     let mut core = connected();
     core.handle(Input::WindowFocusChanged(true));
+    push(&mut core, job(DriverJobStatus::Running));
+
+    assert_eq!(
+        notifications(&push(&mut core, job(DriverJobStatus::Failed))),
+        []
+    );
+}
+
+#[test]
+fn a_driver_job_ending_doesnt_notify_with_desktop_notifications_off() {
+    let mut core = connected();
+    core.handle(Input::Intent(Intent::SetDesktopNotifications(false)));
     push(&mut core, job(DriverJobStatus::Running));
 
     assert_eq!(

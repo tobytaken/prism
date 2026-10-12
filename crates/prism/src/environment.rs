@@ -8,6 +8,7 @@ use prism_gpu::GpuProviders;
 
 use crate::activation::DesktopActivation;
 use crate::file_chooser::{FileChooser, PortalFileChooser};
+use crate::links::{DesktopOpener, Opener};
 use crate::notifications::{DesktopNotifier, Notifier};
 use crate::prismd::{PrismdConnector, SocketConnector};
 use crate::prismd_host::{HostPrismdService, PrismdService};
@@ -52,12 +53,14 @@ pub struct HostServices {
     pub notifier: Box<dyn Notifier>,
     /// Where the user chooses a program file to add as a game.
     pub file_chooser: Box<dyn FileChooser>,
+    /// What opens links, such as Settings → About's, in the desktop's app for them.
+    pub opener: Box<dyn Opener>,
 }
 
 impl Default for HostServices {
     /// The host's systemd and os-release, no later launch reaches this Prism, the window is
     /// raised through the desktop, notifications go to the session's notification server, and
-    /// program files are chosen through the desktop portal.
+    /// program files are chosen and links opened through the desktop portal.
     fn default() -> Self {
         Self {
             prismd: Box::new(HostPrismdService::production()),
@@ -65,6 +68,7 @@ impl Default for HostServices {
             activation: Box::new(DesktopActivation),
             notifier: Box::new(DesktopNotifier::session()),
             file_chooser: Box::new(PortalFileChooser::session()),
+            opener: Box::new(DesktopOpener::session()),
         }
     }
 }

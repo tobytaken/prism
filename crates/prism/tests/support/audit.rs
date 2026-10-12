@@ -127,7 +127,11 @@ pub fn problems(elements: &[Element], access: TuningAccess) -> Vec<String> {
                 problem("no checked state");
             }
         }
-        if access == TuningAccess::Denied && is_editable(role) && element.read_only != Some(true) {
+        if access == TuningAccess::Denied
+            && is_editable(role)
+            && !GUI_SETTINGS.contains(&element.label().unwrap_or_default())
+            && element.read_only != Some(true)
+        {
             problem("not read-only");
         }
     }
@@ -163,6 +167,10 @@ pub fn is_interactive(role: AccessibleRole) -> bool {
             | RadioButton
     )
 }
+
+/// The controls, by label, that set the GUI's own settings rather than tuning values, which need
+/// no tuning access.
+const GUI_SETTINGS: &[&str] = &["Desktop notifications"];
 
 /// Roles of the controls that hold tuning values. A text field isn't one: it searches commands or
 /// names things, which needs no tuning access.

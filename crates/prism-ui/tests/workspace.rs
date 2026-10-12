@@ -8,7 +8,7 @@ use prism_gpu::{
 };
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    AppearanceMode, Content, Core, GpuWorkspace, Input, Intent, TelemetrySource, Track, TrackKind,
+    Content, Core, GpuWorkspace, GuiSettings, Input, Intent, TelemetrySource, Track, TrackKind,
 };
 
 fn simulated(fixture: SimulatedFixture) -> SimulatedGpus {
@@ -18,7 +18,7 @@ fn simulated(fixture: SimulatedFixture) -> SimulatedGpus {
 fn launched(fixture: SimulatedFixture) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::InventoryRead(simulated(fixture).inventory()));

@@ -16,9 +16,9 @@ use prism_protocol::{
     SessionMessage, SetEditHoldsRequest, Welcome,
 };
 use prism_ui::{
-    AppearanceMode, CommandId, Content, Core, Dialog, Effect, FanArrangement,
-    FanArrangementControl, FanCurveEditor, FanMode, FanModeControl, GpuWorkspace, Input, Intent,
-    Review, ReviewChange, Stepper,
+    CommandId, Content, Core, Dialog, Effect, FanArrangement, FanArrangementControl,
+    FanCurveEditor, FanMode, FanModeControl, GpuWorkspace, GuiSettings, Input, Intent, Review,
+    ReviewChange, Stepper,
 };
 
 const GPU: &str = "GPU-5a1b0000-0000-4000-8000-000000000001";
@@ -59,7 +59,7 @@ fn connected_with(
 ) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::PrismdConnected {
@@ -450,7 +450,7 @@ fn fans_whose_speed_ranges_dont_overlap_cant_share_a_fixed_speed_and_say_so() {
 fn no_mode_is_staged_before_the_gpus_fans_have_been_read() {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::PrismdConnected {

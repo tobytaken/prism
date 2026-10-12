@@ -23,6 +23,7 @@ use crate::notifications::{GpuConcern, Notification, NotificationId, Notificatio
 use crate::palette::{Command, PaletteState, Shortcut};
 use crate::profile_management::ProfileCommand;
 use crate::profiles::ProfileApplying;
+use crate::settings::{GuiSettings, Link};
 use crate::switching::Switching;
 use crate::telemetry::{Readings, TelemetryHistory, TelemetryRange};
 
@@ -248,10 +249,10 @@ pub enum Timer {
 /// Something that happened, for the core to take in.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    /// Prism started, with the appearance mode loaded from its settings, at this wall clock time
-    /// in Unix milliseconds. Every later input's time counts from it.
+    /// Prism started, with the settings loaded from its settings file, at this wall clock time in
+    /// Unix milliseconds. Every later input's time counts from it.
     Launched {
-        appearance: AppearanceMode,
+        settings: GuiSettings,
         started_unix_ms: u64,
     },
     /// The in-process GPU inventory was read.
@@ -326,6 +327,12 @@ pub enum Intent {
     RunService(ServiceAction),
     /// Put this text, such as a command to run, on the clipboard.
     Copy(String),
+    /// Use this appearance mode from now on.
+    SetAppearance(AppearanceMode),
+    /// Turn desktop notifications on or off.
+    SetDesktopNotifications(bool),
+    /// Open this link in the desktop's app for it, such as Settings → About's.
+    Open(Link),
     CloseWindow,
     OpenPalette,
     /// Search the palette's commands for this query.
@@ -464,6 +471,10 @@ pub enum Effect {
     RunService(ServiceAction),
     /// Put this text on the clipboard.
     Copy(String),
+    /// Save the GUI's settings, as they are now, to its settings file.
+    SaveSettings(GuiSettings),
+    /// Open this link in the desktop's app for it.
+    Open(Link),
     /// Send this request on the session with prismd; its answer isn't needed.
     SendToPrismd(DaemonRequest),
     /// Send this request on the session with prismd, and hand its answer back as
@@ -692,10 +703,12 @@ impl Core {
         self.revision += 1;
         match input {
             Input::Launched {
-                appearance,
+                settings,
                 started_unix_ms,
             } => {
-                self.appearance = appearance;
+                self.appearance = settings.appearance;
+                self.notifications
+                    .set_enabled(settings.desktop_notifications);
                 self.activity.started(started_unix_ms);
                 // The sampler waits until there's no session, so NVML is never loaded while
                 // prismd is there from the start.
@@ -1009,6 +1022,11 @@ impl Core {
             Intent::GoToSettings(section) => self.perform(Command::GoToSettings(section)),
             Intent::RunService(action) => self.perform(Command::RunService(action)),
             Intent::Copy(text) => vec![Effect::Copy(text)],
+            Intent::SetAppearance(mode) => self.perform(Command::SetAppearance(mode)),
+            Intent::SetDesktopNotifications(enabled) => {
+                self.perform(Command::SetDesktopNotifications(enabled))
+            }
+            Intent::Open(link) => vec![Effect::Open(link)],
             Intent::CloseWindow => self.perform(Command::Quit),
             Intent::OpenPalette | Intent::Press(Shortcut::OpenPalette) => {
                 self.open_palette();
@@ -1191,6 +1209,8 @@ impl Core {
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }
+            Command::SetAppearance(mode) => self.set_appearance(mode),
+            Command::SetDesktopNotifications(enabled) => self.set_desktop_notifications(enabled),
             Command::Quit => self.close_or_ask(),
         };
         // Settings → Daemon shows why there's no session, as the host says it now.
@@ -1262,6 +1282,11 @@ impl Core {
 
     pub fn appearance(&self) -> AppearanceMode {
         self.appearance
+    }
+
+    /// Whether Prism sends desktop notifications at all.
+    pub fn desktop_notifications(&self) -> bool {
+        self.notifications.enabled()
     }
 
     /// Changes with every input, so the view can tell when to redraw what it derives.

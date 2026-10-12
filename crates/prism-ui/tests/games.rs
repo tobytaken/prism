@@ -14,8 +14,8 @@ use prism_protocol::{
     SetGameProfileRequest, SteamApp, Welcome,
 };
 use prism_ui::{
-    AddProgram, AddSteamGame, AppearanceMode, CommandId, Core, Dialog, Effect, GameRow,
-    GamesSection, Input, Intent, ProgramFile, Section, SessionFailure,
+    AddProgram, AddSteamGame, CommandId, Core, Dialog, Effect, GameRow, GamesSection, GuiSettings,
+    Input, Intent, ProgramFile, Section, SessionFailure,
 };
 
 const GPU: &str = "GPU-5a1b0000-0000-4000-8000-000000000001";
@@ -87,7 +87,7 @@ fn welcome(can_tune: bool) -> Welcome {
 fn connected_with(can_tune: bool, change: impl FnOnce(&mut DaemonSnapshot)) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     let mut snapshot = snapshot();
