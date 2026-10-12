@@ -153,7 +153,7 @@ fn inline(core: &Core) -> Option<CoolingProblem> {
 }
 
 fn paused(core: &Core) -> bool {
-    core.sidebar().gpus[0].paused
+    core.sidebar().gpus[0].paused()
 }
 
 /// The problems Activity lists.

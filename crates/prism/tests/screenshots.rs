@@ -202,6 +202,43 @@ mod screenshot {
         cooling_fault(AppearanceMode::Dark, "workspace-cooling-fault-dark");
     }
 
+    /// The workspace in automatic switching's failure pause: the change strip saying it failed
+    /// with Retry, PAUSED in the sidebar, and the status bar's item and problem indicator.
+    fn switching_failure(appearance: AppearanceMode, name: &str) {
+        use prism_protocol::{
+            AutomaticSwitchingStatus, DaemonEvent, GpuSwitchingState, GpuSwitchingStatus,
+            SwitchingCondition,
+        };
+
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        harness.prismd.push(DaemonEvent::AutomaticSwitchingChanged(
+            AutomaticSwitchingStatus {
+                condition: SwitchingCondition::Ready {},
+                gpus: vec![GpuSwitchingStatus {
+                    gpu_id: "GPU-5a1b0000-0000-4000-8000-000000000001".into(),
+                    state: GpuSwitchingState::Failed {
+                        message: "Power limit is outside the current allowed range.".into(),
+                    },
+                    application: None,
+                }],
+            },
+        ));
+        harness.app.receive_posted();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn a_switching_failure_in_light() {
+        switching_failure(AppearanceMode::Light, "workspace-switching-failure-light");
+    }
+
+    #[test]
+    fn a_switching_failure_in_dark() {
+        switching_failure(AppearanceMode::Dark, "workspace-switching-failure-dark");
+    }
+
     /// The workspace with fan 1's own fixed speed pending, after another session changed the
     /// GPU's cooling: the fan picker with per-fan settings pending, and the change strip asking
     /// for a review before Apply.

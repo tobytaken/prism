@@ -17,7 +17,7 @@ use crate::activity::{ActivityAction, sentence};
 use crate::cooling::cooling_read;
 use crate::core::{CommandId, Core, Effect};
 use crate::drafts::not_applied;
-use crate::notifications::Subject;
+use crate::notifications::{GpuConcern, Subject};
 use crate::palette::Command;
 use crate::view::{ActivityItem, CoolingProblem, gpu_label};
 
@@ -270,14 +270,14 @@ impl Core {
                 let summary = format!("Fan curve paused on {}", self.gpu_name(&gpu_id));
                 let body = notification_body(&suspension);
                 self.notifications
-                    .send(Subject::Gpu(gpu_id), summary, body)
+                    .send(Subject::Gpu(gpu_id, GpuConcern::Cooling), summary, body)
                     .map(Effect::Notify)
                     .into_iter()
                     .collect()
             }
             _ if before.is_some_and(|before| before.kind == SuspensionKind::Fault) => self
                 .notifications
-                .withdraw(&Subject::Gpu(gpu_id))
+                .withdraw(&Subject::Gpu(gpu_id, GpuConcern::Cooling))
                 .map(Effect::WithdrawNotification)
                 .into_iter()
                 .collect(),

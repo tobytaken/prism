@@ -34,6 +34,8 @@ pub enum ActivityAction {
     DismissStartupOutcome(String),
     /// Retry, or resume, the fan curve Prism stopped following on this GPU, by id.
     RetryCooling(String),
+    /// Try this GPU's failed automatic switching again, by id.
+    RetrySwitching(String),
 }
 
 /// What Activity knows, apart from what other parts of the core report as problems.
@@ -180,6 +182,7 @@ impl Core {
         self.store_problem()
             .into_iter()
             .chain(self.cooling_problems())
+            .chain(self.switching_problems())
             .chain(self.startup_items().0)
             .collect()
     }
@@ -207,6 +210,10 @@ impl Core {
             }
             // It stays a problem until prismd pushes that the curve is followed again.
             ActivityAction::RetryCooling(gpu_id) => self.run(Some(Command::RetryCooling(gpu_id))),
+            // It stays a problem until prismd pushes that it's over.
+            ActivityAction::RetrySwitching(gpu_id) => {
+                self.run(Some(Command::RetrySwitching(gpu_id)))
+            }
         }
     }
 
@@ -240,6 +247,9 @@ impl Core {
                     .then(|| "Dismissing…".into())
             }
             ActivityAction::RetryCooling(gpu_id) => self.retry_unavailable(gpu_id),
+            ActivityAction::RetrySwitching(gpu_id) => self
+                .switching_command_unavailable(&Command::RetrySwitching(gpu_id.clone()))
+                .flatten(),
         }
     }
 

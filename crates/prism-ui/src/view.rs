@@ -62,12 +62,18 @@ pub struct SidebarGpu {
     pub fan_speed: Readout,
     /// Why some of the vitals are unknown, when they are.
     pub unknown_reason: Option<String>,
-    /// Whether the GPU's cooling is in a failure pause after a cooling fault, shown as PAUSED.
-    pub paused: bool,
+    /// What's in a failure pause on the GPU, such as "Fan curve paused" after a cooling fault or
+    /// "Automatic switching failed", shown together as PAUSED.
+    pub pauses: Vec<String>,
     pub selected: bool,
 }
 
 impl SidebarGpu {
+    /// Whether anything is in a failure pause on the GPU, which the block shows as PAUSED.
+    pub fn paused(&self) -> bool {
+        !self.pauses.is_empty()
+    }
+
     /// The vitals as a screen reader says them, with why any are unknown.
     pub fn vitals(&self) -> String {
         let vitals = format!(
@@ -77,15 +83,12 @@ impl SidebarGpu {
             self.power_draw.spoken(),
             self.fan_speed.spoken()
         );
-        [
-            Some(vitals),
-            self.unknown_reason.clone(),
-            self.paused.then(|| "Fan curve paused".into()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(". ")
+        [Some(vitals), self.unknown_reason.clone()]
+            .into_iter()
+            .flatten()
+            .chain(self.pauses.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(". ")
     }
 }
 
@@ -113,6 +116,8 @@ pub struct GpuWorkspace {
     pub changes: ChangeStrip,
     /// Why there's no tuning access, for the inline "Tuning needs prismd" line; none with it.
     pub no_tuning_access: Option<String>,
+    /// The GPU's automatic switching status, while there is a session.
+    pub switching: Option<SwitchingStatus>,
     /// The range the range picker has picked, which every track shows.
     pub range: TelemetryRange,
     /// One track per metric, top to bottom in [`TrackKind::ALL`]'s order.
@@ -335,6 +340,29 @@ pub struct CoolingProblem {
     /// Why the button can't be pressed now, when it can't.
     pub unavailable: Option<String>,
     /// Why prismd didn't apply the latest Retry or Resume, until the next one.
+    pub outcome: Option<String>,
+}
+
+/// What drives automatic switching on a GPU, or why it's waiting, paused, overridden, blocked or
+/// failed, with Pause or Resume, and Retry on a failure pause. It doesn't establish which tuning
+/// values are in effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchingStatus {
+    /// Such as "Cyberpunk 2077 → Quiet", "Paused" or "Failed".
+    pub summary: String,
+    /// Why, and what happens next.
+    pub detail: Vec<String>,
+    /// Whether automatic switching is in a failure pause on the GPU, which Retry ends.
+    pub failed: bool,
+    /// Whether Resume ends what holds it, an automatic switching pause or a manual override, so
+    /// the button is Resume, not Pause.
+    pub resumable: bool,
+    /// Why Pause, or Resume, can't be pressed now, when it can't.
+    pub pause_unavailable: Option<String>,
+    /// Why Retry can't be pressed now, when it can't.
+    pub retry_unavailable: Option<String>,
+    /// Why prismd refused the latest Pause, Resume or Retry, until the next one or the status
+    /// changes.
     pub outcome: Option<String>,
 }
 
@@ -822,6 +850,9 @@ pub struct StatusBar {
     pub telemetry: String,
     /// Whether any GPU has unapplied tuning changes, which hold automatic changes: EDIT HOLD.
     pub edit_hold: bool,
+    /// What drives automatic switching on the selected GPU, or why it doesn't, such as
+    /// "AUTO · CYBERPUNK 2077 → QUIET"; none without a session.
+    pub switching: Option<String>,
     /// How many current problems Activity lists.
     pub problems: usize,
     /// The problem indicator, which opens Activity, such as "2 PROBLEMS".
@@ -958,6 +989,7 @@ impl Core {
             }
             .into(),
             edit_hold: self.edit_hold(),
+            switching: self.switching_item(),
             problems,
             problem_indicator: match problems {
                 0 => "NO PROBLEMS".into(),
@@ -1029,7 +1061,14 @@ impl Core {
             power_draw: Readout::watts(latest.power_draw_watts),
             fan_speed: Readout::percent(latest.fan_speed_percent),
             unknown_reason: unknown_reason(gpu, &VITALS),
-            paused: self.cooling_paused(&gpu.id),
+            pauses: [
+                self.cooling_paused(&gpu.id).then_some("Fan curve paused"),
+                self.switching_failure(&gpu.id),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::to_owned)
+            .collect(),
             selected: self.selection == Some(Selection::Gpu(gpu.id.clone())),
         }
     }
@@ -1052,6 +1091,7 @@ impl Core {
             profiles: self.profile_switcher(&gpu.id),
             changes: self.change_strip(),
             no_tuning_access: self.tuning_access().reason().map(str::to_owned),
+            switching: self.switching_status(&gpu.id),
             range: self.range,
             tracks: TrackKind::ALL
                 .into_iter()

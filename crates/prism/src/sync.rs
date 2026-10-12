@@ -8,8 +8,8 @@ use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
     ActivityItem, AppearanceMode as CoreAppearance, Content, CoolingProblem, Core, Dialog, Fact,
     FanCurveEditor, FanModeControl, GameRow, ReviewChange, Section as CoreSection,
-    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Stepper, Track,
-    Tunable,
+    ServiceAction as CoreServiceAction, SettingsSection as CoreSettingsSection, Stepper,
+    SwitchingStatus, Track, Tunable,
 };
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
     ExplainedStateView, FactView, FanCurveView, FanModeView, GameLinkView, GameView, GamesView,
     LimitMark, MainWindow, ManagedProfileView, MenuEntryView, PaletteEntryView, ProgramView,
     ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection, SidebarGpuView,
-    SteamAppView, StepperView, Theme, TrackView, TuningSetting, WorkspaceView,
+    SteamAppView, StepperView, SwitchingView, Theme, TrackView, TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -44,7 +44,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
             power_draw: readout(&gpu.power_draw),
             fan_speed: readout(&gpu.fan_speed),
             vitals: gpu.vitals().into(),
-            paused: gpu.paused,
+            paused: gpu.paused(),
             selected: gpu.selected,
         })
         .collect();
@@ -97,6 +97,12 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                     .as_deref()
                     .unwrap_or_default()
                     .into(),
+                has_switching: workspace.switching.is_some(),
+                switching: workspace
+                    .switching
+                    .as_ref()
+                    .map(switching_view)
+                    .unwrap_or_default(),
                 hardware_open: workspace.hardware.open,
                 // Slint's int is 32 bits; wrapping still changes the value with every request.
                 reveal_fans: workspace.reveal_fans as i32,
@@ -436,6 +442,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     state.set_connection(status.connection.into());
     state.set_connected(status.connected);
     state.set_telemetry(status.telemetry.into());
+    state.set_switching(status.switching.unwrap_or_default().into());
     state.set_edit_hold(status.edit_hold);
     state.set_problems(status.problems.try_into().unwrap_or(i32::MAX));
     state.set_problem_indicator(status.problem_indicator.into());
@@ -474,6 +481,29 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
     state.set_activity_empty(empty.into());
     // Slint's int is 32 bits; wrapping still changes the value on every input.
     state.set_revision(core.revision() as i32);
+}
+
+/// A GPU's automatic switching status as its workspace shows it.
+fn switching_view(status: &SwitchingStatus) -> SwitchingView {
+    SwitchingView {
+        summary: status.summary.as_str().into(),
+        detail: status.detail.join(" ").into(),
+        failed: status.failed,
+        resumable: status.resumable,
+        can_pause: status.pause_unavailable.is_none(),
+        pause_reason: status
+            .pause_unavailable
+            .as_deref()
+            .unwrap_or_default()
+            .into(),
+        can_retry: status.retry_unavailable.is_none(),
+        retry_reason: status
+            .retry_unavailable
+            .as_deref()
+            .unwrap_or_default()
+            .into(),
+        outcome: status.outcome.as_deref().unwrap_or_default().into(),
+    }
 }
 
 /// A problem or an event as Activity shows it.

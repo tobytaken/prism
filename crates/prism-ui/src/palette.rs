@@ -49,6 +49,13 @@ pub(crate) enum Command {
     OpenActivity,
     /// Retry, or resume, the fan curve Prism stopped following on this GPU, by id.
     RetryCooling(String),
+    /// Pause automatic switching on this GPU, by id, or resume it.
+    SetSwitchingPaused {
+        gpu_id: String,
+        paused: bool,
+    },
+    /// Try this GPU's failed automatic switching again, by id.
+    RetrySwitching(String),
     Quit,
 }
 
@@ -332,6 +339,9 @@ impl Core {
         if let Some(reason) = self.game_command_unavailable(command) {
             return reason;
         }
+        if let Some(reason) = self.switching_command_unavailable(command) {
+            return reason;
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
@@ -357,6 +367,8 @@ impl Core {
             | Command::AddSteamGame
             | Command::AddProgram
             | Command::RetryCooling(_)
+            | Command::SetSwitchingPaused { .. }
+            | Command::RetrySwitching(_)
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
@@ -485,6 +497,7 @@ impl Core {
         let retries = self
             .retry_commands()
             .into_iter()
+            .chain(self.switching_commands())
             .map(|(command, title)| (command, title, None));
         let app = [(Command::Quit, "Quit Prism".to_owned(), Some(Shortcut::Quit))];
         navigation

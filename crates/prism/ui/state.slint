@@ -225,11 +225,30 @@ export struct ChangeStripView {
     discard-reason: string,
 }
 
+// What drives automatic switching on a GPU, or why it doesn't, in short as `summary` and explained
+// as `detail`. `failed` says it's in a failure pause, which Retry ends; Retry can be pressed when
+// `can-retry` and says why not in `retry-reason`. `resumable` says Resume ends what holds it, an
+// automatic switching pause or a manual override, so its button resumes instead of pausing; the
+// button can be pressed when `can-pause` and says why not in `pause-reason`. `outcome` says why prismd refused the latest
+// Pause, Resume or Retry.
+export struct SwitchingView {
+    summary: string,
+    detail: string,
+    failed: bool,
+    resumable: bool,
+    can-pause: bool,
+    pause-reason: string,
+    can-retry: bool,
+    retry-reason: string,
+    outcome: string,
+}
+
 // `no-tuning-access` is why there's no tuning access, and empty with it. `has-profiles` says
 // whether the header shows the GPU's profiles, read-only with `profiles-reason` when
 // `profiles-read-only`, showing `current-profile`, the current profile's name, or "None".
 // `profiles-not-saved` says whether the values in effect differ from the current profile.
 // `reveal-fans` changes each time the tracks should scroll the Fans track into view.
+// `has-switching` says whether the GPU's automatic switching status is known, as `switching`.
 export struct WorkspaceView {
     id: string,
     title: string,
@@ -241,6 +260,8 @@ export struct WorkspaceView {
     profiles-not-saved: bool,
     changes: ChangeStripView,
     no-tuning-access: string,
+    has-switching: bool,
+    switching: SwitchingView,
     hardware-open: bool,
     reveal-fans: int,
 }
@@ -430,6 +451,9 @@ export global AppState {
     in property <string> connection;
     in property <bool> connected;
     in property <string> telemetry;
+    // What drives automatic switching on the selected GPU, or why it doesn't, such as
+    // "AUTO · CYBERPUNK 2077 → QUIET"; empty without a session.
+    in property <string> switching;
     // Whether any GPU has unapplied tuning changes, which hold automatic changes.
     in property <bool> edit-hold;
     // The problem indicator: how many current problems there are, and what it says.
@@ -535,6 +559,10 @@ export global Intents {
     callback delete-profile(index: int);
     // Turns automatic switching on or off.
     callback set-automatic-switching(enabled: bool);
+    // Pauses or resumes automatic switching on the GPU, by id.
+    callback set-switching-paused(gpu-id: string, paused: bool);
+    // Retries automatic switching on the GPU, by id, ending its failure pause.
+    callback retry-switching(gpu-id: string);
     // Links the game at this index, on the GPU of its link at this index, to the choice at this
     // index: None, then the GPU's profiles.
     callback link-game(game: int, link: int, choice: int);

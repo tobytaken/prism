@@ -564,7 +564,7 @@ fn without_tuning_access_games_are_read_only_with_the_reason() {
 
     let reason = Some("Needs tuning access · bob isn't in group wheel".to_owned());
     assert_eq!(
-        palette_titles(&mut core, "automatic switching"),
+        palette_titles(&mut core, "turn automatic switching"),
         [("Turn automatic switching on".to_owned(), reason.clone())]
     );
     assert_eq!(
@@ -650,7 +650,7 @@ fn the_palette_turns_automatic_switching_on_or_off_and_adds_a_steam_game_or_a_pr
     intent(&mut core, Intent::GoTo(Section::Settings));
 
     assert_eq!(
-        palette_titles(&mut core, "automatic switching"),
+        palette_titles(&mut core, "turn automatic switching"),
         [("Turn automatic switching on".to_owned(), None)]
     );
     intent(&mut core, Intent::OpenPalette);
@@ -669,7 +669,7 @@ fn the_palette_turns_automatic_switching_on_or_off_and_adds_a_steam_game_or_a_pr
     on.automatic_switching = true;
     push(&mut core, DaemonEvent::GamesChanged(on));
     assert_eq!(
-        palette_titles(&mut core, "automatic switching"),
+        palette_titles(&mut core, "turn automatic switching"),
         [("Turn automatic switching off".to_owned(), None)]
     );
 
