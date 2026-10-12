@@ -278,6 +278,8 @@ export enum DialogKind {
     manage-profiles,
     add-steam-game,
     add-program,
+    run-driver-plan,
+    reboot,
 }
 
 // A dialog over the window: its title and message, and whether its Apply and Discard can run and
@@ -428,6 +430,34 @@ export struct ActivityItemView {
     action-reason: string,
 }
 
+// Drivers, apart from its lists: why nothing can run (`read-only`, with the reason), what it says in
+// place of the host's driver status, and why prismd refused the latest request, each empty when
+// there's nothing to say. The recommended driver plan, when there is one, with whether Run can
+// open its confirmation and why not; the latest driver job, when there is one, with its state, the
+// step running while it's active, what its state means, and whether Cancel and Reboot can run and
+// why not. Reboot shows only while the job left the host needing a restart.
+export struct DriversView {
+    read-only: bool,
+    reason: string,
+    status: string,
+    outcome: string,
+    has-plan: bool,
+    plan-title: string,
+    can-run: bool,
+    run-reason: string,
+    has-job: bool,
+    job-title: string,
+    job-state: string,
+    job-active: bool,
+    job-step: string,
+    job-explanation: string,
+    can-cancel: bool,
+    cancel-reason: string,
+    reboot: bool,
+    can-reboot: bool,
+    reboot-reason: string,
+}
+
 // Activity's lists: current problems, startup outcomes and recent events.
 export enum ActivityList { problems, startup, recent }
 
@@ -493,6 +523,17 @@ export global AppState {
     in property <[GameView]> games;
     in property <[SteamAppView]> steam-apps;
     in property <[ProgramView]> programs;
+    // Drivers, the host's facts and warnings, the recommended driver plan's blockers, warnings and
+    // what's left after it, and the driver job's log, oldest first.
+    in property <DriversView> drivers;
+    in property <[FactView]> driver-facts;
+    in property <[string]> driver-warnings;
+    in property <[string]> plan-blockers;
+    in property <[string]> plan-warnings;
+    in property <[string]> plan-steps;
+    in property <[string]> driver-log;
+    // The open Run or Reboot confirmation's lines, such as the plan's warnings.
+    in property <[string]> dialog-details;
     // Changes with every input, so derived geometry knows when to redraw.
     in property <int> revision;
 
@@ -578,6 +619,12 @@ export global Intents {
     callback filter-programs(query: string);
     callback add-running-program(index: int);
     callback browse-for-program();
+    // Asks before running the recommended driver plan, cancels the active driver job, asks before
+    // restarting the host, and answers the open Run or Reboot confirmation.
+    callback run-driver-plan();
+    callback cancel-driver-job();
+    callback reboot-host();
+    callback confirm-driver-dialog();
     // Applies or discards the selected GPU's unapplied tuning changes.
     callback apply-changes();
     callback discard-changes();

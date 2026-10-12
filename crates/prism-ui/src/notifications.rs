@@ -23,6 +23,8 @@ pub(crate) enum Subject {
     Prismd,
     /// A GPU, by id, at its workspace, such as its failure pause.
     Gpu(String, GpuConcern),
+    /// A driver job that ended, at Drivers.
+    Drivers,
 }
 
 /// What about a GPU a notification is about.

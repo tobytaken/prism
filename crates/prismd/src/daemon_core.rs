@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use prism_drivers::{DriverService, request_host_reboot};
+use prism_drivers::DriverService;
 use prism_gpu::fan_curve::{self, FanCurvePreview, PreviewFanCurveRequest};
 use prism_gpu::{
     GpuCommandError, GpuCommandErrorCode, GpuPerformanceResponse, TuningOutcome,
@@ -157,6 +157,7 @@ impl DaemonCore {
             automatic_switching,
             startup: self.startup_states.known(peer),
             activity: self.activity.entries_for(peer),
+            driver_job: self.dependencies.drivers.latest_job(),
         }
     }
 
@@ -753,6 +754,13 @@ impl DaemonCore {
             Arc::clone(&dependencies.clock),
             Arc::clone(&tuning_store),
         ));
+        // Driver jobs are host-wide, so every session hears how each one goes.
+        let events = Arc::downgrade(&tuning_store);
+        dependencies.drivers.on_job_changed(move |job| {
+            if let Some(events) = events.upgrade() {
+                events.publish(DaemonEvent::DriverJobChanged(job));
+            }
+        });
         let recognition = Arc::default();
         let switching = super::switching::Switching::open(
             &dependencies.boot_dir,
@@ -890,7 +898,7 @@ impl DaemonCore {
                 Err(error) => DaemonResponse::Error(error),
             },
             DaemonRequest::RequestHostReboot => DaemonResponse::Command(command_result(
-                request_host_reboot().map_err(|error| error.message),
+                drivers.reboot().map_err(|error| error.message),
             )),
         }
     }

@@ -147,6 +147,11 @@ pub(crate) enum DialogState {
         adding: Option<(CommandId, u32)>,
         error: Option<String>,
     },
+    /// Running the recommended driver plan, once the user confirms it. `error` is why prismd
+    /// refused to start it.
+    RunDriverPlan { error: Option<String> },
+    /// Restarting the host, once the user confirms it. `error` is why prismd refused.
+    Reboot { error: Option<String> },
     /// The caller's running programs, searched by `filter`, to add one as a game, or a program
     /// file to choose in the file chooser. `adding` is the program, by host location, being
     /// added under the command prismd hasn't answered yet, and `error` why the last one couldn't
@@ -471,6 +476,7 @@ impl Core {
             || self.activity_answered(command, &response)
             || self.cooling_retry_answered(command, &response)
             || self.switching_answered(command, &response)
+            || self.driver_answered(command, &response)
         {
             return Vec::new();
         }

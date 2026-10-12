@@ -284,6 +284,10 @@ impl Inner {
         intents.on_discard_changes(to_core(Intent::DiscardChanges));
         intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
         intents.on_open_activity(to_core(Intent::OpenActivity));
+        intents.on_run_driver_plan(to_core(Intent::RunDriverPlan));
+        intents.on_cancel_driver_job(to_core(Intent::CancelDriverJob));
+        intents.on_reboot_host(to_core(Intent::RebootHost));
+        intents.on_confirm_driver_dialog(to_core(Intent::ConfirmDriverDialog));
         let inner = Rc::downgrade(this);
         intents.on_run_activity_action(move |list, index| {
             with_inner(&inner, |inner| {

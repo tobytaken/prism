@@ -1,0 +1,56 @@
+{
+  "host": {
+    "distro_id": "ubuntu",
+    "distro_version": "24.04",
+    "kernel_release": "6.8.0-45-generic",
+    "package_manager": "apt",
+    "secure_boot": "enabled",
+    "is_flatpak": false,
+    "supported": true,
+    "unsupported_reason": null
+  },
+  "nvidia": {
+    "detected": true,
+    "driver_version": null,
+    "nvml_available": false,
+    "nouveau_loaded": true,
+    "runfile_install_detected": false,
+    "rpm_fusion_detected": false,
+    "gpus": [
+      {
+        "id": "0000:01:00.0",
+        "name": "NVIDIA GeForce RTX 5090",
+        "architecture": "Blackwell",
+        "bus_id": "0000:01:00.0"
+      }
+    ],
+    "plans": [
+      {
+        "id": "ubuntu-install-recommended",
+        "action": "install_recommended",
+        "label": "Install recommended NVIDIA driver",
+        "recommended": true,
+        "requires_reboot": true,
+        "manual_steps": ["Reboot after installation before expecting the new driver to load."],
+        "blockers": [],
+        "warnings": [
+          "Nouveau is loaded. A reboot is required after installing the proprietary driver.",
+          "Secure Boot is enabled. Ubuntu's recommended driver path normally uses signed modules, but firmware prompts may still appear on some systems."
+        ]
+      },
+      {
+        "id": "ubuntu-update-installed",
+        "action": "update_installed",
+        "label": "Update installed NVIDIA driver packages",
+        "recommended": false,
+        "requires_reboot": true,
+        "manual_steps": ["Reboot after updating if the kernel module or driver package changed."],
+        "blockers": [],
+        "warnings": []
+      }
+    ],
+    "warnings": ["NVML could not be loaded: libnvidia-ml.so.1 was not found."]
+  },
+  "active_job": null,
+  "warnings": []
+}

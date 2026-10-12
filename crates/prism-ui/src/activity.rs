@@ -36,6 +36,8 @@ pub enum ActivityAction {
     RetryCooling(String),
     /// Try this GPU's failed automatic switching again, by id.
     RetrySwitching(String),
+    /// Show Drivers, where the driver job's outcome is explained.
+    OpenDrivers,
 }
 
 /// What Activity knows, apart from what other parts of the core report as problems.
@@ -183,6 +185,7 @@ impl Core {
             .into_iter()
             .chain(self.cooling_problems())
             .chain(self.switching_problems())
+            .chain(self.driver_problems())
             .chain(self.startup_items().0)
             .collect()
     }
@@ -214,6 +217,10 @@ impl Core {
             ActivityAction::RetrySwitching(gpu_id) => {
                 self.run(Some(Command::RetrySwitching(gpu_id)))
             }
+            ActivityAction::OpenDrivers => {
+                self.close_activity();
+                self.perform(Command::GoTo(crate::core::Section::Drivers))
+            }
         }
     }
 
@@ -235,7 +242,7 @@ impl Core {
 
     fn action_unavailable(&self, action: &ActivityAction) -> Option<String> {
         match action {
-            ActivityAction::OpenGpu(_) => None,
+            ActivityAction::OpenGpu(_) | ActivityAction::OpenDrivers => None,
             ActivityAction::DismissStartupOutcome(gpu_id) => {
                 if let Some(reason) = self.tuning_access().reason() {
                     return Some(format!("Needs tuning access · {reason}"));

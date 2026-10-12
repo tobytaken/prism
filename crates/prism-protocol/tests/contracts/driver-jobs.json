@@ -1,0 +1,105 @@
+[
+  {
+    "id": "driver-1791804900000",
+    "status": "queued",
+    "action": "install_recommended",
+    "started_at_unix_ms": 1791804900000,
+    "finished_at_unix_ms": null,
+    "current_step": "Queued",
+    "log_tail": ["Driver job queued."],
+    "error": null,
+    "requires_reboot": true
+  },
+  {
+    "id": "driver-1791804900000",
+    "status": "running",
+    "action": "install_recommended",
+    "started_at_unix_ms": 1791804900000,
+    "finished_at_unix_ms": null,
+    "current_step": "Installing Ubuntu's recommended NVIDIA driver",
+    "log_tail": [
+      "Driver job queued.",
+      "Driver job started.",
+      "Running apt-get update",
+      "Reading package lists...",
+      "Running ubuntu-drivers install"
+    ],
+    "error": null,
+    "requires_reboot": true
+  },
+  {
+    "id": "driver-1791804900000",
+    "status": "reboot_required",
+    "action": "install_recommended",
+    "started_at_unix_ms": 1791804900000,
+    "finished_at_unix_ms": 1791805020000,
+    "current_step": "Reboot required",
+    "log_tail": [
+      "Driver job queued.",
+      "Driver job started.",
+      "Running apt-get update",
+      "Reading package lists...",
+      "Running ubuntu-drivers install",
+      "Setting up nvidia-driver-595 (595.58.03-0ubuntu1) ...",
+      "Package operation finished. Reboot to load the NVIDIA driver."
+    ],
+    "error": null,
+    "requires_reboot": true
+  },
+  {
+    "id": "driver-1791804900000",
+    "status": "manual_step_required",
+    "action": "install_recommended",
+    "started_at_unix_ms": 1791804900000,
+    "finished_at_unix_ms": 1791805020000,
+    "current_step": "Machine Owner Key enrollment may be required",
+    "log_tail": [
+      "Driver job queued.",
+      "Driver job started.",
+      "Running dnf -y install nvidia-driver kmod-nvidia-open-dkms",
+      "Complete!",
+      "Package operation finished. Complete firmware key enrollment if prompted, then reboot."
+    ],
+    "error": null,
+    "requires_reboot": true
+  },
+  {
+    "id": "driver-1791804900000",
+    "status": "failed",
+    "action": "update_installed",
+    "started_at_unix_ms": 1791804900000,
+    "finished_at_unix_ms": 1791804960000,
+    "current_step": null,
+    "log_tail": [
+      "Driver job queued.",
+      "Driver job started.",
+      "Running apt-get update",
+      "E: Could not get lock /var/lib/apt/lists/lock.",
+      "apt-get update exited with status exit status: 100"
+    ],
+    "error": "apt-get update exited with status exit status: 100",
+    "requires_reboot": true
+  },
+  {
+    "id": "driver-1791804900000",
+    "status": "canceled",
+    "action": "update_installed",
+    "started_at_unix_ms": 1791804900000,
+    "finished_at_unix_ms": 1791804901000,
+    "current_step": null,
+    "log_tail": ["Driver job queued.", "Driver job canceled before it started."],
+    "error": null,
+    "requires_reboot": true
+  },
+  {
+    "id": "driver-1791804900000",
+    "status": "succeeded",
+    "action": "update_installed",
+    "started_at_unix_ms": 1791804900000,
+    "finished_at_unix_ms": 1791804960000,
+    "current_step": null,
+    "log_tail": ["Driver job queued.", "Driver job started.", "Driver packages are up to date."],
+    "error": null,
+    "requires_reboot": false
+  }
+]

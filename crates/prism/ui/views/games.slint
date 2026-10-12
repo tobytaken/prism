@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { Button, ButtonKind, Divider, PressArea, Segmented, StyledText } from "../widgets.slint";
+import { Button, ButtonKind, Divider, Notice, PressArea, Segmented, StyledText } from "../widgets.slint";
 import { AppState, GameView, Intents } from "../state.slint";
 
 // An on/off switch with its label before it, such as "Automatic switching". The knob sits right
@@ -75,20 +75,6 @@ component Switch inherits Rectangle {
             accessible-role: none;
         }
     }
-}
-
-// A line about the section as a whole, labeled for a screen reader, such as why running games
-// can't be recognized; in the danger color when something is wrong.
-component Notice inherits StyledText {
-    in property <string> label;
-    in property <bool> danger;
-
-    style: Theme.text.body;
-    color: root.danger ? Theme.color.danger : Theme.color.ink-muted;
-    wrap: word-wrap;
-    accessible-role: text;
-    accessible-label: root.label;
-    accessible-value: self.text;
 }
 
 // One of the caller's games: its name and what it is, Remove, then its link on each GPU here as

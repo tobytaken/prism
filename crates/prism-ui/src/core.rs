@@ -16,6 +16,7 @@ use crate::cooling::FanMode;
 use crate::cooling_faults::CoolingFaults;
 use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::drafts::{DialogState, Drafts};
+use crate::drivers::Drivers;
 use crate::games::{GameCommand, ProgramFile};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
 use crate::notifications::{GpuConcern, Notification, NotificationId, Notifications, Subject};
@@ -440,6 +441,14 @@ pub enum Intent {
     },
     /// Try the GPU's failed automatic switching again, by GPU id, ending its failure pause.
     RetrySwitching(String),
+    /// Show Drivers, and ask before running the recommended driver plan.
+    RunDriverPlan,
+    /// Cancel the active driver job.
+    CancelDriverJob,
+    /// Ask before restarting the host, as a driver job that needs it offers.
+    RebootHost,
+    /// Answer the open Run or Reboot confirmation: start the driver job, or restart the host.
+    ConfirmDriverDialog,
 }
 
 /// Something the core asks the caller to do.
@@ -549,6 +558,7 @@ pub struct Core {
     /// while there is a session.
     pub(crate) running_games: Option<RunningGamesState>,
     pub(crate) switching: Switching,
+    pub(crate) drivers: Drivers,
     /// Each game change sent to prismd that hasn't been answered.
     pub(crate) game_commands: BTreeMap<CommandId, GameCommand>,
     /// Why prismd refused the latest game change, until the next one.
@@ -720,6 +730,7 @@ impl Core {
                 self.running_games = Some(snapshot.running_games);
                 self.switching_connected(snapshot.automatic_switching);
                 let mut effects = vec![Effect::SendToPrismd(DaemonRequest::SubscribeTelemetry)];
+                effects.extend(self.drivers_connected(snapshot.driver_job));
                 // The new session holds edits only once told.
                 effects.extend(self.sync_edit_holds());
                 if std::mem::take(&mut self.sampling) {
@@ -749,6 +760,7 @@ impl Core {
                 self.profiles_lost_session();
                 self.games_lost_session();
                 self.switching_lost_session();
+                self.drivers_lost_session();
                 self.activity_lost_session(lost);
                 let mut effects = Vec::new();
                 if !std::mem::replace(&mut self.sampling, true) {
@@ -817,6 +829,7 @@ impl Core {
                     DaemonEvent::AutomaticSwitchingChanged(status) => {
                         effects = self.switching_pushed(status);
                     }
+                    DaemonEvent::DriverJobChanged(job) => effects = self.driver_job_pushed(job),
                 }
                 effects
             }
@@ -876,6 +889,8 @@ impl Core {
                     Some(Subject::Gpu(id, GpuConcern::Switching)) => {
                         self.perform(Command::GoToGpu(id))
                     }
+                    // About a driver job that ended, which Drivers explains.
+                    Some(Subject::Drivers) => self.perform(Command::GoTo(Section::Drivers)),
                     // Withdrawn on its way in: the window is still what the user asked for.
                     None => Vec::new(),
                 };
@@ -1082,6 +1097,10 @@ impl Core {
                 self.run(Some(Command::SetSwitchingPaused { gpu_id, paused }))
             }
             Intent::RetrySwitching(gpu_id) => self.run(Some(Command::RetrySwitching(gpu_id))),
+            Intent::RunDriverPlan => self.run(Some(Command::RunDriverPlan)),
+            Intent::CancelDriverJob => self.cancel_driver_job(),
+            Intent::RebootHost => self.run(Some(Command::RebootHost)),
+            Intent::ConfirmDriverDialog => self.confirm_driver_dialog(),
         }
     }
 
@@ -1101,6 +1120,7 @@ impl Core {
 
     pub(crate) fn perform(&mut self, command: Command) -> Vec<Effect> {
         let daemon_was_open = self.daemon_open();
+        let drivers_were_open = self.drivers_open();
         let effects = match command {
             Command::GoToGpu(id) => {
                 if self.gpus().iter().any(|gpu| gpu.id == id) {
@@ -1153,6 +1173,8 @@ impl Core {
                 self.set_switching_paused(gpu_id, paused)
             }
             Command::RetrySwitching(gpu_id) => self.retry_switching(gpu_id),
+            Command::RunDriverPlan => self.confirm_driver_plan(),
+            Command::RebootHost => self.confirm_reboot(),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }
@@ -1161,6 +1183,10 @@ impl Core {
         // Settings → Daemon shows why there's no session, as the host says it now.
         if !daemon_was_open && self.daemon_open() && !self.connected() {
             return [effects, vec![Effect::CheckPrismdHost]].concat();
+        }
+        // Drivers shows the driver plan as the host has it now.
+        if !drivers_were_open && self.drivers_open() {
+            return [effects, self.read_driver_status()].concat();
         }
         effects
     }

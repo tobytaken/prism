@@ -1,0 +1,270 @@
+import { Theme } from "../theme.slint";
+import { Button, ButtonKind, Divider, Fact, Notice, StyledText } from "../widgets.slint";
+import { AppState, Intents } from "../state.slint";
+
+// A part's label, such as HOST, in uppercase mono.
+component PartLabel inherits StyledText {
+    style: Theme.text.label;
+    color: Theme.color.ink-muted;
+    accessible-role: none;
+}
+
+// Lines under a label, such as the plan's blockers, as a list a screen reader names by `label`;
+// in the danger color when they say what's wrong.
+component Lines inherits Rectangle {
+    in property <string> label;
+    in property <[string]> lines;
+    in property <bool> danger;
+
+    accessible-role: list;
+    accessible-label: root.label;
+    height: rows.preferred-height;
+
+    rows := VerticalLayout {
+        spacing: Theme.space.xxs;
+
+        PartLabel {
+            text: root.label;
+        }
+
+        for line in root.lines: Notice {
+            label: line;
+            text: line;
+            danger: root.danger;
+        }
+    }
+}
+
+// The driver job's log, oldest first, in mono. It shows its last lines, and scrolls back.
+component Log inherits Rectangle {
+    background: Theme.color.raised;
+    border-width: Theme.stroke.hairline;
+    border-color: Theme.color.rule;
+    accessible-role: list;
+    accessible-label: "Driver job log";
+    height: min(lines.preferred-height, Theme.size.driver-log);
+
+    log := Flickable {
+        content-height: lines.preferred-height;
+
+        lines := VerticalLayout {
+            padding: Theme.space.m;
+            spacing: Theme.space.xxs;
+
+            for line in AppState.driver-log: StyledText {
+                text: line;
+                style: Theme.text.value;
+                wrap: word-wrap;
+                accessible-role: text;
+                accessible-label: line;
+            }
+        }
+
+        // New lines come in at the end.
+        changed content-height => {
+            self.content-y = min(0px, self.height - self.content-height);
+        }
+    }
+}
+
+// Drivers: the host's NVIDIA driver, the recommended driver plan with its blockers and warnings
+// and Run, which asks first, then the latest driver job's progress, log and outcome, with Cancel
+// while it's active and Reboot, which asks first, while the host needs a restart. Without tuning
+// access nothing runs, and it says why.
+export component Drivers inherits Rectangle {
+    property <length> content-width: min(Theme.size.settings-content, self.width - 2 * Theme.space.xxl);
+
+    page := Flickable {
+        content-height: max(self.height, body.preferred-height);
+
+        body := VerticalLayout {
+            padding: Theme.space.xxl;
+            spacing: Theme.space.l;
+            alignment: start;
+
+            StyledText {
+                text: "Drivers";
+                style: Theme.text.heading;
+            }
+
+            StyledText {
+                width: root.content-width;
+                text: "Prism installs and updates the host's NVIDIA driver with the distribution's own packages, through prismd.";
+                style: Theme.text.body;
+                color: Theme.color.ink-muted;
+                wrap: word-wrap;
+            }
+
+            if AppState.drivers.read-only: Notice {
+                width: root.content-width;
+                label: "Read-only";
+                text: AppState.drivers.reason;
+            }
+
+            if AppState.drivers.status != "": Notice {
+                width: root.content-width;
+                label: "Driver status";
+                text: AppState.drivers.status;
+            }
+
+            if AppState.drivers.outcome != "": Notice {
+                width: root.content-width;
+                label: "Problem";
+                text: AppState.drivers.outcome;
+                danger: true;
+            }
+
+            if AppState.drivers.has-job: VerticalLayout {
+                width: root.content-width;
+                spacing: Theme.space.s;
+
+                Divider { }
+
+                PartLabel {
+                    text: "DRIVER JOB";
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.space.m;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        accessible-role: text;
+                        accessible-label: "Driver job";
+                        accessible-value: AppState.drivers.job-title + " · " + AppState.drivers.job-state;
+
+                        job := HorizontalLayout {
+                            spacing: Theme.space.m;
+                            alignment: start;
+
+                            StyledText {
+                                text: AppState.drivers.job-title;
+                                style: Theme.text.name;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
+
+                            StyledText {
+                                text: AppState.drivers.job-state;
+                                style: Theme.text.status;
+                                color: AppState.drivers.job-state == "Failed" ? Theme.color.danger
+                                    : AppState.drivers.reboot ? Theme.color.accent : Theme.color.ink-muted;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
+                        }
+                    }
+
+                    if AppState.drivers.job-active: Button {
+                        text: "Cancel";
+                        label: "Cancel driver job";
+                        kind: ButtonKind.quiet;
+                        enabled: AppState.drivers.can-cancel;
+                        description: AppState.drivers.cancel-reason;
+                        activated => {
+                            Intents.cancel-driver-job();
+                        }
+                    }
+
+                    if AppState.drivers.reboot: Button {
+                        text: "Reboot…";
+                        label: "Reboot now…";
+                        kind: ButtonKind.accent;
+                        enabled: AppState.drivers.can-reboot;
+                        description: AppState.drivers.reboot-reason;
+                        activated => {
+                            Intents.reboot-host();
+                        }
+                    }
+                }
+
+                if AppState.drivers.job-step != "": Notice {
+                    label: "Step";
+                    text: AppState.drivers.job-step;
+                }
+
+                Notice {
+                    label: "Outcome";
+                    text: AppState.drivers.job-explanation;
+                    danger: AppState.drivers.job-state == "Failed";
+                }
+
+                Log { }
+            }
+
+            if AppState.drivers.has-plan: VerticalLayout {
+                width: root.content-width;
+                spacing: Theme.space.s;
+
+                Divider { }
+
+                PartLabel {
+                    text: "RECOMMENDED DRIVER PLAN";
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.space.m;
+
+                    StyledText {
+                        horizontal-stretch: 1;
+                        text: AppState.drivers.plan-title;
+                        style: Theme.text.name;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                        accessible-role: text;
+                        accessible-label: "Driver plan";
+                        accessible-value: self.text;
+                    }
+
+                    Button {
+                        text: "Run…";
+                        label: "Run recommended driver plan…";
+                        enabled: AppState.drivers.can-run;
+                        description: AppState.drivers.run-reason;
+                        activated => {
+                            Intents.run-driver-plan();
+                        }
+                    }
+                }
+
+                if AppState.plan-blockers.length > 0: Lines {
+                    label: "BLOCKED BY";
+                    lines: AppState.plan-blockers;
+                    danger: true;
+                }
+
+                if AppState.plan-warnings.length > 0: Lines {
+                    label: "WARNINGS";
+                    lines: AppState.plan-warnings;
+                }
+
+                if AppState.plan-steps.length > 0: Lines {
+                    label: "AFTERWARD";
+                    lines: AppState.plan-steps;
+                }
+            }
+
+            if AppState.driver-facts.length > 0: VerticalLayout {
+                width: root.content-width;
+                spacing: Theme.space.s;
+
+                Divider { }
+
+                PartLabel {
+                    text: "HOST";
+                }
+
+                for fact in AppState.driver-facts: Fact {
+                    label: fact.label;
+                    value: fact.value;
+                }
+
+                if AppState.driver-warnings.length > 0: Lines {
+                    label: "HOST WARNINGS";
+                    lines: AppState.driver-warnings;
+                }
+            }
+        }
+    }
+}

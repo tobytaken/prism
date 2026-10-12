@@ -9,6 +9,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+prism-drivers.workspace = true
 prism-gpu.workspace = true
 prism-protocol.workspace = true
 
