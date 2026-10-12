@@ -883,6 +883,15 @@ impl FakeSession {
         }
         events
     }
+
+    /// The events of this type, such as "tuning_state_changed", pushed to this session so far,
+    /// as protocol JSON, oldest first; any others pushed meanwhile are dropped.
+    pub fn pushed_events_of(&self, kind: &str) -> Vec<serde_json::Value> {
+        self.pushed_events()
+            .into_iter()
+            .filter(|event| event["type"] == kind)
+            .collect()
+    }
 }
 
 /// The GPU's tuning-state revision now, or none when the daemon can't tell it.

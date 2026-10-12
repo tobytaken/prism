@@ -99,6 +99,11 @@
         "applied": null
       }
     ],
+    "profiles": {
+      "profiles": [],
+      "startup_profiles": {},
+      "current_profiles": {}
+    },
     "running_games": {
       "status": "available",
       "games": []

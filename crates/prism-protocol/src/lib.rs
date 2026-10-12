@@ -148,6 +148,7 @@ pub struct DaemonSnapshot {
     pub store_health: TuningStoreHealth,
     pub tuning_states: Vec<GpuTuningState>,
     pub cooling_controls: Vec<GpuCoolingControl>,
+    pub profiles: ProfilesState,
     pub running_games: RunningGamesState,
     pub automatic_switching: AutomaticSwitchingStatus,
 }
@@ -408,6 +409,19 @@ pub struct GpuTuningProfile {
     /// The owning GPU's UUID.
     pub gpu_id: String,
     pub settings: ProfileSettings,
+}
+
+/// The caller's GPU tuning profiles, with each GPU's startup and current profile by name, whoever
+/// owns them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfilesState {
+    /// The caller's own profiles, of every GPU, present or not.
+    pub profiles: Vec<GpuTuningProfile>,
+    /// Each GPU's host-wide startup profile, by GPU UUID.
+    pub startup_profiles: BTreeMap<String, CurrentProfile>,
+    /// Each GPU's current profile, by GPU UUID.
+    pub current_profiles: BTreeMap<String, CurrentProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -933,6 +947,8 @@ pub enum DaemonEvent {
     /// Prism's control of a GPU's fans changed, such as when cooling was applied, a curve
     /// faulted or yielded to another tool, or the caller's remembered curve changed.
     CoolingControlChanged(GpuCoolingControl),
+    /// The caller's profiles changed, or a GPU's startup or current profile, or its name.
+    ProfilesChanged(ProfilesState),
     RunningGamesChanged(RunningGamesState),
     AutomaticSwitchingChanged(AutomaticSwitchingStatus),
 }
@@ -1241,6 +1257,22 @@ mod session_tests {
         let mut with_output = control;
         with_output["requested"] = serde_json::json!([]);
         assert!(serde_json::from_value::<GpuCoolingControl>(with_output).is_err());
+    }
+
+    #[test]
+    fn profiles_round_trip_the_shared_contract_as_a_pushed_event() {
+        let profiles: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/contracts/profiles-state.json")).unwrap();
+        let event = serde_json::json!({
+            "type": "event", "event": { "type": "profiles_changed", "payload": profiles }
+        });
+        let typed: SessionMessage = serde_json::from_value(event.clone()).unwrap();
+        assert_eq!(serde_json::to_value(typed).unwrap(), event);
+        // Another user's profile values stay private: only names cross for startup and current.
+        let mut with_settings = profiles;
+        with_settings["current_profiles"]["GPU-5a1b0000-0000-4000-8000-000000000001"]["settings"] =
+            serde_json::json!({});
+        assert!(serde_json::from_value::<ProfilesState>(with_settings).is_err());
     }
 
     #[test]

@@ -144,6 +144,7 @@ impl DaemonCore {
             store_health: self.tuning_store.health(),
             tuning_states,
             cooling_controls: cooling_controls(performance),
+            profiles: self.tuning_store.known_profiles(peer),
             running_games,
             automatic_switching,
         }

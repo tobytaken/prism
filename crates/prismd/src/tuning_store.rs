@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Write};
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::session::{DaemonSession, SessionEvents, SessionPeer, SessionPolicy};
 use prism_protocol::{
-    DaemonEvent, GpuTuningProfile, GpuTuningState, ProfileSettings, StartupBehavior,
+    DaemonEvent, GpuTuningProfile, GpuTuningState, ProfileSettings, ProfilesState, StartupBehavior,
     TuningStoreHealth, TuningStoreProblem,
 };
 
@@ -151,6 +152,8 @@ pub struct TuningStore {
     events: Arc<SessionEvents>,
     /// The tuning state last pushed to sessions for each GPU, by UUID.
     pushed_tuning: Mutex<HashMap<String, GpuTuningState>>,
+    /// The profiles last pushed to, or read by, each user's sessions, by uid and username.
+    pushed_profiles: Mutex<HashMap<(u32, String), ProfilesState>>,
 }
 
 /// Pushes GPUs' changed tuning states to every session while it's held. Only one is held at a
@@ -198,6 +201,7 @@ impl TuningStore {
             state: Mutex::new(state),
             events: Arc::default(),
             pushed_tuning: Mutex::default(),
+            pushed_profiles: Mutex::default(),
         }
     }
 
@@ -241,6 +245,38 @@ impl TuningStore {
                 .entry(state.gpu_id.clone())
                 .or_insert_with(|| state.clone());
         }
+    }
+
+    /// The caller's profiles, for a session's snapshot. Unless the user's sessions were pushed
+    /// some already, later pushes compare with these.
+    pub fn known_profiles(&self, peer: &SessionPeer) -> ProfilesState {
+        let mut pushed = self.pushed_profiles.lock().unwrap();
+        let profiles = self.read_for_tuning(|document| document.profiles_state(peer));
+        // Another of the user's sessions may not have been pushed newer profiles yet; the next
+        // push then reaches every session.
+        pushed
+            .entry((peer.uid, peer.username.clone()))
+            .or_insert_with(|| profiles.clone());
+        profiles
+    }
+
+    /// Pushes each user's profiles to their sessions when they changed. Only one push runs at a
+    /// time, so the latest document's is pushed last.
+    fn push_profiles(&self) {
+        let mut pushed = self.pushed_profiles.lock().unwrap();
+        // Read before publishing, so no store lock is taken while the sessions' is held.
+        let document = self.read_for_tuning(TuningDocument::clone);
+        let changed = RefCell::new(HashMap::new());
+        self.events.publish_for_users(|peer| {
+            let user = (peer.uid, peer.username.clone());
+            let profiles = document.profiles_state(peer);
+            if pushed.get(&user) == Some(&profiles) {
+                return None;
+            }
+            changed.borrow_mut().insert(user, profiles.clone());
+            Some(DaemonEvent::ProfilesChanged(profiles))
+        });
+        pushed.extend(changed.into_inner());
     }
 
     /// Whether any open session subscribed to telemetry.
@@ -314,8 +350,18 @@ impl TuningStore {
         })
     }
 
-    /// Like `update`, but a change that fails leaves the document unchanged and unwritten.
+    /// Like `update`, but a change that fails leaves the document unchanged and unwritten. Pushes
+    /// the profiles of each user whose profiles it changed.
     pub fn try_update<T, E: From<TuningStoreWriteError>>(
+        &self,
+        change: impl FnOnce(&mut TuningDocument) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let result = self.write(change);
+        self.push_profiles();
+        result
+    }
+
+    fn write<T, E: From<TuningStoreWriteError>>(
         &self,
         change: impl FnOnce(&mut TuningDocument) -> Result<T, E>,
     ) -> Result<T, E> {

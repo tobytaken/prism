@@ -199,7 +199,7 @@ fn deleting_the_current_profile_clears_its_reference_without_retuning_and_persis
     assert_ne!(state(&alice)["revision"], before["revision"]);
     assert_eq!(daemon.gpus.writes(), writes);
     assert_eq!(
-        bob.pushed_events(),
+        bob.pushed_events_of("tuning_state_changed"),
         vec![json!({
             "type": "tuning_state_changed", "payload": state(&bob)
         })]
@@ -247,7 +247,7 @@ fn renaming_trims_the_name_keeps_the_id_and_updates_the_current_profile_across_s
     );
     assert_ne!(state(&alice)["revision"], before["revision"]);
     assert_eq!(
-        bob.pushed_events(),
+        bob.pushed_events_of("tuning_state_changed"),
         vec![json!({
             "type": "tuning_state_changed", "payload": state(&bob)
         })]

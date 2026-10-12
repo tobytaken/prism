@@ -335,8 +335,11 @@ fn current_profile_and_revision_changes_are_pushed_to_every_session() {
     apply_by_id(&alice, "quiet");
     let pushed = json!({ "type": "tuning_state_changed", "payload": state(&bob) });
     assert_eq!(pushed["payload"]["current_profile"]["name"], "Quiet");
-    assert_eq!(bob.pushed_events(), vec![pushed.clone()]);
-    assert_eq!(alice.pushed_events(), vec![pushed]);
+    assert_eq!(
+        bob.pushed_events_of("tuning_state_changed"),
+        vec![pushed.clone()]
+    );
+    assert_eq!(alice.pushed_events_of("tuning_state_changed"), vec![pushed]);
 
     // A live change keeps the current profile but changes the revision.
     let before = revision(&bob);
@@ -344,7 +347,7 @@ fn current_profile_and_revision_changes_are_pushed_to_every_session() {
         "GPU-123",
         json!({ "power_limit_watts": { "kind": "value", "value": 320 } }),
     );
-    let pushed = bob.pushed_events();
+    let pushed = bob.pushed_events_of("tuning_state_changed");
     assert_eq!(
         pushed,
         vec![json!({ "type": "tuning_state_changed", "payload": state(&bob) })]

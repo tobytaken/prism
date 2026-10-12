@@ -1,0 +1,36 @@
+{
+  "profiles": [
+    {
+      "id": "quiet",
+      "name": "Quiet",
+      "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+      "settings": {
+        "power_limit_watts": { "kind": "value", "value": 450 },
+        "graphics_offset_mhz": { "kind": "value", "value": 0 },
+        "memory_offset_mhz": { "kind": "value", "value": 0 }
+      }
+    },
+    {
+      "id": "boost",
+      "name": "Boost",
+      "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
+      "settings": {
+        "power_limit_watts": { "kind": "default" },
+        "graphics_offset_mhz": { "kind": "value", "value": 150 },
+        "memory_offset_mhz": { "kind": "value", "value": 500 }
+      }
+    },
+    {
+      "id": "old-card",
+      "name": "Old card",
+      "gpu_id": "GPU-0ld00000-0000-4000-8000-000000000002",
+      "settings": { "power_limit_watts": { "kind": "value", "value": 200 } }
+    }
+  ],
+  "startup_profiles": {
+    "GPU-5a1b0000-0000-4000-8000-000000000001": { "id": "quiet", "name": "Quiet" }
+  },
+  "current_profiles": {
+    "GPU-5a1b0000-0000-4000-8000-000000000001": { "id": "boost", "name": "Boost" }
+  }
+}

@@ -690,6 +690,7 @@ impl Core {
                     }
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)
+                    | DaemonEvent::ProfilesChanged(_)
                     | DaemonEvent::RunningGamesChanged(_)
                     | DaemonEvent::AutomaticSwitchingChanged(_) => {}
                 }
