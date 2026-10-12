@@ -59,21 +59,115 @@ impl TuningDocument {
     }
 }
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::activity::Activity;
 use super::automatic_tuning::apply_with_baseline;
 use super::backend::DaemonBackend;
-use super::boot_state::STARTUP_IN_PROGRESS;
+use super::boot_state::{BootState, STARTUP_IN_PROGRESS};
 use super::cooling::CoolingController;
 use super::daemon_core::{DaemonCore, tuning_state};
 use super::host::Clock;
+use super::possibly_stale::PossiblyStale;
 use super::profiles::verified_gpu;
 use super::switching::Switching;
 use super::tuning_store::{RestoreAttempt, TuningStore};
-use prism_protocol::{ProfileSettings, StartupBehavior, StartupOutcome, StartupOutcomeStatus};
+use prism_protocol::{
+    ActivityEvent, DaemonEvent, ProfileSettings, StartupBehavior, StartupOutcome,
+    StartupOutcomeStatus,
+};
+
+/// Each user's view of startup: the host-wide choices, and this boot's startup outcomes they
+/// haven't dismissed. Pushed to their sessions whenever it changes.
+pub(super) struct StartupStates {
+    store: Arc<TuningStore>,
+    boot_state: Arc<BootState>,
+    possibly_stale: Arc<PossiblyStale>,
+    /// The state last pushed to, or read by, each user's sessions, by uid and username.
+    pushed: Mutex<HashMap<(u32, String), StartupState>>,
+}
+
+impl StartupStates {
+    pub fn new(
+        store: Arc<TuningStore>,
+        boot_state: Arc<BootState>,
+        possibly_stale: Arc<PossiblyStale>,
+    ) -> Self {
+        Self {
+            store,
+            boot_state,
+            possibly_stale,
+            pushed: Mutex::default(),
+        }
+    }
+
+    /// The caller's startup state, unless the tuning store or the boot state can't be used.
+    pub fn read(&self, peer: &SessionPeer) -> Result<StartupState, GpuCommandError> {
+        let mut state = self.store.read(|document| self.choices(document))?;
+        state.outcomes = self.boot_state.outcomes(peer)?;
+        Ok(state)
+    }
+
+    /// The caller's startup state as far as it can be read, for a session's snapshot: an unusable
+    /// tuning store or boot state reads as no choices or no outcomes. Unless the user's sessions
+    /// were pushed one already, later pushes compare with it.
+    pub fn known(&self, peer: &SessionPeer) -> StartupState {
+        let mut pushed = self.pushed.lock().unwrap();
+        let mut state = self
+            .store
+            .read_for_tuning(|document| self.choices(document));
+        state.outcomes = self.boot_state.outcomes(peer).unwrap_or_default();
+        pushed
+            .entry((peer.uid, peer.username.clone()))
+            .or_insert_with(|| state.clone());
+        state
+    }
+
+    /// Pushes each user's startup state to their sessions when it changed. Only one push runs at
+    /// a time, so the latest state is pushed last.
+    pub fn push(&self) {
+        let mut pushed = self.pushed.lock().unwrap();
+        // Read before publishing, so no store lock is taken while the sessions' is held.
+        let choices = self
+            .store
+            .read_for_tuning(|document| self.choices(document));
+        let now = RefCell::new(HashMap::new());
+        self.store.publish_for_users(|peer| {
+            let user = (peer.uid, peer.username.clone());
+            let state = StartupState {
+                outcomes: self.boot_state.outcomes(peer).unwrap_or_default(),
+                ..choices.clone()
+            };
+            let unchanged = pushed.get(&user) == Some(&state);
+            now.borrow_mut().insert(user, state.clone());
+            (!unchanged).then_some(DaemonEvent::StartupStateChanged(state))
+        });
+        // A user without a session has nothing to compare with.
+        *pushed = now.into_inner();
+    }
+
+    fn choices(&self, document: &TuningDocument) -> StartupState {
+        let mut state = document.startup_state();
+        state.possibly_stale = self.possibly_stale.gpus(document.last_applied.keys());
+        state
+    }
+}
+
+/// Records a finished startup outcome in Activity, for every user, and pushes it.
+fn record_outcome(activity: &Activity, states: &StartupStates, outcome: &StartupOutcome) {
+    activity.record(
+        None,
+        &outcome.gpu_id,
+        ActivityEvent::StartupRan {
+            outcome: outcome.clone(),
+        },
+    );
+    states.push();
+}
 
 const RESTORE_SKIPPED: &str = "Restoring last applied tuning values was skipped once because the \
     host didn't shut down cleanly after the previous boot restored them. They will be restored \
@@ -192,6 +286,16 @@ impl DaemonCore {
         {
             return Ok(());
         }
+        // Skipping a GPU's restore, or a previous boot's failure, is worth reporting even though
+        // nothing is applied to it.
+        for outcome in &outcomes {
+            if !targets.contains_key(&outcome.gpu_id)
+                && (outcome.previous_failure.is_some()
+                    || outcome.reason.as_deref() == Some(RESTORE_SKIPPED))
+            {
+                record_outcome(&self.activity, &self.startup_states, outcome);
+            }
+        }
         let restoring = behavior == StartupBehavior::RestoreLastApplied && !targets.is_empty();
         let prepare = |document: &mut TuningDocument| {
             document
@@ -218,7 +322,8 @@ impl DaemonCore {
                     outcome.reason = Some(format!(
                         "Startup was skipped because Prism's tuning store couldn't be written: {error}"
                     ));
-                    self.boot_state.record(outcome)?;
+                    self.boot_state.record(outcome.clone())?;
+                    record_outcome(&self.activity, &self.startup_states, &outcome);
                 }
             }
             return Err(error.into());
@@ -238,6 +343,8 @@ impl DaemonCore {
             let switching = self.switching.clone();
             let store = Arc::clone(&self.tuning_store);
             let boot = Arc::clone(&self.boot_state);
+            let activity = Arc::clone(&self.activity);
+            let states = Arc::clone(&self.startup_states);
             let clock = Arc::clone(&self.dependencies.clock);
             let stopping = Arc::clone(&self.stopping);
             // Reserve every target GPU's queue now. Manual writes wait behind startup; reads and
@@ -283,8 +390,9 @@ impl DaemonCore {
                         pushes.push(state, None);
                     }
                 });
-                if let Err(error) = boot.record(outcome) {
-                    eprintln!("{}", error.message);
+                match boot.record(outcome.clone()) {
+                    Ok(()) => record_outcome(&activity, &states, &outcome),
+                    Err(error) => eprintln!("{}", error.message),
                 }
             });
             self.startup_operations.lock().unwrap().push(pending);
