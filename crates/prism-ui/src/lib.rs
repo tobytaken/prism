@@ -10,6 +10,7 @@ mod curve;
 mod daemon;
 mod drafts;
 pub mod format;
+mod games;
 mod host;
 mod notifications;
 mod palette;
@@ -29,9 +30,10 @@ pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
-    ChangeStrip, ConfirmClose, ConfirmDelete, Content, CurveMarker, CurvePoint, Detail, Dialog,
-    DiscardForProfile, ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor,
-    FanModeChoice, FanModeControl, GpuWorkspace, HardwareDetails, ManageProfiles, ManagedProfile,
-    MenuEntry, ProfileChoice, ProfileCorrections, ProfileMenu, ProfileNameDialog, ProfileSwitcher,
-    Review, Sidebar, SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind, Tunable,
+    AddSteamGame, ChangeStrip, ConfirmClose, ConfirmDelete, Content, CurveMarker, CurvePoint,
+    Detail, Dialog, DiscardForProfile, ExplainedState, FanArrangementControl, FanChoice,
+    FanCurveEditor, FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace,
+    HardwareDetails, LinkChoice, ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice,
+    ProfileCorrections, ProfileMenu, ProfileNameDialog, ProfileSwitcher, Review, Sidebar,
+    SidebarGpu, StatusBar, SteamAppChoice, Stepper, Track, TrackChart, TrackKind, Tunable,
 };

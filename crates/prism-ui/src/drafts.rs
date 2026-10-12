@@ -15,6 +15,7 @@ use prism_protocol::{
 use crate::cooling::{cooling_read, cooling_text};
 use crate::core::{CommandId, Core, Effect, Gpu, Latest, Selection, TuningControl};
 use crate::format::Readout;
+use crate::games::SteamListing;
 
 /// A GPU's unapplied tuning changes.
 #[derive(Debug, Clone)]
@@ -137,6 +138,15 @@ pub(crate) enum DialogState {
     },
     /// The GPU's profiles, to rename or delete any of them.
     ManageProfiles { gpu_id: String },
+    /// The caller's Steam apps, searched by `filter`, to add one as a game. `adding` is the app,
+    /// by id, being added under the command prismd hasn't answered yet, and `error` why prismd
+    /// refused the last one.
+    AddSteamGame {
+        listing: SteamListing,
+        filter: String,
+        adding: Option<(CommandId, u32)>,
+        error: Option<String>,
+    },
 }
 
 /// What a profile name dialog names.
@@ -447,6 +457,7 @@ impl Core {
     pub(crate) fn answered(&mut self, command: CommandId, response: DaemonResponse) -> Vec<Effect> {
         if self.profile_answered(command, &response)
             || self.profile_command_answered(command, &response)
+            || self.game_answered(command, &response)
         {
             return Vec::new();
         }

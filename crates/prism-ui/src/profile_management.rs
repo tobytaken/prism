@@ -182,7 +182,7 @@ impl Core {
 
     /// Why profiles can't be changed without tuning access, such as "Needs tuning access · not
     /// running", or none with it.
-    fn needs_tuning_access(&self) -> Option<String> {
+    pub(crate) fn needs_tuning_access(&self) -> Option<String> {
         self.tuning_access()
             .reason()
             .map(|reason| format!("Needs tuning access · {reason}"))
