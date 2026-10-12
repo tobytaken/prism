@@ -32,6 +32,8 @@ pub enum ActivityAction {
     OpenGpu(String),
     /// Dismiss this GPU's startup outcome, by GPU id, for the caller.
     DismissStartupOutcome(String),
+    /// Retry, or resume, the fan curve Prism stopped following on this GPU, by id.
+    RetryCooling(String),
 }
 
 /// What Activity knows, apart from what other parts of the core report as problems.
@@ -160,8 +162,8 @@ impl Core {
         if !self.activity.open {
             return None;
         }
-        let (problems, startup) = self.startup_items();
-        let problems: Vec<_> = self.store_problem().into_iter().chain(problems).collect();
+        let problems = self.problems();
+        let startup = self.startup_items().1;
         let recent = self.recent_items();
         let nothing = problems.is_empty() && startup.is_empty() && recent.is_empty();
         Some(ActivityPanel {
@@ -177,6 +179,7 @@ impl Core {
     pub(crate) fn problems(&self) -> Vec<ActivityItem> {
         self.store_problem()
             .into_iter()
+            .chain(self.cooling_problems())
             .chain(self.startup_items().0)
             .collect()
     }
@@ -202,6 +205,8 @@ impl Core {
                     request: DaemonRequest::DismissStartupOutcome(StartupGpuRequest { gpu_id }),
                 }]
             }
+            // It stays a problem until prismd pushes that the curve is followed again.
+            ActivityAction::RetryCooling(gpu_id) => self.run(Some(Command::RetryCooling(gpu_id))),
         }
     }
 
@@ -234,10 +239,11 @@ impl Core {
                     .any(|dismissing| dismissing == gpu_id)
                     .then(|| "Dismissing…".into())
             }
+            ActivityAction::RetryCooling(gpu_id) => self.retry_unavailable(gpu_id),
         }
     }
 
-    fn button(&self, title: &str, action: ActivityAction) -> ActivityButton {
+    pub(crate) fn button(&self, title: &str, action: ActivityAction) -> ActivityButton {
         ActivityButton {
             title: title.into(),
             unavailable: self.action_unavailable(&action),
@@ -486,7 +492,7 @@ fn duration(length: Duration) -> String {
 }
 
 /// `text` ending in a period.
-fn sentence(text: &str) -> String {
+pub(crate) fn sentence(text: &str) -> String {
     if text.ends_with('.') {
         text.into()
     } else {

@@ -62,6 +62,8 @@ pub struct SidebarGpu {
     pub fan_speed: Readout,
     /// Why some of the vitals are unknown, when they are.
     pub unknown_reason: Option<String>,
+    /// Whether the GPU's cooling is in a failure pause after a cooling fault, shown as PAUSED.
+    pub paused: bool,
     pub selected: bool,
 }
 
@@ -75,10 +77,15 @@ impl SidebarGpu {
             self.power_draw.spoken(),
             self.fan_speed.spoken()
         );
-        match &self.unknown_reason {
-            Some(reason) => format!("{vitals}. {reason}"),
-            None => vitals,
-        }
+        [
+            Some(vitals),
+            self.unknown_reason.clone(),
+            self.paused.then(|| "Fan curve paused".into()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(". ")
     }
 }
 
@@ -301,13 +308,31 @@ pub struct FanModeControl {
     pub failed: Option<String>,
     /// Why it can't be changed, when it can't.
     pub read_only: Option<String>,
-    /// What the user should know about the GPU's cooling, such as why Prism stopped following its
-    /// curve or why fan curves are unavailable.
+    /// What the user should know about the GPU's cooling, such as why fan curves are unavailable.
     pub note: Option<String>,
+    /// Why Prism stopped following the GPU's fan curve, with Retry or Resume, while it has.
+    pub problem: Option<CoolingProblem>,
     /// Which fans the controls set, while the GPU has more than one fan.
     pub arrangement: Option<FanArrangementControl>,
     /// Whether the remembered fan curve can be recalled into the draft now.
     pub can_recall: bool,
+}
+
+/// Why Prism stopped following a GPU's fan curve: a cooling fault, after which its fans fell back
+/// to automatic cooling, or another tool's change to fan control. The curve was kept, and only
+/// Retry, or Resume, brings it back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoolingProblem {
+    /// Such as "Fan curve paused".
+    pub title: String,
+    /// Why it stopped, how each fan fell back, and what brings the curve back.
+    pub detail: Vec<String>,
+    /// The button's title: "Retry" after a fault, "Resume" after external control.
+    pub action: String,
+    /// Why the button can't be pressed now, when it can't.
+    pub unavailable: Option<String>,
+    /// Why prismd didn't apply the latest Retry or Resume, until the next one.
+    pub outcome: Option<String>,
 }
 
 /// Which of a GPU's fans the cooling controls set: every fan together, or one fan on its own, with
@@ -1001,6 +1026,7 @@ impl Core {
             power_draw: Readout::watts(latest.power_draw_watts),
             fan_speed: Readout::percent(latest.fan_speed_percent),
             unknown_reason: unknown_reason(gpu, &VITALS),
+            paused: self.cooling_paused(&gpu.id),
             selected: self.selection == Some(Selection::Gpu(gpu.id.clone())),
         }
     }
@@ -1366,16 +1392,10 @@ impl Core {
                 },
             })
             .collect();
-        // Why the curve stopped matters most; why curves are unavailable only where fans can be
-        // controlled at all.
-        let suspension = self
-            .cooling
-            .get(&gpu.id)
-            .and_then(|control| control.suspension.as_ref())
-            .map(|suspension| suspension.reason.clone());
-        let curves_unavailable =
+        // Why curves are unavailable only where fans can be controlled at all; why a curve stopped
+        // is the problem's.
+        let note =
             curves_unavailable.filter(|_| gpu.capabilities.contains(&TuningControl::Cooling));
-        let note: Vec<_> = suspension.into_iter().chain(curves_unavailable).collect();
         // A mode is pending while those fans' setting differs from the one in effect.
         let staged_setting = staged.and_then(|staged| setting_of(staged, fans));
         let pending_mode = staged_setting
@@ -1396,7 +1416,8 @@ impl Core {
                 .and_then(|draft| draft.failed.get(&Staged::Cooling))
                 .map(|why| not_applied("Not applied", why.as_deref())),
             read_only: self.cooling_read_only(gpu),
-            note: (!note.is_empty()).then(|| note.join(" ")),
+            note,
+            problem: self.cooling_problem(&gpu.id),
             arrangement: self.fan_arrangement(gpu),
             can_recall: self.selected_gpu().as_ref() == Some(&gpu.id)
                 && self.recall_unavailable().is_none(),

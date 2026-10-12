@@ -245,6 +245,7 @@ export component Workspace inherits Rectangle {
 
                 for track in AppState.tracks: Track {
                     track: track;
+                    gpu-id: root.workspace.id;
                     narrow: root.width < Theme.size.narrow-workspace;
                     short: root.short;
                 }

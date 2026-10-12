@@ -21,8 +21,7 @@ pub struct NotificationId(pub u64);
 pub(crate) enum Subject {
     /// The prismd connection, at Settings → Daemon.
     Prismd,
-    /// A GPU, by id, at its workspace.
-    #[allow(dead_code)] // Failure pauses notify about their GPU (#147).
+    /// A GPU, by id, at its workspace, such as its failure pause.
     Gpu(String),
 }
 

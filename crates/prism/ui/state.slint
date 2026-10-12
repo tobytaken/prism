@@ -26,6 +26,7 @@ export struct SidebarGpuView {
     power-draw: ReadoutView,
     fan-speed: ReadoutView,
     vitals: string,
+    paused: bool,
     selected: bool,
 }
 
@@ -109,6 +110,10 @@ export struct ChartView {
 // fan for the controls to set, with a change between one shared configuration and per-fan settings
 // pending next to it as `arrangement-pending`, such as "→ per fan". `can-recall` says whether the
 // remembered fan curve can be recalled into the draft now.
+// `has-problem` says whether Prism stopped following the GPU's fan curve, titled `problem-title`
+// and explained by `problem-detail`, with the button `problem-action` ("Retry" or "Resume"), which
+// can be pressed when `problem-available` and says why not in `problem-reason`.
+// `problem-outcome` says why prismd didn't apply the latest one.
 export struct FanModeView {
     modes: [SegmentView],
     mode: string,
@@ -123,6 +128,13 @@ export struct FanModeView {
     arrangement-pending: string,
     fans: [SegmentView],
     can-recall: bool,
+    has-problem: bool,
+    problem-title: string,
+    problem-detail: string,
+    problem-action: string,
+    problem-available: bool,
+    problem-reason: string,
+    problem-outcome: string,
 }
 
 // One of the fan curve's points: where it's drawn, from the left (0) to the right (1) and from the
@@ -490,6 +502,8 @@ export global Intents {
     callback pick-fans(index: int);
     // Stages the selected GPU's remembered fan curve, with its fan arrangement.
     callback recall-remembered-curve();
+    // Applies the suspended cooling configuration of the GPU, by id, again: Retry or Resume.
+    callback retry-cooling(gpu-id: string);
     // Stages the power limit drawn at `y` on the power chart, from the top (0) to the bottom (1).
     callback drag-power-limit(y: float);
     // Stages the fan curve with this point moved to where it's drawn at `x` across and `y` down

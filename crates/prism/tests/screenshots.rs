@@ -145,6 +145,63 @@ mod screenshot {
         pending_cooling(AppearanceMode::Dark, "workspace-cooling-pending-dark");
     }
 
+    /// The workspace after a cooling fault: the Fans track explaining the paused curve and each
+    /// fan's fallback with Retry, PAUSED in the sidebar and the problem indicator.
+    fn cooling_fault(appearance: AppearanceMode, name: &str) {
+        use prism_gpu::cooling::{
+            CoolingConfiguration, CurveSuspension, FanRestoration, FanSetting, RestorationStatus,
+            SuspensionKind,
+        };
+        use prism_gpu::fan_curve::FanCurvePoint;
+        use prism_protocol::{DaemonEvent, GpuCoolingControl};
+
+        init_rendering_backend();
+        let harness = tunable_workspace(appearance);
+        let curve = CoolingConfiguration::Shared {
+            setting: FanSetting::Curve {
+                points: vec![FanCurvePoint::new(45, 30), FanCurvePoint::new(85, 100)],
+            },
+        };
+        harness
+            .prismd
+            .push(DaemonEvent::CoolingControlChanged(GpuCoolingControl {
+                gpu_id: "GPU-5a1b0000-0000-4000-8000-000000000001".into(),
+                revision: 2,
+                applied: Some(curve.clone()),
+                suspension: Some(CurveSuspension {
+                    kind: SuspensionKind::Fault,
+                    reason: "NVML couldn't read the GPU's temperature: Unknown Error".into(),
+                    restoration: vec![
+                        FanRestoration {
+                            fan_index: 0,
+                            status: RestorationStatus::Restored,
+                            detail: None,
+                        },
+                        FanRestoration {
+                            fan_index: 1,
+                            status: RestorationStatus::Unverified,
+                            detail: Some("the driver still reports manual control".into()),
+                        },
+                    ],
+                }),
+                recovery: None,
+                remembered_curve: Some(curve),
+            }));
+        harness.app.receive_posted();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn a_cooling_fault_in_light() {
+        cooling_fault(AppearanceMode::Light, "workspace-cooling-fault-light");
+    }
+
+    #[test]
+    fn a_cooling_fault_in_dark() {
+        cooling_fault(AppearanceMode::Dark, "workspace-cooling-fault-dark");
+    }
+
     /// The workspace with fan 1's own fixed speed pending, after another session changed the
     /// GPU's cooling: the fan picker with per-fan settings pending, and the change strip asking
     /// for a review before Apply.

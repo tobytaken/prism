@@ -44,6 +44,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
             power_draw: readout(&gpu.power_draw),
             fan_speed: readout(&gpu.fan_speed),
             vitals: gpu.vitals().into(),
+            paused: gpu.paused,
             selected: gpu.selected,
         })
         .collect();
@@ -722,6 +723,7 @@ fn fan_mode_view(
                 .collect()
         })
         .unwrap_or_default();
+    let problem = fan_mode.problem.as_ref();
     let (current_modes, current_fans) = match current {
         Some(current) => (Some(current.modes), Some(current.fans)),
         None => (None, None),
@@ -749,6 +751,28 @@ fn fan_mode_view(
             .into(),
         fans: reuse(current_fans, fans),
         can_recall: fan_mode.can_recall,
+        has_problem: problem.is_some(),
+        problem_title: problem
+            .map(|problem| problem.title.as_str())
+            .unwrap_or_default()
+            .into(),
+        problem_detail: problem
+            .map(|problem| problem.detail.join(" "))
+            .unwrap_or_default()
+            .into(),
+        problem_action: problem
+            .map(|problem| problem.action.as_str())
+            .unwrap_or_default()
+            .into(),
+        problem_available: problem.is_some_and(|problem| problem.unavailable.is_none()),
+        problem_reason: problem
+            .and_then(|problem| problem.unavailable.as_deref())
+            .unwrap_or_default()
+            .into(),
+        problem_outcome: problem
+            .and_then(|problem| problem.outcome.as_deref())
+            .unwrap_or_default()
+            .into(),
     }
 }
 

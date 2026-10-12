@@ -47,6 +47,8 @@ pub(crate) enum Command {
     /// Show Games, and open Add program over it.
     AddProgram,
     OpenActivity,
+    /// Retry, or resume, the fan curve Prism stopped following on this GPU, by id.
+    RetryCooling(String),
     Quit,
 }
 
@@ -321,6 +323,9 @@ impl Core {
         if let Command::ApplyProfile(profile_id) = command {
             return self.profile_unavailable(profile_id);
         }
+        if let Command::RetryCooling(gpu_id) = command {
+            return self.retry_unavailable(gpu_id);
+        }
         if let Some(reason) = self.profile_action_unavailable(command) {
             return reason;
         }
@@ -351,6 +356,7 @@ impl Core {
             | Command::SetAutomaticSwitching(_)
             | Command::AddSteamGame
             | Command::AddProgram
+            | Command::RetryCooling(_)
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
@@ -475,11 +481,17 @@ impl Core {
             "Open Activity".to_owned(),
             Some(Shortcut::ToggleActivity),
         )];
+        // Whichever GPU is selected, as Activity offers them.
+        let retries = self
+            .retry_commands()
+            .into_iter()
+            .map(|(command, title)| (command, title, None));
         let app = [(Command::Quit, "Quit Prism".to_owned(), Some(Shortcut::Quit))];
         navigation
             .chain(sections)
             .chain(settings)
             .chain(activity)
+            .chain(retries)
             .chain(tuning)
             .chain(profiles)
             .chain(games)
