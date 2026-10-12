@@ -36,7 +36,7 @@ pub use crate::games::ProgramFile;
 pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
-pub use crate::settings::{About, GuiSettings, Link};
+pub use crate::settings::{About, GuiSettings, Link, SLINT_WEBSITE};
 pub use crate::view::{
     ActivityButton, ActivityItem, ActivityPanel, AddProgram, AddSteamGame, ChangeStrip,
     ConfirmClose, ConfirmDelete, Content, CoolingProblem, CurveMarker, CurvePoint, Detail, Dialog,

@@ -65,6 +65,7 @@ impl Notifications {
         self.focused = focused;
     }
 
+    /// Whether the user has desktop notifications on.
     pub(crate) fn enabled(&self) -> bool {
         !self.off
     }

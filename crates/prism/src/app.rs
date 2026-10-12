@@ -11,10 +11,10 @@ use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, 
 use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    ActivityAction, AppearanceMode as CoreAppearance, Content, Core, Dialog, Effect,
-    FanCurveEditor, FanMode, Input, Intent, Key, Link as CoreLink, PrismdHost, ProgramFile,
-    Section as CoreSection, ServiceAction as CoreServiceAction, ServiceOutcome,
-    SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer, TrackChart,
+    ActivityAction, AppearanceMode, Content, Core, Dialog, Effect, FanCurveEditor, FanMode, Input,
+    Intent, Key, Link as CoreLink, PrismdHost, ProgramFile, Section as CoreSection,
+    ServiceAction as CoreServiceAction, ServiceOutcome, SettingsSection as CoreSettingsSection,
+    Shortcut, TelemetrySource, Timer, TrackChart,
 };
 
 use crate::chart::{area_commands, limit_commands, line_commands, series_commands};
@@ -29,8 +29,8 @@ use crate::settings::SettingsStore;
 use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{
-    ActivityList, AppState, AppearanceMode, ChartId, ChartPart, CurvePart, Inbox, Intents,
-    KeyPress, Link, MainWindow, Section, ServiceAction, SettingsSection, TuningSetting,
+    ActivityList, AppState, ChartId, ChartPart, CurvePart, Inbox, Intents, KeyPress, Link,
+    MainWindow, Section, ServiceAction, SettingsSection, TuningSetting,
 };
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
@@ -270,15 +270,15 @@ impl Inner {
             });
         });
         let inner = Rc::downgrade(this);
-        intents.on_set_appearance(move |mode| {
-            let mode = match mode {
-                AppearanceMode::System => CoreAppearance::System,
-                AppearanceMode::Light => CoreAppearance::Light,
-                AppearanceMode::Dark => CoreAppearance::Dark,
-            };
-            with_inner(&inner, |inner| {
-                inner.handle(Input::Intent(Intent::SetAppearance(mode)))
-            });
+        intents.on_set_appearance(move |index| {
+            let mode = usize::try_from(index)
+                .ok()
+                .and_then(|index| AppearanceMode::ALL.get(index));
+            if let Some(&mode) = mode {
+                with_inner(&inner, |inner| {
+                    inner.handle(Input::Intent(Intent::SetAppearance(mode)))
+                });
+            }
         });
         let inner = Rc::downgrade(this);
         intents.on_set_desktop_notifications(move |enabled| {

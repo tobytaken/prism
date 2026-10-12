@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::thread;
 
-use prism_ui::Link;
+use prism_ui::{Link, SLINT_WEBSITE};
 use zbus::blocking::Connection;
 use zbus::zvariant::{Fd, Value};
 
@@ -65,9 +65,9 @@ impl Opener for DesktopOpener {
 }
 
 fn open(connect: &dyn Fn() -> zbus::Result<Connection>, link: Link) -> Result<(), String> {
-    let target = match link.url() {
-        Some(url) => Target::Url(url.to_owned()),
-        None => {
+    let target = match link {
+        Link::SlintWebsite => Target::Url(SLINT_WEBSITE.to_owned()),
+        Link::ThirdPartyLicenses => {
             let executable = std::env::current_exe().map_err(|error| error.to_string())?;
             let path = third_party_licenses(&executable)
                 .into_iter()
@@ -134,7 +134,7 @@ fn xdg_open(target: &Target) -> Result<(), String> {
 }
 
 /// Where THIRD-PARTY-LICENSES may be, most likely first, for the Prism at `executable`: under
-/// its prefix, where each package installs it, then in the source tree, for a development build.
+/// its prefix, where each package installs it, then, for a development build, in the source tree.
 fn third_party_licenses(executable: &Path) -> Vec<PathBuf> {
     let prefix = executable.parent().and_then(Path::parent);
     let installed = prefix.into_iter().flat_map(|prefix| {
@@ -148,9 +148,10 @@ fn third_party_licenses(executable: &Path) -> Vec<PathBuf> {
             share.join("doc").join(PACKAGE),
         ]
     });
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source =
+        cfg!(debug_assertions).then(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     installed
-        .chain([source])
+        .chain(source)
         .map(|directory| directory.join(THIRD_PARTY_LICENSES))
         .collect()
 }

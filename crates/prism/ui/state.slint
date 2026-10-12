@@ -1,7 +1,6 @@
 // Prism's state and the user's intents, implemented in Rust. The glue copies the prism-ui core's
 // view models in here after every input; views only lay out and draw what they're given.
 
-import { AppearanceMode } from "theme.slint";
 import { SegmentView } from "widgets/segmented.slint";
 import { MenuEntryView } from "widgets/menu.slint";
 
@@ -519,6 +518,8 @@ export global AppState {
     in property <[string]> daemon-paragraphs;
     in property <[string]> daemon-commands;
     in property <[FactView]> daemon-facts;
+    // Settings → Appearance's segments, one for each appearance mode, the one in use picked.
+    in property <[SegmentView]> appearance-modes;
     // Whether Prism sends desktop notifications at all.
     in property <bool> desktop-notifications;
     in property <AboutView> about;
@@ -569,8 +570,8 @@ export global Intents {
     callback run-service(action: ServiceAction);
     // Puts `text` on the clipboard.
     callback copy(text: string);
-    // Uses this appearance mode from now on.
-    callback set-appearance(mode: AppearanceMode);
+    // Uses the appearance mode at this index among Settings → Appearance's segments from now on.
+    callback set-appearance(index: int);
     // Turns desktop notifications on or off.
     callback set-desktop-notifications(enabled: bool);
     // Opens `link` in the desktop's app for it.

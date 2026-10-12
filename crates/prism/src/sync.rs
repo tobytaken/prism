@@ -183,6 +183,19 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         CoreSettingsSection::About => SettingsSection::About,
     });
     state.set_settings_section_name(core.settings_section().name().into());
+    let modes: Vec<_> = CoreAppearance::ALL
+        .into_iter()
+        .map(|mode| SegmentView {
+            text: mode.name().into(),
+            label: mode.name().into(),
+            selected: mode == core.appearance(),
+            unavailable_reason: SharedString::new(),
+            mark: SharedString::new(),
+        })
+        .collect();
+    if let Some(model) = update_in_place(&state.get_appearance_modes(), modes, PartialEq::eq) {
+        state.set_appearance_modes(model);
+    }
     state.set_desktop_notifications(core.desktop_notifications());
     let about = core.about();
     state.set_about(AboutView {

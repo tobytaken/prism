@@ -1,4 +1,4 @@
-import { AppearanceMode, Theme } from "../theme.slint";
+import { Theme } from "../theme.slint";
 import { Button, Fact, LinkButton, ListRow, Segmented, StyledText, Switch, VerticalDivider } from "../widgets.slint";
 import { AppState, Intents, Link, SettingsSection } from "../state.slint";
 import { ExplainedState } from "explained-state.slint";
@@ -88,14 +88,9 @@ component Appearance inherits Rectangle {
 
             Segmented {
                 label: "Appearance";
-                segments: [
-                    { text: "System", label: "System", selected: Theme.mode == AppearanceMode.system },
-                    { text: "Light", label: "Light", selected: Theme.mode == AppearanceMode.light },
-                    { text: "Dark", label: "Dark", selected: Theme.mode == AppearanceMode.dark },
-                ];
+                segments: AppState.appearance-modes;
                 chosen(index) => {
-                    Intents.set-appearance(index == 0 ? AppearanceMode.system
-                        : index == 1 ? AppearanceMode.light : AppearanceMode.dark);
+                    Intents.set-appearance(index);
                 }
             }
         }

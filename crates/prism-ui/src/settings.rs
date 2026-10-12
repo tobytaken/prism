@@ -2,8 +2,7 @@
 //! per user, and what Settings → About shows.
 
 use crate::core::{AppearanceMode, Core, Effect};
-use crate::games::on_off;
-use crate::palette::Command;
+use crate::palette::{Command, on_off};
 
 /// The settings the GUI keeps for itself, per user, apart from prismd's tuning store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,15 +31,8 @@ pub enum Link {
     SlintWebsite,
 }
 
-impl Link {
-    /// The web address it opens, for one on the web.
-    pub fn url(self) -> Option<&'static str> {
-        match self {
-            Self::ThirdPartyLicenses => None,
-            Self::SlintWebsite => Some("https://slint.dev"),
-        }
-    }
-}
+/// Where [`Link::SlintWebsite`] leads.
+pub const SLINT_WEBSITE: &str = "https://slint.dev";
 
 /// What Settings → About shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +47,15 @@ pub struct About {
 impl AppearanceMode {
     pub const ALL: [Self; 3] = [Self::System, Self::Light, Self::Dark];
 
+    /// What Settings → Appearance calls it, such as "Dark".
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
     /// What the palette calls using it, such as "Use dark appearance".
     pub(crate) fn command(self) -> &'static str {
         match self {
@@ -66,11 +67,12 @@ impl AppearanceMode {
 }
 
 impl Core {
+    /// What Settings → About shows.
     pub fn about(&self) -> About {
         About {
             version: env!("CARGO_PKG_VERSION").into(),
             license: env!("CARGO_PKG_LICENSE").into(),
-            slint_website: Link::SlintWebsite.url().unwrap_or_default().into(),
+            slint_website: SLINT_WEBSITE.into(),
         }
     }
 

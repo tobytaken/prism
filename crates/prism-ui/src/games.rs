@@ -13,7 +13,7 @@ use prism_protocol::{
 
 use crate::core::{CommandId, Core, Effect, Section, Selection};
 use crate::drafts::DialogState;
-use crate::palette::{Command, fuzzy_match};
+use crate::palette::{Command, fuzzy_match, on_off};
 use crate::view::{
     AddProgram, AddSteamGame, GameLink, GameRow, GamesSection, LinkChoice, ProgramChoice,
     SteamAppChoice, gpu_label,
@@ -55,11 +55,6 @@ impl GameCommand {
             Self::Add(game) => format!("{game} not added: {why}"),
         }
     }
-}
-
-/// "on" or "off", as turning automatic switching on or off says it.
-pub(crate) fn on_off(enabled: bool) -> &'static str {
-    if enabled { "on" } else { "off" }
 }
 
 /// The caller's Steam apps or running programs, as Add Steam game or Add program lists them.

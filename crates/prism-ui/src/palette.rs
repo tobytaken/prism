@@ -587,6 +587,11 @@ impl Core {
     }
 }
 
+/// "on" or "off", as a command that turns something on or off says it.
+pub(crate) fn on_off(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
+}
+
 /// Whether the query's characters, ignoring case and whitespace, appear in order in `title`.
 pub(crate) fn fuzzy_match(query: &str, title: &str) -> bool {
     let mut title = title.chars().flat_map(char::to_lowercase);
