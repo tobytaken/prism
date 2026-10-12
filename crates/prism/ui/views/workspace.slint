@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
-import { Button, ButtonKind, Divider, LinkButton, Segmented, StyledText } from "../widgets.slint";
-import { AppState, ChangeStripView, Intents, MenuAnchor, SettingsSection, WorkspaceView } from "../state.slint";
+import { Button, ButtonKind, Divider, LinkButton, Segmented, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, ChangeStripView, Intents, MenuAnchor, SettingsSection, SwitchingView, WorkspaceView } from "../state.slint";
 import { HardwareDetails } from "hardware-details.slint";
 import { Track } from "track.slint";
 
@@ -53,11 +53,95 @@ component TuningNeedsPrismd inherits Rectangle {
     }
 }
 
+// What drives automatic switching on the GPU, or why it doesn't, in the danger color on a failure
+// pause with why it failed, or with why prismd refused the latest Pause, Resume or Retry; then
+// Retry on a failure pause, and Pause, or Resume. The explanation is its description.
+component SwitchingStatus inherits Rectangle {
+    in property <SwitchingView> switching;
+
+    accessible-role: groupbox;
+    accessible-label: "Automatic switching";
+    accessible-description: root.switching.summary + " · "
+        + (root.switching.outcome != "" ? root.switching.outcome : root.switching.detail);
+    min-width: row.min-width;
+    preferred-width: row.preferred-width;
+
+    row := HorizontalLayout {
+        spacing: Theme.space.s;
+
+        StyledText {
+            text: "AUTO";
+            style: Theme.text.label;
+            color: Theme.color.ink-muted;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        StyledText {
+            min-width: 0;
+            text: root.switching.summary;
+            style: Theme.text.body;
+            color: root.switching.failed ? Theme.color.danger : Theme.color.ink;
+            vertical-alignment: center;
+            overflow: elide;
+            accessible-role: text;
+            accessible-label: "Automatic switching status";
+            accessible-value: root.switching.summary;
+        }
+
+        // Why prismd refused the latest request, or else why it failed.
+        if root.switching.outcome != "" || root.switching.failed: StyledText {
+            min-width: 0;
+            text: root.switching.outcome != "" ? root.switching.outcome : root.switching.detail;
+            style: Theme.text.body;
+            color: root.switching.outcome != "" ? Theme.color.danger : Theme.color.ink-muted;
+            vertical-alignment: center;
+            overflow: elide;
+            accessible-role: none;
+        }
+
+        if root.switching.failed: VerticalLayout {
+            alignment: center;
+
+            Button {
+                text: "Retry";
+                label: "Retry automatic switching";
+                height: Theme.size.segment;
+                kind: ButtonKind.quiet;
+                enabled: root.switching.can-retry;
+                description: root.switching.retry-reason;
+                activated => {
+                    Intents.retry-switching(AppState.workspace.id);
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+
+            Button {
+                text: root.switching.paused ? "Resume" : "Pause";
+                label: (root.switching.paused ? "Resume" : "Pause") + " automatic switching";
+                height: Theme.size.segment;
+                kind: ButtonKind.quiet;
+                enabled: root.switching.can-pause;
+                description: root.switching.pause-reason;
+                activated => {
+                    Intents.set-switching-paused(AppState.workspace.id, !root.switching.paused);
+                }
+            }
+        }
+    }
+}
+
 // The fixed strip under the header: "No unapplied changes", or, marked in the accent, how many
 // there are with Discard and Apply. It's always there and never changes height, so nothing moves
-// under a drag.
+// under a drag. With a session, it also says what drives automatic switching on the GPU, which
+// waits for the unapplied changes.
 component ChangeStrip inherits Rectangle {
     in property <ChangeStripView> changes;
+    in property <bool> has-switching;
+    in property <SwitchingView> switching;
 
     accessible-role: groupbox;
     accessible-label: "Unapplied changes";
@@ -92,6 +176,18 @@ component ChangeStrip inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             accessible-role: none;
+        }
+
+        if root.has-switching: SwitchingStatus {
+            switching: root.switching;
+        }
+
+        // Keeps Pause apart from Discard.
+        if root.has-switching && root.changes.pending: VerticalLayout {
+            padding-top: Theme.space.s;
+            padding-bottom: Theme.space.s;
+
+            VerticalDivider { }
         }
 
         if root.changes.pending: VerticalLayout {
@@ -264,6 +360,8 @@ export component Workspace inherits Rectangle {
 
         ChangeStrip {
             changes: root.workspace.changes;
+            has-switching: root.workspace.has-switching;
+            switching: root.workspace.switching;
         }
 
         if root.workspace.no-tuning-access != "": TuningNeedsPrismd {

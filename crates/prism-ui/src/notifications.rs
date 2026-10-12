@@ -22,7 +22,27 @@ pub(crate) enum Subject {
     /// The prismd connection, at Settings → Daemon.
     Prismd,
     /// A GPU, by id, at its workspace, such as its failure pause.
-    Gpu(String),
+    Gpu(String, GpuConcern),
+}
+
+/// What about a GPU a notification is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GpuConcern {
+    /// A cooling fault, which its Fans track explains.
+    Cooling,
+    /// Automatic switching's failure pause, which the workspace explains.
+    Switching,
+}
+
+impl Subject {
+    /// Whether a notification about `self` takes the place of one about `other`: one about the
+    /// same thing, or about the same GPU, which has at most one live.
+    fn replaces(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Gpu(gpu, _), Self::Gpu(other, _)) => gpu == other,
+            _ => self == other,
+        }
+    }
 }
 
 /// The notifications Prism has live, and whether its window has focus.
@@ -53,7 +73,11 @@ impl Notifications {
         }
         self.next += 1;
         let id = NotificationId(self.next);
-        let replaces = self.take(&subject);
+        let replaces = self
+            .live
+            .iter()
+            .position(|(live, _)| subject.replaces(live))
+            .map(|index| self.live.remove(index).1);
         self.live.push((subject, id));
         Some(Notification {
             id,
@@ -63,9 +87,11 @@ impl Notifications {
         })
     }
 
-    /// The live notification about `subject` to withdraw, if any.
+    /// The live notification about `subject` to withdraw, if any: not one about something else
+    /// that took its place.
     pub(crate) fn withdraw(&mut self, subject: &Subject) -> Option<NotificationId> {
-        self.take(subject)
+        let index = self.live.iter().position(|(live, _)| live == subject)?;
+        Some(self.live.remove(index).1)
     }
 
     /// Every live notification, to withdraw them all.
@@ -78,11 +104,6 @@ impl Notifications {
     pub(crate) fn closed(&mut self, id: NotificationId) -> Option<Subject> {
         let index = self.live.iter().position(|(_, live)| *live == id)?;
         Some(self.live.remove(index).0)
-    }
-
-    fn take(&mut self, subject: &Subject) -> Option<NotificationId> {
-        let index = self.live.iter().position(|(live, _)| live == subject)?;
-        Some(self.live.remove(index).1)
     }
 }
 
@@ -97,7 +118,7 @@ mod tests {
     }
 
     fn gpu(id: &str) -> Subject {
-        Subject::Gpu(id.into())
+        Subject::Gpu(id.into(), GpuConcern::Cooling)
     }
 
     #[test]
@@ -111,6 +132,20 @@ mod tests {
         assert_eq!(second.replaces, Some(first.id));
         assert_ne!(second.id, first.id);
         assert_eq!(notifications.withdraw_all(), [second.id]);
+    }
+
+    #[test]
+    fn a_notification_about_something_else_on_the_gpu_replaces_it_too() {
+        let mut notifications = Notifications::default();
+        let cooling = send(&mut notifications, gpu("GPU-0"));
+        let switching = Subject::Gpu("GPU-0".into(), GpuConcern::Switching);
+
+        let newer = send(&mut notifications, switching.clone());
+
+        assert_eq!(newer.replaces, Some(cooling.id));
+        // The cooling fault ending leaves the newer one alone.
+        assert_eq!(notifications.withdraw(&gpu("GPU-0")), None);
+        assert_eq!(notifications.withdraw(&switching), Some(newer.id));
     }
 
     #[test]

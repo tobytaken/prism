@@ -90,8 +90,8 @@ component ProblemIndicator inherits Rectangle {
     }
 }
 
-// The status bar: the prismd connection, where telemetry comes from, EDIT HOLD while any GPU has
-// unapplied tuning changes, and the problem indicator.
+// The status bar: the prismd connection, what drives automatic switching, where telemetry comes
+// from, EDIT HOLD while any GPU has unapplied tuning changes, and the problem indicator.
 export component StatusBar inherits Rectangle {
     height: Theme.size.status-bar;
     background: Theme.color.chrome;
@@ -103,6 +103,15 @@ export component StatusBar inherits Rectangle {
 
         ConnectionItem {
             horizontal-stretch: 0;
+        }
+
+        if AppState.switching != "": StyledText {
+            text: AppState.switching;
+            style: Theme.text.status;
+            color: Theme.color.chrome-ink-muted;
+            accessible-role: text;
+            accessible-label: "Automatic switching";
+            accessible-value: AppState.switching;
         }
 
         StyledText {

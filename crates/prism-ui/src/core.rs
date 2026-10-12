@@ -18,10 +18,11 @@ use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::drafts::{DialogState, Drafts};
 use crate::games::{GameCommand, ProgramFile};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
-use crate::notifications::{Notification, NotificationId, Notifications, Subject};
+use crate::notifications::{GpuConcern, Notification, NotificationId, Notifications, Subject};
 use crate::palette::{Command, PaletteState, Shortcut};
 use crate::profile_management::ProfileCommand;
 use crate::profiles::ProfileApplying;
+use crate::switching::Switching;
 use crate::telemetry::{Readings, TelemetryHistory, TelemetryRange};
 
 /// The user's choice of System, Light or Dark; System follows the desktop's preference.
@@ -431,6 +432,14 @@ pub enum Intent {
     /// Apply the GPU's suspended cooling configuration again, by GPU id, to bring back the fan
     /// curve Prism stopped following: Retry after a cooling fault, Resume after external control.
     RetryCooling(String),
+    /// Pause automatic switching on the GPU, by id, or resume it after a pause or a manual
+    /// override.
+    SetSwitchingPaused {
+        gpu_id: String,
+        paused: bool,
+    },
+    /// Try the GPU's failed automatic switching again, by GPU id, ending its failure pause.
+    RetrySwitching(String),
 }
 
 /// Something the core asks the caller to do.
@@ -539,6 +548,7 @@ pub struct Core {
     /// The caller's running games as prismd last pushed them, or why it can't recognize them,
     /// while there is a session.
     pub(crate) running_games: Option<RunningGamesState>,
+    pub(crate) switching: Switching,
     /// Each game change sent to prismd that hasn't been answered.
     pub(crate) game_commands: BTreeMap<CommandId, GameCommand>,
     /// Why prismd refused the latest game change, until the next one.
@@ -708,6 +718,7 @@ impl Core {
                 self.profiles = snapshot.profiles;
                 self.games = snapshot.games;
                 self.running_games = Some(snapshot.running_games);
+                self.switching_connected(snapshot.automatic_switching);
                 let mut effects = vec![Effect::SendToPrismd(DaemonRequest::SubscribeTelemetry)];
                 // The new session holds edits only once told.
                 effects.extend(self.sync_edit_holds());
@@ -737,6 +748,7 @@ impl Core {
                 self.drafts_lost_session();
                 self.profiles_lost_session();
                 self.games_lost_session();
+                self.switching_lost_session();
                 self.activity_lost_session(lost);
                 let mut effects = Vec::new();
                 if !std::mem::replace(&mut self.sampling, true) {
@@ -802,8 +814,9 @@ impl Core {
                     DaemonEvent::StoreHealthChanged(health) => self.store_health_pushed(health),
                     DaemonEvent::StartupStateChanged(startup) => self.startup_pushed(startup),
                     DaemonEvent::ActivityRecorded(entry) => self.activity_recorded(entry),
-                    // Taken in as the screens that show them land.
-                    DaemonEvent::AutomaticSwitchingChanged(_) => {}
+                    DaemonEvent::AutomaticSwitchingChanged(status) => {
+                        effects = self.switching_pushed(status);
+                    }
                 }
                 effects
             }
@@ -854,9 +867,13 @@ impl Core {
                     Some(Subject::Prismd) => {
                         self.perform(Command::GoToSettings(SettingsSection::Daemon))
                     }
-                    // About its failure pause, which the Fans track explains.
-                    Some(Subject::Gpu(id)) => {
+                    // About its cooling fault, which the Fans track explains.
+                    Some(Subject::Gpu(id, GpuConcern::Cooling)) => {
                         self.fans_revealed += 1;
+                        self.perform(Command::GoToGpu(id))
+                    }
+                    // About automatic switching's failure pause, which the workspace explains.
+                    Some(Subject::Gpu(id, GpuConcern::Switching)) => {
                         self.perform(Command::GoToGpu(id))
                     }
                     // Withdrawn on its way in: the window is still what the user asked for.
@@ -1061,6 +1078,10 @@ impl Core {
             Intent::OpenActivity => self.run(Some(Command::OpenActivity)),
             Intent::RunActivityAction(action) => self.run_activity_action(action),
             Intent::RetryCooling(gpu_id) => self.run(Some(Command::RetryCooling(gpu_id))),
+            Intent::SetSwitchingPaused { gpu_id, paused } => {
+                self.run(Some(Command::SetSwitchingPaused(gpu_id, paused)))
+            }
+            Intent::RetrySwitching(gpu_id) => self.run(Some(Command::RetrySwitching(gpu_id))),
         }
     }
 
@@ -1128,6 +1149,10 @@ impl Core {
             Command::AddProgram => self.open_add_program(),
             Command::OpenActivity => self.open_activity(),
             Command::RetryCooling(gpu_id) => self.retry_cooling(gpu_id),
+            Command::SetSwitchingPaused(gpu_id, paused) => {
+                self.set_switching_paused(gpu_id, paused)
+            }
+            Command::RetrySwitching(gpu_id) => self.retry_switching(gpu_id),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }

@@ -2,7 +2,8 @@ import { Theme } from "../theme.slint";
 import { Divider, ListRow, StyledText, VerticalDivider } from "../widgets.slint";
 import { AppState, ContentKind, Intents, Section, SidebarGpuView } from "../state.slint";
 
-// A GPU's block: its index, PAUSED while its cooling is in a failure pause, and identity, name, a
+// A GPU's block: its index, PAUSED while anything is in a failure pause on it, such as its cooling
+// or automatic switching, and identity, name, a
 // large temperature, then utilization, power draw and fan speed.
 component GpuBlock inherits ListRow {
     in property <SidebarGpuView> gpu;

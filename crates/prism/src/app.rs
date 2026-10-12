@@ -342,6 +342,21 @@ impl Inner {
             });
         });
         let inner = Rc::downgrade(this);
+        intents.on_set_switching_paused(move |gpu_id, paused| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::SetSwitchingPaused {
+                    gpu_id: gpu_id.into(),
+                    paused,
+                }))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_retry_switching(move |gpu_id| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::RetrySwitching(gpu_id.into())))
+            });
+        });
+        let inner = Rc::downgrade(this);
         intents.on_link_game(move |game, link, choice| {
             with_inner(&inner, |inner| {
                 // The rows list games, links and choices in the order the core gives them.

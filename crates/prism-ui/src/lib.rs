@@ -18,6 +18,7 @@ mod notifications;
 mod palette;
 mod profile_management;
 mod profiles;
+mod switching;
 pub mod telemetry;
 mod view;
 
@@ -40,5 +41,5 @@ pub use crate::view::{
     FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace, HardwareDetails,
     LinkChoice, ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice, ProfileCorrections,
     ProfileMenu, ProfileNameDialog, ProfileSwitcher, ProgramChoice, Review, Sidebar, SidebarGpu,
-    StatusBar, SteamAppChoice, Stepper, Track, TrackChart, TrackKind, Tunable,
+    StatusBar, SteamAppChoice, Stepper, SwitchingStatus, Track, TrackChart, TrackKind, Tunable,
 };
