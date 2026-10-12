@@ -200,6 +200,15 @@ export component Games inherits Rectangle {
                     Intents.add-steam-game();
                 }
             }
+
+            Button {
+                text: "Add program…";
+                enabled: !AppState.games-section.read-only;
+                description: AppState.games-section.reason;
+                activated => {
+                    Intents.add-program();
+                }
+            }
         }
 
         if AppState.games-section.switching-known: HorizontalLayout {

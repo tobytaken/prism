@@ -1,6 +1,6 @@
 //! The Games section: the automatic switching toggle, the caller's games with a profile link per
-//! GPU, removing a game and adding a Steam game, all from prismd's events, read-only without
-//! tuning access, with recognition problems explained, and the palette's game commands.
+//! GPU, removing a game and adding a Steam game or a program, all from prismd's events, read-only
+//! without tuning access, with recognition problems explained, and the palette's game commands.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -8,13 +8,14 @@ use std::time::Duration;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode, GpuTelemetryProvider};
 use prism_protocol::{
-    AddSteamGameRequest, DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GameEntry,
-    GameId, GameRequest, GamesState, ProfilesState, ProtocolVersion, RunningGamesState,
-    SessionMessage, SetAutomaticSwitchingRequest, SetGameProfileRequest, SteamApp, Welcome,
+    AddProgramRequest, AddSteamGameRequest, DaemonEvent, DaemonRequest, DaemonResponse,
+    DaemonSnapshot, GameEntry, GameId, GameRequest, GamesState, ProfilesState, ProtocolVersion,
+    RunningGamesState, RunningProgram, SessionMessage, SetAutomaticSwitchingRequest,
+    SetGameProfileRequest, SteamApp, Welcome,
 };
 use prism_ui::{
-    AddSteamGame, AppearanceMode, CommandId, Core, Dialog, Effect, GameRow, GamesSection, Input,
-    Intent, Section, SessionFailure,
+    AddProgram, AddSteamGame, AppearanceMode, CommandId, Core, Dialog, Effect, GameRow,
+    GamesSection, Input, Intent, ProgramFile, Section, SessionFailure,
 };
 
 const GPU: &str = "GPU-5a1b0000-0000-4000-8000-000000000001";
@@ -195,6 +196,31 @@ fn add_steam_game_dialog(core: &Core) -> AddSteamGame {
     }
 }
 
+fn add_program_dialog(core: &Core) -> AddProgram {
+    match core.dialog() {
+        Some(Dialog::AddProgram(dialog)) => dialog,
+        other => panic!("expected Add program, got {other:?}"),
+    }
+}
+
+/// One of the caller's running programs, at its host location if known.
+fn program(pid: u32, name: &str, path: Option<&str>, warning: Option<&str>) -> RunningProgram {
+    RunningProgram {
+        pid,
+        name: name.into(),
+        path: path.map(Into::into),
+        launcher: None,
+        environment: Vec::new(),
+        helper: false,
+        recognition_warning: warning.map(Into::into),
+    }
+}
+
+const UNRECOVERED: &str =
+    "The host program location could not be recovered; browse for the program file instead.";
+const SCRIPTS: &str = "Scripts, virtual machines and emulators identify the runtime, not the \
+                       individual game; recognition may be unreliable.";
+
 fn palette_titles(core: &mut Core, query: &str) -> Vec<(String, Option<String>)> {
     intent(core, Intent::OpenPalette);
     intent(core, Intent::FilterPalette(query.into()));
@@ -214,7 +240,7 @@ fn games_show_from_the_snapshot_with_the_toggle_and_each_gpus_linked_profile() {
     assert_eq!(section.automatic_switching, Some(false));
     assert_eq!(
         section.empty,
-        "No games yet. Add a Steam game to link it to your profiles."
+        "No games yet. Add a Steam game or a program to link it to your profiles."
     );
     assert_eq!(section.read_only, None);
     assert_eq!(section.recognition_problem, None);
@@ -525,6 +551,7 @@ fn without_tuning_access_games_are_read_only_with_the_reason() {
         },
         Intent::RemoveGame(DOTA),
         Intent::AddSteamGame,
+        Intent::AddProgram,
     ] {
         assert_eq!(
             requests(&intent(&mut core, change.clone())),
@@ -541,14 +568,27 @@ fn without_tuning_access_games_are_read_only_with_the_reason() {
     );
     assert_eq!(
         palette_titles(&mut core, "add steam game"),
-        [("Add Steam game…".to_owned(), reason)]
+        [("Add Steam game…".to_owned(), reason.clone())]
+    );
+    assert_eq!(
+        palette_titles(&mut core, "add program"),
+        [("Add program…".to_owned(), reason)]
     );
 }
 
 #[test]
 fn without_a_session_games_need_prismd_and_show_none() {
+    for add in [Intent::AddSteamGame, Intent::AddProgram] {
+        let mut core = connected();
+        intent(&mut core, add.clone());
+        core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
+            message: "gone".into(),
+        }));
+        // Nothing it lists can be added any more.
+        assert!(!core.dialog_open(), "{add:?}");
+    }
+
     let mut core = connected();
-    intent(&mut core, Intent::AddSteamGame);
     core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
         message: "gone".into(),
     }));
@@ -565,8 +605,6 @@ fn without_a_session_games_need_prismd_and_show_none() {
         section.read_only.as_deref(),
         Some("Needs tuning access · not running")
     );
-    // Nothing it lists can be added any more.
-    assert!(!core.dialog_open());
 }
 
 #[test]
@@ -606,7 +644,7 @@ fn recognition_problems_are_explained_with_their_reason() {
 }
 
 #[test]
-fn the_palette_turns_automatic_switching_on_or_off_and_adds_a_steam_game() {
+fn the_palette_turns_automatic_switching_on_or_off_and_adds_a_steam_game_or_a_program() {
     let mut core = connected();
     intent(&mut core, Intent::GoTo(Section::Settings));
 
@@ -641,4 +679,279 @@ fn the_palette_turns_automatic_switching_on_or_off_and_adds_a_steam_game() {
     // It shows Games under the dialog, where the game it adds appears.
     assert_eq!(core.content(), prism_ui::Content::Section(Section::Games));
     assert!(matches!(core.dialog(), Some(Dialog::AddSteamGame(_))));
+
+    intent(&mut core, Intent::Dismiss);
+    intent(&mut core, Intent::GoTo(Section::Settings));
+    intent(&mut core, Intent::OpenPalette);
+    intent(&mut core, Intent::FilterPalette("add program".into()));
+    let effects = intent(&mut core, Intent::RunHighlighted);
+    assert_eq!(requests(&effects), [DaemonRequest::ListRunningPrograms]);
+    assert_eq!(core.content(), prism_ui::Content::Section(Section::Games));
+    assert!(matches!(core.dialog(), Some(Dialog::AddProgram(_))));
+}
+
+#[test]
+fn add_program_lists_the_callers_running_programs_and_adds_the_one_chosen() {
+    let mut core = connected();
+
+    let (listing, request) = sent_once(&intent(&mut core, Intent::AddProgram));
+    assert_eq!(request, DaemonRequest::ListRunningPrograms);
+    let dialog = add_program_dialog(&core);
+    assert_eq!(dialog.title, "Add program");
+    assert_eq!(
+        dialog.status.as_deref(),
+        Some("Reading your running programs…")
+    );
+    assert_eq!(dialog.programs, []);
+    assert!(dialog.can_browse);
+
+    answer(
+        &mut core,
+        listing,
+        DaemonResponse::RunningPrograms(vec![
+            program(
+                4100,
+                "Balatro.exe",
+                Some("/games/Balatro/Balatro.exe"),
+                None,
+            ),
+            // Another process of the same program.
+            program(
+                4101,
+                "Balatro.exe",
+                Some("/games/Balatro/Balatro.exe"),
+                None,
+            ),
+            program(
+                2001,
+                "factorio",
+                Some("/opt/games/factorio/bin/factorio"),
+                None,
+            ),
+            program(3000, "game.exe", None, Some(UNRECOVERED)),
+            program(3100, "python3", Some("/usr/bin/python3"), Some(SCRIPTS)),
+        ]),
+    );
+    let dialog = add_program_dialog(&core);
+    assert_eq!(dialog.status, None);
+    let programs: Vec<_> = dialog
+        .programs
+        .iter()
+        .map(|program| {
+            (
+                program.name.as_str(),
+                program.detail.as_str(),
+                program.unavailable.as_deref(),
+                program.warning.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        programs,
+        [
+            ("Balatro.exe", "/games/Balatro/Balatro.exe", None, None),
+            (
+                "factorio",
+                "/opt/games/factorio/bin/factorio",
+                Some("Already added"),
+                None
+            ),
+            (
+                "game.exe",
+                "Host location unknown",
+                Some("Location unknown"),
+                Some(UNRECOVERED)
+            ),
+            ("python3", "/usr/bin/python3", None, Some(SCRIPTS)),
+        ]
+    );
+
+    intent(&mut core, Intent::FilterPrograms("blt".into()));
+    let dialog = add_program_dialog(&core);
+    assert_eq!(dialog.filter, "blt");
+    let names: Vec<_> = dialog
+        .programs
+        .iter()
+        .map(|program| program.name.as_str())
+        .collect();
+    assert_eq!(names, ["Balatro.exe"]);
+
+    // One that's already added, or that isn't listed, can't be added from the list.
+    for path in ["/opt/games/factorio/bin/factorio", "/usr/bin/bash"] {
+        assert_eq!(
+            requests(&intent(&mut core, Intent::AddRunningProgram(path.into()))),
+            []
+        );
+    }
+
+    let (adding, request) = sent_once(&intent(
+        &mut core,
+        Intent::AddRunningProgram("/games/Balatro/Balatro.exe".into()),
+    ));
+    assert_eq!(
+        request,
+        DaemonRequest::AddProgram(AddProgramRequest {
+            path: "/games/Balatro/Balatro.exe".into()
+        })
+    );
+    let dialog = add_program_dialog(&core);
+    assert_eq!(dialog.status.as_deref(), Some("Adding Balatro.exe…"));
+    assert!(!dialog.can_browse);
+    // Only one at a time.
+    assert_eq!(
+        requests(&intent(
+            &mut core,
+            Intent::AddRunningProgram("/usr/bin/python3".into())
+        )),
+        []
+    );
+    assert_eq!(intent(&mut core, Intent::BrowseForProgram), []);
+
+    answer(&mut core, adding, DaemonResponse::Games(games()));
+    assert!(!core.dialog_open());
+}
+
+#[test]
+fn browsing_adds_the_program_file_at_the_host_location_chosen() {
+    let mut core = connected();
+    let (listing, _) = sent_once(&intent(&mut core, Intent::AddProgram));
+    answer(&mut core, listing, DaemonResponse::RunningPrograms(vec![]));
+    assert_eq!(
+        add_program_dialog(&core).status.as_deref(),
+        Some("None of your programs are running. Browse for the program file instead.")
+    );
+
+    assert_eq!(
+        intent(&mut core, Intent::BrowseForProgram),
+        [Effect::ChooseProgramFile]
+    );
+    let dialog = add_program_dialog(&core);
+    assert!(!dialog.can_browse);
+    assert_eq!(
+        dialog.status.as_deref(),
+        Some("Choose the program file in the file chooser…")
+    );
+    // One file chooser at a time.
+    assert_eq!(intent(&mut core, Intent::BrowseForProgram), []);
+
+    // Canceling it changes nothing.
+    assert_eq!(
+        core.handle(Input::ProgramFileChosen(ProgramFile::Canceled)),
+        []
+    );
+    let dialog = add_program_dialog(&core);
+    assert!(dialog.can_browse);
+    assert_eq!(dialog.error, None);
+
+    intent(&mut core, Intent::BrowseForProgram);
+    let (adding, request) = sent_once(&core.handle(Input::ProgramFileChosen(ProgramFile::Chosen(
+        "/home/alice/Games/Celeste/Celeste".into(),
+    ))));
+    assert_eq!(
+        request,
+        DaemonRequest::AddProgram(AddProgramRequest {
+            path: "/home/alice/Games/Celeste/Celeste".into()
+        })
+    );
+    assert_eq!(
+        add_program_dialog(&core).status.as_deref(),
+        Some("Adding Celeste…")
+    );
+    answer(&mut core, adding, DaemonResponse::Games(games()));
+    assert!(!core.dialog_open());
+
+    // A file chosen once Add program is closed adds nothing.
+    intent(&mut core, Intent::AddProgram);
+    intent(&mut core, Intent::BrowseForProgram);
+    intent(&mut core, Intent::Dismiss);
+    assert_eq!(
+        core.handle(Input::ProgramFileChosen(ProgramFile::Chosen(
+            "/games/late".into()
+        ))),
+        []
+    );
+}
+
+#[test]
+fn reopened_add_program_waits_for_the_file_chooser_still_open() {
+    let mut core = connected();
+    intent(&mut core, Intent::AddProgram);
+    intent(&mut core, Intent::BrowseForProgram);
+    intent(&mut core, Intent::Dismiss);
+
+    // The file chooser opened before is still open, so another doesn't open over it.
+    intent(&mut core, Intent::AddProgram);
+    let dialog = add_program_dialog(&core);
+    assert!(!dialog.can_browse);
+    assert_eq!(
+        dialog.status.as_deref(),
+        Some("Choose the program file in the file chooser…")
+    );
+    assert_eq!(intent(&mut core, Intent::BrowseForProgram), []);
+
+    // What it chooses is what Add program waits for.
+    let (_, request) = sent_once(&core.handle(Input::ProgramFileChosen(ProgramFile::Chosen(
+        "/games/Celeste".into(),
+    ))));
+    assert_eq!(
+        request,
+        DaemonRequest::AddProgram(AddProgramRequest {
+            path: "/games/Celeste".into()
+        })
+    );
+}
+
+#[test]
+fn add_program_says_why_listing_choosing_or_adding_failed() {
+    let mut core = connected();
+    let (listing, _) = sent_once(&intent(&mut core, Intent::AddProgram));
+    answer(
+        &mut core,
+        listing,
+        refused("Running programs could not be listed: denied"),
+    );
+    let dialog = add_program_dialog(&core);
+    assert_eq!(
+        dialog.status.as_deref(),
+        Some("Running programs could not be listed: denied")
+    );
+    // Browsing still works.
+    assert!(dialog.can_browse);
+
+    // A file the document portal shared without its host location isn't sent to prismd.
+    intent(&mut core, Intent::BrowseForProgram);
+    let missing = "Prism couldn't find where game.exe is on the host: the document portal \
+                   doesn't know it.";
+    assert_eq!(
+        core.handle(Input::ProgramFileChosen(ProgramFile::Failed(
+            missing.into()
+        ))),
+        []
+    );
+    let dialog = add_program_dialog(&core);
+    assert_eq!(dialog.error.as_deref(), Some(missing));
+    assert!(dialog.can_browse);
+
+    // prismd takes only an absolute host location.
+    intent(&mut core, Intent::BrowseForProgram);
+    let (adding, _) = sent_once(&core.handle(Input::ProgramFileChosen(ProgramFile::Chosen(
+        "games/Celeste".into(),
+    ))));
+    // Trying again clears why the last one failed.
+    assert_eq!(add_program_dialog(&core).error, None);
+    answer(
+        &mut core,
+        adding,
+        refused("Choose an absolute host program location."),
+    );
+    let dialog = add_program_dialog(&core);
+    assert_eq!(
+        dialog.status.as_deref(),
+        Some("Running programs could not be listed: denied")
+    );
+    assert_eq!(
+        dialog.error.as_deref(),
+        Some("Celeste not added: Choose an absolute host program location.")
+    );
+    assert!(dialog.can_browse);
 }

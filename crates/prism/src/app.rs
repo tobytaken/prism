@@ -12,12 +12,13 @@ use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
     Content, Core, Dialog, Effect, FanCurveEditor, FanMode, Input, Intent, Key, PrismdHost,
-    Section as CoreSection, ServiceAction as CoreServiceAction, ServiceOutcome,
+    ProgramFile, Section as CoreSection, ServiceAction as CoreServiceAction, ServiceOutcome,
     SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer, TrackChart,
 };
 
 use crate::chart::{area_commands, limit_commands, line_commands, series_commands};
 use crate::environment::{Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
+use crate::file_chooser::FileChooser;
 use crate::notifications::{NotificationEvent, Notifier};
 use crate::prismd::{PrismdConnector, PrismdReport};
 use crate::prismd_host::PrismdService;
@@ -50,6 +51,7 @@ struct Inner {
     launches: Box<dyn Launches>,
     activation: Box<dyn WindowActivation>,
     notifier: Box<dyn Notifier>,
+    file_chooser: Box<dyn FileChooser>,
     /// The core's timers, made the first time each starts.
     timers: RefCell<HashMap<Timer, slint::Timer>>,
     /// The selected GPU's charts and fan curve editor as of the core revision they were made at,
@@ -79,6 +81,8 @@ enum Posted {
     /// A service action ended.
     ServiceDone(CoreServiceAction, ServiceOutcome),
     Notification(NotificationEvent),
+    /// The file chooser closed, with the program file chosen, if any.
+    ProgramFile(ProgramFile),
     /// The window gained or lost focus.
     Focused(bool),
     TimerElapsed(Timer),
@@ -97,6 +101,7 @@ impl App {
                     launches,
                     activation,
                     notifier,
+                    file_chooser,
                 },
             settings,
             clock,
@@ -118,6 +123,7 @@ impl App {
             launches,
             activation,
             notifier,
+            file_chooser,
             timers: RefCell::default(),
             drawn: RefCell::default(),
             inbox,
@@ -375,6 +381,29 @@ impl Inner {
                 }
             });
         });
+        intents.on_add_program(to_core(Intent::AddProgram));
+        let inner = Rc::downgrade(this);
+        intents.on_filter_programs(move |query| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::FilterPrograms(query.into())))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_add_running_program(move |index| {
+            with_inner(&inner, |inner| {
+                // The rows list the programs in the order the core gives them.
+                let path = match inner.core.borrow().dialog() {
+                    Some(Dialog::AddProgram(add)) => usize::try_from(index)
+                        .ok()
+                        .and_then(|index| add.programs.get(index)?.path.clone()),
+                    _ => None,
+                };
+                if let Some(path) = path {
+                    inner.handle(Input::Intent(Intent::AddRunningProgram(path)));
+                }
+            });
+        });
+        intents.on_browse_for_program(to_core(Intent::BrowseForProgram));
         let inner = Rc::downgrade(this);
         intents.on_apply_profile(move |index| {
             with_inner(&inner, |inner| {
@@ -694,6 +723,7 @@ impl Inner {
             Posted::Notification(NotificationEvent::Closed(id)) => Input::NotificationClosed(id),
             Posted::Focused(focused) => Input::WindowFocusChanged(focused),
             Posted::TimerElapsed(timer) => Input::TimerElapsed(timer),
+            Posted::ProgramFile(file) => Input::ProgramFileChosen(file),
         });
     }
 
@@ -748,6 +778,11 @@ impl Inner {
             }
             Effect::Notify(notification) => self.notifier.notify(notification),
             Effect::WithdrawNotification(id) => self.notifier.withdraw(id),
+            Effect::ChooseProgramFile => {
+                let post = self.poster();
+                self.file_chooser
+                    .choose_program(Box::new(move |file| post(Posted::ProgramFile(file))));
+            }
             Effect::Quit => {
                 let _ = self.window.hide();
                 // There is no event loop to quit when the window never ran, as in tests.

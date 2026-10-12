@@ -26,14 +26,16 @@ pub use crate::core::{
 };
 pub use crate::daemon::{DaemonAction, DaemonSettings, Fact, ServiceAction, ServiceOutcome};
 pub use crate::drafts::ReviewChange;
+pub use crate::games::ProgramFile;
 pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
-    AddSteamGame, ChangeStrip, ConfirmClose, ConfirmDelete, Content, CurveMarker, CurvePoint,
-    Detail, Dialog, DiscardForProfile, ExplainedState, FanArrangementControl, FanChoice,
-    FanCurveEditor, FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace,
-    HardwareDetails, LinkChoice, ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice,
-    ProfileCorrections, ProfileMenu, ProfileNameDialog, ProfileSwitcher, Review, Sidebar,
-    SidebarGpu, StatusBar, SteamAppChoice, Stepper, Track, TrackChart, TrackKind, Tunable,
+    AddProgram, AddSteamGame, ChangeStrip, ConfirmClose, ConfirmDelete, Content, CurveMarker,
+    CurvePoint, Detail, Dialog, DiscardForProfile, ExplainedState, FanArrangementControl,
+    FanChoice, FanCurveEditor, FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection,
+    GpuWorkspace, HardwareDetails, LinkChoice, ManageProfiles, ManagedProfile, MenuEntry,
+    ProfileChoice, ProfileCorrections, ProfileMenu, ProfileNameDialog, ProfileSwitcher,
+    ProgramChoice, Review, Sidebar, SidebarGpu, StatusBar, SteamAppChoice, Stepper, Track,
+    TrackChart, TrackKind, Tunable,
 };

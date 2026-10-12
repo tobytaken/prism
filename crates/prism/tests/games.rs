@@ -1,6 +1,7 @@
 //! View tests for the Games section: the automatic switching toggle, each game's profile link per
-//! GPU and removing it, rendered from prismd's events; Add Steam game; read-only without tuning
-//! access; and recognition problems explained.
+//! GPU and removing it, rendered from prismd's events; Add Steam game; Add program, from the
+//! running programs or the file chooser; read-only without tuning access; and recognition problems
+//! explained.
 
 mod support;
 
@@ -11,10 +12,11 @@ use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode, GpuTelemetryProvider};
 use prism_protocol::{
-    AddSteamGameRequest, DaemonEvent, DaemonRequest, DaemonResponse, GameEntry, GameId,
-    GameRequest, GamesState, ProfilesState, RunningGamesState, SetAutomaticSwitchingRequest,
-    SetGameProfileRequest, SteamApp,
+    AddProgramRequest, AddSteamGameRequest, DaemonEvent, DaemonRequest, DaemonResponse, GameEntry,
+    GameId, GameRequest, GamesState, ProfilesState, RunningGamesState, RunningProgram,
+    SetAutomaticSwitchingRequest, SetGameProfileRequest, SteamApp,
 };
+use prism_ui::ProgramFile;
 
 use support::Harness;
 use support::prismd::DaemonState;
@@ -101,6 +103,8 @@ fn game_requests(harness: &Harness) -> Vec<DaemonRequest> {
                     | DaemonRequest::RemoveGame(_)
                     | DaemonRequest::ListSteamApps
                     | DaemonRequest::AddSteamGame(_)
+                    | DaemonRequest::ListRunningPrograms
+                    | DaemonRequest::AddProgram(_)
             )
         })
         .collect()
@@ -167,7 +171,9 @@ fn the_toggle_and_each_games_link_render_from_events() {
 
     push(&harness, DaemonEvent::GamesChanged(GamesState::default()));
     assert_eq!(harness.count(Groupbox, "Dota 2"), 0);
-    assert!(harness.shows("No games yet. Add a Steam game to link it to your profiles."));
+    assert!(
+        harness.shows("No games yet. Add a Steam game or a program to link it to your profiles.")
+    );
 }
 
 #[test]
@@ -268,6 +274,128 @@ fn add_steam_game_lists_the_callers_steam_apps_and_adds_the_one_chosen() {
     assert_eq!(harness.count(Groupbox, "Add Steam game"), 0);
 }
 
+/// Why the open dialog's last change failed.
+fn problem(harness: &Harness) -> String {
+    harness
+        .find(Text, "Problem")
+        .accessible_value()
+        .map(String::from)
+        .unwrap_or_default()
+}
+
+/// One of the caller's running programs, at its host location if known.
+fn program(pid: u32, name: &str, path: Option<&str>, warning: Option<&str>) -> RunningProgram {
+    RunningProgram {
+        pid,
+        name: name.into(),
+        path: path.map(Into::into),
+        launcher: None,
+        environment: Vec::new(),
+        helper: false,
+        recognition_warning: warning.map(Into::into),
+    }
+}
+
+#[test]
+fn add_program_lists_the_callers_running_programs_and_adds_the_one_chosen() {
+    let harness = connected();
+
+    harness
+        .find(Button, "Add program…")
+        .invoke_accessible_default_action();
+    assert_eq!(
+        game_requests(&harness),
+        [DaemonRequest::ListRunningPrograms]
+    );
+    assert_eq!(harness.count(Groupbox, "Add program"), 1);
+    assert!(harness.shows("Reading your running programs…"));
+
+    let unrecovered =
+        "The host program location could not be recovered; browse for the program file instead.";
+    answer(
+        &harness,
+        DaemonResponse::RunningPrograms(vec![
+            program(
+                4100,
+                "Balatro.exe",
+                Some("/games/Balatro/Balatro.exe"),
+                None,
+            ),
+            program(3000, "game.exe", None, Some(unrecovered)),
+        ]),
+    );
+    assert_eq!(
+        description(&harness.find(Button, "Add Balatro.exe")),
+        "/games/Balatro/Balatro.exe"
+    );
+    let unknown = harness.find(Button, "Add game.exe");
+    assert_eq!(unknown.accessible_enabled(), Some(false));
+    assert_eq!(description(&unknown), "Location unknown");
+
+    harness.type_text("blt");
+    assert_eq!(harness.count(Button, "Add game.exe"), 0);
+    harness
+        .find(Button, "Add Balatro.exe")
+        .invoke_accessible_default_action();
+    assert_eq!(
+        game_requests(&harness)[1..],
+        [DaemonRequest::AddProgram(AddProgramRequest {
+            path: "/games/Balatro/Balatro.exe".into()
+        })]
+    );
+
+    answer(&harness, DaemonResponse::Games(games(false)));
+    assert_eq!(harness.count(Groupbox, "Add program"), 0);
+}
+
+#[test]
+fn browsing_adds_the_program_file_chosen_or_says_why_it_cant() {
+    let harness = connected();
+    harness
+        .find(Button, "Add program…")
+        .invoke_accessible_default_action();
+    answer(&harness, DaemonResponse::RunningPrograms(vec![]));
+
+    let browse = harness.find(Button, "Browse…");
+    browse.invoke_accessible_default_action();
+    assert_eq!(harness.file_chooser.open(), 1);
+    assert_eq!(browse.accessible_enabled(), Some(false));
+
+    let missing = "Prism couldn't find where game.exe is on the host: the document portal \
+                   doesn't know it.";
+    harness
+        .file_chooser
+        .answer(ProgramFile::Failed(missing.into()));
+    harness.app.receive_posted();
+    assert_eq!(problem(&harness), missing);
+    assert_eq!(browse.accessible_enabled(), Some(true));
+
+    browse.invoke_accessible_default_action();
+    harness.file_chooser.answer(ProgramFile::Chosen(
+        "/home/alice/Games/Celeste/Celeste".into(),
+    ));
+    harness.app.receive_posted();
+    assert_eq!(
+        game_requests(&harness)[1..],
+        [DaemonRequest::AddProgram(AddProgramRequest {
+            path: "/home/alice/Games/Celeste/Celeste".into()
+        })]
+    );
+    assert!(harness.shows("Adding Celeste…"));
+
+    answer(
+        &harness,
+        DaemonResponse::Error(GpuCommandError::new(
+            GpuCommandErrorCode::NotFound,
+            "Program not found at this host location.",
+        )),
+    );
+    assert_eq!(
+        problem(&harness),
+        "Celeste not added: Program not found at this host location."
+    );
+}
+
 #[test]
 fn without_tuning_access_games_are_read_only_with_the_reason() {
     let harness = connected_as(DaemonState::ReadOnly);
@@ -277,9 +405,11 @@ fn without_tuning_access_games_are_read_only_with_the_reason() {
     let switch = switch(&harness);
     assert_eq!(switch.accessible_read_only(), Some(true));
     assert_eq!(description(&switch), reason);
-    let add = harness.find(Button, "Add Steam game…");
-    assert_eq!(add.accessible_enabled(), Some(false));
-    assert_eq!(description(&add), reason);
+    for add in ["Add Steam game…", "Add program…"] {
+        let add = harness.find(Button, add);
+        assert_eq!(add.accessible_enabled(), Some(false));
+        assert_eq!(description(&add), reason);
+    }
     assert_eq!(
         harness.find(Button, "Remove Dota 2").accessible_enabled(),
         Some(false)

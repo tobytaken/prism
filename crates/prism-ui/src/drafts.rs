@@ -9,13 +9,13 @@ use prism_gpu::{GpuCommandErrorCode, TuningOutcome, TuningOutcomeStatus};
 use prism_protocol::{
     ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, GpuTuningState,
     ProfileApplicationResponse, ProfileRangeCorrection, ProfileSetting, ProfileSettingKey,
-    ProfileSettings, ReportedTuningValues, SetEditHoldsRequest,
+    ProfileSettings, ReportedTuningValues, RunningProgram, SetEditHoldsRequest, SteamApp,
 };
 
 use crate::cooling::{cooling_read, cooling_text};
 use crate::core::{CommandId, Core, Effect, Gpu, Latest, Selection, TuningControl};
 use crate::format::Readout;
-use crate::games::SteamListing;
+use crate::games::Listing;
 
 /// A GPU's unapplied tuning changes.
 #[derive(Debug, Clone)]
@@ -142,9 +142,19 @@ pub(crate) enum DialogState {
     /// by id, being added under the command prismd hasn't answered yet, and `error` why prismd
     /// refused the last one.
     AddSteamGame {
-        listing: SteamListing,
+        listing: Listing<SteamApp>,
         filter: String,
         adding: Option<(CommandId, u32)>,
+        error: Option<String>,
+    },
+    /// The caller's running programs, searched by `filter`, to add one as a game, or a program
+    /// file to choose in the file chooser. `adding` is the program, by host location, being
+    /// added under the command prismd hasn't answered yet, and `error` why the last one couldn't
+    /// be added.
+    AddProgram {
+        listing: Listing<RunningProgram>,
+        filter: String,
+        adding: Option<(CommandId, String)>,
         error: Option<String>,
     },
 }

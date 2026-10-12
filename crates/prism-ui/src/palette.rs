@@ -44,6 +44,8 @@ pub(crate) enum Command {
     SetAutomaticSwitching(bool),
     /// Show Games, and open Add Steam game over it.
     AddSteamGame,
+    /// Show Games, and open Add program over it.
+    AddProgram,
     Quit,
 }
 
@@ -244,7 +246,8 @@ impl Core {
                 | DialogState::ProfileName { .. }
                 | DialogState::DeleteProfile { .. }
                 | DialogState::ManageProfiles { .. }
-                | DialogState::AddSteamGame { .. },
+                | DialogState::AddSteamGame { .. }
+                | DialogState::AddProgram { .. },
             ) => true,
         }
     }
@@ -336,6 +339,7 @@ impl Core {
             | Command::ManageProfiles
             | Command::SetAutomaticSwitching(_)
             | Command::AddSteamGame
+            | Command::AddProgram
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())

@@ -356,7 +356,7 @@ fn show_games(harness: &Harness) {
 }
 
 #[test]
-fn games_and_add_steam_game_are_accessible() {
+fn games_add_steam_game_and_add_program_are_accessible() {
     let harness = tunable();
     show_games(&harness);
     audit("tunable, games", &harness);
@@ -379,6 +379,48 @@ fn games_and_add_steam_game_are_accessible() {
     harness.app.receive_posted();
     audit("tunable, add Steam game", &harness);
     harness.find(AccessibleRole::Button, "Add Hades");
+    harness.press(&[], slint::platform::Key::Escape);
+
+    harness
+        .find(AccessibleRole::Button, "Add program…")
+        .invoke_accessible_default_action();
+    audit("tunable, add program, reading", &harness);
+    harness.prismd.answer(DaemonResponse::RunningPrograms(vec![
+        prism_protocol::RunningProgram {
+            pid: 4100,
+            name: "Balatro.exe".into(),
+            path: Some("/games/Balatro/Balatro.exe".into()),
+            launcher: None,
+            environment: Vec::new(),
+            helper: false,
+            recognition_warning: None,
+        },
+        prism_protocol::RunningProgram {
+            pid: 3000,
+            name: "game.exe".into(),
+            path: None,
+            launcher: None,
+            environment: Vec::new(),
+            helper: false,
+            recognition_warning: Some(
+                "The host program location could not be recovered; browse for the program \
+                     file instead."
+                    .into(),
+            ),
+        },
+    ]));
+    harness.app.receive_posted();
+    audit("tunable, add program", &harness);
+    harness.find(AccessibleRole::Button, "Add Balatro.exe");
+    harness
+        .find(AccessibleRole::Button, "Browse…")
+        .invoke_accessible_default_action();
+    harness.file_chooser.answer(prism_ui::ProgramFile::Failed(
+        "Prism couldn't find where game.exe is on the host: the document portal doesn't know it."
+            .into(),
+    ));
+    harness.app.receive_posted();
+    audit("tunable, add program, file not found", &harness);
 
     let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, DaemonState::ReadOnly);
     harness.prismd_tick(
