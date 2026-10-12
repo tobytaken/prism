@@ -191,6 +191,7 @@ fn tuning_changed(core: &mut Core, gpu_id: &str, revision: &str, watts: i64) {
         event: DaemonEvent::TuningStateChanged(GpuTuningState {
             gpu_id: gpu_id.into(),
             revision: revision.into(),
+            defaults: Vec::new(),
             reported: ReportedTuningValues {
                 cooling: None,
                 power_limit_watts: Some(watts),
@@ -779,6 +780,7 @@ fn a_review_compares_with_the_values_the_draft_started_from() {
         event: DaemonEvent::TuningStateChanged(GpuTuningState {
             gpu_id: GPU.into(),
             revision: "switched".into(),
+            defaults: Vec::new(),
             reported: ReportedTuningValues {
                 cooling: None,
                 power_limit_watts: Some(500),

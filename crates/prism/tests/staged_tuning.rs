@@ -342,6 +342,7 @@ fn tuning_changed(harness: &Harness, revision: &str, watts: i64) {
         .push(DaemonEvent::TuningStateChanged(GpuTuningState {
             gpu_id: GPU.into(),
             revision: revision.into(),
+            defaults: Vec::new(),
             reported: ReportedTuningValues {
                 cooling: None,
                 power_limit_watts: Some(watts),

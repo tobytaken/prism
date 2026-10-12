@@ -463,6 +463,10 @@ pub struct GpuTuningState {
     /// The current tuning values the revision covers, so the app can tell whether they are the
     /// values it shows.
     pub reported: ReportedTuningValues,
+    /// The settings whose current tuning value follows a request for the default the user last
+    /// applied, which saving keeps as a default rather than a number.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub defaults: Vec<ProfileSettingKey>,
     pub current_profile: Option<CurrentProfile>,
 }
 
