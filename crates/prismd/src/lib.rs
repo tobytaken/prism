@@ -29,6 +29,8 @@ mod current_profile_tests;
 #[cfg(test)]
 mod fan_curve_tests;
 #[cfg(test)]
+mod games_changed_tests;
+#[cfg(test)]
 mod games_tests;
 #[cfg(test)]
 mod harness;

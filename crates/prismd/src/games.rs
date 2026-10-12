@@ -11,7 +11,7 @@ use super::steam_library::installed_steam_apps;
 use super::tuning_store::TuningDocument;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 use prism_protocol::{
-    DaemonResponse, GameEntry, GameId, GamesState, SetGameProfileRequest, SteamApp,
+    DaemonEvent, DaemonResponse, GameEntry, GameId, GamesState, SetGameProfileRequest, SteamApp,
 };
 
 /// A user's link from a game to at most one of their profiles per GPU.
@@ -33,6 +33,44 @@ impl DaemonCore {
         Ok(DaemonResponse::Games(self.tuning_store.read(
             |document| document.games_state(peer, &installed, &self.dependencies.host_root),
         )?))
+    }
+
+    /// The caller's games as sessions are shown them. An unhealthy store shows none, and games
+    /// show as not installed while the caller's Steam libraries can't be read.
+    fn games_state(&self, peer: &SessionPeer) -> GamesState {
+        let installed = self.steam_apps(peer).unwrap_or_default();
+        self.tuning_store.read_for_tuning(|document| {
+            document.games_state(peer, &installed, &self.dependencies.host_root)
+        })
+    }
+
+    /// The caller's games, for a session's snapshot. Unless the user's sessions were pushed some
+    /// already, later pushes compare with these.
+    pub(super) fn known_games(&self, peer: &SessionPeer) -> GamesState {
+        let mut pushed = self.pushed_games.lock().unwrap();
+        let games = self.games_state(peer);
+        // Another of the user's sessions may not have been pushed newer games yet; the next push
+        // then reaches every session.
+        pushed
+            .entry((peer.uid, peer.username.clone()))
+            .or_insert_with(|| games.clone());
+        games
+    }
+
+    /// Pushes the caller's games to each of their sessions when they changed. Games change only
+    /// at their owner's request, so no one else's need pushing.
+    pub(super) fn push_games(&self, peer: &SessionPeer) {
+        let mut pushed = self.pushed_games.lock().unwrap();
+        let games = self.games_state(peer);
+        let user = (peer.uid, peer.username.clone());
+        if pushed.get(&user) == Some(&games) {
+            return;
+        }
+        self.tuning_store.publish_for_users(|session| {
+            (session.uid == peer.uid && session.username == peer.username)
+                .then(|| DaemonEvent::GamesChanged(games.clone()))
+        });
+        pushed.insert(user, games);
     }
 
     pub(super) fn steam_apps(&self, peer: &SessionPeer) -> Result<Vec<SteamApp>, GpuCommandError> {

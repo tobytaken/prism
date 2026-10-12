@@ -724,6 +724,7 @@ impl Core {
                     DaemonEvent::ProfilesChanged(profiles) => self.profiles_pushed(profiles),
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)
+                    | DaemonEvent::GamesChanged(_)
                     | DaemonEvent::RunningGamesChanged(_)
                     | DaemonEvent::AutomaticSwitchingChanged(_) => {}
                 }

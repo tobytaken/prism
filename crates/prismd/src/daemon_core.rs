@@ -10,7 +10,7 @@ use prism_gpu::{
 };
 use prism_protocol::{
     ApplyGpuProfileRequest, CorrectAndApplyProfileRequest, CorrectedProfileApplication,
-    DaemonCommandResponse, DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot,
+    DaemonCommandResponse, DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GamesState,
     GpuCoolingControl, GpuDaemonStatus, GpuTuningProfile, GpuTuningState, HelloRequest,
     Incompatible, ProfileApplicationResponse, ProfileSetting, ProfileSettingKey, ProfileSettings,
     ProtocolVersion, SaveProfileAsNewRequest, SaveToCurrentProfileRequest, Welcome,
@@ -65,6 +65,8 @@ pub struct DaemonCore {
     pub(super) cooling: Arc<CoolingController>,
     /// The GPUs, by id, in the latest inventory sessions were given.
     inventory_ids: Mutex<Vec<String>>,
+    /// The games last pushed to, or read by, each user's sessions, by uid and username.
+    pub(super) pushed_games: Mutex<std::collections::HashMap<(u32, String), GamesState>>,
 }
 
 /// Why prismd refused a session connection's hello.
@@ -145,6 +147,7 @@ impl DaemonCore {
             tuning_states,
             cooling_controls: cooling_controls(performance),
             profiles: self.tuning_store.known_profiles(peer),
+            games: self.known_games(peer),
             running_games,
             automatic_switching,
         }
@@ -289,6 +292,16 @@ impl DaemonCore {
                 | DaemonRequest::DeleteProfile(_)
                 | DaemonRequest::RenameProfile(_)
         );
+        // These can change the caller's games, their links or the opt-in.
+        let changes_games = matches!(
+            request,
+            DaemonRequest::AddSteamGame(_)
+                | DaemonRequest::AddProgram(_)
+                | DaemonRequest::SetGameProfile(_)
+                | DaemonRequest::RemoveGame(_)
+                | DaemonRequest::SetAutomaticSwitching(_)
+                | DaemonRequest::DeleteProfile(_)
+        );
         let response = match request {
             DaemonRequest::ApplyProfile(request) => self
                 .apply_staged(request, Some(peer.clone()))
@@ -418,6 +431,9 @@ impl DaemonCore {
             }
             request => Ok(self.handle(request)),
         };
+        if changes_games {
+            self.push_games(peer);
+        }
         if reevaluate {
             self.evaluate_switching();
         }
@@ -720,6 +736,7 @@ impl DaemonCore {
             queues: GpuOperationQueues::default(),
             tuning_store,
             inventory_ids: Mutex::default(),
+            pushed_games: Mutex::default(),
         };
 
         core.resume_interrupted_curves();
