@@ -21,7 +21,7 @@ use crate::drafts::{DialogState, not_applied};
 use crate::notifications::Subject;
 use crate::palette::Command;
 use crate::view::{
-    ActivityItem, DriverConfirmation, DriverJobView, DriverPlanView, DriversSection,
+    ActivityItem, Dialog, DriverConfirmation, DriverJobView, DriverPlanView, DriversSection,
 };
 
 /// What prismd last said about the host's drivers, and the requests it hasn't answered.
@@ -39,6 +39,9 @@ pub(crate) struct Drivers {
     sent: BTreeMap<CommandId, DriverRequest>,
     /// The job, by id, prismd accepted a Cancel for, until it ends.
     canceling: Option<String>,
+    /// The job, by id, that was active when the session ended, so its ending notifies once the
+    /// next session's snapshot shows it.
+    active_when_lost: Option<String>,
     /// Why prismd refused the latest request the Drivers section shows, until the next one.
     outcome: Option<String>,
 }
@@ -68,6 +71,24 @@ impl DriverRequest {
             Self::Cancel => "canceling the driver job",
             Self::Reboot => "restarting the host",
         }
+    }
+}
+
+/// How Run treats a driver plan that's still being read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanRead {
+    /// Run confirms what the plan says, so it waits until it's read.
+    Needed,
+    /// Run may come first, as from the palette, whose confirmation waits for the plan.
+    MayFollow,
+}
+
+/// The package manager's name, unless driver management doesn't support it.
+fn package_manager_name(manager: PackageManager) -> Option<&'static str> {
+    match manager {
+        PackageManager::Apt => Some("APT"),
+        PackageManager::Dnf => Some("DNF"),
+        PackageManager::Unsupported => None,
     }
 }
 
@@ -167,12 +188,9 @@ fn host_facts(status: &DriverStatusResponse) -> Vec<Fact> {
         fact("Kernel", host.kernel_release.clone()),
         fact(
             "Package manager",
-            match host.package_manager {
-                PackageManager::Apt => "APT",
-                PackageManager::Dnf => "DNF",
-                PackageManager::Unsupported => "Not supported",
-            }
-            .into(),
+            package_manager_name(host.package_manager)
+                .unwrap_or("Not supported")
+                .into(),
         ),
         fact(
             "Secure Boot",
@@ -264,9 +282,9 @@ impl Core {
         self.drivers.sent.values().any(|sent| *sent == request)
     }
 
-    /// Why the recommended driver plan can't run now, when it can't: also while it's being read,
-    /// unless `unread_runs`, as from the palette, which waits for it in the confirmation.
-    fn run_unavailable(&self, unread_runs: bool) -> Option<String> {
+    /// Why the recommended driver plan can't run now, when it can't, with the plan read as `plan`
+    /// says.
+    fn run_unavailable(&self, plan: PlanRead) -> Option<String> {
         if let Some(reason) = self.needs_tuning_access() {
             return Some(reason);
         }
@@ -281,7 +299,7 @@ impl Core {
             return Some("Restart the host first".into());
         }
         let checking = Some("Checking the driver plan…".into());
-        if self.drivers.reading.is_some() && !unread_runs {
+        if self.drivers.reading.is_some() && plan == PlanRead::Needed {
             return checking;
         }
         match &self.drivers.status {
@@ -292,7 +310,7 @@ impl Core {
                     .first()
                     .map(|blocker| format!("Blocked · {blocker}")),
             },
-            _ if unread_runs => None,
+            _ if plan == PlanRead::MayFollow => None,
             Some(Err(_)) => Some("The driver plan couldn't be read".into()),
             None => checking,
         }
@@ -327,7 +345,7 @@ impl Core {
     /// Why the palette's command can't run now, when it can't; none when `command` isn't one.
     pub(crate) fn driver_command_unavailable(&self, command: &Command) -> Option<Option<String>> {
         match command {
-            Command::RunDriverPlan => Some(self.run_unavailable(true)),
+            Command::RunDriverPlan => Some(self.run_unavailable(PlanRead::MayFollow)),
             Command::RebootHost => Some(self.reboot_unavailable()),
             _ => None,
         }
@@ -351,10 +369,14 @@ impl Core {
 
     /// Shows Drivers with the confirmation to run the recommended driver plan over it.
     pub(crate) fn confirm_driver_plan(&mut self) -> Vec<Effect> {
-        if self.run_unavailable(true).is_some() {
+        if self.run_unavailable(PlanRead::MayFollow).is_some() {
             return Vec::new();
         }
-        let effects = self.perform(Command::GoTo(Section::Drivers));
+        let mut effects = self.perform(Command::GoTo(Section::Drivers));
+        // Drivers may have shown already, with no plan read.
+        if self.driver_status().is_none() {
+            effects.extend(self.read_driver_status());
+        }
         self.open_dialog(DialogState::RunDriverPlan { error: None });
         effects
     }
@@ -371,7 +393,7 @@ impl Core {
     pub(crate) fn confirm_driver_dialog(&mut self) -> Vec<Effect> {
         let (request, daemon_request) = match &self.dialog {
             Some(DialogState::RunDriverPlan { .. }) => {
-                if self.run_unavailable(false).is_some() {
+                if self.run_unavailable(PlanRead::Needed).is_some() {
                     return Vec::new();
                 }
                 let Some(plan) = self.driver_plan() else {
@@ -471,27 +493,46 @@ impl Core {
         true
     }
 
-    /// Takes in a new session's latest driver job, without notifying about one already ended,
-    /// and reads the driver plan again if Drivers shows it.
+    /// Takes in a new session's latest driver job, and reads the driver plan again if Drivers
+    /// shows it. A job that ended doesn't notify, unless it was active when the last session
+    /// ended.
     pub(crate) fn drivers_connected(&mut self, job: Option<DriverJob>) -> Vec<Effect> {
+        let active_when_lost = self.drivers.active_when_lost.take();
+        let ended_meanwhile = job
+            .as_ref()
+            .is_some_and(|job| !job.status.is_active() && active_when_lost == Some(job.id.clone()));
         self.drivers.job = job;
-        if self.drivers_open() {
-            self.read_driver_status()
-        } else {
-            Vec::new()
+        let mut effects = Vec::new();
+        if ended_meanwhile {
+            effects.extend(self.driver_job_notification());
         }
+        if self.drivers_open() {
+            effects.extend(self.read_driver_status());
+        }
+        effects
     }
 
     /// Takes in prismd's push of a driver job. One that ended notifies, and the driver plan is
     /// read again, since its packages may have changed.
     pub(crate) fn driver_job_pushed(&mut self, job: DriverJob) -> Vec<Effect> {
-        let ended = !job.status.is_active()
-            && self
-                .drivers
-                .job
-                .as_ref()
-                .is_none_or(|before| before.id != job.id || before.status.is_active());
+        let before = self.drivers.job.as_ref();
+        let same = before.is_some_and(|before| before.id == job.id);
+        // A job that ended never runs again, so this push is older than the snapshot.
+        if same && before.is_some_and(|before| !before.status.is_active()) {
+            return Vec::new();
+        }
+        let ended = !job.status.is_active();
+        let started = !same && job.status.is_active();
         self.drivers.job = Some(job);
+        if started {
+            // What it said about the job before no longer holds.
+            return self
+                .notifications
+                .withdraw(&Subject::Drivers)
+                .map(Effect::WithdrawNotification)
+                .into_iter()
+                .collect();
+        }
         if !ended {
             return Vec::new();
         }
@@ -538,11 +579,26 @@ impl Core {
         }]
     }
 
+    /// What Drivers says in place of the host's driver status, while there's none to show.
+    fn driver_status_message(&self) -> Option<String> {
+        Some(match &self.drivers.status {
+            Some(Ok(_)) => return None,
+            Some(Err(why)) => format!(
+                "prismd couldn't read the host's NVIDIA driver: {}",
+                sentence(why)
+            ),
+            None if self.connected() => "Checking the host's NVIDIA driver…".into(),
+            None => format!(
+                "Driver management needs prismd · {}",
+                self.prismd().reason().unwrap_or_default()
+            ),
+        })
+    }
+
     /// The Drivers section as shown.
     pub fn drivers(&self) -> DriversSection {
-        let (status, host, warnings, plan) = match &self.drivers.status {
-            Some(Ok(status)) => (
-                None,
+        let (host, warnings, plan) = match self.driver_status() {
+            Some(status) => (
                 host_facts(status),
                 status
                     .warnings
@@ -555,38 +611,15 @@ impl Core {
                     blockers: plan.blockers.clone(),
                     warnings: plan.warnings.clone(),
                     manual_steps: plan.manual_steps.clone(),
-                    run_unavailable: self.run_unavailable(false),
+                    run_unavailable: self.run_unavailable(PlanRead::Needed),
                 }),
             ),
-            Some(Err(why)) => (
-                Some(format!(
-                    "prismd couldn't read the host's NVIDIA driver: {}",
-                    sentence(why)
-                )),
-                Vec::new(),
-                Vec::new(),
-                None,
-            ),
-            None if self.connected() => (
-                Some("Checking the host's NVIDIA driver…".into()),
-                Vec::new(),
-                Vec::new(),
-                None,
-            ),
-            None => (
-                Some(format!(
-                    "Driver management needs prismd · {}",
-                    self.prismd().reason().unwrap_or_default()
-                )),
-                Vec::new(),
-                Vec::new(),
-                None,
-            ),
+            None => (Vec::new(), Vec::new(), None),
         };
         DriversSection {
             // Without a session, the status says why already.
             read_only: self.needs_tuning_access().filter(|_| self.connected()),
-            status,
+            status: self.driver_status_message(),
             host,
             warnings,
             plan,
@@ -594,6 +627,7 @@ impl Core {
                 title: action_title(job.action).into(),
                 state: state_name(job.status).into(),
                 active: job.status.is_active(),
+                failed: job.status == DriverJobStatus::Failed,
                 step: job.current_step.clone().filter(|_| job.status.is_active()),
                 explanation: explained(job),
                 log: job.log_tail.clone(),
@@ -606,44 +640,45 @@ impl Core {
     }
 
     /// The Run or Reboot confirmation as shown, if `dialog` is one.
-    pub(crate) fn driver_dialog(&self, dialog: &DialogState) -> Option<DriverConfirmation> {
+    pub(crate) fn driver_dialog(&self, dialog: &DialogState) -> Option<Dialog> {
         Some(match dialog {
-            DialogState::RunDriverPlan { error } => match self.driver_plan() {
-                Some(plan) => DriverConfirmation {
-                    title: format!("{}?", plan.label),
-                    message: format!(
-                        "prismd runs {} as root to change the host's NVIDIA driver packages. \
+            DialogState::RunDriverPlan { error } => {
+                Dialog::RunDriverPlan(match self.driver_plan() {
+                    Some(plan) => DriverConfirmation {
+                        title: format!("{}?", plan.label),
+                        message: format!(
+                            "prismd runs {} as root to change the host's NVIDIA driver packages. \
                          Keep the host on until the driver job ends.",
-                        match self.driver_status_package_manager() {
-                            Some(PackageManager::Dnf) => "DNF",
-                            Some(PackageManager::Apt) => "APT",
-                            _ => "the package manager",
-                        }
-                    ),
-                    details: plan
-                        .warnings
-                        .iter()
-                        .chain(&plan.manual_steps)
-                        .cloned()
-                        .collect(),
-                    confirm_text: "Run",
-                    confirm_unavailable: self.run_unavailable(false),
-                    error: error.clone(),
-                },
-                None => DriverConfirmation {
-                    title: "Run recommended driver plan?".into(),
-                    message: self
-                        .drivers()
-                        .status
-                        .unwrap_or_else(|| "This host has no driver plan.".into()),
-                    details: Vec::new(),
-                    confirm_text: "Run",
-                    confirm_unavailable: self.run_unavailable(false),
-                    error: error.clone(),
-                },
-            },
-            DialogState::Reboot { error } => DriverConfirmation {
-                title: "Restart the host now?".into(),
+                            self.driver_status()
+                                .and_then(|status| package_manager_name(
+                                    status.host.package_manager
+                                ))
+                                .unwrap_or("the package manager")
+                        ),
+                        details: plan
+                            .warnings
+                            .iter()
+                            .chain(&plan.manual_steps)
+                            .cloned()
+                            .collect(),
+                        confirm_text: "Run",
+                        confirm_unavailable: self.run_unavailable(PlanRead::Needed),
+                        error: error.clone(),
+                    },
+                    None => DriverConfirmation {
+                        title: "Run recommended driver plan?".into(),
+                        message: self
+                            .driver_status_message()
+                            .unwrap_or_else(|| "This host has no driver plan.".into()),
+                        details: Vec::new(),
+                        confirm_text: "Run",
+                        confirm_unavailable: self.run_unavailable(PlanRead::Needed),
+                        error: error.clone(),
+                    },
+                })
+            }
+            DialogState::Reboot { error } => Dialog::Reboot(DriverConfirmation {
+                title: "Reboot now?".into(),
                 message: "prismd asks systemd to restart the host, which closes every app. Save \
                           your work first."
                     .into(),
@@ -651,14 +686,9 @@ impl Core {
                 confirm_text: "Reboot",
                 confirm_unavailable: self.reboot_unavailable(),
                 error: error.clone(),
-            },
+            }),
             _ => return None,
         })
-    }
-
-    fn driver_status_package_manager(&self) -> Option<PackageManager> {
-        self.driver_status()
-            .map(|status| status.host.package_manager)
     }
 
     /// The session ended: what prismd said no longer holds, its confirmations have nothing left
@@ -671,7 +701,16 @@ impl Core {
             self.dialog = None;
         }
         let unanswered = std::mem::take(&mut self.drivers.sent);
-        self.drivers = Drivers::default();
+        let active = self
+            .drivers
+            .job
+            .take()
+            .filter(|job| job.status.is_active())
+            .map(|job| job.id);
+        self.drivers = Drivers {
+            active_when_lost: active.or(self.drivers.active_when_lost.take()),
+            ..Drivers::default()
+        };
         if let Some(request) = unanswered.into_values().next() {
             self.drivers.outcome = Some(format!(
                 "The prismd connection ended before {} was answered. Check Drivers once Prism \

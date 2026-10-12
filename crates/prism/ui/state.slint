@@ -433,8 +433,8 @@ export struct ActivityItemView {
 // Drivers, apart from its lists: why nothing can run (`read-only`, with the reason), what it says in
 // place of the host's driver status, and why prismd refused the latest request, each empty when
 // there's nothing to say. The recommended driver plan, when there is one, with whether Run can
-// open its confirmation and why not; the latest driver job, when there is one, with its state, the
-// step running while it's active, what its state means, and whether Cancel and Reboot can run and
+// open its confirmation and why not; the latest driver job, when there is one, with its state,
+// whether it failed, the step running while it's active, what its state means, and whether Cancel and Reboot can run and
 // why not. Reboot shows only while the job left the host needing a restart.
 export struct DriversView {
     read-only: bool,
@@ -449,6 +449,7 @@ export struct DriversView {
     job-title: string,
     job-state: string,
     job-active: bool,
+    job-failed: bool,
     job-step: string,
     job-explanation: string,
     can-cancel: bool,

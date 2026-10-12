@@ -264,6 +264,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         job_title: job.map(|job| job.title.as_str()).unwrap_or_default().into(),
         job_state: job.map(|job| job.state.as_str()).unwrap_or_default().into(),
         job_active: job.is_some_and(|job| job.active),
+        job_failed: job.is_some_and(|job| job.failed),
         job_step: job
             .and_then(|job| job.step.as_deref())
             .unwrap_or_default()

@@ -755,6 +755,8 @@ pub struct DriverJobView {
     pub state: String,
     /// Whether it's queued or running.
     pub active: bool,
+    /// Whether it failed.
+    pub failed: bool,
     /// The step running now, such as "Installing NVIDIA driver packages", while it's active.
     pub step: Option<String>,
     /// What its state means, such as that the host needs a restart to load the driver.
@@ -956,11 +958,8 @@ impl Core {
         if let Some(dialog) = self.add_program_dialog(state) {
             return Some(Dialog::AddProgram(dialog));
         }
-        if let Some(confirmation) = self.driver_dialog(state) {
-            return Some(match state {
-                DialogState::Reboot { .. } => Dialog::Reboot(confirmation),
-                _ => Dialog::RunDriverPlan(confirmation),
-            });
+        if let Some(dialog) = self.driver_dialog(state) {
+            return Some(dialog);
         }
         Some(match state {
             DialogState::Review { gpu_id, changes } => {

@@ -148,7 +148,7 @@ export component Drivers inherits Rectangle {
                             StyledText {
                                 text: AppState.drivers.job-state;
                                 style: Theme.text.status;
-                                color: AppState.drivers.job-state == "Failed" ? Theme.color.danger
+                                color: AppState.drivers.job-failed ? Theme.color.danger
                                     : AppState.drivers.reboot ? Theme.color.accent : Theme.color.ink-muted;
                                 vertical-alignment: center;
                                 accessible-role: none;
@@ -187,7 +187,7 @@ export component Drivers inherits Rectangle {
                 Notice {
                     label: "Outcome";
                     text: AppState.drivers.job-explanation;
-                    danger: AppState.drivers.job-state == "Failed";
+                    danger: AppState.drivers.job-failed;
                 }
 
                 Log { }

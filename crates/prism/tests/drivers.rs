@@ -295,10 +295,10 @@ fn reboot_asks_first_and_then_asks_prismd() {
     answer(&harness, DaemonResponse::DriverStatus(driver_status()));
 
     press(&harness, Button, "Reboot now…");
-    harness.find(Groupbox, "Restart the host now?");
+    harness.find(Groupbox, "Reboot now?");
     assert_eq!(driver_requests(&harness), []);
     press(&harness, Button, "Cancel");
-    assert_eq!(harness.count(Groupbox, "Restart the host now?"), 0);
+    assert_eq!(harness.count(Groupbox, "Reboot now?"), 0);
     assert_eq!(driver_requests(&harness), []);
 
     press(&harness, Button, "Reboot now…");
@@ -314,7 +314,7 @@ fn reboot_asks_first_and_then_asks_prismd() {
             error: None,
         }),
     );
-    assert_eq!(harness.count(Groupbox, "Restart the host now?"), 0);
+    assert_eq!(harness.count(Groupbox, "Reboot now?"), 0);
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn the_palette_runs_the_plan_and_reboots_only_through_their_confirmations() {
 
     push(&harness, job(DriverJobStatus::RebootRequired));
     run_from_palette(&harness, "Reboot now…");
-    harness.find(Groupbox, "Restart the host now?");
+    harness.find(Groupbox, "Reboot now?");
     assert_eq!(driver_requests(&harness), []);
 }
 

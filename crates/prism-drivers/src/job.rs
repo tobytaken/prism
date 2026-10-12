@@ -46,6 +46,8 @@ pub struct DriverJobStore {
     host: Arc<dyn DriverHost>,
     state: Arc<Mutex<DriverJobFile>>,
     canceled_jobs: Arc<Mutex<BTreeSet<String>>>,
+    /// The canceled jobs, by id, whose host stopped for it, rather than failing on its own.
+    stopped_jobs: Arc<Mutex<BTreeSet<String>>>,
     listener: Arc<Mutex<Option<JobListener>>>,
 }
 
@@ -77,16 +79,13 @@ impl DriverJobStore {
             host,
             state: Arc::new(Mutex::new(state)),
             canceled_jobs: Arc::new(Mutex::new(BTreeSet::new())),
+            stopped_jobs: Arc::new(Mutex::new(BTreeSet::new())),
             listener: Arc::new(Mutex::new(None)),
         };
         if interrupted && let Ok(state) = store.state.lock() {
             store.persist(&state);
         }
         store
-    }
-
-    pub(crate) fn host(&self) -> &dyn DriverHost {
-        self.host.as_ref()
     }
 
     /// Has `listener` hear about every later change to a job, in order, with the job as it is
@@ -230,7 +229,7 @@ impl DriverJobStore {
                 push_log(job, &completion.message);
             }),
             Err(error) => self.update_job(&job_id, |job| {
-                job.status = if self.is_canceled(&job_id) {
+                job.status = if self.contains(&self.stopped_jobs, &job_id) {
                     DriverJobStatus::Canceled
                 } else {
                     DriverJobStatus::Failed
@@ -282,9 +281,8 @@ impl DriverJobStore {
         }
     }
 
-    fn is_canceled(&self, job_id: &str) -> bool {
-        self.canceled_jobs
-            .lock()
+    fn contains(&self, jobs: &Mutex<BTreeSet<String>>, job_id: &str) -> bool {
+        jobs.lock()
             .map(|jobs| jobs.contains(job_id))
             .unwrap_or(false)
     }
@@ -317,15 +315,22 @@ impl JobProgress<'_> {
         });
     }
 
-    /// Whether cancellation was requested, so the host stops before its next step.
-    pub fn canceled(&self) -> bool {
-        self.store.is_canceled(self.job_id)
+    /// Stops the job, which then reads as canceled, once cancellation was requested: the host
+    /// asks before each step.
+    pub fn stop_if_canceled(&self) -> Result<(), String> {
+        if !self.store.contains(&self.store.canceled_jobs, self.job_id) {
+            return Ok(());
+        }
+        if let Ok(mut stopped) = self.store.stopped_jobs.lock() {
+            stopped.insert(self.job_id.to_string());
+        }
+        Err("Driver job was canceled.".into())
     }
 }
 
 impl DriverHost for SystemDriverHost {
     fn status(&self) -> crate::DriverStatusResponse {
-        collect_driver_status(None)
+        collect_driver_status()
     }
 
     fn run(&self, action: DriverAction, job: &JobProgress) -> Result<JobCompletion, String> {
@@ -339,7 +344,7 @@ impl DriverHost for SystemDriverHost {
 
 /// Runs the driver action's package operations on this host, after checking its plan again.
 fn run_system_action(action: DriverAction, job: &JobProgress) -> Result<JobCompletion, String> {
-    let status = collect_driver_status(None);
+    let status = collect_driver_status();
     let plan = status
         .nvidia
         .plans
@@ -353,9 +358,7 @@ fn run_system_action(action: DriverAction, job: &JobProgress) -> Result<JobCompl
 
     let steps = build_steps(&status.host, &status.nvidia, plan.action);
     for step in steps {
-        if job.canceled() {
-            return Err("Driver job was canceled.".into());
-        }
+        job.stop_if_canceled()?;
 
         match step {
             JobStep::Command(command) => {
@@ -387,23 +390,15 @@ fn run_system_action(action: DriverAction, job: &JobProgress) -> Result<JobCompl
     let secure_boot_manual = status.host.package_manager == PackageManager::Dnf
         && status.host.secure_boot == SecureBootState::Enabled;
 
+    if !secure_boot_manual {
+        return Ok(JobCompletion::reboot_required());
+    }
     Ok(JobCompletion {
-        status: if secure_boot_manual {
-            DriverJobStatus::ManualStepRequired
-        } else {
-            DriverJobStatus::RebootRequired
-        },
-        current_step: if secure_boot_manual {
-            Some("Machine Owner Key enrollment may be required".into())
-        } else {
-            Some("Reboot required".into())
-        },
-        message: if secure_boot_manual {
+        status: DriverJobStatus::ManualStepRequired,
+        current_step: Some("Machine Owner Key enrollment may be required".into()),
+        message:
             "Package operation finished. Complete firmware key enrollment if prompted, then reboot."
-                .into()
-        } else {
-            "Package operation finished. Reboot to load the NVIDIA driver.".into()
-        },
+                .into(),
         requires_reboot: true,
     })
 }
@@ -416,6 +411,18 @@ pub struct JobCompletion {
     /// The log's last line.
     pub message: String,
     pub requires_reboot: bool,
+}
+
+impl JobCompletion {
+    /// Package operations finished, and the host needs a restart to load the driver.
+    pub fn reboot_required() -> Self {
+        Self {
+            status: DriverJobStatus::RebootRequired,
+            current_step: Some("Reboot required".into()),
+            message: "Package operation finished. Reboot to load the NVIDIA driver.".into(),
+            requires_reboot: true,
+        }
+    }
 }
 
 enum JobStep {
@@ -782,15 +789,6 @@ mod tests {
         (store, finish, changes)
     }
 
-    fn reboot_required() -> JobCompletion {
-        JobCompletion {
-            status: DriverJobStatus::RebootRequired,
-            current_step: Some("Reboot required".into()),
-            message: "Package operation finished. Reboot to load the NVIDIA driver.".into(),
-            requires_reboot: true,
-        }
-    }
-
     /// The announced changes up to and including the one where the job ended.
     fn until_ended(changes: &Receiver<DriverJob>) -> Vec<DriverJob> {
         let mut seen = Vec::new();
@@ -814,7 +812,7 @@ mod tests {
         store
             .start(DriverAction::InstallRecommended)
             .expect("start");
-        finish.send(Ok(reboot_required())).unwrap();
+        finish.send(Ok(JobCompletion::reboot_required())).unwrap();
 
         let seen = until_ended(&changes);
         let steps: Vec<_> = seen
@@ -869,6 +867,26 @@ mod tests {
     }
 
     #[test]
+    fn a_job_that_fails_on_its_own_after_a_cancel_was_requested_reads_as_failed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, finish, changes) = gated_store(&dir.path().join("jobs.json"));
+        let job = store
+            .start(DriverAction::InstallRecommended)
+            .expect("start");
+        while changes.recv_timeout(Duration::from_secs(5)).unwrap().status
+            != DriverJobStatus::Running
+        {}
+
+        store.cancel(&job.id);
+        // The package manager fails before the host got to stop.
+        finish.send(Err("dnf exited with status 1".into())).unwrap();
+
+        let ended = until_ended(&changes).pop().unwrap();
+        assert_eq!(ended.status, DriverJobStatus::Failed);
+        assert_eq!(ended.error.as_deref(), Some("dnf exited with status 1"));
+    }
+
+    #[test]
     fn a_job_still_running_when_the_daemon_stopped_reads_as_failed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("jobs.json");
@@ -912,7 +930,7 @@ mod tests {
         store
             .start(DriverAction::InstallRecommended)
             .expect("start");
-        finish.send(Ok(reboot_required())).unwrap();
+        finish.send(Ok(JobCompletion::reboot_required())).unwrap();
         until_ended(&changes);
 
         let next_boot = DriverJobStore::load(

@@ -500,8 +500,12 @@ fn a_driver_jobs_progress_log_and_outcome_render_from_events() {
             vec!["Package operations finished, and nothing else is needed."],
         ),
     ];
-    for (status, state, explanation) in expected {
-        let pushed = job(status);
+    for (index, (status, state, explanation)) in expected.into_iter().enumerate() {
+        // Each ending is a job of its own: a job that ended never changes again.
+        let pushed = DriverJob {
+            id: format!("driver-{index}"),
+            ..job(status)
+        };
         push(&mut core, pushed.clone());
 
         let shown = drivers(&core).job.unwrap();
@@ -590,7 +594,7 @@ fn reboot_is_offered_only_when_the_host_needs_it_and_always_asks_first() {
 
     assert_eq!(commands(&run_palette(&mut core, "Reboot now…")), []);
     let asked = confirmation(&core, reboot_confirmation);
-    assert_eq!(asked.title, "Restart the host now?");
+    assert_eq!(asked.title, "Reboot now?");
     assert_eq!(asked.confirm_text, "Reboot");
 
     let (id, request) = command(&intent(&mut core, Intent::ConfirmDriverDialog));
@@ -833,4 +837,99 @@ fn reconnecting_while_drivers_shows_reads_the_plan_again() {
     });
 
     assert_eq!(commands(&effects), [DaemonRequest::GetDriverStatus]);
+}
+
+#[test]
+fn a_driver_job_that_ended_while_the_session_was_down_notifies_once_it_comes_back() {
+    let mut core = connected();
+    push(&mut core, job(DriverJobStatus::Running));
+    core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
+        message: "Connection reset by peer (os error 104)".into(),
+    }));
+
+    let effects = core.handle(Input::PrismdConnected {
+        welcome: welcome(true),
+        snapshot: DaemonSnapshot {
+            driver_job: Some(job(DriverJobStatus::Failed)),
+            ..snapshot()
+        },
+        socket: "/run/prism/prismd.sock".into(),
+    });
+
+    let sent = notifications(&effects);
+    assert_eq!(
+        sent.iter()
+            .map(|notification| notification.summary.as_str())
+            .collect::<Vec<_>>(),
+        ["NVIDIA driver job failed"]
+    );
+    assert_eq!(
+        notifications(&push(&mut core, job(DriverJobStatus::Failed))),
+        []
+    );
+}
+
+#[test]
+fn a_push_older_than_the_snapshot_doesnt_bring_an_ended_job_back() {
+    let (mut core, _) = connected_from(
+        DaemonSnapshot {
+            driver_job: Some(job(DriverJobStatus::RebootRequired)),
+            ..snapshot()
+        },
+        true,
+    );
+
+    push(&mut core, job(DriverJobStatus::Running));
+
+    assert_eq!(drivers(&core).job.unwrap().state, "Reboot required");
+    assert_eq!(
+        notifications(&push(&mut core, job(DriverJobStatus::RebootRequired))),
+        []
+    );
+}
+
+#[test]
+fn a_newer_driver_job_withdraws_the_last_ones_notification() {
+    let mut core = connected();
+    push(&mut core, job(DriverJobStatus::Running));
+    let [ended] = notifications(&push(&mut core, job(DriverJobStatus::Failed)))
+        .try_into()
+        .expect("one notification");
+
+    let effects = push(
+        &mut core,
+        DriverJob {
+            id: "driver-1791805200000".into(),
+            ..job(DriverJobStatus::Queued)
+        },
+    );
+
+    assert!(
+        effects.contains(&Effect::WithdrawNotification(ended.id)),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn the_palette_reads_a_plan_that_couldnt_be_read_again() {
+    let mut core = connected();
+    let (id, _) = command(&intent(&mut core, Intent::GoTo(Section::Drivers)));
+    answer(
+        &mut core,
+        id,
+        DaemonResponse::Error(GpuCommandError::new(
+            GpuCommandErrorCode::Io,
+            "nvidia-smi timed out",
+        )),
+    );
+
+    let effects = run_palette(&mut core, "Run recommended driver plan…");
+
+    assert_eq!(commands(&effects), [DaemonRequest::GetDriverStatus]);
+    assert_eq!(
+        confirmation(&core, run_confirmation)
+            .confirm_unavailable
+            .as_deref(),
+        Some("Checking the driver plan…")
+    );
 }

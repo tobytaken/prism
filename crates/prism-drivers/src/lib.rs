@@ -101,6 +101,7 @@ pub struct SystemDriverHost;
 
 #[derive(Clone)]
 pub struct DriverService {
+    host: Arc<dyn DriverHost>,
     jobs: DriverJobStore,
 }
 
@@ -109,14 +110,15 @@ impl DriverService {
     /// host boot `boot_id`.
     pub fn new(state_path: PathBuf, boot_id: impl Into<String>, host: Arc<dyn DriverHost>) -> Self {
         Self {
-            jobs: DriverJobStore::load(state_path, boot_id.into(), host),
+            jobs: DriverJobStore::load(state_path, boot_id.into(), Arc::clone(&host)),
+            host,
         }
     }
 
     pub fn status(&self) -> DriverStatusResponse {
         DriverStatusResponse {
             active_job: self.jobs.active_job(),
-            ..self.jobs.host().status()
+            ..self.host.status()
         }
     }
 
@@ -141,7 +143,7 @@ impl DriverService {
             ));
         }
 
-        let status = self.jobs.host().status();
+        let status = self.host.status();
         let plan = status
             .nvidia
             .plans
@@ -183,11 +185,12 @@ impl DriverService {
     }
 
     pub fn reboot(&self) -> Result<(), GpuCommandError> {
-        self.jobs.host().reboot()
+        self.host.reboot()
     }
 }
 
-pub fn collect_driver_status(active_job: Option<DriverJob>) -> DriverStatusResponse {
+/// The host's driver status with every driver plan, and no job.
+pub fn collect_driver_status() -> DriverStatusResponse {
     let mut warnings = Vec::new();
     let mut host = collect_host_info();
     let mut nvidia = collect_nvidia_status();
@@ -223,7 +226,7 @@ pub fn collect_driver_status(active_job: Option<DriverJob>) -> DriverStatusRespo
     DriverStatusResponse {
         host,
         nvidia,
-        active_job,
+        active_job: None,
         warnings,
     }
 }
@@ -310,7 +313,7 @@ mod tests {
 
     #[test]
     fn status_collection_never_panics_on_test_host() {
-        let status = collect_driver_status(None);
+        let status = collect_driver_status();
         assert!(!status.host.kernel_release.is_empty());
     }
 }

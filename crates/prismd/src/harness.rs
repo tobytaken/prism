@@ -495,12 +495,7 @@ impl FakeDriverHost {
 
     /// The running action's package operations finish, leaving a reboot outstanding.
     pub fn finish_needing_reboot(&self) {
-        self.next(FakeDriverStep::Finish(Ok(JobCompletion {
-            status: DriverJobStatus::RebootRequired,
-            current_step: Some("Reboot required".into()),
-            message: "Package operation finished. Reboot to load the NVIDIA driver.".into(),
-            requires_reboot: true,
-        })));
+        self.next(FakeDriverStep::Finish(Ok(JobCompletion::reboot_required())));
     }
 
     /// The running action fails with `error`.
@@ -526,9 +521,7 @@ impl DriverHost for FakeDriverHost {
 
     fn run(&self, _: DriverAction, job: &JobProgress) -> Result<JobCompletion, String> {
         loop {
-            if job.canceled() {
-                return Err("Driver job was canceled.".into());
-            }
+            job.stop_if_canceled()?;
             let (mut drivers, _) = self
                 .1
                 .wait_timeout_while(
