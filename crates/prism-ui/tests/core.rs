@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuInventoryProvider, GpuPerformanceResponse, GpuTelemetryProvider};
-use prism_protocol::{DaemonRequest, DaemonSnapshot, ProtocolVersion, SessionMessage, Welcome};
+use prism_protocol::{
+    DaemonEvent, DaemonRequest, DaemonSnapshot, ProtocolVersion, SessionMessage, Welcome,
+};
 use prism_ui::{
     AppearanceMode, Content, Core, Effect, ExplainedState, Input, Intent, Section, TelemetrySource,
     Track, TrackKind,
@@ -314,6 +316,26 @@ fn a_session_without_gpus_opens_into_drivers_and_reads_the_host_s_driver() {
 }
 
 #[test]
+fn gpus_found_while_running_the_driver_plan_leave_drivers_showing() {
+    let mut core = Core::default();
+    core.handle(Input::Launched {
+        appearance: AppearanceMode::System,
+        started_unix_ms: 0,
+    });
+    let mut empty = snapshot();
+    empty.inventory = simulated(SimulatedFixture::EmptyInventory).inventory();
+    connect(&mut core, empty);
+    core.handle(Input::Intent(Intent::RunDriverPlan));
+
+    core.handle(Input::PrismdEvent {
+        event: DaemonEvent::InventoryChanged(snapshot().inventory),
+        received_at: Duration::from_secs(1),
+    });
+
+    assert_eq!(core.content(), Content::Section(Section::Drivers));
+}
+
+#[test]
 fn with_gpus_present_the_selected_gpu_stays_open_when_the_inventory_is_read_again() {
     let mut core = launched(SimulatedFixture::TwoIdenticalGpus);
     let second = core.sidebar().gpus[1].id.clone();
@@ -324,6 +346,21 @@ fn with_gpus_present_the_selected_gpu_stays_open_when_the_inventory_is_read_agai
     ));
 
     assert_eq!(workspace(&core).id, second);
+}
+
+#[test]
+fn a_gpu_that_leaves_an_inventory_now_empty_is_explained_in_its_place() {
+    let mut core = launched(SimulatedFixture::TunableGpu);
+
+    core.handle(Input::InventoryRead(
+        simulated(SimulatedFixture::EmptyInventory).inventory(),
+    ));
+
+    let Content::NoGpus(state) = core.content() else {
+        panic!("expected an explained state, got {:?}", core.content());
+    };
+    assert_eq!(state.title, "No GPUs found");
+    assert_eq!(core.sidebar().no_gpus, Some(state));
 }
 
 #[test]

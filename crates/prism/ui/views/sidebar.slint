@@ -139,7 +139,7 @@ export component Sidebar inherits Rectangle {
                     }
                 }
 
-                // Whatever the content shows, such as Drivers, which Prism opens into then.
+                // Shown whenever the inventory has no GPUs, whatever the content shows.
                 if AppState.no-gpus.title != "": VerticalLayout {
                     padding: Theme.space.xl;
                     spacing: Theme.space.xs;
