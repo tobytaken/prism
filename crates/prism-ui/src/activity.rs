@@ -247,7 +247,9 @@ impl Core {
                     .then(|| "Dismissing…".into())
             }
             ActivityAction::RetryCooling(gpu_id) => self.retry_unavailable(gpu_id),
-            ActivityAction::RetrySwitching(gpu_id) => self.retry_switching_unavailable(gpu_id),
+            ActivityAction::RetrySwitching(gpu_id) => self
+                .switching_command_unavailable(&Command::RetrySwitching(gpu_id.clone()))
+                .flatten(),
         }
     }
 

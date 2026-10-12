@@ -489,7 +489,7 @@ fn switching_view(status: &SwitchingStatus) -> SwitchingView {
         summary: status.summary.as_str().into(),
         detail: status.detail.join(" ").into(),
         failed: status.failed,
-        paused: status.paused,
+        resumable: status.resumable,
         can_pause: status.pause_unavailable.is_none(),
         pause_reason: status
             .pause_unavailable

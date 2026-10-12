@@ -285,8 +285,8 @@ fn every_gpu_state_explains_itself_in_the_workspace_and_the_status_bar() {
                 changed_outside_prism: true,
             },
             "Overridden",
-            "A change made outside Prism paused automatic switching on this GPU until its \
-             linked games end. Resume to switch again now.",
+            "A change made outside Prism replaced the game's tuning, so automatic switching \
+             waits for the next linked game. Resume to switch again now.",
         ),
         (
             failed(),
@@ -381,6 +381,38 @@ fn the_snapshot_says_how_automatic_switching_starts() {
 }
 
 #[test]
+fn retry_is_unavailable_while_automatic_switching_is_blocked() {
+    let mut core = connected();
+
+    push(
+        &mut core,
+        AutomaticSwitchingStatus {
+            condition: SwitchingCondition::Blocked {
+                reason: "Prism's boot state can't be read".into(),
+            },
+            gpus: vec![gpu(GpuSwitchingState::RecoveryRequired {
+                message: "The pre-game tuning values can't be read.".into(),
+            })],
+        },
+    );
+
+    let shown = shown(&core);
+    assert!(shown.failed);
+    assert_eq!(
+        shown.detail,
+        [
+            "The pre-game tuning values can't be read.",
+            "Prism's boot state can't be read.",
+        ]
+    );
+    assert_eq!(
+        shown.retry_unavailable.as_deref(),
+        Some("Automatic switching is blocked")
+    );
+    assert_eq!(retry(&mut core), []);
+}
+
+#[test]
 fn a_manual_override_names_the_running_games_it_waits_for() {
     let mut core = connected();
     push_event(
@@ -420,7 +452,7 @@ fn a_manual_override_names_the_running_games_it_waits_for() {
         "Your own tuning change paused automatic switching on this GPU until Cyberpunk 2077 \
          ends. Resume to switch again now."
     );
-    assert!(shown.paused, "Resume, not Pause");
+    assert!(shown.resumable, "Resume, not Pause");
 }
 
 #[test]
@@ -461,7 +493,7 @@ fn pause_asks_prismd_and_the_gpu_shows_paused_only_once_prismd_says_so() {
     let mut core = connected();
     push(&mut core, on_gpu(active()));
     let shown_before = shown(&core);
-    assert!(!shown_before.paused);
+    assert!(!shown_before.resumable);
     assert_eq!(shown_before.pause_unavailable, None);
 
     let effects = set_paused(&mut core, true);
@@ -486,7 +518,7 @@ fn pause_asks_prismd_and_the_gpu_shows_paused_only_once_prismd_says_so() {
 
     let paused = shown(&core);
     assert_eq!(paused.summary, "Paused");
-    assert!(paused.paused);
+    assert!(paused.resumable);
     assert_eq!(paused.pause_unavailable, None);
 }
 

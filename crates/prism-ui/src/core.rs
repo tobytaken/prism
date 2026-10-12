@@ -1079,7 +1079,7 @@ impl Core {
             Intent::RunActivityAction(action) => self.run_activity_action(action),
             Intent::RetryCooling(gpu_id) => self.run(Some(Command::RetryCooling(gpu_id))),
             Intent::SetSwitchingPaused { gpu_id, paused } => {
-                self.run(Some(Command::SetSwitchingPaused(gpu_id, paused)))
+                self.run(Some(Command::SetSwitchingPaused { gpu_id, paused }))
             }
             Intent::RetrySwitching(gpu_id) => self.run(Some(Command::RetrySwitching(gpu_id))),
         }
@@ -1149,7 +1149,7 @@ impl Core {
             Command::AddProgram => self.open_add_program(),
             Command::OpenActivity => self.open_activity(),
             Command::RetryCooling(gpu_id) => self.retry_cooling(gpu_id),
-            Command::SetSwitchingPaused(gpu_id, paused) => {
+            Command::SetSwitchingPaused { gpu_id, paused } => {
                 self.set_switching_paused(gpu_id, paused)
             }
             Command::RetrySwitching(gpu_id) => self.retry_switching(gpu_id),

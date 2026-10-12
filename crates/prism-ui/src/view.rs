@@ -354,9 +354,9 @@ pub struct SwitchingStatus {
     pub detail: Vec<String>,
     /// Whether automatic switching is in a failure pause on the GPU, which Retry ends.
     pub failed: bool,
-    /// Whether it's paused, explicitly or by a manual override, so the button is Resume, not
-    /// Pause.
-    pub paused: bool,
+    /// Whether Resume ends what holds it, an automatic switching pause or a manual override, so
+    /// the button is Resume, not Pause.
+    pub resumable: bool,
     /// Why Pause, or Resume, can't be pressed now, when it can't.
     pub pause_unavailable: Option<String>,
     /// Why Retry can't be pressed now, when it can't.
@@ -1063,7 +1063,7 @@ impl Core {
             unknown_reason: unknown_reason(gpu, &VITALS),
             pauses: [
                 self.cooling_paused(&gpu.id).then_some("Fan curve paused"),
-                self.switching_pause(&gpu.id),
+                self.switching_failure(&gpu.id),
             ]
             .into_iter()
             .flatten()

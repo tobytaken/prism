@@ -54,8 +54,8 @@ component TuningNeedsPrismd inherits Rectangle {
 }
 
 // What drives automatic switching on the GPU, or why it doesn't, in the danger color on a failure
-// pause with why it failed, or with why prismd refused the latest Pause, Resume or Retry; then
-// Retry on a failure pause, and Pause, or Resume. The explanation is its description.
+// pause, explained, or with why prismd refused the latest Pause, Resume or Retry; then Retry on a
+// failure pause, and Pause, or Resume.
 component SwitchingStatus inherits Rectangle {
     in property <SwitchingView> switching;
 
@@ -89,8 +89,8 @@ component SwitchingStatus inherits Rectangle {
             accessible-value: root.switching.summary;
         }
 
-        // Why prismd refused the latest request, or else why it failed.
-        if root.switching.outcome != "" || root.switching.failed: StyledText {
+        // Why prismd refused the latest request, or else the explanation.
+        StyledText {
             min-width: 0;
             text: root.switching.outcome != "" ? root.switching.outcome : root.switching.detail;
             style: Theme.text.body;
@@ -120,14 +120,14 @@ component SwitchingStatus inherits Rectangle {
             alignment: center;
 
             Button {
-                text: root.switching.paused ? "Resume" : "Pause";
-                label: (root.switching.paused ? "Resume" : "Pause") + " automatic switching";
+                text: root.switching.resumable ? "Resume" : "Pause";
+                label: (root.switching.resumable ? "Resume" : "Pause") + " automatic switching";
                 height: Theme.size.segment;
                 kind: ButtonKind.quiet;
                 enabled: root.switching.can-pause;
                 description: root.switching.pause-reason;
                 activated => {
-                    Intents.set-switching-paused(AppState.workspace.id, !root.switching.paused);
+                    Intents.set-switching-paused(AppState.workspace.id, !root.switching.resumable);
                 }
             }
         }

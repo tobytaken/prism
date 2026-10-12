@@ -50,7 +50,10 @@ pub(crate) enum Command {
     /// Retry, or resume, the fan curve Prism stopped following on this GPU, by id.
     RetryCooling(String),
     /// Pause automatic switching on this GPU, by id, or resume it.
-    SetSwitchingPaused(String, bool),
+    SetSwitchingPaused {
+        gpu_id: String,
+        paused: bool,
+    },
     /// Try this GPU's failed automatic switching again, by id.
     RetrySwitching(String),
     Quit,
@@ -364,7 +367,7 @@ impl Core {
             | Command::AddSteamGame
             | Command::AddProgram
             | Command::RetryCooling(_)
-            | Command::SetSwitchingPaused(..)
+            | Command::SetSwitchingPaused { .. }
             | Command::RetrySwitching(_)
             | Command::Quit => false,
         };

@@ -227,15 +227,15 @@ export struct ChangeStripView {
 
 // What drives automatic switching on a GPU, or why it doesn't, in short as `summary` and explained
 // as `detail`. `failed` says it's in a failure pause, which Retry ends; Retry can be pressed when
-// `can-retry` and says why not in `retry-reason`. `paused` says it's paused, explicitly or by a
-// manual override, so its button resumes instead of pausing; the button can be pressed when
-// `can-pause` and says why not in `pause-reason`. `outcome` says why prismd refused the latest
+// `can-retry` and says why not in `retry-reason`. `resumable` says Resume ends what holds it, an
+// automatic switching pause or a manual override, so its button resumes instead of pausing; the
+// button can be pressed when `can-pause` and says why not in `pause-reason`. `outcome` says why prismd refused the latest
 // Pause, Resume or Retry.
 export struct SwitchingView {
     summary: string,
     detail: string,
     failed: bool,
-    paused: bool,
+    resumable: bool,
     can-pause: bool,
     pause-reason: string,
     can-retry: bool,
@@ -559,8 +559,9 @@ export global Intents {
     callback delete-profile(index: int);
     // Turns automatic switching on or off.
     callback set-automatic-switching(enabled: bool);
-    // Pauses or resumes automatic switching on the GPU, by id, or retries it after a failure.
+    // Pauses or resumes automatic switching on the GPU, by id.
     callback set-switching-paused(gpu-id: string, paused: bool);
+    // Retries automatic switching on the GPU, by id, ending its failure pause.
     callback retry-switching(gpu-id: string);
     // Links the game at this index, on the GPU of its link at this index, to the choice at this
     // index: None, then the GPU's profiles.

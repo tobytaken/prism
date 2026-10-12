@@ -41,6 +41,11 @@ enum SwitchingRequest {
 }
 
 impl SwitchingRequest {
+    /// Pause, or with `paused` false, Resume.
+    fn setting_paused(paused: bool) -> Self {
+        if paused { Self::Pause } else { Self::Resume }
+    }
+
     /// What the button says while prismd hasn't answered it.
     fn waiting(self) -> &'static str {
         match self {
@@ -63,6 +68,26 @@ impl SwitchingRequest {
 /// What brings a GPU out of a failure pause.
 const UNTIL_RETRY: &str = "Automatic switching won't change this GPU again until you retry.";
 
+/// The GPU's state in `status`, if it lists the GPU.
+fn state_in<'a>(
+    status: Option<&'a AutomaticSwitchingStatus>,
+    gpu_id: &str,
+) -> Option<&'a GpuSwitchingState> {
+    status?
+        .gpus
+        .iter()
+        .find(|gpu| gpu.gpu_id == gpu_id)
+        .map(|gpu| &gpu.state)
+}
+
+/// Whether `state` is a failure pause, which only Retry ends.
+fn in_failure_pause(state: Option<&GpuSwitchingState>) -> bool {
+    matches!(
+        state,
+        Some(GpuSwitchingState::Failed { .. } | GpuSwitchingState::RecoveryRequired { .. })
+    )
+}
+
 /// Each line of prismd's message, as a sentence.
 fn sentences(message: &str) -> impl Iterator<Item = String> {
     message
@@ -83,20 +108,19 @@ fn listed(names: &[&str]) -> String {
 impl Core {
     /// The GPU's state as prismd last pushed it, if prismd lists the GPU.
     fn switching_state(&self, gpu_id: &str) -> Option<&GpuSwitchingState> {
-        self.switching
-            .status
-            .as_ref()?
-            .gpus
-            .iter()
-            .find(|gpu| gpu.gpu_id == gpu_id)
-            .map(|gpu| &gpu.state)
+        state_in(self.switching.status.as_ref(), gpu_id)
     }
 
     /// Whether automatic switching is in a failure pause on the GPU.
     pub(crate) fn switching_failed(&self, gpu_id: &str) -> bool {
+        in_failure_pause(self.switching_state(gpu_id))
+    }
+
+    /// Whether the GPU has an explicit automatic switching pause.
+    fn switching_paused(&self, gpu_id: &str) -> bool {
         matches!(
             self.switching_state(gpu_id),
-            Some(GpuSwitchingState::Failed { .. } | GpuSwitchingState::RecoveryRequired { .. })
+            Some(GpuSwitchingState::Paused {})
         )
     }
 
@@ -109,9 +133,8 @@ impl Core {
         )
     }
 
-    /// What the sidebar says is paused on the GPU after a failure, such as "Automatic switching
-    /// failed".
-    pub(crate) fn switching_pause(&self, gpu_id: &str) -> Option<&'static str> {
+    /// What the sidebar says about the GPU's failure pause, such as "Automatic switching failed".
+    pub(crate) fn switching_failure(&self, gpu_id: &str) -> Option<&'static str> {
         match self.switching_state(gpu_id)? {
             GpuSwitchingState::Failed { .. } => Some("Automatic switching failed"),
             GpuSwitchingState::RecoveryRequired { .. } => {
@@ -129,18 +152,13 @@ impl Core {
             Some(state) => self.explained(gpu_id, state),
             None => explained_condition(&status.condition),
         };
-        let failed = self.switching_failed(gpu_id);
-        let paused = self.switching_resumable(gpu_id);
-        let pause = if paused {
-            SwitchingRequest::Resume
-        } else {
-            SwitchingRequest::Pause
-        };
+        let resumable = self.switching_resumable(gpu_id);
+        let pause = SwitchingRequest::setting_paused(!resumable);
         Some(SwitchingStatus {
             summary,
             detail,
-            failed,
-            paused,
+            failed: self.switching_failed(gpu_id),
+            resumable,
             pause_unavailable: self.switching_unavailable(gpu_id, pause),
             retry_unavailable: self.switching_unavailable(gpu_id, SwitchingRequest::Retry),
             outcome: self.switching.outcomes.get(gpu_id).cloned(),
@@ -195,29 +213,41 @@ impl Core {
                 changed_outside_prism,
             } => {
                 let games = self.running_linked_games(gpu_id);
-                let (summary, until) = match games.as_slice() {
-                    [] => ("Overridden".to_owned(), "its linked games end".to_owned()),
-                    [game] => (
-                        format!("Overridden until {game} ends"),
-                        format!("{game} ends"),
-                    ),
-                    games => (
-                        format!("Overridden until {} end", listed(games)),
-                        format!("{} end", listed(games)),
-                    ),
-                };
                 let who = if *changed_outside_prism {
                     "A change made outside Prism"
                 } else {
                     "Your own tuning change"
                 };
-                (
-                    summary,
-                    vec![
-                        format!("{who} paused automatic switching on this GPU until {until}."),
-                        "Resume to switch again now.".into(),
-                    ],
-                )
+                let (summary, why) = match games.as_slice() {
+                    // prismd keeps a change made outside Prism after the games end, until a
+                    // linked game starts again.
+                    [] if *changed_outside_prism => (
+                        "Overridden".to_owned(),
+                        format!(
+                            "{who} replaced the game's tuning, so automatic switching waits for \
+                             the next linked game."
+                        ),
+                    ),
+                    [] => (
+                        "Overridden".to_owned(),
+                        format!(
+                            "{who} paused automatic switching on this GPU until its linked \
+                             games end."
+                        ),
+                    ),
+                    games => {
+                        let ends = if games.len() == 1 { "ends" } else { "end" };
+                        let games = listed(games);
+                        (
+                            format!("Overridden until {games} {ends}"),
+                            format!(
+                                "{who} paused automatic switching on this GPU until {games} \
+                                 {ends}."
+                            ),
+                        )
+                    }
+                };
+                (summary, vec![why, "Resume to switch again now.".into()])
             }
             GpuSwitchingState::Failed { message } => (
                 "Failed".into(),
@@ -225,8 +255,22 @@ impl Core {
             ),
             GpuSwitchingState::RecoveryRequired { message } => (
                 "Needs recovery".into(),
-                sentences(message).chain([UNTIL_RETRY.into()]).collect(),
+                sentences(message)
+                    .chain([match self.switching_blocked() {
+                        // prismd can't retry until what blocks it is fixed.
+                        Some(reason) => sentence(reason),
+                        None => UNTIL_RETRY.into(),
+                    }])
+                    .collect(),
             ),
+        }
+    }
+
+    /// Why automatic switching is blocked on every GPU, when it is.
+    fn switching_blocked(&self) -> Option<&str> {
+        match &self.switching.status.as_ref()?.condition {
+            SwitchingCondition::Blocked { reason } => Some(reason),
+            _ => None,
         }
     }
 
@@ -271,10 +315,7 @@ impl Core {
     fn switching_unavailable(&self, gpu_id: &str, request: SwitchingRequest) -> Option<String> {
         self.switching.status.as_ref()?;
         let applies = match request {
-            SwitchingRequest::Pause => !matches!(
-                self.switching_state(gpu_id),
-                Some(GpuSwitchingState::Paused {})
-            ),
+            SwitchingRequest::Pause => !self.switching_paused(gpu_id),
             SwitchingRequest::Resume => self.switching_resumable(gpu_id),
             SwitchingRequest::Retry => self.switching_failed(gpu_id),
         };
@@ -287,6 +328,9 @@ impl Core {
                 }
                 .into(),
             );
+        }
+        if request == SwitchingRequest::Retry && self.switching_blocked().is_some() {
+            return Some("Automatic switching is blocked".into());
         }
         if let Some(reason) = self.tuning_access().reason() {
             return Some(format!("Needs tuning access · {reason}"));
@@ -306,11 +350,8 @@ impl Core {
         command: &Command,
     ) -> Option<Option<String>> {
         match command {
-            Command::SetSwitchingPaused(gpu_id, true) => {
-                Some(self.switching_unavailable(gpu_id, SwitchingRequest::Pause))
-            }
-            Command::SetSwitchingPaused(gpu_id, false) => {
-                Some(self.switching_unavailable(gpu_id, SwitchingRequest::Resume))
+            Command::SetSwitchingPaused { gpu_id, paused } => {
+                Some(self.switching_unavailable(gpu_id, SwitchingRequest::setting_paused(*paused)))
             }
             Command::RetrySwitching(gpu_id) => {
                 Some(self.switching_unavailable(gpu_id, SwitchingRequest::Retry))
@@ -334,15 +375,21 @@ impl Core {
         for (index, gpu) in self.gpus().iter().enumerate() {
             let label = gpu_label(index, gpu);
             let id = &gpu.id;
-            if !matches!(self.switching_state(id), Some(GpuSwitchingState::Paused {})) {
+            if !self.switching_paused(id) {
                 commands.push((
-                    Command::SetSwitchingPaused(id.clone(), true),
+                    Command::SetSwitchingPaused {
+                        gpu_id: id.clone(),
+                        paused: true,
+                    },
                     format!("Pause automatic switching on {label}"),
                 ));
             }
             if self.switching_resumable(id) {
                 commands.push((
-                    Command::SetSwitchingPaused(id.clone(), false),
+                    Command::SetSwitchingPaused {
+                        gpu_id: id.clone(),
+                        paused: false,
+                    },
                     format!("Resume automatic switching on {label}"),
                 ));
             }
@@ -361,14 +408,9 @@ impl Core {
 
     /// Asks prismd to pause or resume automatic switching on the GPU.
     pub(crate) fn set_switching_paused(&mut self, gpu_id: String, paused: bool) -> Vec<Effect> {
-        let request = if paused {
-            SwitchingRequest::Pause
-        } else {
-            SwitchingRequest::Resume
-        };
         self.send_switching(
             gpu_id.clone(),
-            request,
+            SwitchingRequest::setting_paused(paused),
             DaemonRequest::SetGpuSwitchingPaused(SetGpuSwitchingPausedRequest { gpu_id, paused }),
         )
     }
@@ -426,8 +468,8 @@ impl Core {
         true
     }
 
-    /// Takes in a new session's automatic switching status. A failure pause already there isn't
-    /// news, so it doesn't notify.
+    /// Takes in a new session's automatic switching status, without notifying about a failure
+    /// pause already there.
     pub(crate) fn switching_connected(&mut self, status: AutomaticSwitchingStatus) {
         self.switching.status = Some(status);
     }
@@ -436,31 +478,19 @@ impl Core {
     /// notifies, and one that ended takes its notification back.
     pub(crate) fn switching_pushed(&mut self, status: AutomaticSwitchingStatus) -> Vec<Effect> {
         let before = self.switching.status.replace(status);
-        let state_before = |gpu_id: &str| {
-            before
-                .as_ref()
-                .and_then(|status| status.gpus.iter().find(|gpu| gpu.gpu_id == gpu_id))
-                .map(|gpu| &gpu.state)
-        };
-        let failed = |state: Option<&GpuSwitchingState>| {
-            matches!(
-                state,
-                Some(GpuSwitchingState::Failed { .. } | GpuSwitchingState::RecoveryRequired { .. })
-            )
-        };
         let gpu_ids: Vec<_> = self.gpus().iter().map(|gpu| gpu.id.clone()).collect();
         let mut effects = Vec::new();
         for gpu_id in gpu_ids {
-            let was = state_before(&gpu_id).cloned();
-            if self.switching_state(&gpu_id) != was.as_ref() {
+            let was = state_in(before.as_ref(), &gpu_id);
+            if self.switching_state(&gpu_id) != was {
                 self.switching.outcomes.remove(&gpu_id);
             }
             let subject = Subject::Gpu(gpu_id.clone(), GpuConcern::Switching);
-            match (failed(was.as_ref()), self.switching_failed(&gpu_id)) {
+            match (in_failure_pause(was), self.switching_failed(&gpu_id)) {
                 (false, true) => {
                     let summary = format!(
                         "{} on {}",
-                        self.switching_pause(&gpu_id).unwrap_or_default(),
+                        self.switching_failure(&gpu_id).unwrap_or_default(),
                         self.gpu_name(&gpu_id)
                     );
                     let body = self
@@ -491,7 +521,7 @@ impl Core {
         self.gpus()
             .iter()
             .filter_map(|gpu| {
-                let title = self.switching_pause(&gpu.id)?;
+                let title = self.switching_failure(&gpu.id)?;
                 let status = self.switching_status(&gpu.id)?;
                 Some(ActivityItem {
                     title: title.into(),
@@ -507,11 +537,6 @@ impl Core {
                 })
             })
             .collect()
-    }
-
-    /// Why the Activity item's Retry can't run now, when it can't.
-    pub(crate) fn retry_switching_unavailable(&self, gpu_id: &str) -> Option<String> {
-        self.switching_unavailable(gpu_id, SwitchingRequest::Retry)
     }
 
     /// The session ended: the status goes with it, and requests it didn't answer may or may not
