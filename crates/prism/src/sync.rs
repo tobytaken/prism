@@ -13,13 +13,13 @@ use prism_ui::{
 };
 
 use crate::{
-    ActivityItemView, AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind,
-    CoolingProblemView, CurvePointView, DaemonView, DetailView, DialogKind, DialogView,
-    DriversView, ExplainedStateView, FactView, FanCurveView, FanModeView, GameLinkView, GameView,
-    GamesView, LimitMark, MainWindow, ManagedProfileView, MenuEntryView, PaletteEntryView,
-    ProgramView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction, SettingsSection,
-    SidebarGpuView, SteamAppView, StepperView, SwitchingView, Theme, TrackView, TuningSetting,
-    WorkspaceView,
+    AboutView, ActivityItemView, AppState, AppearanceMode, ChangeStripView, ChartId, ChartView,
+    ContentKind, CoolingProblemView, CurvePointView, DaemonView, DetailView, DialogKind,
+    DialogView, DriversView, ExplainedStateView, FactView, FanCurveView, FanModeView, GameLinkView,
+    GameView, GamesView, LimitMark, MainWindow, ManagedProfileView, MenuEntryView,
+    PaletteEntryView, ProgramView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction,
+    SettingsSection, SidebarGpuView, SteamAppView, StepperView, SwitchingView, Theme, TrackView,
+    TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -183,6 +183,13 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         CoreSettingsSection::About => SettingsSection::About,
     });
     state.set_settings_section_name(core.settings_section().name().into());
+    state.set_desktop_notifications(core.desktop_notifications());
+    let about = core.about();
+    state.set_about(AboutView {
+        version: about.version.into(),
+        license: about.license.into(),
+        slint_website: about.slint_website.into(),
+    });
     let daemon = core.daemon_settings();
     let action = daemon.action.as_ref();
     state.set_daemon(DaemonView {

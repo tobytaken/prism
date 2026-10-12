@@ -17,7 +17,7 @@ use prism_protocol::{
     SaveToCurrentProfileRequest, SessionMessage, SetStartupProfileRequest, Welcome,
 };
 use prism_ui::{
-    AppearanceMode, CommandId, Content, Core, Dialog, Effect, FanMode, GpuWorkspace, Input, Intent,
+    CommandId, Content, Core, Dialog, Effect, FanMode, GpuWorkspace, GuiSettings, Input, Intent,
     ManagedProfile, ProfileNameDialog, SessionFailure,
 };
 
@@ -64,7 +64,7 @@ fn reading() -> GpuPerformanceResponse {
 fn connected_with(can_tune: bool, sample: GpuPerformanceResponse) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     let mut snapshot = snapshot();

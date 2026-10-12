@@ -5,7 +5,7 @@ use prism_protocol::{
     Authorization, DaemonSnapshot, Incompatible, ProtocolVersion, SessionMessage, Welcome,
 };
 use prism_ui::{
-    AppearanceMode, Core, DaemonAction, DaemonSettings, Distro, Fact, Input, PrismdHost,
+    Core, DaemonAction, DaemonSettings, Distro, Fact, GuiSettings, Input, PrismdHost,
     PrismdInstall, ServiceAction, SessionFailure, UnitState,
 };
 
@@ -39,7 +39,7 @@ fn ubuntu() -> Distro {
 fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core

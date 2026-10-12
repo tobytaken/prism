@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use prism_protocol::{DaemonSnapshot, ProtocolVersion, SessionMessage, Welcome};
 use prism_ui::{
-    AppearanceMode, Content, Core, Distro, Effect, Input, Intent, Notification, PrismdHost,
+    Content, Core, Distro, Effect, GuiSettings, Input, Intent, Notification, PrismdHost,
     PrismdInstall, Section, SessionFailure, SettingsSection, Timer, UnitState,
 };
 
@@ -40,7 +40,7 @@ const LOSS: Effect = Effect::StartTimer {
 fn connected(focused: bool) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     connect(&mut core);
@@ -156,7 +156,7 @@ fn focus_counts_when_the_wait_ends_not_when_the_connection_is_lost() {
 fn a_window_that_never_reported_focus_counts_as_unfocused() {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     connect(&mut core);
@@ -169,7 +169,7 @@ fn a_window_that_never_reported_focus_counts_as_unfocused() {
 fn no_prismd_from_the_start_isnt_a_lost_connection() {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core.handle(Input::WindowFocusChanged(false));
@@ -240,4 +240,39 @@ fn a_notification_closed_by_the_server_is_no_longer_live() {
         core.handle(Input::Intent(Intent::CloseWindow)),
         [Effect::Quit]
     );
+}
+
+#[test]
+fn a_lost_connection_doesnt_notify_with_desktop_notifications_off() {
+    let mut core = Core::default();
+    core.handle(Input::Launched {
+        settings: GuiSettings {
+            desktop_notifications: false,
+            ..GuiSettings::default()
+        },
+        started_unix_ms: 0,
+    });
+    connect(&mut core);
+
+    lose(&mut core);
+    failed(&mut core);
+
+    assert_eq!(sent(&elapse(&mut core)), []);
+}
+
+#[test]
+fn turning_desktop_notifications_off_withdraws_the_live_ones() {
+    let mut core = connected(false);
+    let notification = still_lost(&mut core);
+
+    let effects = core.handle(Input::Intent(Intent::SetDesktopNotifications(false)));
+
+    assert!(
+        effects.contains(&Effect::WithdrawNotification(notification.id)),
+        "{effects:?}"
+    );
+    // Back on, the next loss notifies again.
+    core.handle(Input::Intent(Intent::SetDesktopNotifications(true)));
+    connect(&mut core);
+    still_lost(&mut core);
 }

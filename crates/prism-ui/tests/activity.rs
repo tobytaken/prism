@@ -13,7 +13,7 @@ use prism_protocol::{
     TuningStoreProblem, Welcome,
 };
 use prism_ui::{
-    ActivityAction, ActivityItem, ActivityPanel, AppearanceMode, CommandId, Core, Effect, Input,
+    ActivityAction, ActivityItem, ActivityPanel, CommandId, Core, Effect, GuiSettings, Input,
     Intent, Key, Section, SessionFailure, Shortcut,
 };
 
@@ -67,7 +67,7 @@ fn welcome(can_tune: bool) -> Welcome {
 fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: STARTED_UNIX_MS,
     });
     core

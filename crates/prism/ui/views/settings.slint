@@ -1,6 +1,6 @@
-import { Theme } from "../theme.slint";
-import { Button, Fact, LinkButton, ListRow, StyledText, VerticalDivider } from "../widgets.slint";
-import { AppState, Intents, SettingsSection } from "../state.slint";
+import { AppearanceMode, Theme } from "../theme.slint";
+import { Button, Fact, LinkButton, ListRow, Segmented, StyledText, Switch, VerticalDivider } from "../widgets.slint";
+import { AppState, Intents, Link, SettingsSection } from "../state.slint";
 import { ExplainedState } from "explained-state.slint";
 
 component SectionRow inherits ListRow {
@@ -50,9 +50,10 @@ component CommandLine inherits Rectangle {
     }
 }
 
-// Settings → Daemon: what the prismd connection is and, without tuning access, why and how to fix
-// it.
-component Daemon inherits Rectangle {
+// A section's page: its title, then what's in it, one under the other.
+component Page inherits Rectangle {
+    in property <string> title;
+
     VerticalLayout {
         padding: Theme.space.xxl;
         alignment: start;
@@ -62,48 +63,195 @@ component Daemon inherits Rectangle {
             spacing: Theme.space.l;
 
             StyledText {
-                text: AppState.daemon.title;
+                text: root.title;
                 style: Theme.text.heading;
             }
 
-            for paragraph in AppState.daemon-paragraphs: StyledText {
-                text: paragraph;
-                style: Theme.text.body;
-                wrap: word-wrap;
-            }
+            @children
+        }
+    }
+}
 
-            for command in AppState.daemon-commands: CommandLine {
-                command: command;
-            }
+// A paragraph that explains a section.
+component Paragraph inherits StyledText {
+    style: Theme.text.body;
+    wrap: word-wrap;
+}
 
-            if AppState.daemon.has-action: HorizontalLayout {
-                alignment: start;
+// Settings → Appearance: System, Light or Dark.
+component Appearance inherits Rectangle {
+    Page {
+        title: "Appearance";
 
-                Button {
-                    text: AppState.daemon.action-title;
-                    enabled: !AppState.daemon.action-busy;
-                    activated => {
-                        Intents.run-service(AppState.daemon.action);
-                    }
+        HorizontalLayout {
+            alignment: start;
+
+            Segmented {
+                label: "Appearance";
+                segments: [
+                    { text: "System", label: "System", selected: Theme.mode == AppearanceMode.system },
+                    { text: "Light", label: "Light", selected: Theme.mode == AppearanceMode.light },
+                    { text: "Dark", label: "Dark", selected: Theme.mode == AppearanceMode.dark },
+                ];
+                chosen(index) => {
+                    Intents.set-appearance(index == 0 ? AppearanceMode.system
+                        : index == 1 ? AppearanceMode.light : AppearanceMode.dark);
                 }
             }
+        }
 
-            if AppState.daemon.error != "": StyledText {
-                text: AppState.daemon.error;
+        Paragraph {
+            text: "System follows your desktop's light or dark preference and changes with it.";
+        }
+    }
+}
+
+// Settings → Notifications: the one switch for desktop notifications, and when Prism sends them.
+component Notifications inherits Rectangle {
+    Page {
+        title: "Notifications";
+
+        HorizontalLayout {
+            alignment: start;
+
+            Switch {
+                label: "Desktop notifications";
+                checked: AppState.desktop-notifications;
+                toggled => {
+                    Intents.set-desktop-notifications(!AppState.desktop-notifications);
+                }
+            }
+        }
+
+        Paragraph {
+            text: "Prism notifies you when a GPU's cooling or automatic switching pauses after a failure, when a driver job ends, and when its connection to prismd stays lost for about 10 seconds. It doesn't while its window has focus, and only while it's running.";
+        }
+    }
+}
+
+// A fact whose value is a link, lined up with the facts around it: its label, then the link.
+component LinkFact inherits Rectangle {
+    in property <string> label;
+    in property <string> text;
+    // What a screen reader calls the link.
+    in property <string> link-label;
+    callback activated();
+
+    height: line.preferred-height;
+
+    line := HorizontalLayout {
+        // The link's own padding makes up the rest of the facts' spacing.
+        spacing: Theme.space.m - Theme.space.xs;
+
+        StyledText {
+            width: Theme.size.fact-label;
+            text: root.label;
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        LinkButton {
+            text: root.text;
+            label: root.link-label;
+            style: Theme.text.value;
+            activated => {
+                root.activated();
+            }
+        }
+
+        Rectangle { }
+    }
+}
+
+// Settings → About: Prism's version and license, the third-party licenses, and the Slint credit.
+component About inherits Rectangle {
+    Page {
+        title: "Prism";
+
+        Fact {
+            label: "Version";
+            value: AppState.about.version;
+        }
+
+        Fact {
+            label: "License";
+            value: AppState.about.license;
+        }
+
+        LinkFact {
+            label: "Third parties";
+            text: "THIRD-PARTY-LICENSES";
+            link-label: "Open third-party licenses";
+            activated => {
+                Intents.open(Link.third-party-licenses);
+            }
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: Theme.space.s - Theme.space.xs;
+
+            StyledText {
+                text: "Built with Slint";
                 style: Theme.text.body;
-                color: Theme.color.danger;
-                wrap: word-wrap;
+                vertical-alignment: center;
             }
 
-            for fact in AppState.daemon-facts: Fact {
-                label: fact.label;
-                value: fact.value;
+            LinkButton {
+                text: AppState.about.slint-website;
+                label: "Open Slint's website";
+                style: Theme.text.value;
+                activated => {
+                    Intents.open(Link.slint-website);
+                }
             }
         }
     }
 }
 
-// Settings: its sections, then the open one. Only Daemon is built so far.
+// Settings → Daemon: what the prismd connection is and, without tuning access, why and how to fix
+// it.
+component Daemon inherits Rectangle {
+    Page {
+        title: AppState.daemon.title;
+
+        for paragraph in AppState.daemon-paragraphs: Paragraph {
+            text: paragraph;
+        }
+
+        for command in AppState.daemon-commands: CommandLine {
+            command: command;
+        }
+
+        if AppState.daemon.has-action: HorizontalLayout {
+            alignment: start;
+
+            Button {
+                text: AppState.daemon.action-title;
+                enabled: !AppState.daemon.action-busy;
+                activated => {
+                    Intents.run-service(AppState.daemon.action);
+                }
+            }
+        }
+
+        if AppState.daemon.error != "": StyledText {
+            text: AppState.daemon.error;
+            style: Theme.text.body;
+            color: Theme.color.danger;
+            wrap: word-wrap;
+        }
+
+        for fact in AppState.daemon-facts: Fact {
+            label: fact.label;
+            value: fact.value;
+        }
+    }
+}
+
+// Settings: its sections, then the open one. Startup isn't built yet.
 export component Settings inherits Rectangle {
     HorizontalLayout {
         Rectangle {
@@ -144,8 +292,11 @@ export component Settings inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
 
+            if AppState.settings-section == SettingsSection.appearance: Appearance { }
+            if AppState.settings-section == SettingsSection.notifications: Notifications { }
             if AppState.settings-section == SettingsSection.daemon: Daemon { }
-            if AppState.settings-section != SettingsSection.daemon: ExplainedState {
+            if AppState.settings-section == SettingsSection.about: About { }
+            if AppState.settings-section == SettingsSection.startup: ExplainedState {
                 title: AppState.settings-section-name;
                 reason: "This section isn't built yet.";
             }

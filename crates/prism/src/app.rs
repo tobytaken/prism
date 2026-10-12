@@ -11,24 +11,26 @@ use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, 
 use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    ActivityAction, Content, Core, Dialog, Effect, FanCurveEditor, FanMode, Input, Intent, Key,
-    PrismdHost, ProgramFile, Section as CoreSection, ServiceAction as CoreServiceAction,
-    ServiceOutcome, SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer,
-    TrackChart,
+    ActivityAction, AppearanceMode as CoreAppearance, Content, Core, Dialog, Effect,
+    FanCurveEditor, FanMode, Input, Intent, Key, Link as CoreLink, PrismdHost, ProgramFile,
+    Section as CoreSection, ServiceAction as CoreServiceAction, ServiceOutcome,
+    SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer, TrackChart,
 };
 
 use crate::chart::{area_commands, limit_commands, line_commands, series_commands};
 use crate::environment::{Clock, Environment, HostServices, Launches, Sampling, WindowActivation};
 use crate::file_chooser::FileChooser;
+use crate::links::Opener;
 use crate::notifications::{NotificationEvent, Notifier};
 use crate::prismd::{PrismdConnector, PrismdReport};
 use crate::prismd_host::PrismdService;
 use crate::sampler::{Sampler, SamplerReading, SamplerSwitch};
+use crate::settings::SettingsStore;
 use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{
-    ActivityList, AppState, ChartId, ChartPart, CurvePart, Inbox, Intents, KeyPress, MainWindow,
-    Section, ServiceAction, SettingsSection, TuningSetting,
+    ActivityList, AppState, AppearanceMode, ChartId, ChartPart, CurvePart, Inbox, Intents,
+    KeyPress, Link, MainWindow, Section, ServiceAction, SettingsSection, TuningSetting,
 };
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
@@ -53,6 +55,8 @@ struct Inner {
     activation: Box<dyn WindowActivation>,
     notifier: Box<dyn Notifier>,
     file_chooser: Box<dyn FileChooser>,
+    opener: Box<dyn Opener>,
+    settings: Box<dyn SettingsStore>,
     /// The core's timers, made the first time each starts.
     timers: RefCell<HashMap<Timer, slint::Timer>>,
     /// The selected GPU's charts and fan curve editor as of the core revision they were made at,
@@ -103,6 +107,7 @@ impl App {
                     activation,
                     notifier,
                     file_chooser,
+                    opener,
                 },
             settings,
             clock,
@@ -125,6 +130,8 @@ impl App {
             activation,
             notifier,
             file_chooser,
+            opener,
+            settings,
             timers: RefCell::default(),
             drawn: RefCell::default(),
             inbox,
@@ -144,8 +151,9 @@ impl App {
             inner.window.window(),
             Box::new(move |focused| post(Posted::Focused(focused))),
         );
+        let settings = inner.settings.load();
         inner.handle(Input::Launched {
-            appearance: settings.load().appearance,
+            settings,
             started_unix_ms: inner.clock.started_unix_ms(),
         });
         Ok(Self { inner })
@@ -259,6 +267,33 @@ impl Inner {
             };
             with_inner(&inner, |inner| {
                 inner.handle(Input::Intent(Intent::RunService(action)))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_set_appearance(move |mode| {
+            let mode = match mode {
+                AppearanceMode::System => CoreAppearance::System,
+                AppearanceMode::Light => CoreAppearance::Light,
+                AppearanceMode::Dark => CoreAppearance::Dark,
+            };
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::SetAppearance(mode)))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_set_desktop_notifications(move |enabled| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::SetDesktopNotifications(enabled)))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_open(move |link| {
+            let link = match link {
+                Link::ThirdPartyLicenses => CoreLink::ThirdPartyLicenses,
+                Link::SlintWebsite => CoreLink::SlintWebsite,
+            };
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::Open(link)))
             });
         });
         let inner = Rc::downgrade(this);
@@ -791,6 +826,8 @@ impl Inner {
                 );
             }
             Effect::Copy(text) => self.window.invoke_copy_to_clipboard(text.into()),
+            Effect::SaveSettings(settings) => self.settings.save(&settings),
+            Effect::Open(link) => self.opener.open(link),
             Effect::StartSampler => self.start_sampler(),
             Effect::StopSampler => self.sampler_switch.set(false),
             Effect::RaiseWindow { activation_token } => {

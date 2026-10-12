@@ -11,8 +11,7 @@ use prism_protocol::{
     DaemonEvent, DaemonSnapshot, Incompatible, ProtocolVersion, SessionMessage, Welcome,
 };
 use prism_ui::{
-    AppearanceMode, Content, Core, Input, SessionFailure, TelemetrySource, TuningAccess,
-    TuningControl,
+    Content, Core, GuiSettings, Input, SessionFailure, TelemetrySource, TuningAccess, TuningControl,
 };
 
 const GPU: &str = "GPU-5a1b0000-0000-4000-8000-000000000001";
@@ -46,7 +45,7 @@ fn welcome(can_tune: bool, reason: Option<&str>) -> Welcome {
 fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core

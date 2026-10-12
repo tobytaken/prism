@@ -1,9 +1,10 @@
 //! The Settings shell: its sections, how to reach each one, and checking the host when Daemon
-//! opens without a prismd session.
+//! opens without a prismd session. Then Appearance, Notifications and About.
 
 use prism_protocol::{DaemonSnapshot, ProtocolVersion, SessionMessage, Welcome};
 use prism_ui::{
-    AppearanceMode, Content, Core, Effect, Input, Intent, Section, SessionFailure, SettingsSection,
+    About, AppearanceMode, Content, Core, Effect, GuiSettings, Input, Intent, Link, Section,
+    SessionFailure, SettingsSection,
 };
 
 fn snapshot() -> DaemonSnapshot {
@@ -20,7 +21,7 @@ fn snapshot() -> DaemonSnapshot {
 fn launched() -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     core
@@ -144,5 +145,163 @@ fn opening_daemon_with_a_session_checks_nothing() {
     assert_eq!(
         intent(&mut core, Intent::GoToSettings(SettingsSection::Daemon)),
         []
+    );
+}
+
+/// The palette's command titled `title` run, as picking it does.
+fn run_command(core: &mut Core, title: &str) -> Vec<Effect> {
+    intent(core, Intent::OpenPalette);
+    intent(core, Intent::FilterPalette(title.into()));
+    let index = core
+        .palette()
+        .unwrap()
+        .entries
+        .iter()
+        .position(|entry| entry.title == title)
+        .unwrap_or_else(|| panic!("the palette lists {title}"));
+    intent(core, Intent::RunPaletteEntry(index))
+}
+
+fn saved(appearance: AppearanceMode, desktop_notifications: bool) -> Effect {
+    Effect::SaveSettings(GuiSettings {
+        appearance,
+        desktop_notifications,
+    })
+}
+
+#[test]
+fn choosing_an_appearance_applies_it_and_saves_it() {
+    let mut core = launched();
+
+    assert_eq!(
+        intent(&mut core, Intent::SetAppearance(AppearanceMode::Dark)),
+        [saved(AppearanceMode::Dark, true)]
+    );
+    assert_eq!(core.appearance(), AppearanceMode::Dark);
+
+    // Already in use, so there's nothing to save.
+    assert_eq!(
+        intent(&mut core, Intent::SetAppearance(AppearanceMode::Dark)),
+        []
+    );
+
+    // Back to following the desktop.
+    assert_eq!(
+        intent(&mut core, Intent::SetAppearance(AppearanceMode::System)),
+        [saved(AppearanceMode::System, true)]
+    );
+    assert_eq!(core.appearance(), AppearanceMode::System);
+}
+
+#[test]
+fn the_palette_chooses_the_appearance() {
+    let mut core = launched();
+
+    assert_eq!(
+        palette(&mut core, "appearance"),
+        [
+            ("Go to Settings: Appearance".to_owned(), None),
+            (
+                "Use system appearance".to_owned(),
+                Some("Already in use".to_owned())
+            ),
+            ("Use light appearance".to_owned(), None),
+            ("Use dark appearance".to_owned(), None),
+        ]
+    );
+
+    assert_eq!(
+        run_command(&mut core, "Use light appearance"),
+        [saved(AppearanceMode::Light, true)]
+    );
+    assert_eq!(core.appearance(), AppearanceMode::Light);
+}
+
+#[test]
+fn turning_desktop_notifications_off_and_on_saves_it() {
+    let mut core = launched();
+    assert!(core.desktop_notifications());
+
+    assert_eq!(
+        intent(&mut core, Intent::SetDesktopNotifications(false)),
+        [saved(AppearanceMode::System, false)]
+    );
+    assert!(!core.desktop_notifications());
+    assert_eq!(
+        intent(&mut core, Intent::SetDesktopNotifications(false)),
+        []
+    );
+
+    assert_eq!(
+        intent(&mut core, Intent::SetDesktopNotifications(true)),
+        [saved(AppearanceMode::System, true)]
+    );
+    assert!(core.desktop_notifications());
+}
+
+#[test]
+fn the_palette_turns_desktop_notifications_off_and_on() {
+    let mut core = launched();
+    let titles = |core: &mut Core| -> Vec<String> {
+        palette(core, "desktop notifications")
+            .into_iter()
+            .map(|(title, _)| title)
+            .collect()
+    };
+
+    assert_eq!(titles(&mut core), ["Turn desktop notifications off"]);
+    run_command(&mut core, "Turn desktop notifications off");
+    assert!(!core.desktop_notifications());
+
+    assert_eq!(titles(&mut core), ["Turn desktop notifications on"]);
+    run_command(&mut core, "Turn desktop notifications on");
+    assert!(core.desktop_notifications());
+}
+
+#[test]
+fn prism_starts_with_the_saved_settings() {
+    let mut core = Core::default();
+    core.handle(Input::Launched {
+        settings: GuiSettings {
+            appearance: AppearanceMode::Dark,
+            desktop_notifications: false,
+        },
+        started_unix_ms: 0,
+    });
+
+    assert_eq!(core.appearance(), AppearanceMode::Dark);
+    assert!(!core.desktop_notifications());
+    // Changing one setting keeps the other.
+    assert_eq!(
+        intent(&mut core, Intent::SetAppearance(AppearanceMode::Light)),
+        [saved(AppearanceMode::Light, false)]
+    );
+}
+
+#[test]
+fn about_shows_the_version_the_license_and_the_slint_credit() {
+    let core = launched();
+
+    assert_eq!(
+        core.about(),
+        About {
+            version: env!("CARGO_PKG_VERSION").into(),
+            license: "GPL-3.0-or-later".into(),
+            slint_website: "https://slint.dev".into(),
+        }
+    );
+}
+
+#[test]
+fn about_opens_the_third_party_licenses_and_slints_website() {
+    let mut core = launched();
+
+    assert_eq!(
+        intent(&mut core, Intent::Open(Link::ThirdPartyLicenses)),
+        [Effect::Open(Link::ThirdPartyLicenses)]
+    );
+    assert_eq!(
+        intent(&mut core, Intent::Open(Link::SlintWebsite)),
+        [Effect::Open(Link::SlintWebsite)]
     );
 }

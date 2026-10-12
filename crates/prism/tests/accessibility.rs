@@ -547,6 +547,26 @@ fn drivers_and_its_confirmations_are_accessible() {
 }
 
 #[test]
+fn settings_appearance_notifications_and_about_are_accessible() {
+    for (daemon, state) in [
+        (DaemonState::Running, "tunable"),
+        (DaemonState::ReadOnly, "read-only"),
+    ] {
+        let harness = Harness::with_daemon(SimulatedFixture::TunableGpu, daemon);
+        harness.tick();
+        harness.ctrl(",");
+        harness.tick();
+        for section in ["Appearance", "Notifications", "About"] {
+            harness
+                .find(AccessibleRole::ListItem, section)
+                .invoke_accessible_default_action();
+            harness.tick();
+            audit(&format!("{state}, Settings → {section}"), &harness);
+        }
+    }
+}
+
+#[test]
 fn a_switch_s_default_action_toggles_it_unless_it_s_read_only() {
     let harness = tunable();
     show_games(&harness);
@@ -1250,6 +1270,19 @@ fn a_control_that_stays_editable_without_tuning_access_fails() {
             "Stepper PowerTrack::limit (Spinbox \"Power limit\"): not read-only",
             "Toggle FansTrack::curve (Switch \"Fan curve\"): not read-only",
         ]
+    );
+}
+
+#[test]
+fn a_gui_setting_may_stay_editable_without_tuning_access() {
+    let notifications = Element {
+        label: Some("Desktop notifications".into()),
+        ..switch()
+    };
+
+    assert_eq!(
+        problems(&[notifications], TuningAccess::Denied),
+        Vec::<String>::new()
     );
 }
 

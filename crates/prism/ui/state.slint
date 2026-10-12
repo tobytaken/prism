@@ -1,6 +1,7 @@
 // Prism's state and the user's intents, implemented in Rust. The glue copies the prism-ui core's
 // view models in here after every input; views only lay out and draw what they're given.
 
+import { AppearanceMode } from "theme.slint";
 import { SegmentView } from "widgets/segmented.slint";
 import { MenuEntryView } from "widgets/menu.slint";
 
@@ -398,6 +399,17 @@ export enum SettingsSection { appearance, startup, notifications, daemon, about 
 
 export enum ServiceAction { enable, restart }
 
+// Something Prism opens in the desktop's app for it.
+export enum Link { third-party-licenses, slint-website }
+
+// Settings → About: Prism's version, its license as an SPDX expression, and where "Built with
+// Slint" leads.
+export struct AboutView {
+    version: string,
+    license: string,
+    slint-website: string,
+}
+
 // A labeled fact about the prismd connection, such as the socket path.
 export struct FactView {
     label: string,
@@ -507,6 +519,9 @@ export global AppState {
     in property <[string]> daemon-paragraphs;
     in property <[string]> daemon-commands;
     in property <[FactView]> daemon-facts;
+    // Whether Prism sends desktop notifications at all.
+    in property <bool> desktop-notifications;
+    in property <AboutView> about;
     in property <bool> palette-open;
     in property <DialogView> dialog;
     // The current tuning values the open review says changed, or the profile values the
@@ -554,6 +569,12 @@ export global Intents {
     callback run-service(action: ServiceAction);
     // Puts `text` on the clipboard.
     callback copy(text: string);
+    // Uses this appearance mode from now on.
+    callback set-appearance(mode: AppearanceMode);
+    // Turns desktop notifications on or off.
+    callback set-desktop-notifications(enabled: bool);
+    // Opens `link` in the desktop's app for it.
+    callback open(link: Link);
     callback minimize-window();
     callback toggle-maximized();
     callback close-window();

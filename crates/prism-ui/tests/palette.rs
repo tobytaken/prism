@@ -6,7 +6,7 @@ use prism_gpu::GpuInventoryProvider;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_ui::telemetry::TelemetryRange;
 use prism_ui::{
-    AppearanceMode, Content, Core, Effect, Input, Intent, Key, PaletteEntry, Section, Shortcut,
+    Content, Core, Effect, GuiSettings, Input, Intent, Key, PaletteEntry, Section, Shortcut,
 };
 
 const FIRST_GPU: &str = "Go to GPU 0 · RTX 4090 · 01:00.0";
@@ -18,7 +18,7 @@ const SECOND_GPU_ID: &str = "GPU-5a1b0000-0000-4000-8000-000000000003";
 fn launched(fixture: SimulatedFixture) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     let gpus = SimulatedGpus::new(fixture, || Duration::ZERO);
@@ -69,7 +69,7 @@ fn selected_gpu(core: &Core) -> Option<String> {
 }
 
 #[test]
-fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_tuning_ranges_and_quit() {
+fn the_palette_lists_gpus_then_sections_settings_tuning_ranges_appearance_and_app() {
     let mut core = launched(SimulatedFixture::TwoIdenticalGpus);
     assert!(core.palette().is_none());
 
@@ -107,6 +107,10 @@ fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_tuning_r
             "Show last 5 minutes",
             "Show last 15 minutes",
             "Show last 1 hour",
+            "Use system appearance",
+            "Use light appearance",
+            "Use dark appearance",
+            "Turn desktop notifications off",
             "Quit Prism",
         ]
     );
@@ -151,6 +155,11 @@ fn each_command_shows_its_shortcut() {
             "",
             "",
             // The ranges.
+            "",
+            "",
+            "",
+            "",
+            // The appearance modes and Turn desktop notifications off.
             "",
             "",
             "",
@@ -316,6 +325,10 @@ fn recently_run_commands_come_first() {
             "Show last 5 minutes",
             "Show last 15 minutes",
             "Show last 1 hour",
+            "Use system appearance",
+            "Use light appearance",
+            "Use dark appearance",
+            "Turn desktop notifications off",
             "Quit Prism",
         ]
     );
@@ -357,6 +370,10 @@ fn gpu_and_range_commands_are_left_out_when_the_host_has_no_gpus() {
             "Turn automatic switching on",
             "Add Steam game…",
             "Add program…",
+            "Use system appearance",
+            "Use light appearance",
+            "Use dark appearance",
+            "Turn desktop notifications off",
             "Quit Prism"
         ]
     );
@@ -373,7 +390,7 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 28);
+    assert_eq!(titles(&core).len(), 32);
 }
 
 #[test]

@@ -14,6 +14,7 @@ mod app;
 mod chart;
 mod environment;
 mod file_chooser;
+mod links;
 mod notifications;
 mod prismd;
 mod prismd_host;
@@ -28,6 +29,7 @@ pub use crate::environment::{
     Clock, Environment, HostServices, Launches, NoLaunches, Sampling, SystemClock, WindowActivation,
 };
 pub use crate::file_chooser::{FileChooser, PortalFileChooser};
+pub use crate::links::{DesktopOpener, Opener};
 pub use crate::notifications::{DesktopNotifier, NotificationEvent, Notifier};
 pub use crate::prismd::{NoPrismd, PrismdConnector, PrismdReport, SocketConnector};
 pub use crate::prismd_host::{HostPrismdService, PrismdService};

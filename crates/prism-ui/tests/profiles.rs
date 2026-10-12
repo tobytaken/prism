@@ -15,7 +15,7 @@ use prism_protocol::{
     RangeBound, SessionMessage, SetEditHoldsRequest, Welcome,
 };
 use prism_ui::{
-    AppearanceMode, CommandId, Content, Core, Dialog, Effect, GpuWorkspace, Input, Intent,
+    CommandId, Content, Core, Dialog, Effect, GpuWorkspace, GuiSettings, Input, Intent,
     ProfileChoice, ReviewChange, SessionFailure,
 };
 
@@ -55,7 +55,7 @@ fn welcome(can_tune: bool) -> Welcome {
 fn connected_as(can_tune: bool) -> Core {
     let mut core = Core::default();
     core.handle(Input::Launched {
-        appearance: AppearanceMode::System,
+        settings: GuiSettings::default(),
         started_unix_ms: 0,
     });
     let mut snapshot = snapshot();

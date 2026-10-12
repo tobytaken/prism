@@ -58,7 +58,7 @@ impl GameCommand {
 }
 
 /// "on" or "off", as turning automatic switching on or off says it.
-fn on_off(enabled: bool) -> &'static str {
+pub(crate) fn on_off(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
 }
 
