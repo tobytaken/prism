@@ -7,7 +7,7 @@ import { Workspace } from "views/workspace.slint";
 import { ExplainedState } from "views/explained-state.slint";
 import { StatusBar } from "views/status-bar.slint";
 import { CommandPalette } from "views/command-palette.slint";
-import { CloseDialog, ReviewDialog } from "views/dialogs.slint";
+import { CloseDialog, DiscardForProfileDialog, ProfileCorrectionsDialog, ReviewDialog } from "views/dialogs.slint";
 import { Settings } from "views/settings.slint";
 
 export { Theme, AppearanceMode, AppState, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, Section, ServiceAction, SettingsSection, SidebarGpuView, StepperView, TrackView, TuningSetting, WorkspaceView }
@@ -103,5 +103,7 @@ export component MainWindow inherits Window {
         if AppState.palette-open: CommandPalette { }
         if AppState.dialog.kind == DialogKind.review: ReviewDialog { }
         if AppState.dialog.kind == DialogKind.confirm-close: CloseDialog { }
+        if AppState.dialog.kind == DialogKind.discard-for-profile: DiscardForProfileDialog { }
+        if AppState.dialog.kind == DialogKind.profile-corrections: ProfileCorrectionsDialog { }
     }
 }

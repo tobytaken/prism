@@ -21,6 +21,7 @@ use crate::drafts::{
 };
 use crate::format::{Readout, UNKNOWN, pending, short_bus_id, short_gpu_name, signed};
 use crate::palette::Command;
+use crate::profiles::correction_change;
 use crate::telemetry::{Chart, ChartPoint, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
 
 /// The readings the sidebar shows for each GPU.
@@ -98,6 +99,8 @@ pub struct GpuWorkspace {
     pub title: String,
     /// Index, bus id and architecture, such as "GPU 0 · 01:00.0 · Blackwell".
     pub subtitle: String,
+    /// The header's profile buttons.
+    pub profiles: ProfileSwitcher,
     /// The fixed strip under the header with the GPU's unapplied tuning changes.
     pub changes: ChangeStrip,
     /// Why there's no tuning access, for the inline "Tuning needs prismd" line; none with it.
@@ -149,6 +152,32 @@ impl GpuWorkspace {
     }
 }
 
+/// The GPU's tuning profiles as the workspace header's buttons, one click applying one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileSwitcher {
+    /// The caller's profiles of the GPU, in the order prismd lists them.
+    pub choices: Vec<ProfileChoice>,
+    /// The GPU's current profile's name, whoever owns it, if it has one.
+    pub current: Option<String>,
+    /// Why no profile can be applied, when there's no tuning access.
+    pub read_only: Option<String>,
+}
+
+/// One of the GPU's profiles in the workspace header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileChoice {
+    /// The profile's id, which applying it sends.
+    pub id: String,
+    /// The profile's name, as its button shows it.
+    pub name: String,
+    /// Whether it's the GPU's current profile, which shows as selected.
+    pub current: bool,
+    /// Whether it's the GPU's startup profile, which shows a dot.
+    pub startup: bool,
+    /// Why it can't be applied now, when it can't.
+    pub unavailable: Option<String>,
+}
+
 /// The fixed strip under the workspace's header: "No unapplied changes", or how many there are,
 /// with Discard and Apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,8 +186,9 @@ pub struct ChangeStrip {
     pub summary: String,
     /// Whether the GPU has unapplied tuning changes.
     pub pending: bool,
-    /// What the last Apply put into effect and what it left unapplied, and why, until the next
-    /// edit, such as "Power limit applied · Graphics clock offset not applied: …".
+    /// What the last Apply or profile application put into effect and what it left unapplied, and
+    /// why, until the next edit, such as "Power limit applied · Graphics clock offset not applied:
+    /// …" or "Quiet applied".
     pub outcome: Option<String>,
     /// Why Apply can't run now, while there are changes it can't apply.
     pub apply_unavailable: Option<String>,
@@ -471,6 +501,31 @@ pub enum Dialog {
     Review(Review),
     /// Closing Prism with unapplied tuning changes: "Discard and close" or "Keep editing".
     ConfirmClose(ConfirmClose),
+    /// Choosing a profile over the GPU's unapplied tuning changes: "Discard and apply" or "Keep
+    /// editing".
+    DiscardForProfile(DiscardForProfile),
+    /// A profile's values out of the GPU's range: "Adjust profile and apply" or "Cancel".
+    ProfileCorrections(ProfileCorrections),
+}
+
+/// The question choosing a profile over unapplied tuning changes asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscardForProfile {
+    /// Such as "Discard 2 unapplied changes and apply Quiet?".
+    pub title: String,
+    /// What applying the profile does to the unapplied changes.
+    pub message: String,
+}
+
+/// The one review of every range correction applying a profile needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileCorrections {
+    /// Such as "Adjust Quiet to apply it?".
+    pub title: String,
+    /// What adjusting does, and that nothing has changed yet.
+    pub message: String,
+    /// Each out-of-range setting, from its saved value to the one it would become.
+    pub corrections: Vec<ReviewChange>,
 }
 
 /// What changed under a GPU's draft, with Apply to apply it again over the new state and Discard.
@@ -550,6 +605,35 @@ impl Core {
             DialogState::ConfirmClose => Dialog::ConfirmClose(ConfirmClose {
                 summary: unapplied(self.unapplied_count()),
                 message: "Closing Prism discards them and ends their edit hold.".into(),
+            }),
+            DialogState::DiscardForProfile { profile_id } => {
+                let profile = self.profile(profile_id)?;
+                let count = self
+                    .drafts
+                    .by_gpu
+                    .get(&profile.gpu_id)
+                    .map_or(0, |draft| draft.len());
+                Dialog::DiscardForProfile(DiscardForProfile {
+                    title: format!(
+                        "Discard {} and apply {}?",
+                        unapplied(count).to_lowercase(),
+                        profile.name
+                    ),
+                    message: "The profile replaces the GPU's tuning values, so your unapplied \
+                              changes would be lost."
+                        .into(),
+                })
+            }
+            DialogState::ProfileCorrections {
+                profile_id,
+                corrections,
+            } => Dialog::ProfileCorrections(ProfileCorrections {
+                title: format!("Adjust {} to apply it?", self.profile(profile_id)?.name),
+                message: "These values are outside what the GPU allows now. Adjusting saves the \
+                          nearest allowed values to the profile, then applies it. Nothing has \
+                          changed yet."
+                    .into(),
+                corrections: corrections.iter().map(correction_change).collect(),
             }),
         })
     }
@@ -680,6 +764,7 @@ impl Core {
             id: gpu.id.clone(),
             title: gpu.device.name.clone(),
             subtitle,
+            profiles: self.profile_switcher(&gpu.id),
             changes: self.change_strip(),
             no_tuning_access: self.tuning_access().reason().map(str::to_owned),
             range: self.range,
@@ -1141,6 +1226,30 @@ impl Core {
         })
     }
 
+    /// The header's buttons for the GPU's profiles.
+    fn profile_switcher(&self, gpu_id: &str) -> ProfileSwitcher {
+        let current = self.profiles.current_profiles.get(gpu_id);
+        let startup = self.profiles.startup_profiles.get(gpu_id);
+        let read_only = self.tuning_access().reason().map(str::to_owned);
+        ProfileSwitcher {
+            choices: self
+                .profiles_of(gpu_id)
+                .map(|profile| ProfileChoice {
+                    id: profile.id.clone(),
+                    name: profile.name.clone(),
+                    current: current.is_some_and(|current| current.id == profile.id),
+                    startup: startup.is_some_and(|startup| startup.id == profile.id),
+                    unavailable: read_only
+                        .is_none()
+                        .then(|| self.profile_unavailable(&profile.id))
+                        .flatten(),
+                })
+                .collect(),
+            current: current.map(|current| current.name.clone()),
+            read_only,
+        }
+    }
+
     /// The selected GPU's change strip.
     fn change_strip(&self) -> ChangeStrip {
         let draft = self.selected_draft();
@@ -1148,7 +1257,12 @@ impl Core {
         ChangeStrip {
             summary: unapplied(count),
             pending: count > 0,
-            outcome: draft.and_then(|draft| draft.outcome.clone()),
+            outcome: match draft {
+                Some(draft) => draft.outcome.clone(),
+                None => self
+                    .selected_gpu()
+                    .and_then(|id| self.profile_outcomes.get(&id).cloned()),
+            },
             apply_unavailable: draft.and_then(|_| self.changes_unavailable(&Command::ApplyChanges)),
             discard_unavailable: draft
                 .and_then(|_| self.changes_unavailable(&Command::DiscardChanges)),

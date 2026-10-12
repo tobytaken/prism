@@ -1,6 +1,7 @@
 //! GPU tuning profiles in the tuning store: each user's own, keyed by GPU UUID, with names
 //! unique per GPU regardless of letter case.
 
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
 
@@ -12,7 +13,7 @@ use prism_gpu::{
 };
 use prism_protocol::{
     CurrentProfile, GpuTuningProfile, GpuTuningState, ProfileRangeCorrection, ProfileSetting,
-    ProfileSettingKey, ProfileSettings, RangeBound, ReportedTuningValues,
+    ProfileSettingKey, ProfileSettings, ProfilesState, RangeBound, ReportedTuningValues,
 };
 
 impl From<TuningStoreWriteError> for GpuCommandError {
@@ -281,6 +282,31 @@ impl TuningDocument {
             .iter()
             .flat_map(|user| &user.profiles)
             .find(|profile| profile.id == id)
+    }
+
+    /// The caller's profiles, with each GPU's startup and current profile by name, whoever owns
+    /// them.
+    pub fn profiles_state(&self, peer: &SessionPeer) -> ProfilesState {
+        let named = |designations: &BTreeMap<String, String>| {
+            designations
+                .iter()
+                .filter_map(|(gpu_id, id)| {
+                    let profile = self.any_profile(id)?;
+                    Some((
+                        gpu_id.clone(),
+                        CurrentProfile {
+                            id: profile.id.clone(),
+                            name: profile.name.clone(),
+                        },
+                    ))
+                })
+                .collect()
+        };
+        ProfilesState {
+            profiles: self.profiles_of(peer),
+            startup_profiles: named(&self.startup_profiles),
+            current_profiles: named(&self.current_profiles),
+        }
     }
 
     pub fn profiles_of(&self, peer: &SessionPeer) -> Vec<GpuTuningProfile> {

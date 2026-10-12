@@ -39,6 +39,8 @@ mod overlapping_games_tests;
 #[cfg(test)]
 mod profile_tests;
 #[cfg(test)]
+mod profiles_changed_tests;
+#[cfg(test)]
 mod program_tests;
 #[cfg(test)]
 mod recognition_tests;

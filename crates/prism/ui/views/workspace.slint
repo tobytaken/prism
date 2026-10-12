@@ -165,6 +165,23 @@ export component Workspace inherits Rectangle {
                     }
                 }
 
+                // The GPU's profiles: one click applies one.
+                if root.workspace.has-profiles: VerticalLayout {
+                    alignment: center;
+
+                    Segmented {
+                        label: "Profiles";
+                        segments: AppState.profiles;
+                        read-only: root.workspace.profiles-read-only;
+                        reason: root.workspace.profiles-reason;
+                        value: root.workspace.current-profile;
+                        value-text: root.workspace.current-profile;
+                        chosen(index) => {
+                            Intents.apply-profile(index);
+                        }
+                    }
+                }
+
                 VerticalLayout {
                     alignment: center;
 

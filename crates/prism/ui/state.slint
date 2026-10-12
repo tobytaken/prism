@@ -207,18 +207,24 @@ export struct ChangeStripView {
     discard-reason: string,
 }
 
-// `no-tuning-access` is why there's no tuning access, and empty with it.
+// `no-tuning-access` is why there's no tuning access, and empty with it. `has-profiles` says
+// whether the header shows the GPU's profiles, read-only with `profiles-reason` when
+// `profiles-read-only`, showing `current-profile`, the current profile's name, or "None".
 export struct WorkspaceView {
     id: string,
     title: string,
     subtitle: string,
+    has-profiles: bool,
+    profiles-read-only: bool,
+    profiles-reason: string,
+    current-profile: string,
     changes: ChangeStripView,
     no-tuning-access: string,
     hardware-open: bool,
 }
 
 // Which dialog is over the window, if any.
-export enum DialogKind { none, review, confirm-close }
+export enum DialogKind { none, review, confirm-close, discard-for-profile, profile-corrections }
 
 // A dialog over the window: its title and message, and whether its Apply and Discard can run and
 // why not.
@@ -296,6 +302,9 @@ export global AppState {
     // The workspace's tracks, top to bottom, and its range picker's segments.
     in property <[TrackView]> tracks;
     in property <[SegmentView]> ranges;
+    // The header's profile buttons: the GPU's profiles, the current one picked and the startup
+    // one marked.
+    in property <[SegmentView]> profiles;
     // The hardware details: the GPU inventory's entry for the GPU, and its control capabilities.
     in property <[FactView]> hardware-inventory;
     in property <[FactView]> hardware-capabilities;
@@ -315,7 +324,8 @@ export global AppState {
     in property <[FactView]> daemon-facts;
     in property <bool> palette-open;
     in property <DialogView> dialog;
-    // The current tuning values the open review says changed.
+    // The current tuning values the open review says changed, or the profile values the
+    // correction review would adjust.
     in property <[ReviewChangeView]> review-changes;
     // The commands matching the palette's query, recently run ones first.
     in property <[PaletteEntryView]> palette-entries;
@@ -367,6 +377,11 @@ export global Intents {
     callback move-curve-point(point: int, temperature-by: int, speed-by: int);
     // Collapses the fan curve editor, or opens it again.
     callback toggle-fan-curve();
+    // Applies the profile at this index among the header's profile buttons.
+    callback apply-profile(index: int);
+    // Answers the open profile dialog: discards the GPU's unapplied changes and applies the
+    // profile, or adjusts the profile and applies it.
+    callback confirm-profile();
     // Applies or discards the selected GPU's unapplied tuning changes.
     callback apply-changes();
     callback discard-changes();

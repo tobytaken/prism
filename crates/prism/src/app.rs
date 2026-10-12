@@ -277,6 +277,23 @@ impl Inner {
         intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
         intents.on_toggle_fan_curve(to_core(Intent::ToggleFanCurve));
         intents.on_recall_remembered_curve(to_core(Intent::RecallRememberedCurve));
+        intents.on_confirm_profile(to_core(Intent::ConfirmProfile));
+        let inner = Rc::downgrade(this);
+        intents.on_apply_profile(move |index| {
+            with_inner(&inner, |inner| {
+                // The buttons list the GPU's profiles in the order the core gives them.
+                let profile_id = match inner.core.borrow().content() {
+                    Content::Gpu(workspace) => usize::try_from(index)
+                        .ok()
+                        .and_then(|index| workspace.profiles.choices.get(index))
+                        .map(|choice| choice.id.clone()),
+                    _ => None,
+                };
+                if let Some(profile_id) = profile_id {
+                    inner.handle(Input::Intent(Intent::ApplyProfile(profile_id)));
+                }
+            });
+        });
         let inner = Rc::downgrade(this);
         intents.on_drag_curve_point(move |point, x, y| {
             if let Ok(point) = usize::try_from(point) {

@@ -4,11 +4,13 @@ import { StyledText } from "styled-text.slint";
 
 // A segment as shown: `text` on it, `label` what a screen reader calls it, such as "Show last
 // 1 minute" for "1 m", whether it's the one picked, and why it can't be picked, when it can't.
+// `mark` is what a dot after its text says, such as "Startup profile", and empty without one.
 export struct SegmentView {
     text: string,
     label: string,
     selected: bool,
     unavailable-reason: string,
+    mark: string,
 }
 
 // One segment: a toggle button, checked while it's the one picked. One that can't be picked is
@@ -17,11 +19,14 @@ component Segment inherits Rectangle {
     in property <SegmentView> segment;
     in property <length> segment-height;
     property <bool> available: segment.unavailable-reason == "";
+    property <bool> marked: segment.mark != "";
     callback activated();
 
     accessible-role: button;
     accessible-label: segment.label;
-    accessible-description: segment.unavailable-reason;
+    accessible-description: !marked ? segment.unavailable-reason
+        : available ? segment.mark
+        : "\{segment.mark}. \{segment.unavailable-reason}";
     accessible-enabled: available;
     accessible-checkable: true;
     accessible-checked: segment.selected;
@@ -32,7 +37,8 @@ component Segment inherits Rectangle {
     }
     forward-focus: press;
     height: root.segment-height;
-    width: caption.preferred-width + 2 * Theme.space.s;
+    width: caption.preferred-width + 2 * Theme.space.s
+        + (root.marked ? Theme.space.xs + Theme.size.segment-mark : 0);
     background: root.available && press.has-hover ? Theme.color.hover : transparent;
 
     press := PressArea {
@@ -43,12 +49,23 @@ component Segment inherits Rectangle {
     }
 
     caption := StyledText {
+        x: root.marked ? Theme.space.s : 0;
+        width: root.marked ? self.preferred-width : parent.width;
         text: root.segment.text;
         style: Theme.text.value;
         color: !root.available ? Theme.color.rule
             : root.segment.selected || press.has-hover ? Theme.color.ink : Theme.color.ink-muted;
         horizontal-alignment: center;
         accessible-role: none;
+    }
+
+    // Its mark is a dot after its text.
+    if root.marked: Rectangle {
+        x: caption.x + caption.width + Theme.space.xs;
+        y: (parent.height - self.height) / 2;
+        width: Theme.size.segment-mark;
+        height: Theme.size.segment-mark;
+        background: caption.color;
     }
 
     // The picked segment is underlined in the accent.
