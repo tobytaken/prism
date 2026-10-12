@@ -373,3 +373,33 @@ fn the_tuning_state_reports_the_values_its_revision_covers() {
         json!({ "power_limit_watts": null, "graphics_offset_mhz": 120, "memory_offset_mhz": -40 })
     );
 }
+
+#[test]
+fn the_tuning_state_names_the_settings_that_follow_an_applied_default() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(state(&alice).get("defaults"), None);
+
+    alice.apply(
+        "GPU-123",
+        json!({
+            "power_limit_watts": { "kind": "default" },
+            "memory_offset_mhz": { "kind": "default" }
+        }),
+    );
+    assert_eq!(
+        state(&alice)["defaults"],
+        json!(["power_limit_watts", "memory_offset_mhz"])
+    );
+
+    // A number equal to the default stays a number, and a default the GPU no longer reports
+    // isn't followed.
+    alice.apply(
+        "GPU-123",
+        json!({ "memory_offset_mhz": { "kind": "value", "value": 0 } }),
+    );
+    daemon
+        .gpus
+        .update("GPU-123", |gpu| gpu.power.current_limit_watts = Some(450));
+    assert_eq!(state(&alice).get("defaults"), None);
+}

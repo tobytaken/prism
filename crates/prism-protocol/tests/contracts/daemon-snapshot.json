@@ -85,6 +85,7 @@
         "gpu_id": "GPU-5a1b0000-0000-4000-8000-000000000001",
         "revision": "4f1c2b9d0e8a7c35",
         "reported": {
+          "cooling": { "arrangement": "shared", "setting": { "mode": "automatic" } },
           "power_limit_watts": 575,
           "graphics_offset_mhz": 0,
           "memory_offset_mhz": 0

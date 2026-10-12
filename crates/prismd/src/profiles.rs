@@ -124,12 +124,11 @@ pub(super) fn capture_settings(
                 reading.error.unwrap_or(refresh)
             )));
         };
-        let follows_default = origin == super::tuning::TuningOrigin::Manual
-            && last_applied.and_then(|applied| applied.get(key))
-                == Some(ProfileSetting::Default {});
+        let keeps_default = origin == super::tuning::TuningOrigin::Manual
+            && follows_default(&reading, last_applied, key);
         settings.set(
             key,
-            if follows_default && reading.default == Some(current) {
+            if keeps_default {
                 ProfileSetting::Default {}
             } else {
                 ProfileSetting::Value { value: current }
@@ -144,6 +143,18 @@ pub(super) fn capture_settings(
         ));
     }
     Ok(settings)
+}
+
+/// Whether the setting's current tuning value is its default because the last applied tuning
+/// value was a request for the default.
+fn follows_default(
+    reading: &Reading<'_>,
+    last_applied: Option<&ProfileSettings>,
+    key: ProfileSettingKey,
+) -> bool {
+    last_applied.and_then(|applied| applied.get(key)) == Some(ProfileSetting::Default {})
+        && reading.current.is_some()
+        && reading.default == reading.current
 }
 
 /// A name with surrounding whitespace removed, unless nothing is left.
@@ -205,8 +216,13 @@ impl TuningDocument {
             "last_applied": self.last_applied.get(&uuid),
             "current_profile": current_profile,
         });
+        let last_applied = self.last_applied.get(&uuid);
         GpuTuningState {
             revision: format!("{:016x}", digest(state.to_string().as_bytes())),
+            defaults: ProfileSettingKey::ALL
+                .into_iter()
+                .filter(|key| follows_default(&reading(gpu, *key), last_applied, *key))
+                .collect(),
             reported: ReportedTuningValues {
                 cooling: capture_cooling(gpu).ok().flatten(),
                 power_limit_watts: reading(gpu, ProfileSettingKey::PowerLimitWatts).current,

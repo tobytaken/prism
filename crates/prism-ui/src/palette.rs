@@ -28,6 +28,18 @@ pub(crate) enum Command {
     /// Apply this profile of the selected GPU, by id, asking first as choosing it in the header
     /// does.
     ApplyProfile(String),
+    /// Save the selected GPU's applied values to its current profile.
+    SaveToCurrentProfile,
+    /// Name a new profile of the selected GPU's applied values.
+    SaveAsNewProfile,
+    /// Rename the selected GPU's current profile.
+    RenameProfile,
+    /// Delete the selected GPU's current profile, once the user confirms it.
+    DeleteProfile,
+    /// Make the selected GPU's current profile its startup profile.
+    UseAsStartupProfile,
+    /// List the selected GPU's profiles, to rename or delete any of them.
+    ManageProfiles,
     Quit,
 }
 
@@ -195,16 +207,22 @@ impl Core {
     /// Opens the palette, unless a dialog waits for an answer.
     pub(crate) fn open_palette(&mut self) {
         if self.palette.is_none() && self.dialog.is_none() {
+            self.profile_menu_open = false;
             self.palette = Some(PaletteState::default());
             self.highlight_first_available();
         }
     }
 
-    /// Closes the topmost overlay: the palette, or else the dialog, which keeps editing.
+    /// Closes the topmost overlay: the palette, the profile menu, or else the dialog, which keeps
+    /// editing. A dialog opened from Manage profiles goes back to it.
     pub(crate) fn dismiss(&mut self) {
-        if self.palette.take().is_none() {
-            self.dialog = None;
+        if self.palette.take().is_some() {
+            return;
         }
+        if std::mem::take(&mut self.profile_menu_open) {
+            return;
+        }
+        self.close_dialog();
     }
 
     /// Whether an open dialog keeps a shortcut from running `command`: only its own answers run
@@ -217,7 +235,11 @@ impl Core {
             }
             Some(DialogState::ConfirmClose) => *command != Command::Quit,
             Some(
-                DialogState::DiscardForProfile { .. } | DialogState::ProfileCorrections { .. },
+                DialogState::DiscardForProfile { .. }
+                | DialogState::ProfileCorrections { .. }
+                | DialogState::ProfileName { .. }
+                | DialogState::DeleteProfile { .. }
+                | DialogState::ManageProfiles { .. },
             ) => true,
         }
     }
@@ -281,6 +303,9 @@ impl Core {
         if let Command::ApplyProfile(profile_id) = command {
             return self.profile_unavailable(profile_id);
         }
+        if let Some(reason) = self.profile_action_unavailable(command) {
+            return reason;
+        }
         let already_open = match command {
             Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
             Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
@@ -295,6 +320,12 @@ impl Core {
             | Command::DiscardChanges
             | Command::RecallRememberedCurve
             | Command::ApplyProfile(_)
+            | Command::SaveToCurrentProfile
+            | Command::SaveAsNewProfile
+            | Command::RenameProfile
+            | Command::DeleteProfile
+            | Command::UseAsStartupProfile
+            | Command::ManageProfiles
             | Command::Quit => false,
         };
         already_open.then(|| "Already open".into())
@@ -386,7 +417,13 @@ impl Core {
                     format!("Apply profile {}", profile.name),
                     None,
                 )
-            });
+            })
+            .chain(
+                selected
+                    .iter()
+                    .flat_map(|gpu_id| self.profile_actions(gpu_id))
+                    .map(|(command, title)| (command, title, None)),
+            );
         // Telemetry ranges only matter while there are GPUs to chart.
         let ranges = TelemetryRange::ALL
             .into_iter()

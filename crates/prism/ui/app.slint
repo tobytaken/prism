@@ -1,16 +1,16 @@
 import { Theme, AppearanceMode } from "theme.slint";
-import { AppState, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, Section, ServiceAction, SettingsSection, SidebarGpuView, StepperView, TrackView, TuningSetting, WorkspaceView } from "state.slint";
-import { SegmentView } from "widgets.slint";
+import { AppState, MenuAnchor, ManagedProfileView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, Section, ServiceAction, SettingsSection, SidebarGpuView, StepperView, TrackView, TuningSetting, WorkspaceView } from "state.slint";
+import { Menu, MenuEntryView, SegmentView } from "widgets.slint";
 import { TitleBar } from "views/title-bar.slint";
 import { Sidebar } from "views/sidebar.slint";
 import { Workspace } from "views/workspace.slint";
 import { ExplainedState } from "views/explained-state.slint";
 import { StatusBar } from "views/status-bar.slint";
 import { CommandPalette } from "views/command-palette.slint";
-import { CloseDialog, DiscardForProfileDialog, ProfileCorrectionsDialog, ReviewDialog } from "views/dialogs.slint";
+import { CloseDialog, DeleteProfileDialog, DiscardForProfileDialog, ManageProfilesDialog, ProfileCorrectionsDialog, ProfileNameDialog, ReviewDialog } from "views/dialogs.slint";
 import { Settings } from "views/settings.slint";
 
-export { Theme, AppearanceMode, AppState, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, Section, ServiceAction, SettingsSection, SidebarGpuView, StepperView, TrackView, TuningSetting, WorkspaceView }
+export { Theme, AppearanceMode, AppState, MenuAnchor, ManagedProfileView, MenuEntryView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, Section, ServiceAction, SettingsSection, SidebarGpuView, StepperView, TrackView, TuningSetting, WorkspaceView }
 
 // Prism's one window: frameless, with its own title bar, the sidebar, the content and the status
 // bar, and the command palette or a dialog over them when one is open.
@@ -100,10 +100,31 @@ export component MainWindow inherits Window {
             StatusBar { }
         }
 
+        // The `⋯` profile menu, under the button that opened it. Clicks outside it close it.
+        if AppState.profile-menu-open: Rectangle {
+            TouchArea {
+                clicked => {
+                    Intents.dismiss();
+                }
+            }
+
+            Menu {
+                x: max(0px, MenuAnchor.right - self.width);
+                y: MenuAnchor.top + Theme.space.xs;
+                label: "Profile actions";
+                entries: AppState.profile-menu;
+                chosen(index) => {
+                    Intents.run-profile-menu-entry(index);
+                }
+            }
+        }
         if AppState.palette-open: CommandPalette { }
         if AppState.dialog.kind == DialogKind.review: ReviewDialog { }
         if AppState.dialog.kind == DialogKind.confirm-close: CloseDialog { }
         if AppState.dialog.kind == DialogKind.discard-for-profile: DiscardForProfileDialog { }
         if AppState.dialog.kind == DialogKind.profile-corrections: ProfileCorrectionsDialog { }
+        if AppState.dialog.kind == DialogKind.profile-name: ProfileNameDialog { }
+        if AppState.dialog.kind == DialogKind.delete-profile: DeleteProfileDialog { }
+        if AppState.dialog.kind == DialogKind.manage-profiles: ManageProfilesDialog { }
     }
 }

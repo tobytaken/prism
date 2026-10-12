@@ -92,6 +92,12 @@ fn the_palette_lists_a_command_per_gpu_then_the_sections_their_settings_tuning_r
             "Apply unapplied changes",
             "Discard unapplied changes",
             "Recall remembered fan curve",
+            "Save to current profile",
+            "Save as new profile…",
+            "Rename profile…",
+            "Delete profile…",
+            "Use current profile as startup profile",
+            "Manage profiles…",
             "Show last 1 minute",
             "Show last 5 minutes",
             "Show last 15 minutes",
@@ -126,7 +132,15 @@ fn each_command_shows_its_shortcut() {
             "",
             "Ctrl+Enter",
             "Ctrl+Shift+Backspace",
+            // Recall remembered fan curve and the profile actions.
             "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            // The ranges.
             "",
             "",
             "",
@@ -341,7 +355,7 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 18);
+    assert_eq!(titles(&core).len(), 24);
 }
 
 #[test]

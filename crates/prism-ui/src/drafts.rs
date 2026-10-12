@@ -117,6 +117,35 @@ pub(crate) enum DialogState {
         profile_id: String,
         corrections: Vec<ProfileRangeCorrection>,
     },
+    /// Naming a profile: saving the GPU's applied values as a new one, or renaming one. `error`
+    /// is why prismd refused the name last sent, until it's edited; `sending` the command prismd
+    /// hasn't answered yet; and `managing` the GPU whose Manage profiles it was opened from, which
+    /// it goes back to.
+    ProfileName {
+        naming: Naming,
+        name: String,
+        error: Option<String>,
+        sending: Option<CommandId>,
+        managing: Option<String>,
+    },
+    /// Deleting the profile, once the user confirms it.
+    DeleteProfile {
+        profile_id: String,
+        error: Option<String>,
+        sending: Option<CommandId>,
+        managing: Option<String>,
+    },
+    /// The GPU's profiles, to rename or delete any of them.
+    ManageProfiles { gpu_id: String },
+}
+
+/// What a profile name dialog names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Naming {
+    /// A new profile of the GPU's applied values.
+    SaveAsNew { gpu_id: String },
+    /// The profile, by id.
+    Rename { profile_id: String },
 }
 
 /// A current tuning value that changed under a draft.
@@ -169,7 +198,7 @@ pub(crate) fn staged_text(key: ProfileSettingKey, setting: ProfileSetting) -> St
 }
 
 /// A setting's current tuning value as prismd reported it.
-fn reported(values: &ReportedTuningValues, key: ProfileSettingKey) -> Option<i64> {
+pub(crate) fn reported(values: &ReportedTuningValues, key: ProfileSettingKey) -> Option<i64> {
     match key {
         ProfileSettingKey::PowerLimitWatts => values.power_limit_watts,
         ProfileSettingKey::GraphicsOffsetMhz => values.graphics_offset_mhz,
@@ -416,7 +445,9 @@ impl Core {
     /// unapplied, and why, and a refusal for review opens one. The values in effect come only from
     /// prismd's events.
     pub(crate) fn answered(&mut self, command: CommandId, response: DaemonResponse) -> Vec<Effect> {
-        if self.profile_answered(command, &response) {
+        if self.profile_answered(command, &response)
+            || self.profile_command_answered(command, &response)
+        {
             return Vec::new();
         }
         let Some(id) = self
@@ -511,13 +542,12 @@ impl Core {
     /// answered is open; the strip still says why.
     fn open_review(&mut self, gpu_id: String, changes: Vec<ReviewChange>) {
         if self.dialog.is_none() {
-            self.palette = None;
-            self.dialog = Some(DialogState::Review { gpu_id, changes });
+            self.open_dialog(DialogState::Review { gpu_id, changes });
         }
     }
 
     /// The GPU's tuning-state revision as prismd last pushed it, or none without one.
-    fn revision_of(&self, gpu_id: &str) -> String {
+    pub(crate) fn revision_of(&self, gpu_id: &str) -> String {
         self.tuning
             .get(gpu_id)
             .map(|state| state.revision.clone())
@@ -556,8 +586,7 @@ impl Core {
         if self.drafts.by_gpu.is_empty() {
             return self.quit();
         }
-        self.palette = None;
-        self.dialog = Some(DialogState::ConfirmClose);
+        self.open_dialog(DialogState::ConfirmClose);
         Vec::new()
     }
 

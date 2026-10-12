@@ -11,7 +11,9 @@ use prism_protocol::{
 
 use crate::cooling::cooling_text;
 use crate::core::{CommandId, Core, Effect};
-use crate::drafts::{DialogState, ReviewChange, not_applied, setting_name, setting_readout};
+use crate::drafts::{
+    DialogState, Naming, ReviewChange, not_applied, setting_name, setting_readout,
+};
 
 /// A profile application waiting for prismd's answer.
 #[derive(Debug, Clone)]
@@ -76,8 +78,7 @@ impl Core {
             return Vec::new();
         };
         if self.drafts.by_gpu.contains_key(&gpu_id) {
-            self.palette = None;
-            self.dialog = Some(DialogState::DiscardForProfile { profile_id });
+            self.open_dialog(DialogState::DiscardForProfile { profile_id });
             return Vec::new();
         }
         self.apply_profile(profile_id, Vec::new())
@@ -86,6 +87,12 @@ impl Core {
     /// Answers the open profile dialog: discards the draft and applies the profile, or adjusts the
     /// profile and applies it.
     pub(crate) fn confirm_profile(&mut self) -> Vec<Effect> {
+        if matches!(
+            self.dialog,
+            Some(DialogState::ProfileName { .. } | DialogState::DeleteProfile { .. })
+        ) {
+            return self.confirm_profile_change();
+        }
         let (profile_id, corrections) = match self.dialog.take() {
             Some(DialogState::DiscardForProfile { profile_id }) => (profile_id, Vec::new()),
             Some(DialogState::ProfileCorrections {
@@ -176,8 +183,7 @@ impl Core {
                          review them."
                     )
                 } else {
-                    self.palette = None;
-                    self.dialog = Some(DialogState::ProfileCorrections {
+                    self.open_dialog(DialogState::ProfileCorrections {
                         profile_id: applying.profile_id,
                         corrections: application.corrections.clone(),
                     });
@@ -203,6 +209,7 @@ impl Core {
     pub(crate) fn profiles_lost_session(&mut self) {
         self.profiles = Default::default();
         self.close_stale_profile_dialog();
+        self.profile_changes_lost_session();
         for (gpu_id, applying) in std::mem::take(&mut self.profile_applications) {
             self.profile_outcomes.insert(
                 gpu_id,
@@ -222,17 +229,22 @@ impl Core {
     }
 
     /// Closes a profile dialog whose profile is gone, such as one deleted in another session: it
-    /// has nothing left to show or apply.
+    /// has nothing left to show or apply. One opened from Manage profiles goes back to it.
     fn close_stale_profile_dialog(&mut self) {
         let profile_id = match &self.dialog {
             Some(
                 DialogState::DiscardForProfile { profile_id }
-                | DialogState::ProfileCorrections { profile_id, .. },
+                | DialogState::ProfileCorrections { profile_id, .. }
+                | DialogState::DeleteProfile { profile_id, .. }
+                | DialogState::ProfileName {
+                    naming: Naming::Rename { profile_id },
+                    ..
+                },
             ) => profile_id,
             _ => return,
         };
         if self.profile(profile_id).is_none() {
-            self.dialog = None;
+            self.close_dialog();
         }
     }
 }

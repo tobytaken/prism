@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
-import { Button, ButtonKind, Dialog, StyledText } from "../widgets.slint";
-import { AppState, Intents, ReviewChangeView } from "../state.slint";
+import { Button, ButtonKind, Dialog, StyledText, TextField } from "../widgets.slint";
+import { AppState, Intents, ManagedProfileView, ReviewChangeView } from "../state.slint";
 
 // A current tuning value that changed under the draft: the setting, from what to what, and what
 // the draft stages for it.
@@ -176,6 +176,203 @@ export component ProfileCorrectionsDialog inherits Dialog {
             }
             activated => {
                 Intents.confirm-profile();
+            }
+        }
+    }
+}
+
+// What's wrong, in the danger color, such as a name another profile has or why prismd refused it.
+component Problem inherits StyledText {
+    style: Theme.text.body;
+    color: Theme.color.danger;
+    wrap: word-wrap;
+    accessible-role: text;
+    accessible-label: "Problem";
+    accessible-value: self.text;
+}
+
+// The name of a new profile, or a profile's new name: Return or the confirmation sends it, and
+// Cancel or Escape changes nothing. A name another of the GPU's profiles has shows as it's typed.
+export component ProfileNameDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    field := TextField {
+        label: "Profile name";
+        placeholder: "Profile name";
+        text: AppState.dialog.name;
+        init => {
+            self.focus();
+            self.select-all();
+        }
+        edited(name) => {
+            Intents.edit-profile-name(name);
+        }
+        accepted => {
+            Intents.confirm-profile();
+        }
+    }
+
+    if AppState.dialog.error != "": Problem {
+        text: AppState.dialog.error;
+    }
+
+    Actions {
+        Button {
+            text: "Cancel";
+            kind: ButtonKind.quiet;
+            activated => {
+                Intents.dismiss();
+            }
+        }
+
+        Button {
+            text: AppState.dialog.confirm-text;
+            kind: ButtonKind.accent;
+            enabled: AppState.dialog.can-confirm;
+            description: AppState.dialog.confirm-reason;
+            activated => {
+                Intents.confirm-profile();
+            }
+        }
+    }
+}
+
+// Deleting a profile, which can't be undone: Delete, or Cancel, which Escape also does and which
+// has the keyboard.
+export component DeleteProfileDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    if AppState.dialog.error != "": Problem {
+        text: AppState.dialog.error;
+    }
+
+    Actions {
+        Button {
+            text: "Delete";
+            kind: ButtonKind.plain;
+            enabled: AppState.dialog.can-confirm;
+            description: AppState.dialog.confirm-reason;
+            activated => {
+                Intents.confirm-profile();
+            }
+        }
+
+        Button {
+            text: "Cancel";
+            kind: ButtonKind.accent;
+            init => {
+                self.focus();
+            }
+            activated => {
+                Intents.dismiss();
+            }
+        }
+    }
+}
+
+// One of the GPU's profiles in Manage profiles: its name and marks, then Rename and Delete.
+component ManagedProfile inherits Rectangle {
+    in property <ManagedProfileView> profile;
+    in property <bool> can-change;
+    in property <string> reason;
+    callback rename();
+    callback delete();
+
+    height: row.preferred-height;
+
+    row := HorizontalLayout {
+        spacing: Theme.space.m;
+
+        Rectangle {
+            horizontal-stretch: 1;
+            accessible-role: text;
+            accessible-label: root.profile.name;
+            accessible-value: root.profile.marks;
+
+            HorizontalLayout {
+                spacing: Theme.space.m;
+
+                StyledText {
+                    text: root.profile.name;
+                    style: Theme.text.body;
+                    overflow: elide;
+                    accessible-role: none;
+                }
+
+                StyledText {
+                    horizontal-stretch: 1;
+                    text: root.profile.marks;
+                    style: Theme.text.value;
+                    color: Theme.color.ink-muted;
+                    overflow: elide;
+                    accessible-role: none;
+                }
+            }
+        }
+
+        Button {
+            text: "Rename";
+            label: "Rename \{root.profile.name}";
+            kind: ButtonKind.quiet;
+            enabled: root.can-change;
+            description: root.reason;
+            activated => {
+                root.rename();
+            }
+        }
+
+        Button {
+            text: "Delete";
+            label: "Delete \{root.profile.name}";
+            kind: ButtonKind.quiet;
+            enabled: root.can-change;
+            description: root.reason;
+            activated => {
+                root.delete();
+            }
+        }
+    }
+}
+
+// The GPU's profiles, each with Rename and Delete, which ask in a dialog of their own and come
+// back here. Done or Escape closes it.
+export component ManageProfilesDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    VerticalLayout {
+        spacing: Theme.space.xs;
+
+        for profile[index] in AppState.managed-profiles: ManagedProfile {
+            profile: profile;
+            can-change: AppState.dialog.confirm-reason == "";
+            reason: AppState.dialog.confirm-reason;
+            rename => {
+                Intents.rename-profile(index);
+            }
+            delete => {
+                Intents.delete-profile(index);
+            }
+        }
+
+        if AppState.managed-profiles.length == 0: StyledText {
+            text: "This GPU has no profiles.";
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+        }
+    }
+
+    Actions {
+        Button {
+            text: "Done";
+            kind: ButtonKind.accent;
+            init => {
+                self.focus();
+            }
+            activated => {
+                Intents.dismiss();
             }
         }
     }

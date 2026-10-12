@@ -1,0 +1,94 @@
+import { Theme } from "../theme.slint";
+import { PopupSurface } from "popup-surface.slint";
+import { PressArea } from "press-area.slint";
+import { StyledText } from "styled-text.slint";
+
+// An action in a menu: its title, and why it can't run when it can't, which dims it.
+export struct MenuEntryView {
+    title: string,
+    available: bool,
+    reason: string,
+}
+
+// One entry: running it closes the menu. One that can't run does nothing, and says why.
+component MenuItem inherits Rectangle {
+    in property <MenuEntryView> entry;
+    callback activated();
+
+    accessible-role: list-item;
+    accessible-label: entry.title;
+    accessible-description: entry.reason;
+    accessible-enabled: entry.available;
+    accessible-action-default => {
+        if root.entry.available {
+            root.activated();
+        }
+    }
+    forward-focus: press;
+    height: Theme.size.palette-row;
+    background: root.entry.available && press.has-hover ? Theme.color.hover : transparent;
+
+    press := PressArea {
+        enabled: root.entry.available;
+        activated => {
+            root.activated();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space.l;
+        padding-right: Theme.space.l;
+        spacing: Theme.space.m;
+
+        StyledText {
+            text: root.entry.title;
+            style: Theme.text.body;
+            color: root.entry.available ? Theme.color.ink : Theme.color.ink-muted;
+            accessible-role: none;
+        }
+
+        if !root.entry.available: StyledText {
+            horizontal-stretch: 1;
+            text: root.entry.reason;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            horizontal-alignment: right;
+            overflow: elide;
+            accessible-role: none;
+        }
+    }
+}
+
+// A menu of actions, such as the workspace header's `⋯` profile menu: a list labeled `label`
+// with an entry per action (see widgets.slint). The first entry takes the keyboard when it opens.
+export component Menu inherits PopupSurface {
+    in property <string> label;
+    in property <[MenuEntryView]> entries;
+    callback chosen(index: int);
+
+    accessible-role: list;
+    accessible-label: root.label;
+    width: Theme.size.menu-width;
+    height: layout.preferred-height;
+
+    // Clicks inside the menu stay there.
+    TouchArea { }
+
+    layout := VerticalLayout {
+        height: self.preferred-height;
+        padding-top: Theme.space.xs;
+        padding-bottom: Theme.space.xs;
+
+        for entry[index] in root.entries: MenuItem {
+            entry: entry;
+            init => {
+                if index == 0 {
+                    self.focus();
+                }
+            }
+            activated => {
+                root.chosen(index);
+            }
+        }
+    }
+}

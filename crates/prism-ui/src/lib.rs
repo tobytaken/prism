@@ -13,6 +13,7 @@ pub mod format;
 mod host;
 mod notifications;
 mod palette;
+mod profile_management;
 mod profiles;
 pub mod telemetry;
 mod view;
@@ -28,9 +29,9 @@ pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
-    ChangeStrip, ConfirmClose, Content, CurveMarker, CurvePoint, Detail, Dialog, DiscardForProfile,
-    ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor, FanModeChoice,
-    FanModeControl, GpuWorkspace, HardwareDetails, ProfileChoice, ProfileCorrections,
-    ProfileSwitcher, Review, Sidebar, SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind,
-    Tunable,
+    ChangeStrip, ConfirmClose, ConfirmDelete, Content, CurveMarker, CurvePoint, Detail, Dialog,
+    DiscardForProfile, ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor,
+    FanModeChoice, FanModeControl, GpuWorkspace, HardwareDetails, ManageProfiles, ManagedProfile,
+    MenuEntry, ProfileChoice, ProfileCorrections, ProfileMenu, ProfileNameDialog, ProfileSwitcher,
+    Review, Sidebar, SidebarGpu, StatusBar, Stepper, Track, TrackChart, TrackKind, Tunable,
 };

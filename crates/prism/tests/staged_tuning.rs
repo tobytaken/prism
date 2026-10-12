@@ -342,8 +342,11 @@ fn tuning_changed(harness: &Harness, revision: &str, watts: i64) {
         .push(DaemonEvent::TuningStateChanged(GpuTuningState {
             gpu_id: GPU.into(),
             revision: revision.into(),
+            defaults: Vec::new(),
             reported: ReportedTuningValues {
-                cooling: None,
+                cooling: Some(prism_gpu::cooling::CoolingConfiguration::Shared {
+                    setting: prism_gpu::cooling::FanSetting::Automatic {},
+                }),
                 power_limit_watts: Some(watts),
                 graphics_offset_mhz: Some(0),
                 memory_offset_mhz: Some(0),

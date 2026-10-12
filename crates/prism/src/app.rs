@@ -11,7 +11,7 @@ use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, 
 use prism_protocol::ProfileSettingKey;
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    Content, Core, Effect, FanCurveEditor, FanMode, Input, Intent, Key, PrismdHost,
+    Content, Core, Dialog, Effect, FanCurveEditor, FanMode, Input, Intent, Key, PrismdHost,
     Section as CoreSection, ServiceAction as CoreServiceAction, ServiceOutcome,
     SettingsSection as CoreSettingsSection, Shortcut, TelemetrySource, Timer, TrackChart,
 };
@@ -278,6 +278,39 @@ impl Inner {
         intents.on_toggle_fan_curve(to_core(Intent::ToggleFanCurve));
         intents.on_recall_remembered_curve(to_core(Intent::RecallRememberedCurve));
         intents.on_confirm_profile(to_core(Intent::ConfirmProfile));
+        intents.on_toggle_profile_menu(to_core(Intent::ToggleProfileMenu));
+        let inner = Rc::downgrade(this);
+        intents.on_run_profile_menu_entry(move |index| {
+            if let Ok(index) = usize::try_from(index) {
+                with_inner(&inner, |inner| {
+                    inner.handle(Input::Intent(Intent::RunProfileMenuEntry(index)))
+                });
+            }
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_edit_profile_name(move |name| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::EditProfileName(name.into())))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_rename_profile(move |index| {
+            with_inner(&inner, |inner| {
+                let profile_id = managed_profile_id(&inner.core.borrow(), index);
+                if let Some(profile_id) = profile_id {
+                    inner.handle(Input::Intent(Intent::RenameProfile(profile_id)));
+                }
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_delete_profile(move |index| {
+            with_inner(&inner, |inner| {
+                let profile_id = managed_profile_id(&inner.core.borrow(), index);
+                if let Some(profile_id) = profile_id {
+                    inner.handle(Input::Intent(Intent::DeleteProfile(profile_id)));
+                }
+            });
+        });
         let inner = Rc::downgrade(this);
         intents.on_apply_profile(move |index| {
             with_inner(&inner, |inner| {
@@ -509,7 +542,7 @@ impl Inner {
     /// Whether the palette or a dialog is over the window.
     fn overlay_open(&self) -> bool {
         let core = self.core.borrow();
-        core.palette_open() || core.dialog_open()
+        core.palette_open() || core.dialog_open() || core.profile_menu_open()
     }
 
     /// Runs the global shortcut `key` presses, if any, and says whether the key was spoken for.
@@ -721,4 +754,14 @@ fn use_default_intent(setting: TuningSetting) -> Option<Intent> {
         TuningSetting::FanSpeed => return None,
     };
     Some(Intent::UseDefault(key))
+}
+
+/// The id of the profile at `index` in the open Manage profiles, which lists them in the order the
+/// core gives them.
+fn managed_profile_id(core: &Core, index: i32) -> Option<String> {
+    let Some(Dialog::ManageProfiles(manage)) = core.dialog() else {
+        return None;
+    };
+    let index = usize::try_from(index).ok()?;
+    manage.profiles.get(index).map(|profile| profile.id.clone())
 }

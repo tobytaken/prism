@@ -191,8 +191,11 @@ fn tuning_changed(core: &mut Core, gpu_id: &str, revision: &str, watts: i64) {
         event: DaemonEvent::TuningStateChanged(GpuTuningState {
             gpu_id: gpu_id.into(),
             revision: revision.into(),
+            defaults: Vec::new(),
             reported: ReportedTuningValues {
-                cooling: None,
+                cooling: Some(prism_gpu::cooling::CoolingConfiguration::Shared {
+                    setting: prism_gpu::cooling::FanSetting::Automatic {},
+                }),
                 power_limit_watts: Some(watts),
                 graphics_offset_mhz: Some(0),
                 memory_offset_mhz: Some(0),
@@ -779,8 +782,11 @@ fn a_review_compares_with_the_values_the_draft_started_from() {
         event: DaemonEvent::TuningStateChanged(GpuTuningState {
             gpu_id: GPU.into(),
             revision: "switched".into(),
+            defaults: Vec::new(),
             reported: ReportedTuningValues {
-                cooling: None,
+                cooling: Some(prism_gpu::cooling::CoolingConfiguration::Shared {
+                    setting: prism_gpu::cooling::FanSetting::Automatic {},
+                }),
                 power_limit_watts: Some(500),
                 graphics_offset_mhz: Some(100),
                 memory_offset_mhz: Some(0),

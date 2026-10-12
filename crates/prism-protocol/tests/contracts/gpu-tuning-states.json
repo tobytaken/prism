@@ -17,6 +17,7 @@
       "graphics_offset_mhz": 0,
       "memory_offset_mhz": 0
     },
+    "defaults": ["power_limit_watts", "graphics_offset_mhz"],
     "current_profile": null
   }
 ]

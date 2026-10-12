@@ -16,6 +16,7 @@ use crate::drafts::{DialogState, Drafts};
 use crate::host::{PrismdHost, PrismdInstall, UnitState};
 use crate::notifications::{Notification, NotificationId, Notifications, Subject};
 use crate::palette::{Command, PaletteState, Shortcut};
+use crate::profile_management::ProfileCommand;
 use crate::profiles::ProfileApplying;
 use crate::telemetry::{Readings, TelemetryHistory, TelemetryRange};
 
@@ -369,8 +370,19 @@ pub enum Intent {
     /// Prism first asks to discard.
     ApplyProfile(String),
     /// Answer the open profile dialog: discard the GPU's unapplied tuning changes and apply the
-    /// profile, or adjust the profile's out-of-range values and apply it.
+    /// profile, adjust the profile's out-of-range values and apply it, save or rename the profile
+    /// under the name typed, or delete it.
     ConfirmProfile,
+    /// Open the workspace header's `⋯` profile menu, or close it again.
+    ToggleProfileMenu,
+    /// Run the open profile menu's entry at this index.
+    RunProfileMenuEntry(usize),
+    /// The open dialog's profile name now reads this.
+    EditProfileName(String),
+    /// Rename this profile, by id, from Manage profiles.
+    RenameProfile(String),
+    /// Delete this profile, by id, from Manage profiles, once the user confirms it.
+    DeleteProfile(String),
     /// Send the selected GPU's unapplied tuning changes to prismd as one Apply.
     ApplyChanges,
     /// Drop the selected GPU's unapplied tuning changes.
@@ -470,6 +482,10 @@ pub struct Core {
     /// What the latest profile application on each GPU put into effect and what it left, until
     /// the GPU is edited or another profile is chosen.
     pub(crate) profile_outcomes: BTreeMap<String, String>,
+    /// Each profile change sent to prismd that hasn't been answered, such as a save or a rename.
+    pub(crate) profile_commands: BTreeMap<CommandId, ProfileCommand>,
+    /// Whether the workspace header's `⋯` profile menu is open.
+    pub(crate) profile_menu_open: bool,
     /// The dialog over the window, while one is open.
     pub(crate) dialog: Option<DialogState>,
     revision: u64,
@@ -909,6 +925,26 @@ impl Core {
             Intent::ToggleFanCurve => self.toggle_fan_curve(),
             Intent::ApplyProfile(profile_id) => self.perform(Command::ApplyProfile(profile_id)),
             Intent::ConfirmProfile => self.confirm_profile(),
+            Intent::ToggleProfileMenu => {
+                self.toggle_profile_menu();
+                Vec::new()
+            }
+            Intent::RunProfileMenuEntry(index) => {
+                self.profile_menu_open = false;
+                self.run(self.profile_menu_command(index))
+            }
+            Intent::EditProfileName(name) => {
+                self.edit_profile_name(name);
+                Vec::new()
+            }
+            Intent::RenameProfile(profile_id) => {
+                self.open_rename(&profile_id, true);
+                Vec::new()
+            }
+            Intent::DeleteProfile(profile_id) => {
+                self.open_delete(&profile_id, true);
+                Vec::new()
+            }
             Intent::ApplyChanges => self.perform(Command::ApplyChanges),
             Intent::DiscardChanges => self.perform(Command::DiscardChanges),
             Intent::DiscardAndClose => self.quit(),
@@ -925,6 +961,7 @@ impl Core {
         }
         self.record_run(&command);
         self.palette = None;
+        self.profile_menu_open = false;
         self.perform(command)
     }
 
@@ -967,6 +1004,12 @@ impl Core {
             Command::DiscardChanges => self.discard_changes(),
             Command::RecallRememberedCurve => self.recall_remembered_curve(),
             Command::ApplyProfile(profile_id) => self.choose_profile(profile_id),
+            Command::SaveToCurrentProfile => self.save_to_current_profile(),
+            Command::SaveAsNewProfile => self.open_save_as(),
+            Command::RenameProfile => self.open_rename_current(),
+            Command::DeleteProfile => self.open_delete_current(),
+            Command::UseAsStartupProfile => self.use_as_startup_profile(),
+            Command::ManageProfiles => self.open_manage(),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }
@@ -977,6 +1020,14 @@ impl Core {
             return [effects, vec![Effect::CheckPrismdHost]].concat();
         }
         effects
+    }
+
+    /// Opens `dialog` over the window, closing the palette and the profile menu: it takes the
+    /// keyboard until it's answered or dismissed.
+    pub(crate) fn open_dialog(&mut self, dialog: DialogState) {
+        self.palette = None;
+        self.profile_menu_open = false;
+        self.dialog = Some(dialog);
     }
 
     /// Quits, which ends the session and with it the edit holds of any drafts.
