@@ -563,8 +563,8 @@ pub struct SteamAppChoice {
 /// The Games section: the automatic switching toggle, then the caller's games.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GamesSection {
-    /// Whether the caller turned automatic switching on.
-    pub automatic_switching: bool,
+    /// Whether the caller turned automatic switching on; unknown without a session.
+    pub automatic_switching: Option<bool>,
     /// Why nothing here can be changed, such as "Needs tuning access · not running"; none with
     /// tuning access.
     pub read_only: Option<String>,
@@ -574,6 +574,8 @@ pub struct GamesSection {
     pub outcome: Option<String>,
     /// The caller's games, in the order prismd lists them.
     pub games: Vec<GameRow>,
+    /// What the list says while it has no games, such as that there are none yet.
+    pub empty: String,
 }
 
 /// One of the caller's games, with its link on each GPU here.
@@ -595,7 +597,8 @@ pub struct GameLink {
     pub gpu_id: String,
     /// Such as "GPU 0 · RTX 5090 · 01:00.0".
     pub gpu: String,
-    /// The linked profile's name, or "None".
+    /// The linked profile's name, "None", or "Unknown profile" for a link to none of the caller's
+    /// profiles.
     pub linked: String,
     /// None, then the caller's profiles of the GPU, in the order prismd lists them.
     pub choices: Vec<LinkChoice>,

@@ -393,7 +393,7 @@ pub enum Intent {
     SetAutomaticSwitching(bool),
     /// Link the game to this profile of the GPU, by id, or to none, which leaves the GPU
     /// unchanged while the game runs.
-    LinkGameProfile {
+    LinkGame {
         game: GameId,
         gpu_id: String,
         profile_id: Option<String>,
@@ -984,11 +984,11 @@ impl Core {
             Intent::SetAutomaticSwitching(enabled) => {
                 self.perform(Command::SetAutomaticSwitching(enabled))
             }
-            Intent::LinkGameProfile {
+            Intent::LinkGame {
                 game,
                 gpu_id,
                 profile_id,
-            } => self.link_game_profile(game, gpu_id, profile_id),
+            } => self.link_game(game, gpu_id, profile_id),
             Intent::RemoveGame(game) => self.remove_game(game),
             Intent::AddSteamGame => self.perform(Command::AddSteamGame),
             Intent::FilterSteamApps(query) => {

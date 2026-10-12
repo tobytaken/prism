@@ -318,7 +318,7 @@ impl Inner {
             });
         });
         let inner = Rc::downgrade(this);
-        intents.on_link_game_profile(move |game, link, choice| {
+        intents.on_link_game(move |game, link, choice| {
             with_inner(&inner, |inner| {
                 // The rows list games, links and choices in the order the core gives them.
                 let intent = {
@@ -329,7 +329,7 @@ impl Inner {
                         .and_then(|game| {
                             let link = game.links.get(at(link)?)?;
                             let choice = link.choices.get(at(choice)?)?;
-                            Some(Intent::LinkGameProfile {
+                            Some(Intent::LinkGame {
                                 game: game.game.clone(),
                                 gpu_id: link.gpu_id.clone(),
                                 profile_id: choice.profile_id.clone(),

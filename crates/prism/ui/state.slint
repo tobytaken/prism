@@ -263,15 +263,18 @@ export struct DialogView {
     status: string,
 }
 
-// The Games section, apart from its games: whether automatic switching is on, why nothing can be
-// changed (`read-only`, with the reason), why running games can't be recognized, and why prismd
-// refused the latest change, each empty when there's nothing to say.
+// The Games section, apart from its games: whether automatic switching is known and on, why
+// nothing can be changed (`read-only`, with the reason), why running games can't be recognized,
+// why prismd refused the latest change, each empty when there's nothing to say, and what the list
+// says while it has no games.
 export struct GamesView {
+    switching-known: bool,
     automatic-switching: bool,
     read-only: bool,
     reason: string,
     recognition-problem: string,
     outcome: string,
+    empty: string,
 }
 
 // A game's link to at most one of the caller's profiles of a GPU: the group's label, such as
@@ -468,9 +471,9 @@ export global Intents {
     callback delete-profile(index: int);
     // Turns automatic switching on or off.
     callback set-automatic-switching(enabled: bool);
-    // Links the game at this index to the choice at this index of its link at this index: None,
-    // then the GPU's profiles.
-    callback link-game-profile(game: int, link: int, choice: int);
+    // Links the game at this index, on the GPU of its link at this index, to the choice at this
+    // index: None, then the GPU's profiles.
+    callback link-game(game: int, link: int, choice: int);
     // Removes the game at this index.
     callback remove-game(game: int);
     // Opens Add Steam game, searches it for `query`, and adds the app at this index in its list.

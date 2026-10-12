@@ -35,20 +35,22 @@ impl DaemonCore {
         )?))
     }
 
-    /// The caller's games as sessions are shown them. An unhealthy store shows none, and games
-    /// show as not installed while the caller's Steam libraries can't be read.
-    fn games_state(&self, peer: &SessionPeer) -> GamesState {
+    /// The caller's games as sessions are shown them, or none while the tuning store is
+    /// unhealthy. Games show as not installed while the caller's Steam libraries can't be read.
+    fn games_state(&self, peer: &SessionPeer) -> Option<GamesState> {
         let installed = self.steam_apps(peer).unwrap_or_default();
-        self.tuning_store.read_for_tuning(|document| {
-            document.games_state(peer, &installed, &self.dependencies.host_root)
-        })
+        self.tuning_store
+            .read(|document| document.games_state(peer, &installed, &self.dependencies.host_root))
+            .ok()
     }
 
-    /// The caller's games, for a session's snapshot. Unless the user's sessions were pushed some
-    /// already, later pushes compare with these.
+    /// The caller's games, for a session's snapshot; none while the tuning store is unhealthy.
+    /// Unless the user's sessions were pushed some already, later pushes compare with these.
     pub(super) fn known_games(&self, peer: &SessionPeer) -> GamesState {
         let mut pushed = self.pushed_games.lock().unwrap();
-        let games = self.games_state(peer);
+        let Some(games) = self.games_state(peer) else {
+            return GamesState::default();
+        };
         // Another of the user's sessions may not have been pushed newer games yet; the next push
         // then reaches every session.
         pushed
@@ -57,11 +59,15 @@ impl DaemonCore {
         games
     }
 
-    /// Pushes the caller's games to each of their sessions when they changed. Games change only
-    /// at their owner's request, so no one else's need pushing.
+    /// Pushes the caller's games to each of their sessions when they changed, such as after a
+    /// change they asked for or a Steam app installed since. Games change only at their owner's
+    /// request, so no one else's need pushing. A store that turned unhealthy pushes nothing, so
+    /// sessions keep the games they were shown.
     pub(super) fn push_games(&self, peer: &SessionPeer) {
         let mut pushed = self.pushed_games.lock().unwrap();
-        let games = self.games_state(peer);
+        let Some(games) = self.games_state(peer) else {
+            return;
+        };
         let user = (peer.uid, peer.username.clone());
         if pushed.get(&user) == Some(&games) {
             return;

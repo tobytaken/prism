@@ -292,10 +292,13 @@ impl DaemonCore {
                 | DaemonRequest::DeleteProfile(_)
                 | DaemonRequest::RenameProfile(_)
         );
-        // These can change the caller's games, their links or the opt-in.
-        let changes_games = matches!(
+        // These can change the caller's games, their links or the opt-in, or read the Steam
+        // libraries that say whether their games are installed.
+        let refreshes_games = matches!(
             request,
-            DaemonRequest::AddSteamGame(_)
+            DaemonRequest::ListSteamApps
+                | DaemonRequest::GetGames
+                | DaemonRequest::AddSteamGame(_)
                 | DaemonRequest::AddProgram(_)
                 | DaemonRequest::SetGameProfile(_)
                 | DaemonRequest::RemoveGame(_)
@@ -431,7 +434,7 @@ impl DaemonCore {
             }
             request => Ok(self.handle(request)),
         };
-        if changes_games {
+        if refreshes_games {
             self.push_games(peer);
         }
         if reevaluate {

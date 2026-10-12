@@ -211,7 +211,11 @@ fn games_show_from_the_snapshot_with_the_toggle_and_each_gpus_linked_profile() {
     let core = connected();
 
     let section = section(&core);
-    assert!(!section.automatic_switching);
+    assert_eq!(section.automatic_switching, Some(false));
+    assert_eq!(
+        section.empty,
+        "No games yet. Add a Steam game to link it to your profiles."
+    );
     assert_eq!(section.read_only, None);
     assert_eq!(section.recognition_problem, None);
     let names: Vec<_> = section.games.iter().map(|row| row.name.as_str()).collect();
@@ -254,7 +258,7 @@ fn games_follow_pushed_changes_and_not_the_requests_sent() {
         )]
     );
     // Only prismd's push changes what shows.
-    assert!(!section(&core).automatic_switching);
+    assert_eq!(section(&core).automatic_switching, Some(false));
 
     let mut changed = games();
     changed.automatic_switching = true;
@@ -262,7 +266,7 @@ fn games_follow_pushed_changes_and_not_the_requests_sent() {
     changed.games[0].profiles.insert(GPU.into(), "boost".into());
     push(&mut core, DaemonEvent::GamesChanged(changed));
 
-    assert!(section(&core).automatic_switching);
+    assert_eq!(section(&core).automatic_switching, Some(true));
     assert_eq!(section(&core).games.len(), 2);
     assert_eq!(link_choices(&core, "Dota 2"), ["None", "Quiet", "[Boost]"]);
 
@@ -281,7 +285,7 @@ fn linking_a_profile_or_none_and_removing_a_game_send_their_requests() {
 
     let effects = intent(
         &mut core,
-        Intent::LinkGameProfile {
+        Intent::LinkGame {
             game: GameId::Steam { app_id: 620 },
             gpu_id: GPU.into(),
             profile_id: Some("boost".into()),
@@ -298,7 +302,7 @@ fn linking_a_profile_or_none_and_removing_a_game_send_their_requests() {
 
     let effects = intent(
         &mut core,
-        Intent::LinkGameProfile {
+        Intent::LinkGame {
             game: DOTA,
             gpu_id: GPU.into(),
             profile_id: None,
@@ -316,7 +320,7 @@ fn linking_a_profile_or_none_and_removing_a_game_send_their_requests() {
     // Choosing the profile already linked sends nothing.
     let effects = intent(
         &mut core,
-        Intent::LinkGameProfile {
+        Intent::LinkGame {
             game: DOTA,
             gpu_id: GPU.into(),
             profile_id: Some("quiet".into()),
@@ -346,7 +350,7 @@ fn a_refused_game_change_says_why_until_the_next_one() {
 
     let (id, _) = sent_once(&intent(
         &mut core,
-        Intent::LinkGameProfile {
+        Intent::LinkGame {
             game: DOTA,
             gpu_id: GPU.into(),
             profile_id: Some("boost".into()),
@@ -514,7 +518,7 @@ fn without_tuning_access_games_are_read_only_with_the_reason() {
 
     for change in [
         Intent::SetAutomaticSwitching(true),
-        Intent::LinkGameProfile {
+        Intent::LinkGame {
             game: DOTA,
             gpu_id: GPU.into(),
             profile_id: None,
@@ -551,7 +555,12 @@ fn without_a_session_games_need_prismd_and_show_none() {
 
     let section = section(&core);
     assert_eq!(section.games, []);
-    assert!(!section.automatic_switching);
+    // Whether switching is on, and which games there are, is unknown without prismd.
+    assert_eq!(section.automatic_switching, None);
+    assert_eq!(
+        section.empty,
+        "Your games show once Prism is connected to prismd."
+    );
     assert_eq!(
         section.read_only.as_deref(),
         Some("Needs tuning access · not running")

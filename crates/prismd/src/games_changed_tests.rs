@@ -212,3 +212,18 @@ fn every_session_of_the_caller_is_pushed_their_games_and_no_one_elses() {
     );
     assert_eq!(pushed_games(&bob), Vec::<Value>::new());
 }
+
+#[test]
+fn listing_steam_apps_pushes_games_installed_or_uninstalled_since() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    daemon.install_steam_app("alice", 570, "Dota 2");
+    let alice = daemon.user(1000, "alice");
+    add_dota(&alice);
+    pushed_games(&alice);
+
+    std::fs::remove_dir_all(daemon.host_path("/home/alice/.local/share/Steam")).unwrap();
+    assert_eq!(pushed_games(&alice), Vec::<Value>::new());
+    send_ok(&alice, json!({ "type": "list_steam_apps" }));
+
+    assert_eq!(pushed_once(&alice)["games"][0]["installed"], false);
+}

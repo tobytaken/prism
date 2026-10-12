@@ -1,7 +1,7 @@
 //! The Games section: the caller's games as prismd pushes them, each linked to at most one of the
 //! caller's profiles per GPU, the automatic switching toggle, removing a game, and adding a Steam
 //! game from the caller's Steam libraries, which prismd recognizes natively or through Proton.
-//! Games change only as prismd pushes them; answers only say how a change went (ADR 0003).
+//! Games change only as prismd pushes them; answers only say how a change went (ADR 0010).
 
 use prism_protocol::{
     AddSteamGameRequest, DaemonRequest, DaemonResponse, GameEntry, GameId, GameRequest,
@@ -35,10 +35,9 @@ impl GameCommand {
     /// What the Games section says once prismd refused it, such as "Dota 2 not removed: …".
     fn refused(&self, why: &str) -> String {
         match self {
-            Self::SetSwitching(enabled) => format!(
-                "Automatic switching not turned {}: {why}",
-                if *enabled { "on" } else { "off" }
-            ),
+            Self::SetSwitching(enabled) => {
+                format!("Automatic switching not turned {}: {why}", on_off(*enabled))
+            }
             Self::Link {
                 game,
                 profile: Some(profile),
@@ -54,6 +53,11 @@ impl GameCommand {
     }
 }
 
+/// "on" or "off", as turning automatic switching on or off says it.
+fn on_off(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
+}
+
 /// The caller's Steam apps, as Add Steam game lists them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SteamListing {
@@ -67,8 +71,9 @@ pub(crate) enum SteamListing {
 impl Core {
     /// The Games section as shown.
     pub fn games(&self) -> GamesSection {
+        let connected = self.connected();
         GamesSection {
-            automatic_switching: self.games.automatic_switching,
+            automatic_switching: connected.then_some(self.games.automatic_switching),
             read_only: self.needs_tuning_access(),
             recognition_problem: match &self.running_games {
                 Some(RunningGamesState::Unavailable { reason }) => Some(format!(
@@ -84,6 +89,12 @@ impl Core {
                 .iter()
                 .map(|game| self.game_row(game))
                 .collect(),
+            empty: if connected {
+                "No games yet. Add a Steam game to link it to your profiles."
+            } else {
+                "Your games show once Prism is connected to prismd."
+            }
+            .into(),
         }
     }
 
@@ -155,28 +166,35 @@ impl Core {
         [
             (
                 Command::SetAutomaticSwitching(enable),
-                format!(
-                    "Turn automatic switching {}",
-                    if enable { "on" } else { "off" }
-                ),
+                format!("Turn automatic switching {}", on_off(enable)),
             ),
             (Command::AddSteamGame, "Add Steam game…".into()),
         ]
     }
 
-    /// Sends a game change, unless there's no tuning access, and notes it for its answer.
-    fn send_game_change(&mut self, change: GameCommand, request: DaemonRequest) -> Vec<Effect> {
+    /// Sends a game change, with tuning access, clearing why the last one was refused; returns the
+    /// command its answer comes back as, or none without tuning access.
+    fn send_game_change(
+        &mut self,
+        change: GameCommand,
+        request: DaemonRequest,
+    ) -> Option<(CommandId, Vec<Effect>)> {
         if self.needs_tuning_access().is_some() {
-            return Vec::new();
+            return None;
         }
         self.games_outcome = None;
-        self.command_games(change, request)
+        Some(self.command_prismd_for_games(change, request))
     }
 
-    fn command_games(&mut self, change: GameCommand, request: DaemonRequest) -> Vec<Effect> {
+    /// Sends a request of the Games section to prismd, noting what it was for its answer.
+    fn command_prismd_for_games(
+        &mut self,
+        change: GameCommand,
+        request: DaemonRequest,
+    ) -> (CommandId, Vec<Effect>) {
         let id = self.drafts.next_command();
         self.game_commands.insert(id, change);
-        vec![Effect::CommandPrismd { id, request }]
+        (id, vec![Effect::CommandPrismd { id, request }])
     }
 
     pub(crate) fn set_automatic_switching(&mut self, enabled: bool) -> Vec<Effect> {
@@ -184,10 +202,12 @@ impl Core {
             GameCommand::SetSwitching(enabled),
             DaemonRequest::SetAutomaticSwitching(SetAutomaticSwitchingRequest { enabled }),
         )
+        .map(|(_, effects)| effects)
+        .unwrap_or_default()
     }
 
     /// Links the game to the profile on the GPU, or to none, unless it's linked to it already.
-    pub(crate) fn link_game_profile(
+    pub(crate) fn link_game(
         &mut self,
         game: GameId,
         gpu_id: String,
@@ -218,6 +238,8 @@ impl Core {
                 profile_id,
             }),
         )
+        .map(|(_, effects)| effects)
+        .unwrap_or_default()
     }
 
     pub(crate) fn remove_game(&mut self, game: GameId) -> Vec<Effect> {
@@ -226,6 +248,8 @@ impl Core {
         };
         let change = GameCommand::Remove(entry.name.clone());
         self.send_game_change(change, DaemonRequest::RemoveGame(GameRequest { game }))
+            .map(|(_, effects)| effects)
+            .unwrap_or_default()
     }
 
     /// Shows Games and opens Add Steam game over it, listing the caller's Steam apps.
@@ -234,12 +258,10 @@ impl Core {
             return Vec::new();
         }
         self.selection = Some(Selection::Section(Section::Games));
-        let effects = self.command_games(GameCommand::ListSteamApps, DaemonRequest::ListSteamApps);
-        let Some(Effect::CommandPrismd { id, .. }) = effects.first() else {
-            return effects;
-        };
+        let (id, effects) =
+            self.command_prismd_for_games(GameCommand::ListSteamApps, DaemonRequest::ListSteamApps);
         self.open_dialog(DialogState::AddSteamGame {
-            listing: SteamListing::Reading(*id),
+            listing: SteamListing::Reading(id),
             filter: String::new(),
             adding: None,
             error: None,
@@ -270,16 +292,14 @@ impl Core {
             return Vec::new();
         }
         let name = app.name.clone();
-        let effects = self.send_game_change(
+        let Some((id, effects)) = self.send_game_change(
             GameCommand::Add(name),
             DaemonRequest::AddSteamGame(AddSteamGameRequest { app_id }),
-        );
-        if let (
-            Some(Effect::CommandPrismd { id, .. }),
-            Some(DialogState::AddSteamGame { adding, error, .. }),
-        ) = (effects.first(), &mut self.dialog)
-        {
-            *adding = Some((*id, app_id));
+        ) else {
+            return Vec::new();
+        };
+        if let Some(DialogState::AddSteamGame { adding, error, .. }) = &mut self.dialog {
+            *adding = Some((id, app_id));
             *error = None;
         }
         effects
@@ -335,11 +355,12 @@ impl Core {
         else {
             return None;
         };
-        let adding_name = adding.and_then(|(_, app_id)| match listing {
+        // Such as "Adding Hades…", while an app is being added.
+        let adding_status = adding.and_then(|(_, app_id)| match listing {
             SteamListing::Listed(apps) => apps
                 .iter()
                 .find(|app| app.app_id == app_id)
-                .map(|app| app.name.clone()),
+                .map(|app| format!("Adding {}…", app.name)),
             _ => None,
         });
         let (apps, status) = match listing {
@@ -358,11 +379,11 @@ impl Core {
                         unavailable: if self.game(&GameId::Steam { app_id: app.app_id }).is_some() {
                             Some("Already added".into())
                         } else {
-                            adding_name.as_ref().map(|name| format!("Adding {name}…"))
+                            adding_status.clone()
                         },
                     })
                     .collect(),
-                adding_name.as_ref().map(|name| format!("Adding {name}…")),
+                adding_status.clone(),
             ),
         };
         Some(AddSteamGame {

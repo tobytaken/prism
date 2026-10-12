@@ -208,7 +208,8 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
 
     let section = core.games();
     state.set_games_section(GamesView {
-        automatic_switching: section.automatic_switching,
+        switching_known: section.automatic_switching.is_some(),
+        automatic_switching: section.automatic_switching.unwrap_or_default(),
         read_only: section.read_only.is_some(),
         reason: section.read_only.as_deref().unwrap_or_default().into(),
         recognition_problem: section
@@ -217,6 +218,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
             .unwrap_or_default()
             .into(),
         outcome: section.outcome.as_deref().unwrap_or_default().into(),
+        empty: section.empty.as_str().into(),
     });
     let current = state.get_games();
     let games: Vec<_> = section
