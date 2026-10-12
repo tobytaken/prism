@@ -461,6 +461,98 @@ mod screenshot {
         save_as_new_profile(AppearanceMode::Dark, "save-as-new-profile-dark");
     }
 
+    /// Games over the tunable GPU's profiles: automatic switching on, Dota 2 linked to Quiet, and
+    /// Portal 2, not installed, while running games can't be recognized.
+    fn games_section(appearance: AppearanceMode) -> Harness {
+        use prism_protocol::{DaemonEvent, GameEntry, GameId, GamesState, RunningGamesState};
+
+        let harness = profiles_workspace(appearance);
+        harness.prismd.push(DaemonEvent::GamesChanged(GamesState {
+            automatic_switching: true,
+            games: vec![
+                GameEntry {
+                    game: GameId::Steam { app_id: 570 },
+                    name: "Dota 2".into(),
+                    installed: true,
+                    profiles: [(
+                        "GPU-5a1b0000-0000-4000-8000-000000000001".to_owned(),
+                        "quiet".to_owned(),
+                    )]
+                    .into(),
+                },
+                GameEntry {
+                    game: GameId::Steam { app_id: 620 },
+                    name: "Portal 2".into(),
+                    installed: false,
+                    profiles: Default::default(),
+                },
+            ],
+        }));
+        harness.prismd.push(DaemonEvent::RunningGamesChanged(
+            RunningGamesState::Unavailable {
+                reason: "A complete host process scan could not be read.".into(),
+            },
+        ));
+        harness.app.receive_posted();
+        harness.ctrl_shift("g");
+        harness
+    }
+
+    fn games(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = games_section(appearance);
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn games_in_light() {
+        games(AppearanceMode::Light, "games-light");
+    }
+
+    #[test]
+    fn games_in_dark() {
+        games(AppearanceMode::Dark, "games-dark");
+    }
+
+    /// Add Steam game over Games, with Dota 2 and Portal 2 already added.
+    fn add_steam_game(appearance: AppearanceMode, name: &str) {
+        use prism_protocol::{DaemonResponse, SteamApp};
+
+        init_rendering_backend();
+        let harness = games_section(appearance);
+        harness
+            .find(AccessibleRole::Button, "Add Steam game…")
+            .invoke_accessible_default_action();
+        harness.prismd.answer(DaemonResponse::SteamApps(
+            [
+                (1086940, "Baldur's Gate 3"),
+                (570, "Dota 2"),
+                (1145360, "Hades"),
+                (367520, "Hollow Knight"),
+                (620, "Portal 2"),
+            ]
+            .map(|(app_id, name)| SteamApp {
+                app_id,
+                name: name.into(),
+            })
+            .into(),
+        ));
+        harness.app.receive_posted();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn add_steam_game_in_light() {
+        add_steam_game(AppearanceMode::Light, "add-steam-game-light");
+    }
+
+    #[test]
+    fn add_steam_game_in_dark() {
+        add_steam_game(AppearanceMode::Dark, "add-steam-game-dark");
+    }
+
     /// Closing with unapplied changes: "1 unapplied change", Discard and close, Keep editing.
     fn close_confirmation(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();

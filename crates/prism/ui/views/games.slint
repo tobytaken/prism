@@ -1,0 +1,192 @@
+import { Theme } from "../theme.slint";
+import { Button, ButtonKind, Divider, Segmented, StyledText, Switch } from "../widgets.slint";
+import { AppState, GameView, Intents } from "../state.slint";
+
+// A line about the section as a whole, labeled for a screen reader, such as why running games
+// can't be recognized; in the danger color when something is wrong.
+component Notice inherits StyledText {
+    in property <string> label;
+    in property <bool> danger;
+
+    style: Theme.text.body;
+    color: root.danger ? Theme.color.danger : Theme.color.ink-muted;
+    wrap: word-wrap;
+    accessible-role: text;
+    accessible-label: root.label;
+    accessible-value: self.text;
+}
+
+// One of the caller's games: its name and what it is, Remove, then its link on each GPU here as
+// None and the GPU's profiles, the linked one picked.
+component Game inherits Rectangle {
+    in property <GameView> game;
+    in property <int> index;
+
+    accessible-role: groupbox;
+    accessible-label: root.game.name;
+    accessible-description: root.game.detail;
+    height: layout.preferred-height;
+
+    layout := VerticalLayout {
+        padding-top: Theme.space.l;
+        padding-bottom: Theme.space.l;
+        spacing: Theme.space.s;
+
+        HorizontalLayout {
+            spacing: Theme.space.m;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: Theme.space.xxs;
+
+                StyledText {
+                    text: root.game.name;
+                    style: Theme.text.name;
+                    overflow: elide;
+                    accessible-role: none;
+                }
+
+                StyledText {
+                    text: root.game.detail;
+                    style: Theme.text.value;
+                    color: Theme.color.ink-muted;
+                    overflow: elide;
+                    accessible-role: none;
+                }
+            }
+
+            Button {
+                text: "Remove";
+                label: "Remove \{root.game.name}";
+                kind: ButtonKind.quiet;
+                enabled: !AppState.games-section.read-only;
+                description: AppState.games-section.reason;
+                activated => {
+                    Intents.remove-game(root.index);
+                }
+            }
+        }
+
+        for link[link-index] in root.game.links: HorizontalLayout {
+            spacing: Theme.space.m;
+            alignment: start;
+
+            StyledText {
+                width: Theme.size.hardware-fact-label;
+                text: link.gpu;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                overflow: elide;
+                accessible-role: none;
+            }
+
+            Segmented {
+                label: link.label;
+                segments: link.choices;
+                read-only: AppState.games-section.read-only;
+                reason: AppState.games-section.reason;
+                value: link.linked;
+                value-text: link.linked;
+                chosen(choice) => {
+                    Intents.link-game-profile(root.index, link-index, choice);
+                }
+            }
+        }
+    }
+
+    Divider {
+        y: parent.height - self.height;
+    }
+}
+
+// Games: the automatic switching switch at the top, what holds switching back, then the caller's
+// games, each linked to at most one profile per GPU. Without tuning access it's read-only, with
+// the reason.
+export component Games inherits Rectangle {
+    VerticalLayout {
+        padding: Theme.space.xxl;
+        spacing: Theme.space.l;
+
+        HorizontalLayout {
+            spacing: Theme.space.m;
+
+            StyledText {
+                horizontal-stretch: 1;
+                text: "Games";
+                style: Theme.text.heading;
+            }
+
+            Button {
+                text: "Add Steam game…";
+                enabled: !AppState.games-section.read-only;
+                description: AppState.games-section.reason;
+                activated => {
+                    Intents.add-steam-game();
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: start;
+
+            Switch {
+                label: "Automatic switching";
+                checked: AppState.games-section.automatic-switching;
+                read-only: AppState.games-section.read-only;
+                reason: AppState.games-section.reason;
+                toggled => {
+                    Intents.set-automatic-switching(!AppState.games-section.automatic-switching);
+                }
+            }
+        }
+
+        StyledText {
+            text: "While a game runs, Prism applies the profile it links on each GPU, and restores the GPU's values once it ends.";
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            wrap: word-wrap;
+        }
+
+        if AppState.games-section.read-only: Notice {
+            label: "Read-only";
+            text: AppState.games-section.reason;
+        }
+
+        if AppState.games-section.recognition-problem != "": Notice {
+            label: "Recognition problem";
+            text: AppState.games-section.recognition-problem;
+            danger: true;
+        }
+
+        if AppState.games-section.outcome != "": Notice {
+            label: "Problem";
+            text: AppState.games-section.outcome;
+            danger: true;
+        }
+
+        Divider { }
+
+        if AppState.games.length == 0: StyledText {
+            text: "No games yet. Add a Steam game to link it to your profiles.";
+            style: Theme.text.body;
+            color: Theme.color.ink-muted;
+            wrap: word-wrap;
+        }
+
+        list := Flickable {
+            vertical-stretch: 1;
+            content-height: max(self.height, games.preferred-height);
+
+            games := VerticalLayout {
+                height: list.content-height;
+                alignment: start;
+
+                for game[index] in AppState.games: Game {
+                    game: game;
+                    index: index;
+                }
+            }
+        }
+    }
+}

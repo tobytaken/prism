@@ -312,6 +312,70 @@ impl Inner {
             });
         });
         let inner = Rc::downgrade(this);
+        intents.on_set_automatic_switching(move |enabled| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::SetAutomaticSwitching(enabled)))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_link_game_profile(move |game, link, choice| {
+            with_inner(&inner, |inner| {
+                // The rows list games, links and choices in the order the core gives them.
+                let intent = {
+                    let section = inner.core.borrow().games();
+                    let at = |index: i32| usize::try_from(index).ok();
+                    at(game)
+                        .and_then(|game| section.games.get(game))
+                        .and_then(|game| {
+                            let link = game.links.get(at(link)?)?;
+                            let choice = link.choices.get(at(choice)?)?;
+                            Some(Intent::LinkGameProfile {
+                                game: game.game.clone(),
+                                gpu_id: link.gpu_id.clone(),
+                                profile_id: choice.profile_id.clone(),
+                            })
+                        })
+                };
+                if let Some(intent) = intent {
+                    inner.handle(Input::Intent(intent));
+                }
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_remove_game(move |index| {
+            with_inner(&inner, |inner| {
+                let game = usize::try_from(index).ok().and_then(|index| {
+                    Some(inner.core.borrow().games().games.get(index)?.game.clone())
+                });
+                if let Some(game) = game {
+                    inner.handle(Input::Intent(Intent::RemoveGame(game)));
+                }
+            });
+        });
+        intents.on_add_steam_game(to_core(Intent::AddSteamGame));
+        let inner = Rc::downgrade(this);
+        intents.on_filter_steam_apps(move |query| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::FilterSteamApps(query.into())))
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_add_steam_app(move |index| {
+            with_inner(&inner, |inner| {
+                // The rows list the apps in the order the core gives them.
+                let app_id = match inner.core.borrow().dialog() {
+                    Some(Dialog::AddSteamGame(add)) => usize::try_from(index)
+                        .ok()
+                        .and_then(|index| add.apps.get(index))
+                        .map(|app| app.app_id),
+                    _ => None,
+                };
+                if let Some(app_id) = app_id {
+                    inner.handle(Input::Intent(Intent::AddSteamApp(app_id)));
+                }
+            });
+        });
+        let inner = Rc::downgrade(this);
         intents.on_apply_profile(move |index| {
             with_inner(&inner, |inner| {
                 // The buttons list the GPU's profiles in the order the core gives them.

@@ -1,5 +1,5 @@
 import { Theme, AppearanceMode } from "theme.slint";
-import { AppState, MenuAnchor, ManagedProfileView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, Section, ServiceAction, SettingsSection, SidebarGpuView, StepperView, TrackView, TuningSetting, WorkspaceView } from "state.slint";
+import { AppState, MenuAnchor, ManagedProfileView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, GameLinkView, GamesView, GameView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, Section, ServiceAction, SettingsSection, SidebarGpuView, SteamAppView, StepperView, TrackView, TuningSetting, WorkspaceView } from "state.slint";
 import { Menu, MenuEntryView, SegmentView } from "widgets.slint";
 import { TitleBar } from "views/title-bar.slint";
 import { Sidebar } from "views/sidebar.slint";
@@ -7,10 +7,11 @@ import { Workspace } from "views/workspace.slint";
 import { ExplainedState } from "views/explained-state.slint";
 import { StatusBar } from "views/status-bar.slint";
 import { CommandPalette } from "views/command-palette.slint";
-import { CloseDialog, DeleteProfileDialog, DiscardForProfileDialog, ManageProfilesDialog, ProfileCorrectionsDialog, ProfileNameDialog, ReviewDialog } from "views/dialogs.slint";
+import { AddSteamGameDialog, CloseDialog, DeleteProfileDialog, DiscardForProfileDialog, ManageProfilesDialog, ProfileCorrectionsDialog, ProfileNameDialog, ReviewDialog } from "views/dialogs.slint";
 import { Settings } from "views/settings.slint";
+import { Games } from "views/games.slint";
 
-export { Theme, AppearanceMode, AppState, MenuAnchor, ManagedProfileView, MenuEntryView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, Section, ServiceAction, SettingsSection, SidebarGpuView, StepperView, TrackView, TuningSetting, WorkspaceView }
+export { Theme, AppearanceMode, AppState, MenuAnchor, ManagedProfileView, MenuEntryView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, GameLinkView, GamesView, GameView, Inbox, Intents, KeyPress, LimitMark, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, Section, ServiceAction, SettingsSection, SidebarGpuView, SteamAppView, StepperView, TrackView, TuningSetting, WorkspaceView }
 
 // Prism's one window: frameless, with its own title bar, the sidebar, the content and the status
 // bar, and the command palette or a dialog over them when one is open.
@@ -85,10 +86,7 @@ export component MainWindow inherits Window {
                         reason: AppState.no-gpus.reason;
                         hint: AppState.no-gpus.hint;
                     }
-                    if AppState.content == ContentKind.games: ExplainedState {
-                        title: "Games";
-                        reason: "This section isn't built yet.";
-                    }
+                    if AppState.content == ContentKind.games: Games { }
                     if AppState.content == ContentKind.drivers: ExplainedState {
                         title: "Drivers";
                         reason: "This section isn't built yet.";
@@ -126,5 +124,6 @@ export component MainWindow inherits Window {
         if AppState.dialog.kind == DialogKind.profile-name: ProfileNameDialog { }
         if AppState.dialog.kind == DialogKind.delete-profile: DeleteProfileDialog { }
         if AppState.dialog.kind == DialogKind.manage-profiles: ManageProfilesDialog { }
+        if AppState.dialog.kind == DialogKind.add-steam-game: AddSteamGameDialog { }
     }
 }
