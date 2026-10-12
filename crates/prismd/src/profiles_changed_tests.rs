@@ -17,9 +17,8 @@ fn quiet_and_loud() -> Value {
 /// The profiles pushed to the session since it last looked.
 fn pushed_profiles(session: &FakeSession) -> Vec<Value> {
     session
-        .pushed_events()
+        .pushed_events_of("profiles_changed")
         .into_iter()
-        .filter(|event| event["type"] == "profiles_changed")
         .map(|event| event["payload"].clone())
         .collect()
 }
@@ -225,4 +224,30 @@ fn another_users_profiles_never_reach_a_session() {
     assert_eq!(names(&pushed_once(&alice)), ["Quiet", "Loud"]);
     // Nothing Bob sees changed.
     assert_eq!(pushed_profiles(&bob), Vec::<Value>::new());
+}
+
+#[test]
+fn a_user_who_reconnects_is_pushed_a_change_back_to_what_they_last_saw_before_leaving() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    let bob = daemon.user(1001, "bob");
+    bob.seed_profiles(json!([
+        { "id": "loud", "name": "Loud", "gpu_id": "GPU-123",
+          "settings": { "power_limit_watts": { "kind": "value", "value": 500 } } }
+    ]));
+    pushed_profiles(&alice);
+    drop(alice);
+
+    apply_by_id(&bob, "loud");
+    let alice = daemon.user(1000, "alice");
+    assert_eq!(
+        snapshot_profiles(&alice)["current_profiles"]["GPU-123"]["name"],
+        "Loud"
+    );
+    send_ok(
+        &bob,
+        json!({ "type": "delete_profile", "payload": { "profile_id": "loud" } }),
+    );
+
+    assert_eq!(pushed_once(&alice)["current_profiles"], json!({}));
 }

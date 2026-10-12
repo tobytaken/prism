@@ -266,17 +266,17 @@ impl TuningStore {
         let mut pushed = self.pushed_profiles.lock().unwrap();
         // Read before publishing, so no store lock is taken while the sessions' is held.
         let document = self.read_for_tuning(TuningDocument::clone);
-        let changed = RefCell::new(HashMap::new());
+        let now = RefCell::new(HashMap::new());
         self.events.publish_for_users(|peer| {
             let user = (peer.uid, peer.username.clone());
             let profiles = document.profiles_state(peer);
-            if pushed.get(&user) == Some(&profiles) {
-                return None;
-            }
-            changed.borrow_mut().insert(user, profiles.clone());
-            Some(DaemonEvent::ProfilesChanged(profiles))
+            let unchanged = pushed.get(&user) == Some(&profiles);
+            now.borrow_mut().insert(user, profiles.clone());
+            (!unchanged).then_some(DaemonEvent::ProfilesChanged(profiles))
         });
-        pushed.extend(changed.into_inner());
+        // A user without a session has nothing to compare with: what they last saw may differ
+        // from what their next session's snapshot shows.
+        *pushed = now.into_inner();
     }
 
     /// Whether any open session subscribed to telemetry.
@@ -361,6 +361,7 @@ impl TuningStore {
         result
     }
 
+    /// Changes the document and writes it, as `try_update` does, without pushing anything.
     fn write<T, E: From<TuningStoreWriteError>>(
         &self,
         change: impl FnOnce(&mut TuningDocument) -> Result<T, E>,

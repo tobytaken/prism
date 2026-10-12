@@ -537,3 +537,57 @@ fn the_palette_says_why_a_profile_cant_be_applied() {
         Some("Needs tuning access · bob isn't in group wheel")
     );
 }
+
+#[test]
+fn a_profile_dialog_closes_once_its_profile_is_gone() {
+    let mut core = connected();
+    let command = choose(&mut core, "quiet");
+    core.handle(Input::PrismdAnswered {
+        id: command,
+        response: needs_corrections(vec![power_correction(650, 600)]),
+    });
+    assert!(core.dialog_open());
+
+    let mut deleted = profiles();
+    deleted.profiles.retain(|profile| profile.id != "quiet");
+    push(&mut core, deleted);
+    assert!(!core.dialog_open());
+    assert_eq!(requests(&intent(&mut core, Intent::ConfirmProfile)), []);
+
+    let mut core = connected();
+    intent(
+        &mut core,
+        Intent::Stage(ProfileSettingKey::PowerLimitWatts, 450),
+    );
+    intent(&mut core, Intent::ApplyProfile("quiet".into()));
+    assert!(core.dialog_open());
+    core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
+        message: "The session with prismd ended".into(),
+    }));
+    assert!(!core.dialog_open());
+}
+
+#[test]
+fn corrections_that_arrive_under_another_dialog_say_so_in_the_strip() {
+    let mut core = connected();
+    let command = choose(&mut core, "quiet");
+    intent(
+        &mut core,
+        Intent::Stage(ProfileSettingKey::PowerLimitWatts, 450),
+    );
+    intent(&mut core, Intent::CloseWindow);
+    assert!(matches!(core.dialog(), Some(Dialog::ConfirmClose(_))));
+
+    core.handle(Input::PrismdAnswered {
+        id: command,
+        response: needs_corrections(vec![power_correction(650, 600)]),
+    });
+
+    assert!(matches!(core.dialog(), Some(Dialog::ConfirmClose(_))));
+    intent(&mut core, Intent::Dismiss);
+    intent(&mut core, Intent::DiscardChanges);
+    assert_eq!(
+        strip_outcome(&core).as_deref(),
+        Some("Quiet needs values adjusted to what the GPU allows. Choose it again to review them.")
+    );
+}

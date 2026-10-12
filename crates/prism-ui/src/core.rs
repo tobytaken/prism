@@ -705,7 +705,7 @@ impl Core {
                     DaemonEvent::CoolingControlChanged(control) => {
                         self.cooling.insert(control.gpu_id.clone(), control);
                     }
-                    DaemonEvent::ProfilesChanged(profiles) => self.profiles = profiles,
+                    DaemonEvent::ProfilesChanged(profiles) => self.profiles_pushed(profiles),
                     // Taken in as the screens that show them land.
                     DaemonEvent::StoreHealthChanged(_)
                     | DaemonEvent::RunningGamesChanged(_)

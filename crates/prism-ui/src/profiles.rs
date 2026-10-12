@@ -1,4 +1,4 @@
-//! Switching GPU tuning profiles: each GPU's profiles as prismd pushes them, applying one at once,
+//! Choosing GPU tuning profiles: each GPU's profiles as prismd pushes them, applying one at once,
 //! asking first when that would discard the GPU's draft, and the single review of the range
 //! corrections an application needs (ADR 0001).
 
@@ -6,6 +6,7 @@ use prism_gpu::TuningOutcomeStatus;
 use prism_protocol::{
     CorrectAndApplyProfileRequest, DaemonRequest, DaemonResponse, GpuTuningProfile,
     ProfileApplicationResponse, ProfileIdRequest, ProfileRangeCorrection, ProfileSettingKey,
+    ProfilesState,
 };
 
 use crate::cooling::cooling_text;
@@ -54,6 +55,15 @@ impl Core {
             .then(|| "Applying…".into())
     }
 
+    /// The GPU the profile belongs to, while the profile can be applied.
+    fn applicable_gpu(&self, profile_id: &str) -> Option<String> {
+        if self.profile_unavailable(profile_id).is_some() {
+            return None;
+        }
+        self.profile(profile_id)
+            .map(|profile| profile.gpu_id.clone())
+    }
+
     /// Whether an Apply or a profile application on the GPU waits for prismd's answer.
     pub(crate) fn gpu_applying(&self, gpu_id: &str) -> bool {
         self.applying(gpu_id) || self.profile_applications.contains_key(gpu_id)
@@ -62,13 +72,7 @@ impl Core {
     /// Applies the profile at once, or first asks whether to discard the unapplied tuning changes
     /// on its GPU.
     pub(crate) fn choose_profile(&mut self, profile_id: String) -> Vec<Effect> {
-        if self.profile_unavailable(&profile_id).is_some() {
-            return Vec::new();
-        }
-        let Some(gpu_id) = self
-            .profile(&profile_id)
-            .map(|profile| profile.gpu_id.clone())
-        else {
+        let Some(gpu_id) = self.applicable_gpu(&profile_id) else {
             return Vec::new();
         };
         if self.drafts.by_gpu.contains_key(&gpu_id) {
@@ -93,13 +97,7 @@ impl Core {
                 return Vec::new();
             }
         };
-        if self.profile_unavailable(&profile_id).is_some() {
-            return Vec::new();
-        }
-        let Some(gpu_id) = self
-            .profile(&profile_id)
-            .map(|profile| profile.gpu_id.clone())
-        else {
+        let Some(gpu_id) = self.applicable_gpu(&profile_id) else {
             return Vec::new();
         };
         // Sent before the edit hold ends, so automatic switching can't step in between.
@@ -170,15 +168,21 @@ impl Core {
             DaemonResponse::ProfileApplication(application)
                 if !application.corrections.is_empty() =>
             {
-                // Nothing was written: the user decides on every correction at once.
-                if self.dialog.is_none() {
+                // Nothing was written: the user decides on every correction at once, unless a
+                // dialog they haven't answered is open.
+                if self.dialog.is_some() {
+                    format!(
+                        "{name} needs values adjusted to what the GPU allows. Choose it again to \
+                         review them."
+                    )
+                } else {
                     self.palette = None;
                     self.dialog = Some(DialogState::ProfileCorrections {
                         profile_id: applying.profile_id,
                         corrections: application.corrections.clone(),
                     });
+                    return true;
                 }
-                return true;
             }
             DaemonResponse::ProfileApplication(application) => {
                 application_outcome(name, application)
@@ -198,6 +202,7 @@ impl Core {
     /// The session ended: profile applications it didn't answer may or may not have happened.
     pub(crate) fn profiles_lost_session(&mut self) {
         self.profiles = Default::default();
+        self.close_stale_profile_dialog();
         for (gpu_id, applying) in std::mem::take(&mut self.profile_applications) {
             self.profile_outcomes.insert(
                 gpu_id,
@@ -207,6 +212,27 @@ impl Core {
                     applying.name
                 ),
             );
+        }
+    }
+
+    /// prismd pushed the caller's profiles.
+    pub(crate) fn profiles_pushed(&mut self, profiles: ProfilesState) {
+        self.profiles = profiles;
+        self.close_stale_profile_dialog();
+    }
+
+    /// Closes a profile dialog whose profile is gone, such as one deleted in another session: it
+    /// has nothing left to show or apply.
+    fn close_stale_profile_dialog(&mut self) {
+        let profile_id = match &self.dialog {
+            Some(
+                DialogState::DiscardForProfile { profile_id }
+                | DialogState::ProfileCorrections { profile_id, .. },
+            ) => profile_id,
+            _ => return,
+        };
+        if self.profile(profile_id).is_none() {
+            self.dialog = None;
         }
     }
 }

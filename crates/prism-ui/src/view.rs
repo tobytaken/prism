@@ -166,7 +166,9 @@ pub struct ProfileSwitcher {
 /// One of the GPU's profiles in the workspace header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileChoice {
+    /// The profile's id, which applying it sends.
     pub id: String,
+    /// The profile's name, as its button shows it.
     pub name: String,
     /// Whether it's the GPU's current profile, which shows as selected.
     pub current: bool,
@@ -511,6 +513,7 @@ pub enum Dialog {
 pub struct DiscardForProfile {
     /// Such as "Discard 2 unapplied changes and apply Quiet?".
     pub title: String,
+    /// What applying the profile does to the unapplied changes.
     pub message: String,
 }
 
@@ -519,6 +522,7 @@ pub struct DiscardForProfile {
 pub struct ProfileCorrections {
     /// Such as "Adjust Quiet to apply it?".
     pub title: String,
+    /// What adjusting does, and that nothing has changed yet.
     pub message: String,
     /// Each out-of-range setting, from its saved value to the one it would become.
     pub corrections: Vec<ReviewChange>,
@@ -1222,7 +1226,6 @@ impl Core {
         })
     }
 
-    /// The selected GPU's change strip.
     /// The header's buttons for the GPU's profiles.
     fn profile_switcher(&self, gpu_id: &str) -> ProfileSwitcher {
         let current = self.profiles.current_profiles.get(gpu_id);
@@ -1247,6 +1250,7 @@ impl Core {
         }
     }
 
+    /// The selected GPU's change strip.
     fn change_strip(&self) -> ChangeStrip {
         let draft = self.selected_draft();
         let count = draft.map_or(0, |draft| draft.len());
