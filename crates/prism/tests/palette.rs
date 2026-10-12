@@ -89,6 +89,7 @@ fn ctrl_k_opens_the_palette_with_its_field_focused() {
             "Manage profiles…".into(),
             "Turn automatic switching on".into(),
             "Add Steam game…".into(),
+            "Add program…".into(),
             "Show last 1 minute".into(),
             "Show last 5 minutes".into(),
             "Show last 15 minutes".into(),
@@ -192,7 +193,7 @@ fn escape_closes_the_palette_and_ctrl_k_opens_it_again() {
 
     harness.ctrl("k");
     assert!(palette_is_open(&harness));
-    assert_eq!(commands(&harness).len(), 28);
+    assert_eq!(commands(&harness).len(), 29);
 }
 
 #[test]

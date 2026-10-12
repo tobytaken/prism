@@ -553,6 +553,72 @@ mod screenshot {
         add_steam_game(AppearanceMode::Dark, "add-steam-game-dark");
     }
 
+    /// Add program over Games, with a few running programs, one whose host location is unknown,
+    /// and a script prismd may not recognize.
+    fn add_program(appearance: AppearanceMode, name: &str) {
+        use prism_protocol::{DaemonResponse, RunningProgram};
+
+        init_rendering_backend();
+        let harness = games_section(appearance);
+        harness
+            .find(AccessibleRole::Button, "Add program…")
+            .invoke_accessible_default_action();
+        let program = |pid, name: &str, path: Option<&str>, warning: Option<&str>| RunningProgram {
+            pid,
+            name: name.into(),
+            path: path.map(Into::into),
+            launcher: None,
+            environment: Vec::new(),
+            helper: false,
+            recognition_warning: warning.map(Into::into),
+        };
+        harness.prismd.answer(DaemonResponse::RunningPrograms(vec![
+            program(
+                4100,
+                "Balatro.exe",
+                Some("/home/alice/Games/Balatro/Balatro.exe"),
+                None,
+            ),
+            program(
+                2001,
+                "factorio",
+                Some("/opt/games/factorio/bin/factorio"),
+                None,
+            ),
+            program(
+                3000,
+                "game.exe",
+                None,
+                Some(
+                    "The host program location could not be recovered; browse for the program \
+                     file instead.",
+                ),
+            ),
+            program(
+                3100,
+                "python3",
+                Some("/usr/bin/python3"),
+                Some(
+                    "Scripts, virtual machines and emulators identify the runtime, not the \
+                     individual game; recognition may be unreliable.",
+                ),
+            ),
+        ]));
+        harness.app.receive_posted();
+
+        assert_screenshot(name, harness.app.window().window(), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn add_program_in_light() {
+        add_program(AppearanceMode::Light, "add-program-light");
+    }
+
+    #[test]
+    fn add_program_in_dark() {
+        add_program(AppearanceMode::Dark, "add-program-dark");
+    }
+
     /// Closing with unapplied changes: "1 unapplied change", Discard and close, Keep editing.
     fn close_confirmation(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use prism_gpu::GpuProviders;
 
 use crate::activation::DesktopActivation;
+use crate::file_chooser::{FileChooser, PortalFileChooser};
 use crate::notifications::{DesktopNotifier, Notifier};
 use crate::prismd::{PrismdConnector, SocketConnector};
 use crate::prismd_host::{HostPrismdService, PrismdService};
@@ -49,17 +50,21 @@ pub struct HostServices {
     pub activation: Box<dyn WindowActivation>,
     /// Where desktop notifications go.
     pub notifier: Box<dyn Notifier>,
+    /// Where the user chooses a program file to add as a game.
+    pub file_chooser: Box<dyn FileChooser>,
 }
 
 impl Default for HostServices {
     /// The host's systemd and os-release, no later launch reaches this Prism, the window is
-    /// raised through the desktop, and notifications go to the session's notification server.
+    /// raised through the desktop, notifications go to the session's notification server, and
+    /// program files are chosen through the desktop portal.
     fn default() -> Self {
         Self {
             prismd: Box::new(HostPrismdService::production()),
             launches: Box::new(NoLaunches),
             activation: Box::new(DesktopActivation),
             notifier: Box::new(DesktopNotifier::session()),
+            file_chooser: Box::new(PortalFileChooser::session()),
         }
     }
 }

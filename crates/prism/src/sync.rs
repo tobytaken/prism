@@ -15,9 +15,9 @@ use crate::{
     AppState, AppearanceMode, ChangeStripView, ChartId, ChartView, ContentKind, CurvePointView,
     DaemonView, DetailView, DialogKind, DialogView, ExplainedStateView, FactView, FanCurveView,
     FanModeView, GameLinkView, GameView, GamesView, LimitMark, MainWindow, ManagedProfileView,
-    MenuEntryView, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction,
-    SettingsSection, SidebarGpuView, SteamAppView, StepperView, Theme, TrackView, TuningSetting,
-    WorkspaceView,
+    MenuEntryView, PaletteEntryView, ProgramView, ReadoutView, ReviewChangeView, SegmentView,
+    ServiceAction, SettingsSection, SidebarGpuView, SteamAppView, StepperView, Theme, TrackView,
+    TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -274,6 +274,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
 
     let mut managed = Vec::new();
     let mut steam_apps = Vec::new();
+    let mut programs = Vec::new();
     let (dialog, changes) = match core.dialog() {
         None => (DialogView::default(), Vec::new()),
         Some(Dialog::Review(review)) => (
@@ -386,12 +387,41 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
                 Vec::new(),
             )
         }
+        Some(Dialog::AddProgram(add)) => {
+            programs = add
+                .programs
+                .iter()
+                .map(|program| ProgramView {
+                    name: program.name.as_str().into(),
+                    detail: program.detail.as_str().into(),
+                    warning: program.warning.as_deref().unwrap_or_default().into(),
+                    available: program.unavailable.is_none(),
+                    reason: program.unavailable.as_deref().unwrap_or_default().into(),
+                })
+                .collect();
+            (
+                DialogView {
+                    kind: DialogKind::AddProgram,
+                    title: add.title.into(),
+                    message: add.message.into(),
+                    name: add.filter.into(),
+                    error: add.error.unwrap_or_default().into(),
+                    status: add.status.unwrap_or_default().into(),
+                    can_confirm: add.can_browse,
+                    ..DialogView::default()
+                },
+                Vec::new(),
+            )
+        }
     };
     if let Some(model) = update_in_place(&state.get_managed_profiles(), managed, PartialEq::eq) {
         state.set_managed_profiles(model);
     }
     if let Some(model) = update_in_place(&state.get_steam_apps(), steam_apps, PartialEq::eq) {
         state.set_steam_apps(model);
+    }
+    if let Some(model) = update_in_place(&state.get_programs(), programs, PartialEq::eq) {
+        state.set_programs(model);
     }
     state.set_dialog(dialog);
     if let Some(model) = update_in_place(&state.get_review_changes(), changes, PartialEq::eq) {

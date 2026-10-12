@@ -237,14 +237,16 @@ export enum DialogKind {
     delete-profile,
     manage-profiles,
     add-steam-game,
+    add-program,
 }
 
 // A dialog over the window: its title and message, and whether its Apply and Discard can run and
 // why not. A profile dialog has a name to start its field from, what's wrong with it or why
 // prismd refused it as `error`, and its confirmation, titled `confirm-text`, which can run when
 // `can-confirm` and says why not in `confirm-reason`; Manage profiles uses `confirm-reason` for
-// why no profile can be renamed or deleted. Add Steam game has its search as `name`, what its
-// list waits for or why it's empty as `status`, and why prismd refused an app as `error`.
+// why no profile can be renamed or deleted. Add Steam game and Add program have their search as
+// `name`, what their list waits for or why it's empty as `status`, and why the last one chosen
+// couldn't be added as `error`; Add program's Browse can run when `can-confirm`.
 export struct DialogView {
     kind: DialogKind,
     title: string,
@@ -298,6 +300,17 @@ export struct GameView {
 // One of the caller's Steam apps in Add Steam game, and why it can't be added, when it can't.
 export struct SteamAppView {
     name: string,
+    available: bool,
+    reason: string,
+}
+
+// One of the caller's running programs in Add program: its name, its host location or that it's
+// unknown, why prismd may not recognize it by that location, and why it can't be added, when it
+// can't.
+export struct ProgramView {
+    name: string,
+    detail: string,
+    warning: string,
     available: bool,
     reason: string,
 }
@@ -403,10 +416,12 @@ export global AppState {
     in property <[MenuEntryView]> profile-menu;
     // The GPU's profiles Manage profiles lists.
     in property <[ManagedProfileView]> managed-profiles;
-    // The Games section, its games, and the Steam apps Add Steam game lists.
+    // The Games section, its games, the Steam apps Add Steam game lists and the running programs
+    // Add program lists.
     in property <GamesView> games-section;
     in property <[GameView]> games;
     in property <[SteamAppView]> steam-apps;
+    in property <[ProgramView]> programs;
     // Changes with every input, so derived geometry knows when to redraw.
     in property <int> revision;
 
@@ -480,6 +495,12 @@ export global Intents {
     callback add-steam-game();
     callback filter-steam-apps(query: string);
     callback add-steam-app(index: int);
+    // Opens Add program, searches it for `query`, adds the running program at this index in its
+    // list, and opens the file chooser for a program file to add.
+    callback add-program();
+    callback filter-programs(query: string);
+    callback add-running-program(index: int);
+    callback browse-for-program();
     // Applies or discards the selected GPU's unapplied tuning changes.
     callback apply-changes();
     callback discard-changes();

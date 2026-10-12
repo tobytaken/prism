@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Button, ButtonKind, Dialog, StyledText, TextField } from "../widgets.slint";
-import { AppState, Intents, ManagedProfileView, ReviewChangeView, SteamAppView } from "../state.slint";
+import { AppState, Intents, ManagedProfileView, ProgramView, ReviewChangeView, SteamAppView } from "../state.slint";
 
 // A current tuning value that changed under the draft: the setting, from what to what, and what
 // the draft stages for it.
@@ -465,6 +465,135 @@ export component AddSteamGameDialog inherits Dialog {
     }
 
     Actions {
+        Button {
+            text: "Close";
+            kind: ButtonKind.quiet;
+            activated => {
+                Intents.dismiss();
+            }
+        }
+    }
+}
+
+// One of the caller's running programs in Add program: its name over its host location and why
+// prismd may not recognize it there, then Add, dimmed with why when it can't be added, such as
+// when it's added already or its host location is unknown.
+component RunningProgram inherits Rectangle {
+    in property <ProgramView> program;
+    callback add();
+
+    height: row.preferred-height;
+
+    row := HorizontalLayout {
+        spacing: Theme.space.m;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+
+            StyledText {
+                text: root.program.name;
+                style: Theme.text.body;
+                color: root.program.available ? Theme.color.ink : Theme.color.ink-muted;
+                overflow: elide;
+                accessible-role: none;
+            }
+
+            StyledText {
+                text: root.program.detail;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                overflow: elide;
+                accessible-role: none;
+            }
+
+            if root.program.warning != "": StyledText {
+                text: root.program.warning;
+                style: Theme.text.value;
+                color: Theme.color.ink-muted;
+                wrap: word-wrap;
+                accessible-role: none;
+            }
+        }
+
+        if !root.program.available: StyledText {
+            text: root.program.reason;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        Button {
+            text: "Add";
+            label: "Add \{root.program.name}";
+            kind: ButtonKind.quiet;
+            enabled: root.program.available;
+            // Where it is, and why prismd may not recognize it there, or why it can't be added.
+            description: !root.program.available ? root.program.reason : root.program.warning == "" ? root.program.detail : "\{root.program.detail} · \{root.program.warning}";
+            activated => {
+                root.add();
+            }
+        }
+    }
+}
+
+// The caller's running programs, searched as typed, each with Add, and Browse… for a program file
+// in the desktop's file chooser; it closes once prismd adds the one chosen. What the list waits
+// for, or why it's empty, shows in its place, and why the last one chosen couldn't be added under
+// it. Close or Escape closes it.
+export component AddProgramDialog inherits Dialog {
+    title: AppState.dialog.title;
+    message: AppState.dialog.message;
+
+    TextField {
+        label: "Search running programs";
+        placeholder: "Search running programs";
+        text: AppState.dialog.name;
+        init => {
+            self.focus();
+        }
+        edited(query) => {
+            Intents.filter-programs(query);
+        }
+    }
+
+    if AppState.dialog.status != "": StyledText {
+        text: AppState.dialog.status;
+        style: Theme.text.body;
+        color: Theme.color.ink-muted;
+        wrap: word-wrap;
+    }
+
+    programs := Flickable {
+        height: min(list.preferred-height, Theme.size.dialog-list);
+        content-height: list.preferred-height;
+
+        list := VerticalLayout {
+            spacing: Theme.space.s;
+
+            for program[index] in AppState.programs: RunningProgram {
+                program: program;
+                add => {
+                    Intents.add-running-program(index);
+                }
+            }
+        }
+    }
+
+    if AppState.dialog.error != "": Problem {
+        text: AppState.dialog.error;
+    }
+
+    Actions {
+        Button {
+            text: "Browse…";
+            enabled: AppState.dialog.can-confirm;
+            activated => {
+                Intents.browse-for-program();
+            }
+        }
+
         Button {
             text: "Close";
             kind: ButtonKind.quiet;

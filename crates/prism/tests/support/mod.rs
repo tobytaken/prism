@@ -19,8 +19,8 @@ use std::time::Duration;
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
 use prism::settings::{GuiSettings, SettingsStore};
 use prism::{
-    App, Clock, Environment, HostServices, Launches, NotificationEvent, Notifier, Sampling,
-    WindowActivation,
+    App, Clock, Environment, FileChooser, HostServices, Launches, NotificationEvent, Notifier,
+    Sampling, WindowActivation,
 };
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{
@@ -29,7 +29,9 @@ use prism_gpu::{
 };
 
 use self::prismd::{DaemonState, FakeHost, FakePrismd};
-use prism_ui::{AppearanceMode, Notification, NotificationId, PrismdInstall, UnitState};
+use prism_ui::{
+    AppearanceMode, Notification, NotificationId, PrismdInstall, ProgramFile, UnitState,
+};
 use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
 
@@ -197,11 +199,38 @@ impl Notifier for FakeNotifier {
     }
 }
 
+/// What a file chooser calls with the program file chosen.
+type Chosen = Box<dyn FnOnce(ProgramFile) + Send>;
+
+/// The desktop's file chooser, which stays open until the test answers it.
+#[derive(Clone, Default)]
+pub struct FakeFileChooser(Arc<Mutex<Vec<Chosen>>>);
+
+impl FakeFileChooser {
+    /// How many file choosers are open.
+    pub fn open(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+
+    /// The user closes the file chooser opened first, with `file`.
+    pub fn answer(&self, file: ProgramFile) {
+        let chosen = self.0.lock().unwrap().remove(0);
+        chosen(file);
+    }
+}
+
+impl FileChooser for FakeFileChooser {
+    fn choose_program(&self, chosen: Box<dyn FnOnce(ProgramFile) + Send>) {
+        self.0.lock().unwrap().push(chosen);
+    }
+}
+
 pub struct Harness {
     pub app: App,
     pub launches: FakeLaunches,
     pub activation: RecordedActivation,
     pub notifier: FakeNotifier,
+    pub file_chooser: FakeFileChooser,
     pub prismd: FakePrismd,
     pub host: FakeHost,
     clock: Arc<ManualClock>,
@@ -327,6 +356,7 @@ impl Harness {
         let launches = FakeLaunches::default();
         let activation = RecordedActivation::default();
         let notifier = FakeNotifier::default();
+        let file_chooser = FakeFileChooser::default();
         let prismd = FakePrismd::new(daemon);
         let host = FakeHost::new(install, prismd.clone());
         let in_process_reads = Arc::default();
@@ -344,6 +374,7 @@ impl Harness {
                 launches: launches.name(),
                 activation: Box::new(activation.clone()),
                 notifier: Box::new(notifier.clone()),
+                file_chooser: Box::new(file_chooser.clone()),
             },
             settings: Box::new(FixedSettings(GuiSettings { appearance })),
             clock: clock.clone(),
@@ -359,6 +390,7 @@ impl Harness {
             launches,
             activation,
             notifier,
+            file_chooser,
             prismd,
             host,
             clock,
