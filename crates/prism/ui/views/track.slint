@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
-import { Area, CurveLine, DisclosureMarker, Divider, Grid, LimitLine, LinkButton, PressArea, Segmented, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
-import { AppState, ChartPart, ChartView, CurvePart, CurvePointView, DetailView, FanCurveView, FanModeView, Intents, LimitMark, ReadoutView, StepperView, TrackView, TuningSetting } from "../state.slint";
+import { Area, Button, CurveLine, DisclosureMarker, Divider, Grid, LimitLine, LinkButton, PressArea, Segmented, Series, Stepper, StyledText, VerticalDivider } from "../widgets.slint";
+import { AppState, ChartPart, ChartView, CoolingProblemView, CurvePart, CurvePointView, DetailView, FanCurveView, FanModeView, Intents, LimitMark, ReadoutView, StepperView, TrackView, TuningSetting } from "../state.slint";
 
 component Statistic inherits Rectangle {
     in property <string> name;
@@ -236,6 +236,77 @@ component FanMode inherits VerticalLayout {
             activated => {
                 Intents.recall-remembered-curve();
             }
+        }
+    }
+}
+
+// Why Prism stopped following the GPU's fan curve, across the bottom of the Fans track: a cooling
+// fault, after which its fans fell back to automatic cooling, or another tool's change to fan
+// control, with Retry or Resume, and why prismd didn't apply the latest one. It's marked in the
+// danger color, as Activity marks problems.
+component CoolingProblem inherits Rectangle {
+    in property <CoolingProblemView> problem;
+
+    accessible-role: groupbox;
+    accessible-label: root.problem.title;
+    accessible-description: root.problem.detail;
+
+    Divider {
+        y: 0;
+    }
+
+    Rectangle {
+        x: 0;
+        width: Theme.stroke.selection;
+        background: Theme.color.danger;
+    }
+
+    VerticalLayout {
+        padding-top: Theme.space.s;
+        padding-bottom: Theme.space.s;
+        padding-left: Theme.space.xxl;
+        padding-right: Theme.space.xxl;
+        spacing: Theme.space.xxs;
+
+        HorizontalLayout {
+            spacing: Theme.space.m;
+
+            StyledText {
+                text: root.problem.title;
+                style: Theme.text.name;
+                color: Theme.color.danger;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+
+            Button {
+                text: root.problem.action;
+                label: root.problem.action + " · " + root.problem.title;
+                enabled: root.problem.available;
+                description: root.problem.reason;
+                activated => {
+                    Intents.retry-cooling(AppState.workspace.id);
+                }
+            }
+        }
+
+        StyledText {
+            text: root.problem.detail;
+            style: Theme.text.value;
+            color: Theme.color.ink-muted;
+            wrap: word-wrap;
+            accessible-role: none;
+        }
+
+        if root.problem.outcome != "": StyledText {
+            text: root.problem.outcome;
+            style: Theme.text.value;
+            color: Theme.color.danger;
+            wrap: word-wrap;
+            accessible-role: text;
+            accessible-label: "Outcome";
+            accessible-value: root.problem.outcome;
         }
     }
 }
@@ -563,8 +634,9 @@ component CurveToggle inherits Rectangle {
 
 // A full-width track: the label, a large readout and its details on the left, the live charts in
 // the middle, and max/avg/min over the range on the right. The Fans track's open fan curve editor
-// goes before its charts; a `narrow` track drops max/avg/min, and the editor takes its charts'
-// place. A `short` track gets shorter.
+// goes before its charts, and why Prism stopped following its fan curve goes across its bottom; a
+// `narrow` track drops max/avg/min, and the editor takes its charts' place. A `short` track gets
+// shorter.
 export component Track inherits Rectangle {
     in property <TrackView> track;
     in property <bool> narrow;
@@ -574,184 +646,196 @@ export component Track inherits Rectangle {
 
     accessible-role: groupbox;
     accessible-label: track.name;
-    min-height: max(root.short ? Theme.size.track-min-short : Theme.size.track-min, head.min-height);
-    preferred-height: max(root.shows-fan-curve ? Theme.size.track-curve : Theme.size.track, head.preferred-height);
+    min-height: max(root.short ? Theme.size.track-min-short : Theme.size.track-min, head.min-height) + problem.min-height;
+    preferred-height: max(root.shows-fan-curve ? Theme.size.track-curve : Theme.size.track, head.preferred-height) + problem.preferred-height;
     vertical-stretch: 1;
 
-    HorizontalLayout {
-        Rectangle {
-            width: Theme.size.track-head;
+    VerticalLayout {
+        HorizontalLayout {
+            vertical-stretch: 1;
 
-            head := VerticalLayout {
-                padding-top: root.head-padding;
-                padding-bottom: root.head-padding;
-                padding-left: Theme.space.xxl;
-                padding-right: Theme.space.xxl;
-                spacing: root.short ? Theme.space.xxs : Theme.space.xs;
-                alignment: start;
+            Rectangle {
+                width: Theme.size.track-head;
 
-                HorizontalLayout {
-                    StyledText {
-                        horizontal-stretch: 1;
-                        text: root.track.label;
-                        style: Theme.text.label;
-                        color: Theme.color.ink-muted;
-                        vertical-alignment: center;
-                        accessible-role: none;
+                head := VerticalLayout {
+                    padding-top: root.head-padding;
+                    padding-bottom: root.head-padding;
+                    padding-left: Theme.space.xxl;
+                    padding-right: Theme.space.xxl;
+                    spacing: root.short ? Theme.space.xxs : Theme.space.xs;
+                    alignment: start;
+
+                    HorizontalLayout {
+                        StyledText {
+                            horizontal-stretch: 1;
+                            text: root.track.label;
+                            style: Theme.text.label;
+                            color: Theme.color.ink-muted;
+                            vertical-alignment: center;
+                            accessible-role: none;
+                        }
+
+                        if root.track.has-fan-curve: CurveToggle {
+                            open: root.track.fan-curve.open;
+                        }
                     }
 
-                    if root.track.has-fan-curve: CurveToggle {
-                        open: root.track.fan-curve.open;
+                    // The fan picker sits beside the readout, so it takes no line of its own.
+                    HorizontalLayout {
+                        spacing: Theme.space.m;
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            accessible-role: text;
+                            accessible-label: root.track.readout-label;
+                            accessible-value: root.track.readout.spoken;
+                            accessible-description: root.track.unknown-reason;
+                            height: readout.preferred-height;
+
+                            readout := HorizontalLayout {
+                                alignment: start;
+                                spacing: Theme.space.m;
+
+                                HorizontalLayout {
+                                    StyledText {
+                                        text: root.track.readout.value;
+                                        style: Theme.text.readout;
+                                        vertical-alignment: bottom;
+                                        accessible-role: none;
+                                    }
+
+                                    if root.track.readout.known: StyledText {
+                                        text: root.track.readout.suffix;
+                                        style: Theme.text.readout-unit;
+                                        color: Theme.color.ink-muted;
+                                        vertical-alignment: bottom;
+                                        accessible-role: none;
+                                    }
+                                }
+
+                                // Why the reading is unknown, beside its dash.
+                                if root.track.unknown-reason != "": StyledText {
+                                    horizontal-stretch: 1;
+                                    text: root.track.unknown-reason;
+                                    style: Theme.text.value;
+                                    color: Theme.color.ink-muted;
+                                    wrap: word-wrap;
+                                    overflow: elide;
+                                    accessible-role: none;
+                                }
+                            }
+                        }
+
+                        if root.track.has-fan-mode && root.track.fan-mode.has-arrangement: VerticalLayout {
+                            alignment: end;
+
+                            FanPicker {
+                                fan-mode: root.track.fan-mode;
+                                compact: true;
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: root.short ? 0 : Theme.space.xxs;
+
+                        if root.track.has-fan-mode: FanMode {
+                            fan-mode: root.track.fan-mode;
+                            short: root.short;
+                        }
+
+                        // Tuning values are tuned in place with their steppers. With a fixed speed,
+                        // every fan is asked for the same speed, so a short track shows it in place of
+                        // each fan's; with a fan curve, every fan follows it, and its live marker
+                        // shows their speed.
+                        for detail in root.track.details: VerticalLayout {
+                            if detail.has-stepper: TuningDetail {
+                                detail: detail;
+                                short: root.short;
+                            }
+                            if !detail.has-stepper && !(root.short && (root.track.fan-mode.has-fixed-speed || root.shows-fan-curve)): Detail {
+                                detail: detail;
+                            }
+                        }
                     }
                 }
 
-                // The fan picker sits beside the readout, so it takes no line of its own.
-                HorizontalLayout {
+                VerticalDivider {
+                    x: parent.width - self.width;
+                }
+            }
+
+            HorizontalLayout {
+                padding-top: Theme.space.s;
+                padding-bottom: Theme.space.s;
+                padding-left: Theme.space.m;
+                padding-right: Theme.space.m;
+                spacing: Theme.space.m;
+
+                if root.shows-fan-curve: FanCurve {
+                    horizontal-stretch: 1;
+                    curve: root.track.fan-curve;
+                }
+                if !(root.narrow && root.shows-fan-curve): HorizontalLayout {
+                    horizontal-stretch: 1;
                     spacing: Theme.space.m;
 
-                    Rectangle {
+                    for chart in root.track.charts: ChartPane {
                         horizontal-stretch: 1;
-                        accessible-role: text;
-                        accessible-label: root.track.readout-label;
-                        accessible-value: root.track.readout.spoken;
-                        accessible-description: root.track.unknown-reason;
-                        height: readout.preferred-height;
-
-                        readout := HorizontalLayout {
-                            alignment: start;
-                            spacing: Theme.space.m;
-
-                            HorizontalLayout {
-                                StyledText {
-                                    text: root.track.readout.value;
-                                    style: Theme.text.readout;
-                                    vertical-alignment: bottom;
-                                    accessible-role: none;
-                                }
-
-                                if root.track.readout.known: StyledText {
-                                    text: root.track.readout.suffix;
-                                    style: Theme.text.readout-unit;
-                                    color: Theme.color.ink-muted;
-                                    vertical-alignment: bottom;
-                                    accessible-role: none;
-                                }
-                            }
-
-                            // Why the reading is unknown, beside its dash.
-                            if root.track.unknown-reason != "": StyledText {
-                                horizontal-stretch: 1;
-                                text: root.track.unknown-reason;
-                                style: Theme.text.value;
-                                color: Theme.color.ink-muted;
-                                wrap: word-wrap;
-                                overflow: elide;
-                                accessible-role: none;
-                            }
-                        }
+                        chart: chart;
                     }
+                }
+            }
 
-                    if root.track.has-fan-mode && root.track.fan-mode.has-arrangement: VerticalLayout {
-                        alignment: end;
+            if !root.narrow: Rectangle {
+                width: Theme.size.stats;
 
-                        FanPicker {
-                            fan-mode: root.track.fan-mode;
-                            compact: true;
-                        }
-                    }
+                VerticalDivider {
+                    x: 0;
                 }
 
                 VerticalLayout {
-                    spacing: root.short ? 0 : Theme.space.xxs;
+                    padding-top: Theme.space.m;
+                    padding-bottom: Theme.space.m;
+                    padding-left: Theme.space.l;
+                    padding-right: Theme.space.m;
+                    spacing: Theme.space.xxs;
+                    alignment: start;
 
-                    if root.track.has-fan-mode: FanMode {
-                        fan-mode: root.track.fan-mode;
-                        short: root.short;
+                    // The range the statistics cover; the range picker says it to a screen reader.
+                    StyledText {
+                        text: root.track.range;
+                        style: Theme.text.value;
+                        color: Theme.color.ink-muted;
+                        accessible-role: none;
                     }
 
-                    // Tuning values are tuned in place with their steppers. With a fixed speed,
-                    // every fan is asked for the same speed, so a short track shows it in place of
-                    // each fan's; with a fan curve, every fan follows it, and its live marker
-                    // shows their speed.
-                    for detail in root.track.details: VerticalLayout {
-                        if detail.has-stepper: TuningDetail {
-                            detail: detail;
-                            short: root.short;
-                        }
-                        if !detail.has-stepper && !(root.short && (root.track.fan-mode.has-fixed-speed || root.shows-fan-curve)): Detail {
-                            detail: detail;
-                        }
+                    Statistic {
+                        name: "max";
+                        label: root.track.max-label;
+                        readout: root.track.max;
                     }
-                }
-            }
 
-            VerticalDivider {
-                x: parent.width - self.width;
-            }
-        }
+                    Statistic {
+                        name: "avg";
+                        label: root.track.avg-label;
+                        readout: root.track.avg;
+                    }
 
-        HorizontalLayout {
-            padding-top: Theme.space.s;
-            padding-bottom: Theme.space.s;
-            padding-left: Theme.space.m;
-            padding-right: Theme.space.m;
-            spacing: Theme.space.m;
-
-            if root.shows-fan-curve: FanCurve {
-                horizontal-stretch: 1;
-                curve: root.track.fan-curve;
-            }
-            if !(root.narrow && root.shows-fan-curve): HorizontalLayout {
-                horizontal-stretch: 1;
-                spacing: Theme.space.m;
-
-                for chart in root.track.charts: ChartPane {
-                    horizontal-stretch: 1;
-                    chart: chart;
+                    Statistic {
+                        name: "min";
+                        label: root.track.min-label;
+                        readout: root.track.min;
+                    }
                 }
             }
         }
 
-        if !root.narrow: Rectangle {
-            width: Theme.size.stats;
+        problem := VerticalLayout {
+            vertical-stretch: 0;
 
-            VerticalDivider {
-                x: 0;
-            }
-
-            VerticalLayout {
-                padding-top: Theme.space.m;
-                padding-bottom: Theme.space.m;
-                padding-left: Theme.space.l;
-                padding-right: Theme.space.m;
-                spacing: Theme.space.xxs;
-                alignment: start;
-
-                // The range the statistics cover; the range picker says it to a screen reader.
-                StyledText {
-                    text: root.track.range;
-                    style: Theme.text.value;
-                    color: Theme.color.ink-muted;
-                    accessible-role: none;
-                }
-
-                Statistic {
-                    name: "max";
-                    label: root.track.max-label;
-                    readout: root.track.max;
-                }
-
-                Statistic {
-                    name: "avg";
-                    label: root.track.avg-label;
-                    readout: root.track.avg;
-                }
-
-                Statistic {
-                    name: "min";
-                    label: root.track.min-label;
-                    readout: root.track.min;
-                }
+            if root.track.has-fan-mode && root.track.fan-mode.has-problem: CoolingProblem {
+                problem: root.track.fan-mode.problem;
             }
         }
     }

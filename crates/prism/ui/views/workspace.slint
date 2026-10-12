@@ -131,6 +131,12 @@ component ChangeStrip inherits Rectangle {
     }
 }
 
+// The latest request to scroll the Fans track into view that a workspace answered. It outlives
+// the workspace, which a request made elsewhere, such as from Games, shows anew.
+global FansReveal {
+    in-out property <int> answered;
+}
+
 // The selected GPU's workspace: its header with the range picker, then one full-width track per
 // metric and the hardware details. When they don't fit, they scroll under the header. Narrower
 // than `narrow-workspace`, the tracks are narrow, and shorter than `short-workspace`, short.
@@ -138,6 +144,34 @@ export component Workspace inherits Rectangle {
     in property <WorkspaceView> workspace;
 
     property <bool> short: root.height < Theme.size.short-workspace;
+    property <int> reveal-fans: root.workspace.reveal-fans;
+
+    // Scrolls the tracks so the Fans track, the last above the hardware details, ends in view,
+    // once for each request.
+    function show-fans() {
+        if root.reveal-fans == FansReveal.answered {
+            return;
+        }
+        FansReveal.answered = root.reveal-fans;
+        reveal.running = true;
+    }
+
+    // Scrolls once the tracks are laid out, which they aren't yet in a workspace just shown.
+    reveal := Timer {
+        interval: 1ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            tracks.content-y = min(0px, tracks.height - (tracks.content-height - hardware.height));
+        }
+    }
+
+    init => {
+        root.show-fans();
+    }
+    changed reveal-fans => {
+        root.show-fans();
+    }
 
     VerticalLayout {
         Rectangle {
@@ -249,7 +283,7 @@ export component Workspace inherits Rectangle {
                     short: root.short;
                 }
 
-                HardwareDetails {
+                hardware := HardwareDetails {
                     open: root.workspace.hardware-open;
                 }
             }

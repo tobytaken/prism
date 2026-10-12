@@ -6,6 +6,7 @@
 
 mod activity;
 mod cooling;
+mod cooling_faults;
 mod core;
 mod curve;
 mod daemon;
@@ -34,7 +35,7 @@ pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::view::{
     ActivityButton, ActivityItem, ActivityPanel, AddProgram, AddSteamGame, ChangeStrip,
-    ConfirmClose, ConfirmDelete, Content, CurveMarker, CurvePoint, Detail, Dialog,
+    ConfirmClose, ConfirmDelete, Content, CoolingProblem, CurveMarker, CurvePoint, Detail, Dialog,
     DiscardForProfile, ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor,
     FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace, HardwareDetails,
     LinkChoice, ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice, ProfileCorrections,

@@ -13,6 +13,7 @@ use prism_protocol::{
 
 use crate::activity::{ActivityAction, ActivityState};
 use crate::cooling::FanMode;
+use crate::cooling_faults::CoolingFaults;
 use crate::daemon::{ServiceAction, ServiceOutcome};
 use crate::drafts::{DialogState, Drafts};
 use crate::games::{GameCommand, ProgramFile};
@@ -427,6 +428,9 @@ pub enum Intent {
     OpenActivity,
     /// Do what an Activity item's button does.
     RunActivityAction(ActivityAction),
+    /// Apply the GPU's suspended cooling configuration again, by GPU id, to bring back the fan
+    /// curve Prism stopped following: Retry after a cooling fault, Resume after external control.
+    RetryCooling(String),
 }
 
 /// Something the core asks the caller to do.
@@ -493,6 +497,8 @@ pub struct Core {
     /// The fan the cooling controls show and set on their own, by index, until every fan is
     /// picked again.
     pub(crate) picked_fan: Option<u32>,
+    /// How many times the workspace was asked to bring its Fans track into view.
+    pub(crate) fans_revealed: u64,
     pub(crate) palette: Option<PaletteState>,
     /// Commands run lately, the latest first.
     pub(crate) recent: Vec<Command>,
@@ -507,12 +513,13 @@ pub struct Core {
     sampling: bool,
     /// A session ended and hasn't come back, and Prism hasn't notified about it yet.
     lost_unnotified: bool,
-    notifications: Notifications,
+    pub(crate) notifications: Notifications,
     /// Each GPU's tuning state as prismd last pushed it, by GPU id, while there is a session.
     pub(crate) tuning: BTreeMap<String, GpuTuningState>,
     /// Prism's control of each GPU's fans as prismd last pushed it, by GPU id, while there is a
     /// session.
     pub(crate) cooling: BTreeMap<String, GpuCoolingControl>,
+    pub(crate) cooling_faults: CoolingFaults,
     pub(crate) drafts: Drafts,
     /// The caller's profiles, with each GPU's startup and current profile, as prismd last pushed
     /// them, while there is a session.
@@ -726,6 +733,7 @@ impl Core {
                 self.session = Session::Failed(failure);
                 self.tuning.clear();
                 self.cooling.clear();
+                self.cooling_faults_lost_session();
                 self.drafts_lost_session();
                 self.profiles_lost_session();
                 self.games_lost_session();
@@ -772,6 +780,7 @@ impl Core {
             }
             Input::PrismdEvent { event, received_at } => {
                 self.activity.arrived(received_at);
+                let mut effects = Vec::new();
                 match event {
                     DaemonEvent::InventoryChanged(inventory) => self.found(inventory),
                     DaemonEvent::TelemetrySampled(sample) => {
@@ -783,7 +792,7 @@ impl Core {
                         self.tuning_pushed(&gpu_id);
                     }
                     DaemonEvent::CoolingControlChanged(control) => {
-                        self.cooling.insert(control.gpu_id.clone(), control);
+                        effects = self.cooling_control_pushed(control);
                     }
                     DaemonEvent::ProfilesChanged(profiles) => self.profiles_pushed(profiles),
                     DaemonEvent::GamesChanged(games) => self.games = games,
@@ -796,7 +805,7 @@ impl Core {
                     // Taken in as the screens that show them land.
                     DaemonEvent::AutomaticSwitchingChanged(_) => {}
                 }
-                Vec::new()
+                effects
             }
             Input::TelemetrySampled {
                 gpus: sample,
@@ -845,7 +854,11 @@ impl Core {
                     Some(Subject::Prismd) => {
                         self.perform(Command::GoToSettings(SettingsSection::Daemon))
                     }
-                    Some(Subject::Gpu(id)) => self.perform(Command::GoToGpu(id)),
+                    // About its failure pause, which the Fans track explains.
+                    Some(Subject::Gpu(id)) => {
+                        self.fans_revealed += 1;
+                        self.perform(Command::GoToGpu(id))
+                    }
                     // Withdrawn on its way in: the window is still what the user asked for.
                     None => Vec::new(),
                 };
@@ -1047,11 +1060,12 @@ impl Core {
             Intent::DiscardAndClose => self.quit(),
             Intent::OpenActivity => self.run(Some(Command::OpenActivity)),
             Intent::RunActivityAction(action) => self.run_activity_action(action),
+            Intent::RetryCooling(gpu_id) => self.run(Some(Command::RetryCooling(gpu_id))),
         }
     }
 
     /// Runs a command from the palette or a shortcut, unless it can't run now.
-    fn run(&mut self, command: Option<Command>) -> Vec<Effect> {
+    pub(crate) fn run(&mut self, command: Option<Command>) -> Vec<Effect> {
         let Some(command) = command else {
             return Vec::new();
         };
@@ -1113,6 +1127,7 @@ impl Core {
             Command::AddSteamGame => self.open_add_steam_game(),
             Command::AddProgram => self.open_add_program(),
             Command::OpenActivity => self.open_activity(),
+            Command::RetryCooling(gpu_id) => self.retry_cooling(gpu_id),
             Command::CopyPrismdSetup => {
                 self.setup_command().map(Effect::Copy).into_iter().collect()
             }

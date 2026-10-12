@@ -26,6 +26,7 @@ export struct SidebarGpuView {
     power-draw: ReadoutView,
     fan-speed: ReadoutView,
     vitals: string,
+    paused: bool,
     selected: bool,
 }
 
@@ -98,6 +99,19 @@ export struct ChartView {
     handle-y: float,
 }
 
+// Why Prism stopped following a GPU's fan curve: its title and why, how its fans fell back and
+// what brings the curve back as `detail`, and its button `action` ("Retry" or "Resume"), which can
+// be pressed when `available` and says why not in `reason`. `outcome` says why prismd didn't apply
+// the latest one.
+export struct CoolingProblemView {
+    title: string,
+    detail: string,
+    action: string,
+    available: bool,
+    reason: string,
+    outcome: string,
+}
+
 // The fan control mode of every fan of the GPU, or of the fan picked while each has its own
 // settings: automatic cooling, a fixed speed or a fan curve as segments, with the mode pending next
 // to them, such as "→ fixed", `failure` when the last Apply didn't put it into effect, and why it's
@@ -109,6 +123,7 @@ export struct ChartView {
 // fan for the controls to set, with a change between one shared configuration and per-fan settings
 // pending next to it as `arrangement-pending`, such as "→ per fan". `can-recall` says whether the
 // remembered fan curve can be recalled into the draft now.
+// `has-problem` says whether Prism stopped following the GPU's fan curve, as `problem` explains.
 export struct FanModeView {
     modes: [SegmentView],
     mode: string,
@@ -123,6 +138,8 @@ export struct FanModeView {
     arrangement-pending: string,
     fans: [SegmentView],
     can-recall: bool,
+    has-problem: bool,
+    problem: CoolingProblemView,
 }
 
 // One of the fan curve's points: where it's drawn, from the left (0) to the right (1) and from the
@@ -212,6 +229,7 @@ export struct ChangeStripView {
 // whether the header shows the GPU's profiles, read-only with `profiles-reason` when
 // `profiles-read-only`, showing `current-profile`, the current profile's name, or "None".
 // `profiles-not-saved` says whether the values in effect differ from the current profile.
+// `reveal-fans` changes each time the tracks should scroll the Fans track into view.
 export struct WorkspaceView {
     id: string,
     title: string,
@@ -224,6 +242,7 @@ export struct WorkspaceView {
     changes: ChangeStripView,
     no-tuning-access: string,
     hardware-open: bool,
+    reveal-fans: int,
 }
 
 // Which dialog is over the window, if any.
@@ -490,6 +509,8 @@ export global Intents {
     callback pick-fans(index: int);
     // Stages the selected GPU's remembered fan curve, with its fan arrangement.
     callback recall-remembered-curve();
+    // Applies the suspended cooling configuration of the GPU, by id, again: Retry or Resume.
+    callback retry-cooling(gpu-id: string);
     // Stages the power limit drawn at `y` on the power chart, from the top (0) to the bottom (1).
     callback drag-power-limit(y: float);
     // Stages the fan curve with this point moved to where it's drawn at `x` across and `y` down

@@ -295,6 +295,12 @@ impl Inner {
         });
         intents.on_toggle_fan_curve(to_core(Intent::ToggleFanCurve));
         intents.on_recall_remembered_curve(to_core(Intent::RecallRememberedCurve));
+        let inner = Rc::downgrade(this);
+        intents.on_retry_cooling(move |gpu_id| {
+            with_inner(&inner, |inner| {
+                inner.handle(Input::Intent(Intent::RetryCooling(gpu_id.into())));
+            });
+        });
         intents.on_confirm_profile(to_core(Intent::ConfirmProfile));
         intents.on_toggle_profile_menu(to_core(Intent::ToggleProfileMenu));
         let inner = Rc::downgrade(this);

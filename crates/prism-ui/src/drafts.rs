@@ -469,6 +469,7 @@ impl Core {
             || self.profile_command_answered(command, &response)
             || self.game_answered(command, &response)
             || self.activity_answered(command, &response)
+            || self.cooling_retry_answered(command, &response)
         {
             return Vec::new();
         }

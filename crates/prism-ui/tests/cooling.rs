@@ -424,7 +424,11 @@ fn prismd_pushes_the_gpus_cooling_control_and_a_suspended_curve_says_why() {
         received_at: Duration::from_secs(2),
     });
 
-    assert_eq!(fan_mode(&core).note.as_deref(), Some(reason));
+    let problem = fan_mode(&core)
+        .problem
+        .expect("the suspended curve is a problem");
+    assert_eq!(problem.detail[0], reason);
+    assert_eq!(fan_mode(&core).note, None);
 }
 
 #[test]
