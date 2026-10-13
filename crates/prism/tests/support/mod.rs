@@ -6,6 +6,7 @@
 
 pub mod audit;
 pub mod bus;
+pub mod display;
 pub mod prismd;
 pub mod screenshot;
 
