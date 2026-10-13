@@ -1,0 +1,58 @@
+import { Theme } from "../theme.slint";
+
+// Prism's mark: a beam enters a prism and leaves it split in three, one of them in the accent.
+// It's drawn on a 64-unit grid, the same as the app icon, in the colors of what it sits on, which
+// fills the prism.
+export component PrismMark inherits Rectangle {
+    in property <color> ink;
+    in property <color> muted;
+    in property <color> accent;
+    in property <color> surface;
+    // One unit of the grid; Path scales its commands but not its stroke.
+    property <length> unit: root.width / 64;
+
+    width: Theme.size.mark;
+    height: Theme.size.mark;
+    accessible-role: none;
+
+    Path {
+        viewbox-width: 64;
+        viewbox-height: 64;
+        commands: "M0 40 L20 35";
+        stroke: root.ink;
+        stroke-width: 3 * root.unit;
+    }
+
+    Path {
+        viewbox-width: 64;
+        viewbox-height: 64;
+        commands: "M34 31 L64 20";
+        stroke: root.accent;
+        stroke-width: 4 * root.unit;
+    }
+
+    Path {
+        viewbox-width: 64;
+        viewbox-height: 64;
+        commands: "M34 33 L64 33";
+        stroke: root.ink;
+        stroke-width: 3 * root.unit;
+    }
+
+    Path {
+        viewbox-width: 64;
+        viewbox-height: 64;
+        commands: "M34 35 L64 46";
+        stroke: root.muted;
+        stroke-width: 3 * root.unit;
+    }
+
+    Path {
+        viewbox-width: 64;
+        viewbox-height: 64;
+        commands: "M28 8 L50 52 L6 52 Z";
+        fill: root.surface;
+        stroke: root.ink;
+        stroke-width: 3.5 * root.unit;
+    }
+}

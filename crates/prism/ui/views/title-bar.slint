@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { PressArea, StyledText } from "../widgets.slint";
+import { PressArea, PrismMark, StyledText } from "../widgets.slint";
 import { AppState, Intents } from "../state.slint";
 
 component WindowButton inherits Rectangle {
@@ -55,18 +55,33 @@ export component TitleBar inherits Rectangle {
         Rectangle {
             accessible-role: text;
             accessible-label: "Prism";
-            width: wordmark.preferred-width;
+            width: lockup.preferred-width;
 
-            wordmark := HorizontalLayout {
-                for part in [
-                    { text: "PRI", accent: false },
-                    { text: "S", accent: true },
-                    { text: "M", accent: false },
-                ]: StyledText {
-                    text: part.text;
-                    style: Theme.text.wordmark;
-                    color: part.accent ? Theme.color.accent : Theme.color.chrome-ink;
-                    accessible-role: none;
+            lockup := HorizontalLayout {
+                spacing: Theme.space.m;
+
+                VerticalLayout {
+                    alignment: center;
+
+                    PrismMark {
+                        ink: Theme.color.chrome-ink;
+                        muted: Theme.color.chrome-ink-muted;
+                        accent: Theme.color.accent;
+                        surface: Theme.color.chrome;
+                    }
+                }
+
+                HorizontalLayout {
+                    for part in [
+                        { text: "PRI", accent: false },
+                        { text: "S", accent: true },
+                        { text: "M", accent: false },
+                    ]: StyledText {
+                        text: part.text;
+                        style: Theme.text.wordmark;
+                        color: part.accent ? Theme.color.accent : Theme.color.chrome-ink;
+                        accessible-role: none;
+                    }
                 }
             }
         }
