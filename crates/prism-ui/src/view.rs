@@ -92,6 +92,31 @@ impl SidebarGpu {
     }
 }
 
+/// Compact mode: each GPU's vitals, profile buttons and automatic switching status, stacked in
+/// place of the full layout. It doesn't edit; anything more opens the full layout. Without GPUs,
+/// it says why as the sidebar does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompactMode {
+    pub gpus: Vec<CompactGpu>,
+}
+
+/// A GPU in compact mode.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompactGpu {
+    /// The vitals its sidebar block shows.
+    pub vitals: SidebarGpu,
+    /// Its profile buttons, as the workspace header has them.
+    pub profiles: ProfileSwitcher,
+    /// Its automatic switching status, while there is a session.
+    pub switching: Option<SwitchingStatus>,
+    /// How many unapplied tuning changes it has, such as "2 unapplied changes", while it has
+    /// any, which choosing a profile asks to discard.
+    pub unapplied: Option<String>,
+    /// What the latest profile application on it put into effect and what it left, until the GPU
+    /// is edited or another profile is chosen.
+    pub outcome: Option<String>,
+}
+
 /// What fills the content area.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Content {
@@ -1101,6 +1126,28 @@ impl Core {
                 _ => None,
             },
         }
+    }
+
+    /// Compact mode, while the window shows it.
+    pub fn compact_mode(&self) -> Option<CompactMode> {
+        self.compact.then(|| CompactMode {
+            gpus: self
+                .gpus()
+                .iter()
+                .enumerate()
+                .map(|(index, gpu)| CompactGpu {
+                    vitals: self.sidebar_gpu(index, gpu),
+                    profiles: self.profile_switcher(&gpu.id),
+                    switching: self.switching_status(&gpu.id),
+                    unapplied: self
+                        .drafts
+                        .by_gpu
+                        .get(&gpu.id)
+                        .map(|draft| unapplied(draft.len())),
+                    outcome: self.profile_outcomes.get(&gpu.id).cloned(),
+                })
+                .collect(),
+        })
     }
 
     pub fn content(&self) -> Content {

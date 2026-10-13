@@ -10,14 +10,17 @@ pub struct GuiSettings {
     pub appearance: AppearanceMode,
     /// Whether Prism sends desktop notifications at all.
     pub desktop_notifications: bool,
+    /// Whether the window shows compact mode in place of the full layout.
+    pub compact_mode: bool,
 }
 
 impl Default for GuiSettings {
-    /// System appearance, with desktop notifications on.
+    /// System appearance, with desktop notifications on, in the full layout.
     fn default() -> Self {
         Self {
             appearance: AppearanceMode::System,
             desktop_notifications: true,
+            compact_mode: false,
         }
     }
 }
@@ -81,6 +84,7 @@ impl Core {
         GuiSettings {
             appearance: self.appearance,
             desktop_notifications: self.desktop_notifications(),
+            compact_mode: self.compact,
         }
     }
 

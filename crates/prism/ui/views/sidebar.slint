@@ -4,9 +4,10 @@ import { AppState, ContentKind, Intents, Section, SidebarGpuView } from "../stat
 
 // A GPU's block: its index, PAUSED while anything is in a failure pause on it, such as its
 // cooling or automatic switching, and identity, name, a large temperature, then utilization,
-// power draw and fan speed.
-component GpuBlock inherits ListRow {
+// power draw and fan speed. It ends in a divider unless `divided` is off.
+export component GpuBlock inherits ListRow {
     in property <SidebarGpuView> gpu;
+    in property <bool> divided: true;
 
     height: Theme.size.gpu-block;
     label: gpu.label;
@@ -95,7 +96,7 @@ component GpuBlock inherits ListRow {
         }
     }
 
-    Divider {
+    if root.divided: Divider {
         y: parent.height - self.height;
     }
 }

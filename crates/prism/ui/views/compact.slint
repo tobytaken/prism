@@ -1,0 +1,168 @@
+import { Theme } from "../theme.slint";
+import { Divider, Segmented, StyledText } from "../widgets.slint";
+import { AppState, CompactGpuView, Intents } from "../state.slint";
+import { GpuBlock } from "sidebar.slint";
+
+// A GPU in compact mode: its sidebar block, which opens the GPU in the full layout, then its
+// profile buttons, with its unapplied tuning changes or the latest profile application's outcome
+// beside them, and its automatic switching status.
+component CompactGpu inherits Rectangle {
+    in property <CompactGpuView> view;
+    in property <int> index;
+
+    height: Theme.size.compact-gpu-block;
+
+    VerticalLayout {
+        GpuBlock {
+            gpu: root.view.gpu;
+            selected: false;
+            divided: false;
+            activated => {
+                Intents.select-gpu(root.view.gpu.id);
+            }
+        }
+
+        VerticalLayout {
+            padding-left: Theme.space.xl;
+            padding-right: Theme.space.xl;
+            padding-bottom: Theme.space.l;
+            spacing: Theme.space.s;
+
+            HorizontalLayout {
+                height: Theme.size.segment;
+                spacing: Theme.space.m;
+
+                // One click applies one, asking first when the GPU has unapplied changes.
+                if root.view.has-profiles: Segmented {
+                    label: "Profiles of " + root.view.gpu.label;
+                    segments: root.view.profiles;
+                    read-only: root.view.profiles-read-only;
+                    reason: root.view.profiles-reason;
+                    value: root.view.current-profile;
+                    value-text: root.view.current-profile;
+                    chosen(profile) => {
+                        Intents.apply-compact-profile(root.index, profile);
+                    }
+                }
+
+                if !root.view.has-profiles: StyledText {
+                    text: root.view.profiles-reason != ""
+                        ? "Profiles need prismd · " + root.view.profiles-reason
+                        : "No profiles";
+                    style: Theme.text.value;
+                    color: Theme.color.ink-muted;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                StyledText {
+                    horizontal-stretch: 1;
+                    min-width: 0;
+                    text: root.view.unapplied != "" ? root.view.unapplied : root.view.outcome;
+                    style: Theme.text.value;
+                    color: root.view.unapplied != "" ? Theme.color.accent : Theme.color.ink-muted;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            // What drives automatic switching on the GPU, or why it doesn't, in the danger color
+            // on a failure pause, with why prismd refused the latest request or else why.
+            HorizontalLayout {
+                spacing: Theme.space.s;
+
+                if root.view.has-switching: StyledText {
+                    text: "AUTO";
+                    style: Theme.text.label;
+                    color: Theme.color.ink-muted;
+                    vertical-alignment: center;
+                    accessible-role: none;
+                }
+
+                if root.view.has-switching: StyledText {
+                    min-width: 0;
+                    text: root.view.switching.summary;
+                    style: Theme.text.body;
+                    color: root.view.switching.failed ? Theme.color.danger : Theme.color.ink;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    accessible-role: text;
+                    accessible-label: "Automatic switching status of " + root.view.gpu.label;
+                    accessible-value: root.view.switching.summary;
+                    accessible-description: root.view.switching.outcome != ""
+                        ? root.view.switching.outcome : root.view.switching.detail;
+                }
+
+                StyledText {
+                    horizontal-stretch: 1;
+                    min-width: 0;
+                    text: !root.view.has-switching ? ""
+                        : root.view.switching.outcome != "" ? root.view.switching.outcome
+                        : root.view.switching.detail;
+                    style: Theme.text.body;
+                    color: root.view.switching.outcome != "" ? Theme.color.danger : Theme.color.ink-muted;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    accessible-role: none;
+                }
+            }
+        }
+    }
+
+    Divider {
+        y: parent.height - self.height;
+    }
+}
+
+// Compact mode: each GPU's block stacked, with its profile buttons and automatic switching
+// status, scrolling when they don't all fit. It doesn't edit; a GPU's block opens the GPU in the
+// full layout.
+export component CompactMode inherits Rectangle {
+    background: Theme.color.canvas;
+
+    Flickable {
+        content-height: max(self.height, gpus.preferred-height);
+
+        Rectangle {
+            accessible-role: list;
+            accessible-label: "GPUs";
+            height: gpus.preferred-height;
+            y: 0;
+
+            gpus := VerticalLayout {
+                alignment: start;
+
+                for gpu[index] in AppState.compact-gpus: CompactGpu {
+                    view: gpu;
+                    index: index;
+                }
+
+                // Shown whenever there are no GPUs to stack, and why.
+                if AppState.compact-gpus.length == 0: VerticalLayout {
+                    padding: Theme.space.xl;
+                    spacing: Theme.space.xs;
+
+                    StyledText {
+                        text: AppState.no-gpus.title != "" ? AppState.no-gpus.title : "Looking for GPUs…";
+                        style: Theme.text.name;
+                    }
+
+                    if AppState.no-gpus.title != "": StyledText {
+                        text: AppState.no-gpus.reason;
+                        style: Theme.text.value;
+                        color: Theme.color.ink-muted;
+                        wrap: word-wrap;
+                    }
+
+                    if AppState.no-gpus.title != "": StyledText {
+                        text: AppState.no-gpus.hint;
+                        style: Theme.text.value;
+                        color: Theme.color.ink-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}

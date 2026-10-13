@@ -1,6 +1,6 @@
 //! The composition root: builds the window over the prism-ui core and performs its effects.
 
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -30,7 +30,7 @@ use crate::single_instance::APP_ID;
 use crate::sync::sync;
 use crate::{
     ActivityList, AppState, ChartId, ChartPart, CurvePart, Inbox, Intents, KeyPress, Link,
-    MainWindow, Section, ServiceAction, SettingsSection, TuningSetting,
+    MainWindow, Section, ServiceAction, SettingsSection, Theme, TuningSetting,
 };
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
@@ -62,6 +62,11 @@ struct Inner {
     /// The selected GPU's charts and fan curve editor as of the core revision they were made at,
     /// so drawing every part of every chart derives them once.
     drawn: RefCell<Option<Drawn>>,
+    /// How many GPUs compact mode last fitted the window to, while it shows.
+    compact_fit: Cell<Option<usize>>,
+    /// The window's size, and whether it was maximized, when compact mode started, for the full
+    /// layout to get back; none when Prism started in compact mode.
+    full_layout: Cell<Option<Placement>>,
     /// What other threads posted for the UI thread.
     inbox: Receiver<Posted>,
     outbox: Sender<Posted>,
@@ -72,6 +77,13 @@ struct Drawn {
     revision: u64,
     charts: Vec<TrackChart>,
     fan_curve: Option<FanCurveEditor>,
+}
+
+/// The window's size, and whether it was maximized.
+#[derive(Clone, Copy)]
+struct Placement {
+    size: slint::PhysicalSize,
+    maximized: bool,
 }
 
 /// Something another thread posted for the UI thread.
@@ -134,6 +146,8 @@ impl App {
             settings,
             timers: RefCell::default(),
             drawn: RefCell::default(),
+            compact_fit: Cell::default(),
+            full_layout: Cell::default(),
             inbox,
             outbox,
         });
@@ -156,6 +170,8 @@ impl App {
             settings,
             started_unix_ms: inner.clock.started_unix_ms(),
         });
+        // Started in compact mode, the window not shown yet has no full layout size to give back.
+        inner.full_layout.set(None);
         Ok(Self { inner })
     }
 
@@ -349,6 +365,7 @@ impl Inner {
         intents.on_dismiss(to_core(Intent::Dismiss));
         intents.on_toggle_hardware_details(to_core(Intent::ToggleHardwareDetails));
         intents.on_apply_changes(to_core(Intent::ApplyChanges));
+        intents.on_toggle_compact_mode(to_core(Intent::ToggleCompactMode));
         intents.on_discard_changes(to_core(Intent::DiscardChanges));
         intents.on_discard_and_close(to_core(Intent::DiscardAndClose));
         intents.on_open_activity(to_core(Intent::OpenActivity));
@@ -520,6 +537,20 @@ impl Inner {
                         .map(|choice| choice.id.clone()),
                     _ => None,
                 };
+                if let Some(profile_id) = profile_id {
+                    inner.handle(Input::Intent(Intent::ApplyProfile(profile_id)));
+                }
+            });
+        });
+        let inner = Rc::downgrade(this);
+        intents.on_apply_compact_profile(move |gpu, index| {
+            with_inner(&inner, |inner| {
+                // Compact mode lists GPUs and their profiles in the order the core gives them.
+                let profile_id = inner.core.borrow().compact_mode().and_then(|compact| {
+                    let gpu = compact.gpus.get(usize::try_from(gpu).ok()?)?;
+                    let choice = gpu.profiles.choices.get(usize::try_from(index).ok()?)?;
+                    Some(choice.id.clone())
+                });
                 if let Some(profile_id) = profile_id {
                     inner.handle(Input::Intent(Intent::ApplyProfile(profile_id)));
                 }
@@ -774,12 +805,57 @@ impl Inner {
         let overlay_was_open = self.overlay_open();
         let effects = self.core.borrow_mut().handle(input);
         sync(&self.window, &self.core.borrow());
+        self.fit_window();
         if overlay_was_open && !self.overlay_open() {
             // The palette's field or a dialog's button had the keyboard.
             self.window.invoke_focus_window();
         }
         for effect in effects {
             self.perform(effect);
+        }
+    }
+
+    /// Fits the window to compact mode's GPUs when it starts showing and whenever how many there
+    /// are changes, and gives the full layout back the size it had when compact mode ends.
+    fn fit_window(&self) {
+        let gpus = self
+            .core
+            .borrow()
+            .compact_mode()
+            .map(|compact| compact.gpus.len());
+        let fitted = self.compact_fit.replace(gpus);
+        if fitted == gpus {
+            return;
+        }
+        let window = self.window.window();
+        match gpus {
+            Some(_) => {
+                if fitted.is_none() {
+                    self.full_layout.set(Some(Placement {
+                        size: window.size(),
+                        maximized: window.is_maximized(),
+                    }));
+                    window.set_maximized(false);
+                }
+                let width = self.window.global::<Theme>().get_size().compact_width;
+                window.set_size(slint::LogicalSize::new(
+                    width,
+                    self.window.get_compact_height(),
+                ));
+            }
+            None => match self.full_layout.take() {
+                Some(placement) => {
+                    window.set_size(placement.size);
+                    window.set_maximized(placement.maximized);
+                }
+                None => {
+                    let size = self.window.global::<Theme>().get_size();
+                    window.set_size(slint::LogicalSize::new(
+                        size.window_width,
+                        size.window_height,
+                    ));
+                }
+            },
         }
     }
 

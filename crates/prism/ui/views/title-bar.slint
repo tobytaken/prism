@@ -1,15 +1,18 @@
 import { Theme } from "../theme.slint";
 import { PressArea, StyledText } from "../widgets.slint";
-import { Intents } from "../state.slint";
+import { AppState, Intents } from "../state.slint";
 
 component WindowButton inherits Rectangle {
     in property <string> label;
     in property <image> icon;
+    // Its shortcut, if it has one, such as "Ctrl+Shift+M".
+    in property <string> description;
     callback activated();
 
     width: Theme.size.window-button;
     accessible-role: button;
     accessible-label: label;
+    accessible-description: description;
     accessible-action-default => {
         root.activated();
     }
@@ -32,7 +35,8 @@ component WindowButton inherits Rectangle {
     }
 }
 
-// Prism's own title bar: drag to move, double-click to maximize, window buttons on the right.
+// Prism's own title bar: drag to move, double-click to maximize, window buttons on the right. In
+// compact mode, the first of them opens the full layout.
 export component TitleBar inherits Rectangle {
     height: Theme.size.title-bar;
     background: Theme.color.chrome;
@@ -69,6 +73,15 @@ export component TitleBar inherits Rectangle {
 
         Rectangle {
             horizontal-stretch: 1;
+        }
+
+        if AppState.compact: WindowButton {
+            label: "Full layout";
+            description: "Ctrl+Shift+M";
+            icon: @image-url("../icons/full-layout.svg");
+            activated => {
+                Intents.toggle-compact-mode();
+            }
         }
 
         WindowButton {

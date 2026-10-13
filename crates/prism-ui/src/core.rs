@@ -443,6 +443,8 @@ pub enum Intent {
     DiscardAndClose,
     /// Open Activity, as the status bar's problem indicator does.
     OpenActivity,
+    /// Show compact mode in place of the full layout, or the full layout again.
+    ToggleCompactMode,
     /// Do what an Activity item's button does.
     RunActivityAction(ActivityAction),
     /// Apply the GPU's suspended cooling configuration again, by GPU id, to bring back the fan
@@ -531,6 +533,8 @@ pub struct Core {
     pub(crate) settings_section: SettingsSection,
     pub(crate) telemetry: Option<TelemetryState>,
     pub(crate) range: TelemetryRange,
+    /// Whether the window shows compact mode in place of the full layout.
+    pub(crate) compact: bool,
     /// Whether the workspace's hardware details are open.
     pub(crate) hardware_open: bool,
     /// Whether the user collapsed the fan curve editor; it starts open.
@@ -719,6 +723,7 @@ impl Core {
                 started_unix_ms,
             } => {
                 self.appearance = settings.appearance;
+                self.compact = settings.compact_mode;
                 self.notifications
                     .set_enabled(settings.desktop_notifications);
                 self.activity.started(started_unix_ms);
@@ -1139,6 +1144,7 @@ impl Core {
             Intent::BrowseForProgram => self.browse_for_program(),
             Intent::DiscardAndClose => self.quit(),
             Intent::OpenActivity => self.run(Some(Command::OpenActivity)),
+            Intent::ToggleCompactMode => self.run(Some(Command::ToggleCompactMode)),
             Intent::RunActivityAction(action) => self.run_activity_action(action),
             Intent::RetryCooling(gpu_id) => self.run(Some(Command::RetryCooling(gpu_id))),
             Intent::SetSwitchingPaused { gpu_id, paused } => {
@@ -1169,7 +1175,8 @@ impl Core {
     pub(crate) fn perform(&mut self, command: Command) -> Vec<Effect> {
         let daemon_was_open = self.daemon_open();
         let drivers_were_open = self.drivers_open();
-        let effects = match command {
+        let full_layout_opened = self.leave_compact_mode_for(&command);
+        let mut effects = match command {
             Command::GoToGpu(id) => {
                 if self.gpus().iter().any(|gpu| gpu.id == id) {
                     // Another GPU's controls start with every fan.
@@ -1216,6 +1223,7 @@ impl Core {
             Command::AddSteamGame => self.open_add_steam_game(),
             Command::AddProgram => self.open_add_program(),
             Command::OpenActivity => self.open_activity(),
+            Command::ToggleCompactMode => self.toggle_compact_mode(),
             Command::RetryCooling(gpu_id) => self.retry_cooling(gpu_id),
             Command::SetSwitchingPaused { gpu_id, paused } => {
                 self.set_switching_paused(gpu_id, paused)
@@ -1230,6 +1238,7 @@ impl Core {
             Command::SetDesktopNotifications(enabled) => self.set_desktop_notifications(enabled),
             Command::Quit => self.close_or_ask(),
         };
+        effects.extend(full_layout_opened);
         // Settings → Daemon shows why there's no session, as the host says it now.
         if !daemon_was_open && self.daemon_open() && !self.connected() {
             return [effects, vec![Effect::CheckPrismdHost]].concat();

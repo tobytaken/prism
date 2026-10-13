@@ -300,6 +300,27 @@ fn activity_is_accessible_with_and_without_tuning_access() {
 }
 
 #[test]
+fn compact_mode_is_accessible_with_and_without_profiles() {
+    let harness = Harness::new(SimulatedFixture::TwoIdenticalGpus);
+    harness.tick();
+    harness.ctrl_shift("M");
+    audit("two GPUs, compact mode", &harness);
+    harness.find(AccessibleRole::Button, "Full layout");
+
+    let harness = tunable();
+    harness.prismd.push(DaemonEvent::ProfilesChanged(
+        serde_json::from_str(include_str!(
+            "../../prism-protocol/tests/contracts/profiles-state.json"
+        ))
+        .unwrap(),
+    ));
+    harness.app.receive_posted();
+    harness.ctrl_shift("M");
+    audit("tunable, compact mode with profiles", &harness);
+    harness.find(AccessibleRole::Button, "Apply profile Quiet");
+}
+
+#[test]
 fn the_profile_buttons_and_their_dialogs_are_accessible() {
     let profiles: prism_protocol::ProfilesState = serde_json::from_str(include_str!(
         "../../prism-protocol/tests/contracts/profiles-state.json"
