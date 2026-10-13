@@ -613,7 +613,6 @@ fn driver_confirmation(kind: DialogKind, confirmation: DriverConfirmation) -> Di
     }
 }
 
-/// A GPU's automatic switching status as its workspace shows it.
 /// A GPU's profile buttons as segments, the current one picked and the startup one marked.
 fn profile_segments(profiles: &ProfileSwitcher) -> Vec<SegmentView> {
     profiles
@@ -676,6 +675,7 @@ fn compact_gpu_view(current: Option<CompactGpuView>, gpu: &CompactGpu) -> Compac
     }
 }
 
+/// A GPU's automatic switching status as its workspace shows it.
 fn switching_view(status: &SwitchingStatus) -> SwitchingView {
     SwitchingView {
         summary: status.summary.as_str().into(),

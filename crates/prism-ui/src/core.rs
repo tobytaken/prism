@@ -1175,7 +1175,7 @@ impl Core {
     pub(crate) fn perform(&mut self, command: Command) -> Vec<Effect> {
         let daemon_was_open = self.daemon_open();
         let drivers_were_open = self.drivers_open();
-        let left_compact_mode = self.leave_compact_mode_for(&command);
+        let full_layout_opened = self.leave_compact_mode_for(&command);
         let mut effects = match command {
             Command::GoToGpu(id) => {
                 if self.gpus().iter().any(|gpu| gpu.id == id) {
@@ -1238,7 +1238,7 @@ impl Core {
             Command::SetDesktopNotifications(enabled) => self.set_desktop_notifications(enabled),
             Command::Quit => self.close_or_ask(),
         };
-        effects.extend(left_compact_mode);
+        effects.extend(full_layout_opened);
         // Settings → Daemon shows why there's no session, as the host says it now.
         if !daemon_was_open && self.daemon_open() && !self.connected() {
             return [effects, vec![Effect::CheckPrismdHost]].concat();

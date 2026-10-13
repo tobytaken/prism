@@ -5,11 +5,14 @@ import { AppState, Intents } from "../state.slint";
 component WindowButton inherits Rectangle {
     in property <string> label;
     in property <image> icon;
+    // Its shortcut, if it has one, such as "Ctrl+Shift+M".
+    in property <string> description;
     callback activated();
 
     width: Theme.size.window-button;
     accessible-role: button;
     accessible-label: label;
+    accessible-description: description;
     accessible-action-default => {
         root.activated();
     }
@@ -74,6 +77,7 @@ export component TitleBar inherits Rectangle {
 
         if AppState.compact: WindowButton {
             label: "Full layout";
+            description: "Ctrl+Shift+M";
             icon: @image-url("../icons/full-layout.svg");
             activated => {
                 Intents.toggle-compact-mode();

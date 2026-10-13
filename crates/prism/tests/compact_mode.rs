@@ -171,7 +171,12 @@ fn the_palette_and_the_full_layout_button_toggle_compact_mode() {
     harness.tick();
     assert!(in_compact_mode(&harness));
 
-    press(harness.find(Button, "Full layout"), &harness);
+    let full_layout = harness.find(Button, "Full layout");
+    assert_eq!(
+        full_layout.accessible_description().as_deref(),
+        Some("Ctrl+Shift+M")
+    );
+    press(full_layout, &harness);
 
     assert!(!in_compact_mode(&harness));
     assert_eq!(harness.count(Button, "Full layout"), 0);

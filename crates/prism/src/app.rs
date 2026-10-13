@@ -66,7 +66,7 @@ struct Inner {
     compact_fit: Cell<Option<usize>>,
     /// The window's size, and whether it was maximized, when compact mode started, for the full
     /// layout to get back; none when Prism started in compact mode.
-    full_layout: Cell<Option<(slint::PhysicalSize, bool)>>,
+    full_layout: Cell<Option<Placement>>,
     /// What other threads posted for the UI thread.
     inbox: Receiver<Posted>,
     outbox: Sender<Posted>,
@@ -77,6 +77,13 @@ struct Drawn {
     revision: u64,
     charts: Vec<TrackChart>,
     fan_curve: Option<FanCurveEditor>,
+}
+
+/// The window's size, and whether it was maximized.
+#[derive(Clone, Copy)]
+struct Placement {
+    size: slint::PhysicalSize,
+    maximized: bool,
 }
 
 /// Something another thread posted for the UI thread.
@@ -824,8 +831,10 @@ impl Inner {
         match gpus {
             Some(_) => {
                 if fitted.is_none() {
-                    self.full_layout
-                        .set(Some((window.size(), window.is_maximized())));
+                    self.full_layout.set(Some(Placement {
+                        size: window.size(),
+                        maximized: window.is_maximized(),
+                    }));
                     window.set_maximized(false);
                 }
                 let width = self.window.global::<Theme>().get_size().compact_width;
@@ -835,9 +844,9 @@ impl Inner {
                 ));
             }
             None => match self.full_layout.take() {
-                Some((size, maximized)) => {
-                    window.set_size(size);
-                    window.set_maximized(maximized);
+                Some(placement) => {
+                    window.set_size(placement.size);
+                    window.set_maximized(placement.maximized);
                 }
                 None => {
                     let size = self.window.global::<Theme>().get_size();
