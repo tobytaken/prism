@@ -5,6 +5,7 @@
 //! resulting state through the core's view models.
 
 mod activity;
+mod compact;
 mod cooling;
 mod cooling_faults;
 mod core;
@@ -40,13 +41,13 @@ pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::settings::{About, GuiSettings, Link, SLINT_WEBSITE};
 pub use crate::startup::STARTUP_BEHAVIORS;
 pub use crate::view::{
-    ActivityButton, ActivityItem, ActivityPanel, AddProgram, AddSteamGame, ChangeStrip,
-    ConfirmClose, ConfirmDelete, Content, CoolingProblem, CurveMarker, CurvePoint, Detail, Dialog,
-    DiscardForProfile, DriverConfirmation, DriverJobView, DriverPlanView, DriversSection,
-    ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor, FanModeChoice,
-    FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace, HardwareDetails, LinkChoice,
-    ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice, ProfileCorrections, ProfileMenu,
-    ProfileNameDialog, ProfileSwitcher, ProgramChoice, Review, Sidebar, SidebarGpu,
+    ActivityButton, ActivityItem, ActivityPanel, AddProgram, AddSteamGame, ChangeStrip, CompactGpu,
+    CompactMode, ConfirmClose, ConfirmDelete, Content, CoolingProblem, CurveMarker, CurvePoint,
+    Detail, Dialog, DiscardForProfile, DriverConfirmation, DriverJobView, DriverPlanView,
+    DriversSection, ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor,
+    FanModeChoice, FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace, HardwareDetails,
+    LinkChoice, ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice, ProfileCorrections,
+    ProfileMenu, ProfileNameDialog, ProfileSwitcher, ProgramChoice, Review, Sidebar, SidebarGpu,
     StartupBehaviorChoice, StartupChoice, StartupGpu, StartupSection, StatusBar, SteamAppChoice,
     Stepper, SwitchingStatus, Track, TrackChart, TrackKind, Tunable,
 };

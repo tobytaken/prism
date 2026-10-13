@@ -166,6 +166,7 @@ fn saved(appearance: AppearanceMode, desktop_notifications: bool) -> Effect {
     Effect::SaveSettings(GuiSettings {
         appearance,
         desktop_notifications,
+        compact_mode: false,
     })
 }
 
@@ -265,6 +266,7 @@ fn prism_starts_with_the_saved_settings() {
         settings: GuiSettings {
             appearance: AppearanceMode::Dark,
             desktop_notifications: false,
+            compact_mode: false,
         },
         started_unix_ms: 0,
     });

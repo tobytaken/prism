@@ -107,6 +107,10 @@ export struct Sizes {
     status-dot: length,
     sidebar: length,
     gpu-block: length,
+    // Compact mode's window, and each GPU's block in it.
+    compact-width: length,
+    compact-min-width: length,
+    compact-gpu-block: length,
     nav-row: length,
     header: length,
     // The header in a short workspace.
@@ -279,6 +283,9 @@ export global Theme {
         status-dot: 6px,
         sidebar: 196px,
         gpu-block: 106px,
+        compact-width: 360px,
+        compact-min-width: 300px,
+        compact-gpu-block: 164px,
         nav-row: 34px,
         header: 58px,
         header-short: 44px,

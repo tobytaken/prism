@@ -51,6 +51,8 @@ pub(crate) enum Command {
     /// Show Games, and open Add program over it.
     AddProgram,
     OpenActivity,
+    /// Show compact mode in place of the full layout, or the full layout again.
+    ToggleCompactMode,
     /// Retry, or resume, the fan curve Prism stopped following on this GPU, by id.
     RetryCooling(String),
     /// Pause automatic switching on this GPU, by id, or resume it.
@@ -145,6 +147,8 @@ pub enum Shortcut {
     Discard,
     /// Ctrl+Shift+A: open Activity, or close it again.
     ToggleActivity,
+    /// Ctrl+Shift+M: show compact mode, or the full layout again.
+    ToggleCompactMode,
 }
 
 const ESCAPE: &str = "\u{1b}";
@@ -168,6 +172,7 @@ impl Shortcut {
             (true, true, "g") => Self::GoTo(Section::Games),
             (true, true, "d") => Self::GoTo(Section::Drivers),
             (true, true, "a") => Self::ToggleActivity,
+            (true, true, "m") => Self::ToggleCompactMode,
             (true, false, digit) => match digit.parse::<usize>() {
                 Ok(number @ 1..=9) => Self::GoToGpu(number - 1),
                 _ => return None,
@@ -195,6 +200,7 @@ impl Shortcut {
             Self::Apply => &["Ctrl", "Enter"],
             Self::Discard => &["Ctrl", "Shift", "Backspace"],
             Self::ToggleActivity => &["Ctrl", "Shift", "A"],
+            Self::ToggleCompactMode => &["Ctrl", "Shift", "M"],
         };
         keys.iter().map(|&key| key.to_owned()).collect()
     }
@@ -319,6 +325,7 @@ impl Core {
             Shortcut::Apply => Some(Command::ApplyChanges),
             Shortcut::Discard => Some(Command::DiscardChanges),
             Shortcut::ToggleActivity => Some(Command::OpenActivity),
+            Shortcut::ToggleCompactMode => Some(Command::ToggleCompactMode),
             Shortcut::OpenPalette | Shortcut::Dismiss => None,
         }
     }
@@ -358,39 +365,44 @@ impl Core {
         if let Some(reason) = self.driver_command_unavailable(command) {
             return reason;
         }
-        let already_open = match command {
-            Command::GoToGpu(id) => self.selection.as_ref() == Some(&Selection::Gpu(id.clone())),
-            Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
-            Command::GoToSettings(section) => {
-                self.selection == Some(Selection::Section(Section::Settings))
-                    && self.settings_section == *section
-            }
-            Command::OpenActivity => self.activity_open(),
-            Command::ShowRange(_)
-            | Command::RunService(_)
-            | Command::CopyPrismdSetup
-            | Command::SetAppearance(_)
-            | Command::SetDesktopNotifications(_)
-            | Command::ApplyChanges
-            | Command::DiscardChanges
-            | Command::RecallRememberedCurve
-            | Command::ApplyProfile(_)
-            | Command::SaveToCurrentProfile
-            | Command::SaveAsNewProfile
-            | Command::RenameProfile
-            | Command::DeleteProfile
-            | Command::UseAsStartupProfile
-            | Command::ManageProfiles
-            | Command::SetAutomaticSwitching(_)
-            | Command::AddSteamGame
-            | Command::AddProgram
-            | Command::RetryCooling(_)
-            | Command::SetSwitchingPaused { .. }
-            | Command::RetrySwitching(_)
-            | Command::RunDriverPlan
-            | Command::RebootHost
-            | Command::Quit => false,
-        };
+        // Compact mode shows none of them, so none is open there.
+        let already_open = !self.compact
+            && match command {
+                Command::GoToGpu(id) => {
+                    self.selection.as_ref() == Some(&Selection::Gpu(id.clone()))
+                }
+                Command::GoTo(section) => self.selection == Some(Selection::Section(*section)),
+                Command::GoToSettings(section) => {
+                    self.selection == Some(Selection::Section(Section::Settings))
+                        && self.settings_section == *section
+                }
+                Command::OpenActivity => self.activity_open(),
+                Command::ShowRange(_)
+                | Command::RunService(_)
+                | Command::CopyPrismdSetup
+                | Command::SetAppearance(_)
+                | Command::SetDesktopNotifications(_)
+                | Command::ApplyChanges
+                | Command::DiscardChanges
+                | Command::RecallRememberedCurve
+                | Command::ApplyProfile(_)
+                | Command::SaveToCurrentProfile
+                | Command::SaveAsNewProfile
+                | Command::RenameProfile
+                | Command::DeleteProfile
+                | Command::UseAsStartupProfile
+                | Command::ManageProfiles
+                | Command::SetAutomaticSwitching(_)
+                | Command::AddSteamGame
+                | Command::AddProgram
+                | Command::RetryCooling(_)
+                | Command::SetSwitchingPaused { .. }
+                | Command::RetrySwitching(_)
+                | Command::RunDriverPlan
+                | Command::RebootHost
+                | Command::ToggleCompactMode
+                | Command::Quit => false,
+            };
         already_open.then(|| "Already open".into())
     }
 
@@ -512,11 +524,18 @@ impl Core {
                     None,
                 )
             }));
-        let activity = [(
-            Command::OpenActivity,
-            "Open Activity".to_owned(),
-            Some(Shortcut::ToggleActivity),
-        )];
+        let activity = [
+            (
+                Command::OpenActivity,
+                "Open Activity".to_owned(),
+                Some(Shortcut::ToggleActivity),
+            ),
+            (
+                Command::ToggleCompactMode,
+                "Toggle compact mode".to_owned(),
+                Some(Shortcut::ToggleCompactMode),
+            ),
+        ];
         // Whichever GPU is selected, as Activity offers them.
         let retries = self
             .retry_commands()

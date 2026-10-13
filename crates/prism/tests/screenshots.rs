@@ -467,6 +467,81 @@ mod screenshot {
         profiles(AppearanceMode::Dark, "workspace-profiles-dark");
     }
 
+    /// The window's size in compact mode with `gpus` GPUs, in pixels at a scale factor of 1.
+    fn compact_size(harness: &Harness, gpus: u32) -> (u32, u32) {
+        let size = harness.app.window().global::<prism::Theme>().get_size();
+        (
+            size.compact_width as u32,
+            (size.title_bar + gpus as f32 * size.compact_gpu_block) as u32,
+        )
+    }
+
+    /// Compact mode with prismd: the GPU's block, its profile buttons with Boost current and
+    /// Quiet's startup dot, and what drives automatic switching on it.
+    fn compact_mode(appearance: AppearanceMode, name: &str) {
+        use prism_protocol::{
+            AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId, GpuSwitchingState,
+            GpuSwitchingStatus, SwitchingCondition,
+        };
+
+        init_rendering_backend();
+        let harness = profiles_workspace(appearance);
+        harness.prismd.push(DaemonEvent::AutomaticSwitchingChanged(
+            AutomaticSwitchingStatus {
+                condition: SwitchingCondition::Ready {},
+                gpus: vec![GpuSwitchingStatus {
+                    gpu_id: "GPU-5a1b0000-0000-4000-8000-000000000001".into(),
+                    state: GpuSwitchingState::Active {
+                        game: GameId::Steam { app_id: 1_091_500 },
+                        game_name: "Cyberpunk 2077".into(),
+                        profile: CurrentProfile {
+                            id: "quiet".into(),
+                            name: "Quiet".into(),
+                        },
+                    },
+                    application: None,
+                }],
+            },
+        ));
+        harness.app.receive_posted();
+        harness.ctrl_shift("M");
+
+        let size = compact_size(&harness, 1);
+        assert_screenshot(name, harness.app.window().window(), size);
+    }
+
+    #[test]
+    fn compact_mode_in_light() {
+        compact_mode(AppearanceMode::Light, "compact-mode-light");
+    }
+
+    #[test]
+    fn compact_mode_in_dark() {
+        compact_mode(AppearanceMode::Dark, "compact-mode-dark");
+    }
+
+    /// Compact mode monitoring two GPUs in-process: their blocks stacked, each saying its
+    /// profiles need prismd.
+    fn compact_mode_two_gpus(appearance: AppearanceMode, name: &str) {
+        init_rendering_backend();
+        let harness = Harness::with_appearance(SimulatedFixture::TwoIdenticalGpus, appearance);
+        harness.ticks(30);
+        harness.ctrl_shift("M");
+
+        let size = compact_size(&harness, 2);
+        assert_screenshot(name, harness.app.window().window(), size);
+    }
+
+    #[test]
+    fn compact_mode_with_two_gpus_in_light() {
+        compact_mode_two_gpus(AppearanceMode::Light, "compact-mode-two-gpus-light");
+    }
+
+    #[test]
+    fn compact_mode_with_two_gpus_in_dark() {
+        compact_mode_two_gpus(AppearanceMode::Dark, "compact-mode-two-gpus-dark");
+    }
+
     /// The one review of a profile's out-of-range values: Cancel, Adjust profile and apply.
     fn profile_corrections(appearance: AppearanceMode, name: &str) {
         init_rendering_backend();

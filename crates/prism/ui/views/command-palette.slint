@@ -98,8 +98,11 @@ component PaletteRow inherits Rectangle {
 }
 
 // The command palette (Ctrl+K): a field that fuzzy-filters the commands below it. ↑ and ↓ move
-// the highlight, Return runs the highlighted command, and Escape or a click outside closes it.
+// the highlight, Return runs the highlighted command, and Escape or a click outside closes it. In
+// a window narrower than it, such as in compact mode, it fills the width under the title bar.
 export component CommandPalette inherits Rectangle {
+    property <bool> narrow: root.width < Theme.size.palette-width + 2 * Theme.space.xl;
+
     // Clicks outside the palette close it.
     TouchArea {
         clicked => {
@@ -109,8 +112,8 @@ export component CommandPalette inherits Rectangle {
 
     PopupSurface {
         x: (parent.width - self.width) / 2;
-        y: Theme.size.palette-top;
-        width: Theme.size.palette-width;
+        y: root.narrow ? Theme.size.title-bar + Theme.space.s : Theme.size.palette-top;
+        width: root.narrow ? root.width - 2 * Theme.space.xl : Theme.size.palette-width;
         height: layout.preferred-height;
         accessible-role: groupbox;
         accessible-label: "Command palette";

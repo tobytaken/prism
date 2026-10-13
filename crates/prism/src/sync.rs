@@ -6,18 +6,18 @@ use prism_protocol::ProfileSettingKey;
 use prism_ui::format::{Readout, UNKNOWN};
 use prism_ui::telemetry::{LimitKind, Metric, TelemetryRange};
 use prism_ui::{
-    ActivityItem, AppearanceMode as CoreAppearance, Content, CoolingProblem, Core, Dialog,
-    DriverConfirmation, Fact, FanCurveEditor, FanModeControl, GameRow, ReviewChange,
-    Section as CoreSection, ServiceAction as CoreServiceAction,
-    SettingsSection as CoreSettingsSection, StartupSection, Stepper, SwitchingStatus, Track,
-    Tunable,
+    ActivityItem, AppearanceMode as CoreAppearance, CompactGpu, Content, CoolingProblem, Core,
+    Dialog, DriverConfirmation, Fact, FanCurveEditor, FanModeControl, GameRow, ProfileSwitcher,
+    ReviewChange, Section as CoreSection, ServiceAction as CoreServiceAction,
+    SettingsSection as CoreSettingsSection, SidebarGpu, StartupSection, Stepper, SwitchingStatus,
+    Track, Tunable,
 };
 
 use crate::{
     AboutView, ActivityItemView, AppState, AppearanceMode, ChangeStripView, ChartId, ChartView,
-    ContentKind, CoolingProblemView, CurvePointView, DaemonView, DetailView, DialogKind,
-    DialogView, DriversView, ExplainedStateView, FactView, FanCurveView, FanModeView, GameLinkView,
-    GameView, GamesView, LimitMark, MainWindow, ManagedProfileView, MenuEntryView,
+    CompactGpuView, ContentKind, CoolingProblemView, CurvePointView, DaemonView, DetailView,
+    DialogKind, DialogView, DriversView, ExplainedStateView, FactView, FanCurveView, FanModeView,
+    GameLinkView, GameView, GamesView, LimitMark, MainWindow, ManagedProfileView, MenuEntryView,
     PaletteEntryView, ProgramView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction,
     SettingsSection, SidebarGpuView, StartupGpuView, StartupView, SteamAppView, StepperView,
     SwitchingView, Theme, TrackView, TuningSetting, WorkspaceView,
@@ -32,26 +32,21 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
 
     let state = window.global::<AppState>();
     let sidebar = core.sidebar();
-    let gpus: Vec<_> = sidebar
-        .gpus
-        .iter()
-        .map(|gpu| SidebarGpuView {
-            id: gpu.id.as_str().into(),
-            index: gpu.index.as_str().into(),
-            name: gpu.name.as_str().into(),
-            identity: gpu.identity.as_str().into(),
-            label: gpu.label.as_str().into(),
-            temperature: readout(&gpu.temperature),
-            utilization: readout(&gpu.utilization),
-            power_draw: readout(&gpu.power_draw),
-            fan_speed: readout(&gpu.fan_speed),
-            vitals: gpu.vitals().into(),
-            paused: gpu.paused(),
-            selected: gpu.selected,
-        })
-        .collect();
+    let gpus: Vec<_> = sidebar.gpus.iter().map(sidebar_gpu_view).collect();
     if let Some(model) = update_in_place(&state.get_gpus(), gpus, PartialEq::eq) {
         state.set_gpus(model);
+    }
+    let compact = core.compact_mode();
+    state.set_compact(compact.is_some());
+    let current = state.get_compact_gpus();
+    let compact_gpus: Vec<_> = compact
+        .iter()
+        .flat_map(|compact| &compact.gpus)
+        .enumerate()
+        .map(|(index, gpu)| compact_gpu_view(current.row_data(index), gpu))
+        .collect();
+    if let Some(model) = update_in_place(&current, compact_gpus, PartialEq::eq) {
+        state.set_compact_gpus(model);
     }
     // Empty while there are GPUs, or before the inventory is read.
     state.set_no_gpus(
@@ -137,22 +132,11 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
             if let Some(model) = update_in_place(&state.get_ranges(), ranges, PartialEq::eq) {
                 state.set_ranges(model);
             }
-            let choices: Vec<_> = profiles
-                .choices
-                .iter()
-                .map(|choice| SegmentView {
-                    text: choice.name.as_str().into(),
-                    label: format!("Apply profile {}", choice.name).into(),
-                    selected: choice.current,
-                    unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
-                    mark: if choice.startup {
-                        "Startup profile".into()
-                    } else {
-                        SharedString::new()
-                    },
-                })
-                .collect();
-            if let Some(model) = update_in_place(&state.get_profiles(), choices, PartialEq::eq) {
+            if let Some(model) = update_in_place(
+                &state.get_profiles(),
+                profile_segments(profiles),
+                PartialEq::eq,
+            ) {
                 state.set_profiles(model);
             }
             if let Some(model) = update_in_place(
@@ -630,6 +614,68 @@ fn driver_confirmation(kind: DialogKind, confirmation: DriverConfirmation) -> Di
 }
 
 /// A GPU's automatic switching status as its workspace shows it.
+/// A GPU's profile buttons as segments, the current one picked and the startup one marked.
+fn profile_segments(profiles: &ProfileSwitcher) -> Vec<SegmentView> {
+    profiles
+        .choices
+        .iter()
+        .map(|choice| SegmentView {
+            text: choice.name.as_str().into(),
+            label: format!("Apply profile {}", choice.name).into(),
+            selected: choice.current,
+            unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
+            mark: if choice.startup {
+                "Startup profile".into()
+            } else {
+                SharedString::new()
+            },
+        })
+        .collect()
+}
+
+/// A GPU's block in the sidebar, with its live vitals.
+fn sidebar_gpu_view(gpu: &SidebarGpu) -> SidebarGpuView {
+    SidebarGpuView {
+        id: gpu.id.as_str().into(),
+        index: gpu.index.as_str().into(),
+        name: gpu.name.as_str().into(),
+        identity: gpu.identity.as_str().into(),
+        label: gpu.label.as_str().into(),
+        temperature: readout(&gpu.temperature),
+        utilization: readout(&gpu.utilization),
+        power_draw: readout(&gpu.power_draw),
+        fan_speed: readout(&gpu.fan_speed),
+        vitals: gpu.vitals().into(),
+        paused: gpu.paused(),
+        selected: gpu.selected,
+    }
+}
+
+/// A GPU as compact mode shows it. Its profile buttons go into the model `current` has, if any, so
+/// Slint keeps their elements and the focus of the one just chosen.
+fn compact_gpu_view(current: Option<CompactGpuView>, gpu: &CompactGpu) -> CompactGpuView {
+    let profiles = &gpu.profiles;
+    CompactGpuView {
+        gpu: sidebar_gpu_view(&gpu.vitals),
+        has_profiles: !profiles.choices.is_empty() || profiles.current.is_some(),
+        profiles: reuse(
+            current.map(|current| current.profiles),
+            profile_segments(profiles),
+        ),
+        profiles_read_only: profiles.read_only.is_some(),
+        profiles_reason: profiles.read_only.as_deref().unwrap_or_default().into(),
+        current_profile: profiles.current.as_deref().unwrap_or("None").into(),
+        has_switching: gpu.switching.is_some(),
+        switching: gpu
+            .switching
+            .as_ref()
+            .map(switching_view)
+            .unwrap_or_default(),
+        unapplied: gpu.unapplied.as_deref().unwrap_or_default().into(),
+        outcome: gpu.outcome.as_deref().unwrap_or_default().into(),
+    }
+}
+
 fn switching_view(status: &SwitchingStatus) -> SwitchingView {
     SwitchingView {
         summary: status.summary.as_str().into(),

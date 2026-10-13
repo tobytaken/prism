@@ -266,6 +266,24 @@ export struct WorkspaceView {
     reveal-fans: int,
 }
 
+// A GPU in compact mode: its sidebar block's vitals, then its profile buttons as the workspace
+// header has them, and its automatic switching status, as `switching` when `has-switching`.
+// `unapplied` says how many unapplied tuning changes it has, which choosing a profile asks to
+// discard, and `outcome` what the latest profile application on it put into effect, each empty when
+// there's nothing to say.
+export struct CompactGpuView {
+    gpu: SidebarGpuView,
+    has-profiles: bool,
+    profiles: [SegmentView],
+    profiles-read-only: bool,
+    profiles-reason: string,
+    current-profile: string,
+    has-switching: bool,
+    switching: SwitchingView,
+    unapplied: string,
+    outcome: string,
+}
+
 // Which dialog is over the window, if any.
 export enum DialogKind {
     none,
@@ -502,6 +520,9 @@ export enum ContentKind { searching, no-gpus, gpu, games, drivers, settings }
 
 export global AppState {
     in property <[SidebarGpuView]> gpus;
+    // Whether the window shows compact mode in place of the full layout, and its GPUs.
+    in property <bool> compact;
+    in property <[CompactGpuView]> compact-gpus;
     in property <ContentKind> content;
     // Why the GPU list has no GPUs, with an empty title while it has some or isn't read yet.
     in property <ExplainedStateView> no-gpus;
@@ -643,6 +664,11 @@ export global Intents {
     callback toggle-fan-curve();
     // Applies the profile at this index among the header's profile buttons.
     callback apply-profile(index: int);
+    // Applies the profile at this index among the profile buttons of the GPU at this index in
+    // compact mode.
+    callback apply-compact-profile(gpu: int, index: int);
+    // Shows compact mode in place of the full layout, or the full layout again.
+    callback toggle-compact-mode();
     // Answers the open profile dialog: discards the GPU's unapplied changes and applies the
     // profile, adjusts the profile and applies it, saves or renames it under the name typed, or
     // deletes it.

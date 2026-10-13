@@ -93,6 +93,8 @@ struct SettingsContents {
     appearance: Appearance,
     #[serde(default = "on")]
     desktop_notifications: bool,
+    #[serde(default)]
+    compact_mode: bool,
 }
 
 fn on() -> bool {
@@ -104,6 +106,7 @@ impl From<SettingsContents> for GuiSettings {
         Self {
             appearance: contents.appearance.into(),
             desktop_notifications: contents.desktop_notifications,
+            compact_mode: contents.compact_mode,
         }
     }
 }
@@ -113,6 +116,7 @@ impl From<GuiSettings> for SettingsContents {
         Self {
             appearance: settings.appearance.into(),
             desktop_notifications: settings.desktop_notifications,
+            compact_mode: settings.compact_mode,
         }
     }
 }
@@ -196,12 +200,19 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_file_holds_whether_compact_mode_is_on() {
+        assert!(!settings_from(Some("appearance = \"dark\"\n")).compact_mode);
+        assert!(settings_from(Some("compact_mode = true\n")).compact_mode);
+    }
+
+    #[test]
     fn saved_settings_load_again_from_a_new_settings_directory() {
         let directory = tempfile::tempdir().expect("create a temporary directory");
         let file = SettingsFile::at(directory.path().join("prism").join("settings.toml"));
         let settings = GuiSettings {
             appearance: AppearanceMode::Light,
             desktop_notifications: false,
+            compact_mode: true,
         };
 
         file.save(&settings);

@@ -91,6 +91,7 @@ fn the_palette_lists_gpus_then_sections_settings_tuning_ranges_appearance_and_ap
             "Go to Settings: Daemon",
             "Go to Settings: About",
             "Open Activity",
+            "Toggle compact mode",
             "Apply unapplied changes",
             "Discard unapplied changes",
             "Recall remembered fan curve",
@@ -140,6 +141,7 @@ fn each_command_shows_its_shortcut() {
             "",
             "",
             "Ctrl+Shift+A",
+            "Ctrl+Shift+M",
             "Ctrl+Enter",
             "Ctrl+Shift+Backspace",
             // Recall remembered fan curve and the profile actions.
@@ -229,8 +231,9 @@ fn up_and_down_move_the_highlight_and_wrap_around() {
     intent(&mut core, Intent::HighlightPrevious);
     assert_eq!(highlighted(&core), FIRST_GPU);
 
+    // "Toggle compact mode" has g, o, t and o in order too.
     intent(&mut core, Intent::HighlightPrevious);
-    assert_eq!(highlighted(&core), "Go to Settings: About");
+    assert_eq!(highlighted(&core), "Toggle compact mode");
 
     intent(&mut core, Intent::HighlightNext);
     assert_eq!(highlighted(&core), FIRST_GPU);
@@ -318,6 +321,7 @@ fn recently_run_commands_come_first() {
             "Go to Settings: Daemon",
             "Go to Settings: About",
             "Open Activity",
+            "Toggle compact mode",
             "Turn automatic switching on",
             "Add Steam game…",
             "Add program…",
@@ -367,6 +371,7 @@ fn gpu_and_range_commands_are_left_out_when_the_host_has_no_gpus() {
             "Go to Settings: Daemon",
             "Go to Settings: About",
             "Open Activity",
+            "Toggle compact mode",
             "Turn automatic switching on",
             "Add Steam game…",
             "Add program…",
@@ -390,7 +395,7 @@ fn reopening_the_palette_starts_a_new_search() {
     intent(&mut core, Intent::OpenPalette);
 
     assert_eq!(core.palette().unwrap().query, "");
-    assert_eq!(titles(&core).len(), 32);
+    assert_eq!(titles(&core).len(), 33);
 }
 
 #[test]

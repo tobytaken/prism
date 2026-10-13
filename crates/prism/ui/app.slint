@@ -1,11 +1,12 @@
 import { Theme, AppearanceMode } from "theme.slint";
-import { AboutView, ActivityItemView, ActivityList, AppState, MenuAnchor, ManagedProfileView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, DriversView, ExplainedStateView, FactView, GameLinkView, GamesView, GameView, Inbox, Intents, KeyPress, LimitMark, Link, PaletteEntryView, ReadoutView, ReviewChangeView, Section, ServiceAction, SettingsSection, SidebarGpuView, SteamAppView, StepperView, TrackView, TuningSetting, WorkspaceView, ProgramView } from "state.slint";
+import { AboutView, ActivityItemView, ActivityList, AppState, CompactGpuView, MenuAnchor, ManagedProfileView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, DriversView, ExplainedStateView, FactView, GameLinkView, GamesView, GameView, Inbox, Intents, KeyPress, LimitMark, Link, PaletteEntryView, ReadoutView, ReviewChangeView, Section, ServiceAction, SettingsSection, SidebarGpuView, SteamAppView, StepperView, TrackView, TuningSetting, WorkspaceView, ProgramView } from "state.slint";
 import { Menu, MenuEntryView, SegmentView } from "widgets.slint";
 import { TitleBar } from "views/title-bar.slint";
 import { Sidebar } from "views/sidebar.slint";
 import { Workspace } from "views/workspace.slint";
 import { ExplainedState } from "views/explained-state.slint";
 import { StatusBar } from "views/status-bar.slint";
+import { CompactMode } from "views/compact.slint";
 import { ActivityPanel } from "views/activity.slint";
 import { CommandPalette } from "views/command-palette.slint";
 import { AddProgramDialog, AddSteamGameDialog, CloseDialog, DeleteProfileDialog, DiscardForProfileDialog, DriverConfirmationDialog, ManageProfilesDialog, ProfileCorrectionsDialog, ProfileNameDialog, ReviewDialog } from "views/dialogs.slint";
@@ -13,21 +14,28 @@ import { Settings } from "views/settings.slint";
 import { Games } from "views/games.slint";
 import { Drivers } from "views/drivers.slint";
 
-export { Theme, AppearanceMode, AboutView, ActivityItemView, ActivityList, AppState, MenuAnchor, ManagedProfileView, MenuEntryView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, DriversView, ExplainedStateView, FactView, GameLinkView, GamesView, GameView, Inbox, Intents, KeyPress, LimitMark, Link, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, Section, ServiceAction, SettingsSection, SidebarGpuView, SteamAppView, StepperView, TrackView, TuningSetting, WorkspaceView, ProgramView }
+export { Theme, AppearanceMode, AboutView, ActivityItemView, ActivityList, AppState, CompactGpuView, MenuAnchor, ManagedProfileView, MenuEntryView, ChangeStripView, ChartId, ChartPart, ChartView, ContentKind, CurvePart, DaemonView, DetailView, DialogKind, DialogView, DriversView, ExplainedStateView, FactView, GameLinkView, GamesView, GameView, Inbox, Intents, KeyPress, LimitMark, Link, PaletteEntryView, ReadoutView, ReviewChangeView, SegmentView, Section, ServiceAction, SettingsSection, SidebarGpuView, SteamAppView, StepperView, TrackView, TuningSetting, WorkspaceView, ProgramView }
 
 // Prism's one window: frameless, with its own title bar, the sidebar, the content and the status
-// bar, and the command palette or a dialog over them when one is open.
+// bar, or compact mode in their place, and the command palette or a dialog over them when one is
+// open.
 export component MainWindow inherits Window {
     title: "Prism";
     no-frame: true;
     resize-border-width: Theme.size.resize-border;
-    preferred-width: Theme.size.window-width;
-    preferred-height: Theme.size.window-height;
-    min-width: Theme.size.window-min-width;
-    min-height: Theme.size.window-min-height;
+    preferred-width: AppState.compact ? Theme.size.compact-width : Theme.size.window-width;
+    preferred-height: AppState.compact ? root.compact-height : Theme.size.window-height;
+    min-width: AppState.compact ? Theme.size.compact-min-width : Theme.size.window-min-width;
+    min-height: AppState.compact
+        ? Theme.size.title-bar + Theme.size.compact-gpu-block
+        : Theme.size.window-min-height;
     background: Theme.color.canvas;
     default-font-family: Theme.font-ui;
     forward-focus: keys;
+
+    // The height that fits compact mode's GPUs, or a block's worth while there are none.
+    out property <length> compact-height: Theme.size.title-bar
+        + max(1, AppState.compact-gpus.length) * Theme.size.compact-gpu-block;
 
     // Gives the window's global shortcuts back the keyboard, after the element that had it went
     // away, such as the palette's field when the palette closes.
@@ -68,7 +76,11 @@ export component MainWindow inherits Window {
         VerticalLayout {
             TitleBar { }
 
-            HorizontalLayout {
+            if AppState.compact: CompactMode {
+                vertical-stretch: 1;
+            }
+
+            if !AppState.compact: HorizontalLayout {
                 vertical-stretch: 1;
 
                 Sidebar { }
@@ -94,7 +106,7 @@ export component MainWindow inherits Window {
                 }
             }
 
-            StatusBar { }
+            if !AppState.compact: StatusBar { }
         }
 
         // The `⋯` profile menu, under the button that opened it. Clicks outside it close it.

@@ -38,6 +38,7 @@ fn settings(appearance: AppearanceMode, desktop_notifications: bool) -> FakeSett
     FakeSettings::new(GuiSettings {
         appearance,
         desktop_notifications,
+        ..GuiSettings::default()
     })
 }
 
@@ -85,6 +86,7 @@ fn choosing_an_appearance_applies_it_at_once_and_saves_it() {
         GuiSettings {
             appearance: AppearanceMode::Dark,
             desktop_notifications: true,
+            compact_mode: false,
         }
     );
 }
