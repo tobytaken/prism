@@ -226,7 +226,16 @@ fn sending(state: &Mutex<State>, notification: &Notification) -> u32 {
 fn answered(state: &Mutex<State>, notification: &Notification, answer: Option<u32>) {
     let mut state = lock(state);
     state.notifying = false;
-    state.replacing = None;
+    let replacing = state.replacing.take();
+    let early = std::mem::take(&mut state.early);
+    let mut ended = Vec::new();
+    if answer != replacing {
+        // The server didn't show this one under the replaced one's id, so what happened to that
+        // id happened to the replaced one.
+        ended.extend(early.iter().filter_map(|&(server_id, ending)| {
+            (Some(server_id) == replacing).then(|| state.end(server_id, ending))?
+        }));
+    }
     // The one replaced stays Prism's until the server has shown this one in its place.
     if let Some(server_id) = answer {
         if let Some(replaced) = notification.replaces {
@@ -234,11 +243,11 @@ fn answered(state: &Mutex<State>, notification: &Notification, answer: Option<u3
         }
         state.sent.insert(notification.id, server_id);
     }
-    let early = std::mem::take(&mut state.early);
-    let ended: Vec<_> = early
-        .iter()
-        .filter_map(|&(server_id, ending)| state.end(server_id, ending))
-        .collect();
+    ended.extend(
+        early
+            .iter()
+            .filter_map(|&(server_id, ending)| state.end(server_id, ending)),
+    );
     for (server_id, ending) in early {
         if matches!(ending, Ending::Closed) {
             state.tokens.remove(&server_id);
@@ -361,10 +370,19 @@ mod tests {
         answered(state, notification, Some(server_id));
     }
 
+    /// The user dismissed the server's `server_id`.
     fn closed(server_id: u32) -> Message {
         Message::signal(PATH, INTERFACE, "NotificationClosed")
             .unwrap()
             .build(&(server_id, 2u32))
+            .unwrap()
+    }
+
+    /// The user clicked the server's `server_id`.
+    fn invoked(server_id: u32) -> Message {
+        Message::signal(PATH, INTERFACE, "ActionInvoked")
+            .unwrap()
+            .build(&(server_id, DEFAULT_ACTION))
             .unwrap()
     }
 
@@ -383,6 +401,27 @@ mod tests {
         assert_eq!(
             events.try_iter().collect::<Vec<_>>(),
             [NotificationEvent::Closed(NotificationId(2))]
+        );
+    }
+
+    #[test]
+    fn a_click_as_a_replacement_is_shown_anew_is_the_replaced_ones() {
+        let (state, events) = listening();
+        show(&state, &notification(1, None), 7);
+        let replacement = notification(2, Some(1));
+
+        // The user clicks the one replaced before the server takes the replacement, which it
+        // then shows under an id of its own.
+        sending(&state, &replacement);
+        take_signal(&state, &invoked(7));
+        answered(&state, &replacement, Some(8));
+
+        assert_eq!(
+            events.try_iter().collect::<Vec<_>>(),
+            [NotificationEvent::Clicked {
+                id: NotificationId(1),
+                activation_token: None,
+            }]
         );
     }
 

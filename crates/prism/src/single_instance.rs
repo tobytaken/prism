@@ -2,7 +2,8 @@
 //!
 //! The first Prism owns the name and serves `org.freedesktop.Application` on it. A later launch
 //! finds the name taken, calls `Activate` with its activation token, and exits; the first Prism
-//! then raises its window with that token.
+//! then raises its window with that token. A launch that reaches the first Prism as it quits
+//! claims the name instead.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
