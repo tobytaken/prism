@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
 
+use slint::winit_030::WinitWindowAccessor;
 use slint::{CloseRequestResponse, ComponentHandle, PlatformError, SharedString, TimerMode};
 
 use prism_protocol::ProfileSettingKey;
@@ -32,6 +34,11 @@ use crate::{
     ActivityList, AppState, ChartId, ChartPart, CurvePart, Inbox, Intents, KeyPress, Link,
     MainWindow, Section, ServiceAction, SettingsSection, Theme, TuningSetting,
 };
+
+/// How long after starting Prism expects its window to exist. Slint holds the window back for
+/// at most half a second while it asks the desktop for its appearance. Until then a later launch
+/// still hands over to this Prism.
+const WINDOW_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Prism's GUI: the main window over the core, wired to an [`Environment`].
 pub struct App {
@@ -216,9 +223,33 @@ impl App {
         self.inner.receive_posted();
     }
 
-    /// Shows the window and runs the event loop until Prism quits.
+    /// Shows the window and runs the event loop until Prism quits, or fails when the window
+    /// can't be created, such as without OpenGL.
     pub fn run(self) -> Result<(), PlatformError> {
-        self.inner.window.run()
+        // Slint creates the window once its event loop runs, and when that fails it keeps the
+        // error and the loop, so Prism would run on with no window (#166). Quitting returns the
+        // error it kept. Slint 1.18's `about_to_wait` does this; drop the check once it exits.
+        let window_missing = Rc::new(Cell::new(false));
+        let check = slint::Timer::default();
+        let window = self.inner.window.as_weak();
+        let found_missing = window_missing.clone();
+        check.start(TimerMode::SingleShot, WINDOW_DEADLINE, move || {
+            if window
+                .upgrade()
+                .is_some_and(|window| !window.window().has_winit_window())
+            {
+                found_missing.set(true);
+                let _ = slint::quit_event_loop();
+            }
+        });
+        let result = self.inner.window.run();
+        if !window_missing.get() {
+            return result;
+        }
+        let reason = result
+            .err()
+            .map_or_else(String::new, |error| format!(": {error}"));
+        Err(format!("can't create the window{reason}").into())
     }
 }
 
