@@ -54,31 +54,54 @@ pub fn claim_on(connection: Connection, activation_token: Option<String>) -> zbu
             listener: listener.clone(),
         },
     )?;
-    match connection.request_name_with_flags(APP_ID, RequestNameFlags::DoNotQueue.into()) {
-        Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
-            Ok(Claim::First(BusLaunches {
-                _connection: connection,
-                listener,
-            }))
+    // A Prism that quits as this launch reaches it has given up the name by the time the bus tells
+    // this launch it won't answer, so this launch claims the name once more.
+    let mut claimed_again = false;
+    loop {
+        match connection.request_name_with_flags(APP_ID, RequestNameFlags::DoNotQueue.into()) {
+            Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
+                return Ok(Claim::First(BusLaunches {
+                    _connection: connection,
+                    listener,
+                }));
+            }
+            // zbus reports the name being taken as an error.
+            Ok(RequestNameReply::Exists | RequestNameReply::InQueue)
+            | Err(zbus::Error::NameTaken) => {
+                match activate(&connection, activation_token.as_deref()) {
+                    Ok(()) => return Ok(Claim::HandedOver),
+                    Err(error) if !claimed_again && owner_quit(&error) => claimed_again = true,
+                    Err(error) => {
+                        return Err(zbus::Error::Failure(format!(
+                            "another Prism owns {APP_ID} but didn't take over this launch: {error}"
+                        )));
+                    }
+                }
+            }
+            Err(error) => return Err(error),
         }
-        // zbus reports the name being taken as an error.
-        Ok(RequestNameReply::Exists | RequestNameReply::InQueue) | Err(zbus::Error::NameTaken) => {
-            let proxy = Proxy::new(&connection, APP_ID, OBJECT_PATH, INTERFACE)?;
-            let platform_data: HashMap<&str, Value<'_>> = activation_token
-                .iter()
-                .map(|token| (TOKEN_KEYS[0], Value::from(token.as_str())))
-                .collect();
-            proxy
-                .call_method("Activate", &(platform_data,))
-                .map_err(|error| {
-                    zbus::Error::Failure(format!(
-                        "another Prism owns {APP_ID} but didn't take over this launch: {error}"
-                    ))
-                })?;
-            Ok(Claim::HandedOver)
-        }
-        Err(error) => Err(error),
     }
+}
+
+/// Hands this launch and its activation token over to the Prism that owns the app ID's name.
+fn activate(connection: &Connection, activation_token: Option<&str>) -> zbus::Result<()> {
+    let proxy = Proxy::new(connection, APP_ID, OBJECT_PATH, INTERFACE)?;
+    let platform_data: HashMap<&str, Value<'_>> = activation_token
+        .map(|token| (TOKEN_KEYS[0], Value::from(token)))
+        .into_iter()
+        .collect();
+    proxy.call_method("Activate", &(platform_data,))?;
+    Ok(())
+}
+
+/// Whether `error` says the Prism that owned the name quit before it answered.
+fn owner_quit(error: &zbus::Error) -> bool {
+    matches!(
+        zbus::fdo::Error::from(error.clone()),
+        zbus::fdo::Error::NoReply(_)
+            | zbus::fdo::Error::ServiceUnknown(_)
+            | zbus::fdo::Error::NameHasNoOwner(_)
+    )
 }
 
 /// Later launches that reach the first Prism over the session bus. Keeps the name while it

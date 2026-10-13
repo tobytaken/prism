@@ -70,8 +70,12 @@ struct State {
     tokens: HashMap<u32, String>,
     /// Whether a `Notify` call is waiting for the server's answer.
     notifying: bool,
-    /// Notifications Prism didn't know it sent that ended while it was waiting, which may be the
-    /// one it's waiting for, since a signal can overtake the server's answer.
+    /// The server's id for the notification the one waiting replaces. The server may already show
+    /// the replacement under it, so until the answer comes, its ending may be either one's.
+    replacing: Option<u32>,
+    /// Notifications that ended while Prism was waiting, which it didn't know it sent or which may
+    /// be the one it's replacing. Any may be the one it's waiting for, since a signal can overtake
+    /// the server's answer.
     early: Vec<(u32, Ending)>,
 }
 
@@ -181,14 +185,7 @@ fn notify(
     state: &Mutex<State>,
     notification: &Notification,
 ) -> zbus::Result<()> {
-    let replaces = {
-        let mut state = lock(state);
-        state.notifying = true;
-        notification
-            .replaces
-            .and_then(|replaced| state.sent.get(&replaced).copied())
-            .unwrap_or(0)
-    };
+    let replaces = sending(state, notification);
     let hints = HashMap::from([("desktop-entry", Value::from(APP_ID))]);
     let answer = connection
         .call_method(
@@ -209,25 +206,45 @@ fn notify(
             ),
         )
         .and_then(|reply| reply.body().deserialize::<u32>());
+    answered(state, notification, answer.as_ref().ok().copied());
+    answer.map(drop)
+}
+
+/// Notes that Prism is sending `notification`, and gives the server's id for the one it
+/// replaces, or 0.
+fn sending(state: &Mutex<State>, notification: &Notification) -> u32 {
+    let mut state = lock(state);
+    state.notifying = true;
+    state.replacing = notification
+        .replaces
+        .and_then(|replaced| state.sent.get(&replaced).copied());
+    state.replacing.unwrap_or(0)
+}
+
+/// Takes in the server's answer to `notification`: the server's id for it, or none if the
+/// server didn't show it.
+fn answered(state: &Mutex<State>, notification: &Notification, answer: Option<u32>) {
     let mut state = lock(state);
     state.notifying = false;
-    let early = std::mem::take(&mut state.early);
+    state.replacing = None;
     // The one replaced stays Prism's until the server has shown this one in its place.
-    let ended = answer.as_ref().ok().and_then(|&server_id| {
+    if let Some(server_id) = answer {
         if let Some(replaced) = notification.replaces {
             state.sent.remove(&replaced);
         }
         state.sent.insert(notification.id, server_id);
-        let (_, ending) = early.iter().find(|(early, _)| *early == server_id)?;
-        state.end(server_id, *ending)
-    });
+    }
+    let early = std::mem::take(&mut state.early);
+    let ended: Vec<_> = early
+        .iter()
+        .filter_map(|&(server_id, ending)| state.end(server_id, ending))
+        .collect();
     for (server_id, ending) in early {
         if matches!(ending, Ending::Closed) {
             state.tokens.remove(&server_id);
         }
     }
     tell(state, ended);
-    answer.map(drop)
 }
 
 fn withdraw(connection: &Connection, state: &Mutex<State>, id: NotificationId) -> zbus::Result<()> {
@@ -269,7 +286,11 @@ fn take_signal(state: &Mutex<State>, message: &Message) {
         _ => return,
     };
     let mut state = lock(state);
-    let ended = state.end(server_id, ending);
+    let ended = if state.replacing == Some(server_id) {
+        None
+    } else {
+        state.end(server_id, ending)
+    };
     if ended.is_none() && state.notifying {
         // Its token waits with it.
         state.early.push((server_id, ending));
@@ -298,15 +319,86 @@ impl State {
     }
 }
 
-/// Tells the listener about `event`, if any, letting go of the state first.
-fn tell(state: MutexGuard<'_, State>, event: Option<NotificationEvent>) {
+/// Tells the listener about `events`, letting go of the state first.
+fn tell(state: MutexGuard<'_, State>, events: impl IntoIterator<Item = NotificationEvent>) {
     let listener = state.listener.clone();
     drop(state);
-    if let (Some(listener), Some(event)) = (listener, event) {
-        listener(event);
+    if let Some(listener) = listener {
+        events.into_iter().for_each(|event| listener(event));
     }
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
     state.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn notification(id: u64, replaces: Option<u64>) -> Notification {
+        Notification {
+            id: NotificationId(id),
+            replaces: replaces.map(NotificationId),
+            summary: "Prism lost its connection to prismd".into(),
+            body: "prismd isn't running. Tuning is read-only until Prism reconnects.".into(),
+        }
+    }
+
+    /// Prism's notification state, and what its listener hears.
+    fn listening() -> (Mutex<State>, Receiver<NotificationEvent>) {
+        let (sender, events) = mpsc::channel();
+        let state = Mutex::new(State::default());
+        lock(&state).listener = Some(Arc::new(move |event| {
+            let _ = sender.send(event);
+        }));
+        (state, events)
+    }
+
+    /// Sends `notification`, which the server shows as `server_id`.
+    fn show(state: &Mutex<State>, notification: &Notification, server_id: u32) {
+        sending(state, notification);
+        answered(state, notification, Some(server_id));
+    }
+
+    fn closed(server_id: u32) -> Message {
+        Message::signal(PATH, INTERFACE, "NotificationClosed")
+            .unwrap()
+            .build(&(server_id, 2u32))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_closing_that_overtakes_the_answer_to_a_replacement_is_the_replacements() {
+        let (state, events) = listening();
+        show(&state, &notification(1, None), 7);
+        let replacement = notification(2, Some(1));
+
+        // The server shows the replacement under the replaced one's id, and the user closes it
+        // before Prism hears the server's answer.
+        sending(&state, &replacement);
+        take_signal(&state, &closed(7));
+        answered(&state, &replacement, Some(7));
+
+        assert_eq!(
+            events.try_iter().collect::<Vec<_>>(),
+            [NotificationEvent::Closed(NotificationId(2))]
+        );
+    }
+
+    #[test]
+    fn a_closing_as_a_replacement_fails_is_the_replaced_ones() {
+        let (state, events) = listening();
+        show(&state, &notification(1, None), 7);
+        let replacement = notification(2, Some(1));
+
+        sending(&state, &replacement);
+        take_signal(&state, &closed(7));
+        answered(&state, &replacement, None);
+
+        assert_eq!(
+            events.try_iter().collect::<Vec<_>>(),
+            [NotificationEvent::Closed(NotificationId(1))]
+        );
+    }
 }
