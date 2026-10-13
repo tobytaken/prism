@@ -5,10 +5,14 @@ mod support;
 
 use std::process::Command;
 use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use prism::Launches;
-use prism::single_instance::{BusLaunches, Claim, claim_on};
+use prism::single_instance::{APP_ID, BusLaunches, Claim, claim_on};
+use zbus::MatchRule;
+use zbus::blocking::MessageIterator;
+use zbus::message::Type;
 
 use support::bus::PrivateBus;
 
@@ -87,6 +91,27 @@ fn once_the_first_prism_quits_the_next_launch_is_the_first() {
     drop(bus.launch_first());
 
     assert!(matches!(bus.launch(None), Claim::First(_)));
+}
+
+#[test]
+fn a_launch_that_reaches_the_first_prism_as_it_quits_is_the_first() {
+    let bus = PrivateBus::start();
+    // A first Prism that owns the name and quits, without answering, once a later launch calls.
+    let quitting = bus.connect();
+    quitting.request_name(APP_ID).unwrap();
+    let rule = MatchRule::builder()
+        .msg_type(Type::MethodCall)
+        .member("Activate")
+        .unwrap()
+        .build();
+    let mut calls = MessageIterator::for_match_rule(rule, &quitting, None).unwrap();
+    let quit = thread::spawn(move || {
+        calls.next();
+        quitting.close().unwrap();
+    });
+
+    assert!(matches!(bus.launch(None), Claim::First(_)));
+    quit.join().unwrap();
 }
 
 #[test]
