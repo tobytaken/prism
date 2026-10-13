@@ -31,6 +31,21 @@
     "spikeReferenceMiB": 15.8,
     "issue": 167
   },
+  "releaseProfileFollowUp": {
+    "date": "2026-10-13",
+    "issue": 167,
+    "rustc": "1.99.0",
+    "workspaceReleaseProfile": ["lto = \"fat\"", "codegen-units = 1", "strip = true"],
+    "at715b2bd": {
+      "revision": "715b2bd7a0ddce31dd41c814c392860a49c701c9",
+      "packagedAlmaLinux8Bytes": 26160136,
+      "workspaceReleaseProfileBytes": 26161048,
+      "workspaceReleaseProfilePanicAbortBytes": 23018776,
+      "cargoDefaultProfileBytes": 49651248,
+      "cargoDefaultProfileStrippedBytes": 31768216
+    },
+    "atE2f0bbf": { "spikeProfileBytes": 17612312 }
+  },
   "idleMemoryMiB": {
     "method": "smaps_rollup after a 20 s settle, sampled every 5 s for 60 s; VRAM from nvidia-smi -q -d PIDS",
     "spikeRealNvml": { "rss": 170, "pss": 101, "uss": 91, "vram": 35 },
