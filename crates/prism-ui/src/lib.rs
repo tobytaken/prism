@@ -20,6 +20,7 @@ mod palette;
 mod profile_management;
 mod profiles;
 mod settings;
+mod startup;
 mod switching;
 pub mod telemetry;
 mod view;
@@ -37,6 +38,7 @@ pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::settings::{About, GuiSettings, Link, SLINT_WEBSITE};
+pub use crate::startup::STARTUP_BEHAVIORS;
 pub use crate::view::{
     ActivityButton, ActivityItem, ActivityPanel, AddProgram, AddSteamGame, ChangeStrip,
     ConfirmClose, ConfirmDelete, Content, CoolingProblem, CurveMarker, CurvePoint, Detail, Dialog,
@@ -44,6 +46,7 @@ pub use crate::view::{
     ExplainedState, FanArrangementControl, FanChoice, FanCurveEditor, FanModeChoice,
     FanModeControl, GameLink, GameRow, GamesSection, GpuWorkspace, HardwareDetails, LinkChoice,
     ManageProfiles, ManagedProfile, MenuEntry, ProfileChoice, ProfileCorrections, ProfileMenu,
-    ProfileNameDialog, ProfileSwitcher, ProgramChoice, Review, Sidebar, SidebarGpu, StatusBar,
-    SteamAppChoice, Stepper, SwitchingStatus, Track, TrackChart, TrackKind, Tunable,
+    ProfileNameDialog, ProfileSwitcher, ProgramChoice, Review, Sidebar, SidebarGpu,
+    StartupBehaviorChoice, StartupChoice, StartupGpu, StartupSection, StatusBar, SteamAppChoice,
+    Stepper, SwitchingStatus, Track, TrackChart, TrackKind, Tunable,
 };

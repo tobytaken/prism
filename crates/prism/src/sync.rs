@@ -9,7 +9,8 @@ use prism_ui::{
     ActivityItem, AppearanceMode as CoreAppearance, Content, CoolingProblem, Core, Dialog,
     DriverConfirmation, Fact, FanCurveEditor, FanModeControl, GameRow, ReviewChange,
     Section as CoreSection, ServiceAction as CoreServiceAction,
-    SettingsSection as CoreSettingsSection, Stepper, SwitchingStatus, Track, Tunable,
+    SettingsSection as CoreSettingsSection, StartupSection, Stepper, SwitchingStatus, Track,
+    Tunable,
 };
 
 use crate::{
@@ -18,8 +19,8 @@ use crate::{
     DialogView, DriversView, ExplainedStateView, FactView, FanCurveView, FanModeView, GameLinkView,
     GameView, GamesView, LimitMark, MainWindow, ManagedProfileView, MenuEntryView,
     PaletteEntryView, ProgramView, ReadoutView, ReviewChangeView, SegmentView, ServiceAction,
-    SettingsSection, SidebarGpuView, SteamAppView, StepperView, SwitchingView, Theme, TrackView,
-    TuningSetting, WorkspaceView,
+    SettingsSection, SidebarGpuView, StartupGpuView, StartupView, SteamAppView, StepperView,
+    SwitchingView, Theme, TrackView, TuningSetting, WorkspaceView,
 };
 
 pub(crate) fn sync(window: &MainWindow, core: &Core) {
@@ -182,7 +183,6 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         CoreSettingsSection::Daemon => SettingsSection::Daemon,
         CoreSettingsSection::About => SettingsSection::About,
     });
-    state.set_settings_section_name(core.settings_section().name().into());
     let modes: Vec<_> = CoreAppearance::ALL
         .into_iter()
         .map(|mode| SegmentView {
@@ -197,6 +197,7 @@ pub(crate) fn sync(window: &MainWindow, core: &Core) {
         state.set_appearance_modes(model);
     }
     state.set_desktop_notifications(core.desktop_notifications());
+    sync_startup(&state, &core.startup_settings());
     let about = core.about();
     state.set_about(AboutView {
         version: about.version.into(),
@@ -678,6 +679,69 @@ fn activity_item_view(item: &ActivityItem) -> ActivityItemView {
             .and_then(|button| button.unavailable.as_deref())
             .unwrap_or_default()
             .into(),
+    }
+}
+
+/// Settings → Startup as the view shows it.
+fn sync_startup(state: &AppState, section: &StartupSection) {
+    let text = |line: &Option<String>| line.as_deref().unwrap_or_default().into();
+    state.set_startup(StartupView {
+        behavior: section
+            .behaviors
+            .iter()
+            .find(|choice| choice.chosen)
+            .map_or("Unknown", |choice| choice.name.as_str())
+            .into(),
+        read_only: section.read_only.is_some(),
+        reason: text(&section.read_only),
+        suspended: text(&section.suspended),
+        possibly_stale: text(&section.possibly_stale),
+        outcome: text(&section.outcome),
+        empty: text(&section.empty),
+    });
+    let behaviors: Vec<_> = section
+        .behaviors
+        .iter()
+        .map(|choice| SegmentView {
+            text: choice.name.as_str().into(),
+            label: choice.name.as_str().into(),
+            selected: choice.chosen,
+            unavailable_reason: SharedString::new(),
+            mark: SharedString::new(),
+        })
+        .collect();
+    if let Some(model) = update_in_place(&state.get_startup_behaviors(), behaviors, PartialEq::eq) {
+        state.set_startup_behaviors(model);
+    }
+    let current = state.get_startup_gpus();
+    let gpus: Vec<_> = section
+        .gpus
+        .iter()
+        .enumerate()
+        .map(|(index, gpu)| {
+            let choices = gpu
+                .choices
+                .iter()
+                .map(|choice| SegmentView {
+                    text: choice.name.as_str().into(),
+                    label: choice.name.as_str().into(),
+                    selected: choice.chosen,
+                    unavailable_reason: choice.unavailable.as_deref().unwrap_or_default().into(),
+                    mark: SharedString::new(),
+                })
+                .collect();
+            // Reusing the choices' model keeps their elements and the focus of the one just made.
+            let current_choices = current.row_data(index).map(|current| current.choices);
+            StartupGpuView {
+                label: format!("Startup profile of {}", gpu.gpu).into(),
+                gpu: gpu.gpu.as_str().into(),
+                startup: gpu.startup.as_str().into(),
+                choices: reuse(current_choices, choices),
+            }
+        })
+        .collect();
+    if let Some(model) = update_in_place(&current, gpus, PartialEq::eq) {
+        state.set_startup_gpus(model);
     }
 }
 

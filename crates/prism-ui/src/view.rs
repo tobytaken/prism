@@ -711,6 +711,61 @@ pub struct LinkChoice {
     pub linked: bool,
 }
 
+/// Settings → Startup: the host-wide startup behavior and each GPU's startup profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupSection {
+    /// Each startup behavior, the one chosen picked; none is without a session.
+    pub behaviors: Vec<StartupBehaviorChoice>,
+    /// Why nothing here can be changed, such as "Needs tuning access · not running"; none with
+    /// tuning access.
+    pub read_only: Option<String>,
+    /// Why startup behavior won't run at the next boot whatever is chosen, such as an unhealthy
+    /// tuning store.
+    pub suspended: Option<String>,
+    /// Which GPUs' last applied tuning values miss a recent change, while startup restores them.
+    pub possibly_stale: Option<String>,
+    /// Why prismd refused the latest change, until the next one.
+    pub outcome: Option<String>,
+    /// Each GPU here, in sidebar order, with its startup profile.
+    pub gpus: Vec<StartupGpu>,
+    /// What the section says in place of the GPUs, such as that it needs a session.
+    pub empty: Option<String>,
+}
+
+/// A startup behavior, as Settings → Startup offers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupBehaviorChoice {
+    pub behavior: prism_protocol::StartupBehavior,
+    /// Such as "Last applied tuning values".
+    pub name: String,
+    pub chosen: bool,
+}
+
+/// A GPU's startup profile, as Settings → Startup shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupGpu {
+    pub gpu_id: String,
+    /// Such as "GPU 0 · RTX 5090 · 01:00.0".
+    pub gpu: String,
+    /// The startup profile's name, or "None".
+    pub startup: String,
+    /// None, then the caller's profiles of the GPU in the order prismd lists them, then another
+    /// user's profile while it's the startup profile.
+    pub choices: Vec<StartupChoice>,
+}
+
+/// None, or a profile of the GPU, as its startup profile can be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupChoice {
+    /// The profile's id, which choosing it sends; none for None.
+    pub profile_id: Option<String>,
+    pub name: String,
+    /// Whether it's the GPU's startup profile.
+    pub chosen: bool,
+    /// Why it can't be chosen, such as being another user's profile.
+    pub unavailable: Option<String>,
+}
+
 /// Drivers: the host's NVIDIA driver, the recommended driver plan and the latest driver job.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriversSection {

@@ -547,7 +547,7 @@ fn drivers_and_its_confirmations_are_accessible() {
 }
 
 #[test]
-fn settings_appearance_notifications_and_about_are_accessible() {
+fn every_settings_section_is_accessible() {
     for (daemon, state) in [
         (DaemonState::Running, "tunable"),
         (DaemonState::ReadOnly, "read-only"),
@@ -556,7 +556,10 @@ fn settings_appearance_notifications_and_about_are_accessible() {
         harness.tick();
         harness.ctrl(",");
         harness.tick();
-        for section in ["Appearance", "Notifications", "About"] {
+        harness.prismd_tick(
+            SimulatedGpus::new(SimulatedFixture::TunableGpu, || Duration::ZERO).performance(),
+        );
+        for section in ["Appearance", "Startup", "Notifications", "About"] {
             harness
                 .find(AccessibleRole::ListItem, section)
                 .invoke_accessible_default_action();
