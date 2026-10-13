@@ -1,0 +1,198 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throw away. Five logo concepts for Prism, switchable via ?variant=A..E (and
+  ?variant=compare). Each concept is shown as a large mark, an app icon at launcher sizes, and in
+  the real title bar over a screenshot. Serve from the repo root so the fonts and screenshots load.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Prism logo prototype</title>
+<style>
+  @font-face { font-family: "JetBrains Mono"; font-weight: 700; src: url("../../crates/prism/ui/fonts/JetBrainsMono-Bold.ttf"); }
+  @font-face { font-family: "JetBrains Mono"; font-weight: 400; src: url("../../crates/prism/ui/fonts/JetBrainsMono-Regular.ttf"); }
+  @font-face { font-family: "Inter"; font-weight: 400; src: url("../../crates/prism/ui/fonts/Inter-Regular.ttf"); }
+  @font-face { font-family: "Inter"; font-weight: 600; src: url("../../crates/prism/ui/fonts/Inter-SemiBold.ttf"); }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #1a1917; color: #ece8df; font: 13px/1.5 Inter, sans-serif; padding: 28px 28px 110px; }
+  h1 { font: 600 22px Inter; margin: 0 0 4px; }
+  .note { color: #8e897f; max-width: 760px; margin: 0 0 24px; }
+  .label { font: 400 10px "JetBrains Mono"; letter-spacing: 1.4px; text-transform: uppercase; color: #8e897f; margin: 28px 0 10px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .panel { flex: 1 1 420px; padding: 40px; display: flex; flex-direction: column; align-items: center; gap: 36px; border: 1px solid #33302b; }
+  .dark { background: #121110; --ink: #ece8df; }
+  .light { background: #e9e6df; --ink: #1c1b19; }
+  .lockup { display: flex; align-items: center; gap: 18px; }
+  .wordmark { font: 700 44px "JetBrains Mono"; letter-spacing: 10px; color: var(--ink); }
+  .wordmark .s { color: #ff5a1f; }
+  .icons { display: flex; align-items: flex-end; gap: 22px; padding: 24px; flex: 1 1 420px; border: 1px solid #33302b; }
+  .icons.dark { background: #34322e; }
+  .icons figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .icons figcaption { font: 400 10px "JetBrains Mono"; color: #8e897f; }
+  .light figcaption { color: #77736a; }
+  .shot { position: relative; height: 150px; overflow: hidden; border: 1px solid #33302b; background-position: top left; background-repeat: no-repeat; }
+  .titlebar { position: absolute; left: 0; top: 0; height: 30px; padding-left: 12px; display: flex; align-items: center; gap: 8px; width: 190px; }
+  .titlebar .wm { font: 700 11px "JetBrains Mono"; letter-spacing: 2.6px; }
+  .compare { display: grid; grid-template-columns: 160px repeat(2, 1fr); gap: 1px; background: #33302b; border: 1px solid #33302b; }
+  .compare > div { padding: 18px; display: flex; align-items: center; gap: 20px; }
+  .compare .name { background: #1a1917; flex-direction: column; align-items: flex-start; gap: 0; }
+  .compare a { color: #ece8df; font-weight: 600; }
+  a.dl { color: #ff6326; font: 400 11px "JetBrains Mono"; }
+
+  #switcher { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px;
+    background: #fff; color: #000; border-radius: 999px; padding: 6px; box-shadow: 0 6px 24px #0009; font: 600 13px Inter; z-index: 9; }
+  #switcher button { border: 0; background: #eee; border-radius: 999px; width: 34px; height: 34px; font-size: 16px; cursor: pointer; }
+  #switcher button:hover { background: #ddd; }
+  #switcher span { padding: 0 14px; min-width: 200px; text-align: center; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div id="switcher"><button id="prev" aria-label="Previous variant">←</button><span id="current"></span><button id="next" aria-label="Next variant">→</button></div>
+
+<script>
+// Theme tokens from crates/prism/ui/theme.slint.
+const DARK = { bg: "#121110", ink: "#ece8df", muted: "#8e897f", accent: "#ff6326" };
+const LIGHT = { bg: "#e9e6df", ink: "#1c1b19", muted: "#77736a", accent: "#ff5a1f" };
+const CHROME_DARK = { bg: "#0a0a09", ink: "#ece8df", muted: "#8e897f", accent: "#ff6326" };
+const CHROME_LIGHT = { bg: "#1c1b19", ink: "#e9e6df", muted: "#a8a399", accent: "#ff5a1f" };
+
+// Every mark is drawn on a 64×64 grid.
+const VARIANTS = {
+  A: {
+    name: "Refraction",
+    note: "The current icon, tightened: a white beam enters the prism and splits into three, only one of them in the accent. The most literal reading of the name.",
+    mark: c => `
+      <line x1="0" y1="40" x2="20" y2="35" stroke="${c.ink}" stroke-width="3"/>
+      <line x1="34" y1="31" x2="64" y2="20" stroke="${c.accent}" stroke-width="4"/>
+      <line x1="34" y1="33" x2="64" y2="33" stroke="${c.ink}" stroke-width="3"/>
+      <line x1="34" y1="35" x2="64" y2="46" stroke="${c.muted}" stroke-width="3"/>
+      <polygon points="28,8 50,52 6,52" fill="${c.bg}" stroke="${c.ink}" stroke-width="3.5"/>`,
+  },
+  B: {
+    name: "Trace",
+    note: "A telemetry trace whose peak is a prism, cut by a dashed limit like the power limit on a track; the tip above the limit is in the accent. Watching and tuning in one stroke, drawn the way the app draws its charts.",
+    mark: c => `
+      <line x1="2" y1="24" x2="62" y2="24" stroke="${c.muted}" stroke-width="2" stroke-dasharray="4 3"/>
+      <polyline points="2,48 10,48 16,38 21,44 34,10 46,48 52,42 56,48 62,48" fill="none" stroke="${c.ink}" stroke-width="4"/>
+      <polyline points="28.7,24 34,10 38.4,24" fill="none" stroke="${c.accent}" stroke-width="4"/>`,
+  },
+  C: {
+    name: "Monogram",
+    note: "A heavy P with a faceted bowl and a prism for its counter. Pure letterform: no light beams, works as a favicon and pairs with the PRI S M wordmark.",
+    mark: c => `
+      <rect x="11" y="8" width="11" height="48" fill="${c.ink}"/>
+      <polygon points="22,8 42,8 53,19 53,31 42,42 22,42" fill="${c.ink}"/>
+      <polygon points="22,17 42,25 22,33" fill="${c.accent}"/>`,
+  },
+  D: {
+    name: "Die",
+    note: "A GPU die with pins and a pin-1 notch, carrying an accent prism. Says “GPU tool” at a glance in a launcher full of other icons, at the cost of being the most generic shape.",
+    mark: c => {
+      const pins = [22, 32, 42].map(p => `
+        <rect x="${p - 2}" y="6" width="4" height="6" fill="${c.ink}"/>
+        <rect x="${p - 2}" y="52" width="4" height="6" fill="${c.ink}"/>
+        <rect x="6" y="${p - 2}" width="6" height="4" fill="${c.ink}"/>
+        <rect x="52" y="${p - 2}" width="6" height="4" fill="${c.ink}"/>`).join("");
+      return `${pins}
+        <rect x="14" y="14" width="36" height="36" fill="${c.ink}"/>
+        <polygon points="14,14 21,14 14,21" fill="${c.bg}"/>
+        <polygon points="32,21 43,42 21,42" fill="${c.accent}"/>`;
+    },
+  },
+  E: {
+    name: "Solid",
+    note: "A flat-shaded triangular prism: accent front face, ink side face. Two shapes, no strokes, so it stays crisp at 16 px and echoes the hard offset shadow of the app’s pop-ups.",
+    mark: c => `
+      <polygon points="38,56 22,14 40,6 56,48" fill="${c.ink}"/>
+      <polygon points="6,56 38,56 22,14" fill="${c.accent}"/>`,
+  },
+};
+const KEYS = [...Object.keys(VARIANTS), "compare"];
+
+const svg = (v, c, size, attrs = "") =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 64 64" ${attrs}>${v.mark(c)}</svg>`;
+
+// The app icon: the mark inset on a dark tile, as io.github.tobytaken.Prism.svg would ship it.
+const tile = (v, size) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 64 64">` +
+  `<rect width="64" height="64" fill="${DARK.bg}"/><g transform="translate(8 8) scale(0.75)">${v.mark(DARK)}</g></svg>`;
+
+const wordmark = () => `PRI<span class="s">S</span>M`;
+
+function titleBar(v, chrome, screenshot) {
+  return `<div class="shot" style="background-image:url('../../crates/prism/tests/screenshots/${screenshot}')">
+    <div class="titlebar" style="background:${chrome.bg}">
+      ${svg(v, chrome, 14)}
+      <span class="wm" style="color:${chrome.ink}">PRI<span style="color:${chrome.accent}">S</span>M</span>
+    </div></div>`;
+}
+
+function iconStrip(v, cls) {
+  return `<div class="icons ${cls}">${[128, 64, 48, 32, 24, 16]
+    .map(s => `<figure>${tile(v, s)}<figcaption>${s}</figcaption></figure>`).join("")}</div>`;
+}
+
+function renderVariant(key) {
+  const v = VARIANTS[key];
+  const blob = URL.createObjectURL(new Blob([tile(v, 128)], { type: "image/svg+xml" }));
+  return `
+    <h1>${key} · ${v.name}</h1>
+    <p class="note">${v.note} <a class="dl" href="${blob}" download="prism-${v.name.toLowerCase()}.svg">download app icon svg</a></p>
+
+    <div class="label">Mark and lockup</div>
+    <div class="row">
+      <div class="panel dark">${svg(v, DARK, 180)}<div class="lockup">${svg(v, DARK, 56)}<span class="wordmark">${wordmark()}</span></div></div>
+      <div class="panel light">${svg(v, LIGHT, 180)}<div class="lockup">${svg(v, LIGHT, 56)}<span class="wordmark">${wordmark()}</span></div></div>
+    </div>
+
+    <div class="label">App icon at launcher sizes</div>
+    <div class="row">${iconStrip(v, "dark")}${iconStrip(v, "light")}</div>
+
+    <div class="label">Title bar, actual size</div>
+    <div class="row" style="flex-direction:column">
+      ${titleBar(v, CHROME_DARK, "workspace-pending-dark.png")}
+      ${titleBar(v, CHROME_LIGHT, "workspace-pending-light.png")}
+    </div>`;
+}
+
+function renderCompare() {
+  return `
+    <h1>Compare</h1>
+    <p class="note">Every concept side by side, at 64 px and 16 px on both canvases.</p>
+    <div class="compare">
+      <div class="name"></div><div class="dark label" style="margin:0">Dark</div><div class="light label" style="margin:0">Light</div>
+      ${Object.entries(VARIANTS).map(([k, v]) => `
+        <div class="name"><a href="?variant=${k}">${k} · ${v.name}</a></div>
+        <div class="dark">${svg(v, DARK, 64)}${svg(v, DARK, 16)}${tile(v, 48)}${tile(v, 16)}</div>
+        <div class="light">${svg(v, LIGHT, 64)}${svg(v, LIGHT, 16)}${tile(v, 48)}${tile(v, 16)}</div>`).join("")}
+    </div>`;
+}
+
+function render() {
+  let key = new URLSearchParams(location.search).get("variant") ?? "A";
+  if (!KEYS.includes(key)) key = "A";
+  document.getElementById("app").innerHTML = key === "compare" ? renderCompare() : renderVariant(key);
+  document.getElementById("current").textContent = key === "compare" ? "Compare all" : `${key} (${VARIANTS[key].name})`;
+  return key;
+}
+
+function go(step) {
+  const i = KEYS.indexOf(render());
+  const next = KEYS[(i + step + KEYS.length) % KEYS.length];
+  history.replaceState(null, "", `?variant=${next}`);
+  render();
+}
+
+document.getElementById("prev").onclick = () => go(-1);
+document.getElementById("next").onclick = () => go(1);
+addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
+  if (e.key === "ArrowLeft") go(-1);
+  if (e.key === "ArrowRight") go(1);
+});
+render();
+</script>
+</body>
+</html>
