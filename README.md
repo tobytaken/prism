@@ -101,6 +101,8 @@ sudo systemctl restart prismd
 
 ## Packaging
 
+Release builds use the [toolkit spike](https://github.com/tobytaken/prism-electron/issues/102)'s size profile: fat LTO, one codegen unit and stripped symbols. Unlike the spike's, panics unwind instead of aborting, because `prismd` catches a panicking GPU operation so it fails only its own request and the daemon keeps serving. Cargo's per-package overrides can't set `panic`, and aborting only in the GUI would take a second profile that every build and packaging script would have to name, for 2.9 MiB.
+
 Install the packaging tools:
 
 ```bash
