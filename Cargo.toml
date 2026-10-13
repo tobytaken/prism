@@ -49,6 +49,13 @@ wayland-backend = { version = "0.3.17", features = ["client_system"] }
 wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
 
+# The toolkit spike's size profile (#102, #167), except that panics unwind: prismd catches them so
+# a failing GPU operation fails only its own request, and Cargo can't set `panic` per package.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 

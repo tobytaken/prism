@@ -58,6 +58,8 @@ The issue quotes the spike's ~81 MiB PSS, which was measured on simulated data. 
 
 **The release profile isn't the spike's.** The workspace has no `[profile.release]`, so the binary is unstripped and built with Cargo's default LTO and codegen units. Building with the spike's settings (fat LTO, `codegen-units=1`, `strip`, `panic=abort`) gives 16.9 MiB, close to the spike's 15.8 MiB.
 
+**Follow-up, 13 October 2026 ([#167](https://github.com/tobytaken/prism-electron/issues/167)):** the workspace now has the spike's release profile, except that panics unwind, as the README explains. The packaged binary, built with `cargo build --locked --release -p prism` in AlmaLinux 8 as CI builds it, is **24.9 MiB** against the spike's 15.8 MiB. The gap comes from the GUI's growth since this pass, not the profile. At `e2f0bbf`, the spike's profile still gives 16.8 MiB. At `715b2bd`, Cargo's default profile gives 47.4 MiB, or 30.3 MiB stripped, and the spike's profile with `panic = "abort"` gives 22.0 MiB, so unwinding costs 2.9 MiB.
+
 ## Not covered by this pass
 
 - GNOME Wayland, second-launch focus on GNOME, and a PRIME on-demand laptop (#168).
