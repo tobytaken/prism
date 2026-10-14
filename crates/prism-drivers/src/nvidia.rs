@@ -144,29 +144,63 @@ fn enrich_with_nvml(gpus: &mut Vec<NvidiaGpuInfo>, warnings: &mut Vec<String>) -
             .map(|architecture| architecture.to_string());
         let bus_id = device.pci_info().ok().map(|info| info.bus_id);
 
-        if let Some(bus_id) = bus_id.as_deref()
-            && let Some(existing) = gpus
-                .iter_mut()
-                .find(|gpu| gpu.bus_id.as_deref() == Some(bus_id))
-        {
-            existing.id = uuid.clone();
-            existing.name = name.clone();
-            existing.architecture = architecture.clone();
-            seen.insert(existing.id.clone());
-            continue;
-        }
-
-        if seen.insert(uuid.clone()) {
-            gpus.push(NvidiaGpuInfo {
+        merge_nvml_gpu(
+            gpus,
+            &mut seen,
+            NvidiaGpuInfo {
                 id: uuid,
                 name,
                 architecture,
                 bus_id,
-            });
-        }
+            },
+        );
     }
 
     true
+}
+
+/// Fills in the sysfs GPU at the same PCI address as one NVML reports, or adds it if there's none.
+fn merge_nvml_gpu(gpus: &mut Vec<NvidiaGpuInfo>, seen: &mut BTreeSet<String>, gpu: NvidiaGpuInfo) {
+    let address = gpu.bus_id.as_deref().and_then(PciAddress::parse);
+    if let Some(address) = address
+        && let Some(existing) = gpus.iter_mut().find(|existing| {
+            existing.bus_id.as_deref().and_then(PciAddress::parse) == Some(address)
+        })
+    {
+        existing.id = gpu.id;
+        existing.name = gpu.name;
+        existing.architecture = gpu.architecture;
+        seen.insert(existing.id.clone());
+        return;
+    }
+
+    if seen.insert(gpu.id.clone()) {
+        gpus.push(gpu);
+    }
+}
+
+/// A PCI device's domain, bus, device and function. Sysfs and NVML write the same address
+/// differently: `0000:01:00.0` and `00000000:01:00.0`, with NVML's hex digits in uppercase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PciAddress {
+    domain: u32,
+    bus: u8,
+    device: u8,
+    function: u8,
+}
+
+impl PciAddress {
+    fn parse(address: &str) -> Option<Self> {
+        let (domain, rest) = address.trim().split_once(':')?;
+        let (bus, rest) = rest.split_once(':')?;
+        let (device, function) = rest.split_once('.')?;
+        Some(Self {
+            domain: u32::from_str_radix(domain, 16).ok()?,
+            bus: u8::from_str_radix(bus, 16).ok()?,
+            device: u8::from_str_radix(device, 16).ok()?,
+            function: u8::from_str_radix(function, 16).ok()?,
+        })
+    }
 }
 
 fn is_display_or_3d_controller(class: &str) -> bool {
@@ -210,9 +244,71 @@ fn read_trimmed(path: impl AsRef<Path>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        NvidiaGpuInfo, collect_sysfs_gpus, gpu_supports_open_modules, read_driver_version,
+        NvidiaGpuInfo, PciAddress, collect_sysfs_gpus, gpu_supports_open_modules, merge_nvml_gpu,
+        read_driver_version,
     };
+    use std::collections::BTreeSet;
     use std::fs;
+
+    fn sysfs_gpu(bus_id: &str) -> NvidiaGpuInfo {
+        NvidiaGpuInfo {
+            id: bus_id.into(),
+            name: format!("NVIDIA GPU {bus_id}"),
+            architecture: None,
+            bus_id: Some(bus_id.into()),
+        }
+    }
+
+    fn nvml_gpu(uuid: &str, bus_id: &str) -> NvidiaGpuInfo {
+        NvidiaGpuInfo {
+            id: uuid.into(),
+            name: "NVIDIA GeForce RTX 4090".into(),
+            architecture: Some("Ada".into()),
+            bus_id: Some(bus_id.into()),
+        }
+    }
+
+    #[test]
+    fn nvml_fills_in_the_sysfs_gpu_at_the_same_address_however_its_written() {
+        for (sysfs, nvml) in [
+            ("0000:01:00.0", "00000000:01:00.0"),
+            ("0000:0a:00.0", "00000000:0A:00.0"),
+            ("0001:c1:00.0", "0001:C1:00.0"),
+        ] {
+            let mut gpus = vec![sysfs_gpu(sysfs)];
+            merge_nvml_gpu(&mut gpus, &mut BTreeSet::new(), nvml_gpu("GPU-1", nvml));
+
+            assert_eq!(gpus.len(), 1, "{sysfs} and {nvml}: {gpus:?}");
+            assert_eq!(gpus[0].id, "GPU-1");
+            assert_eq!(gpus[0].architecture.as_deref(), Some("Ada"));
+            assert!(gpu_supports_open_modules(&gpus));
+        }
+    }
+
+    #[test]
+    fn nvml_adds_a_gpu_at_an_address_sysfs_didnt_list() {
+        let mut gpus = vec![sysfs_gpu("0000:01:00.0")];
+        merge_nvml_gpu(
+            &mut gpus,
+            &mut BTreeSet::new(),
+            nvml_gpu("GPU-2", "00000000:02:00.0"),
+        );
+
+        assert_eq!(gpus.len(), 2);
+        assert_eq!(gpus[0].id, "0000:01:00.0");
+        assert_eq!(gpus[1].id, "GPU-2");
+    }
+
+    #[test]
+    fn pci_addresses_that_dont_parse_match_nothing() {
+        assert_eq!(PciAddress::parse("01:00.0"), None);
+        assert_eq!(PciAddress::parse("0000:01:00"), None);
+        assert_eq!(PciAddress::parse("0000:01:zz.0"), None);
+        assert_eq!(
+            PciAddress::parse("00000000:0A:1F.3"),
+            PciAddress::parse("0000:0a:1f.3")
+        );
+    }
 
     #[test]
     fn detects_nvidia_display_gpus_from_sysfs() {
