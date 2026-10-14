@@ -105,11 +105,7 @@ fn become_caller(uid: u32) -> io::Result<()> {
     let user = users::get_user_by_uid(uid)
         .ok_or_else(|| io::Error::other(format!("no user has uid {uid}")))?;
     let gid = user.primary_group_id();
-    let groups: Vec<libc::gid_t> = users::get_user_groups(user.name(), gid)
-        .unwrap_or_default()
-        .iter()
-        .map(|group| group.gid())
-        .collect();
+    let groups = crate::host::user_group_ids(user.name(), gid).unwrap_or_default();
     // Raw system calls change only this thread's credentials; glibc's wrappers would change every
     // thread's. setfsuid and setfsgid report the previous id rather than failure, so asking again
     // with an invalid id confirms the change.

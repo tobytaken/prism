@@ -267,6 +267,55 @@ fn an_incompatible_hello_over_the_socket_is_answered_and_closed() {
 }
 
 #[test]
+fn a_root_admin_group_refuses_a_socket_peer_outside_group_root() {
+    let in_root_group = super::host::user_group_ids(
+        users::get_current_username().unwrap().as_os_str(),
+        users::get_current_gid(),
+    )
+    .unwrap()
+    .contains(&0);
+    // Root and members of group root are rightly allowed.
+    if users::get_current_uid() == 0 || in_root_group {
+        return;
+    }
+    let (socket, _client) = std::os::unix::net::UnixStream::pair().unwrap();
+    let policy = super::SessionPolicy {
+        admin_group: "root".into(),
+        admin_user: None,
+    };
+    let caller = super::resolve_peer(&policy, &socket).unwrap();
+    assert!(
+        !caller.groups.iter().any(|group| group == "root"),
+        "{:?}",
+        caller.groups
+    );
+    assert!(
+        policy
+            .authorize(&caller, &DaemonRequest::RequestHostReboot)
+            .is_err()
+    );
+}
+
+#[test]
+fn an_admin_group_the_socket_peer_belongs_to_lets_them_tune() {
+    let primary_group = users::get_current_groupname()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let (socket, _client) = std::os::unix::net::UnixStream::pair().unwrap();
+    let policy = super::SessionPolicy {
+        admin_group: primary_group,
+        admin_user: None,
+    };
+    let caller = super::resolve_peer(&policy, &socket).unwrap();
+    assert!(
+        policy
+            .authorize(&caller, &DaemonRequest::RequestHostReboot)
+            .is_ok()
+    );
+}
+
+#[test]
 fn a_socket_peer_who_cannot_tune_may_read_but_every_write_is_refused() {
     use prism_protocol::framing::{read_frame, write_frame};
     use prism_protocol::{SessionMessage, SessionRequest};
