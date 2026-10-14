@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
@@ -363,7 +363,7 @@ fn run_system_action(action: DriverAction, job: &JobProgress) -> Result<JobCompl
         match step {
             JobStep::Command(command) => {
                 job.step(&command.label, &format!("Running {}", command.display()));
-                job.log(run_driver_command(&command)?);
+                run_driver_command(job, &command)?;
             }
             JobStep::UbuntuUpgradeInstalled => {
                 job.step(
@@ -382,7 +382,7 @@ fn run_system_action(action: DriverAction, job: &JobProgress) -> Result<JobCompl
                     args,
                     env: vec![("DEBIAN_FRONTEND".into(), "noninteractive".into())],
                 };
-                job.log(run_driver_command(&command)?);
+                run_driver_command(job, &command)?;
             }
         }
     }
@@ -540,8 +540,8 @@ fn apt_update() -> DriverCommand {
     }
 }
 
-/// Runs the allowlisted command, returning its output lines, or why it failed.
-fn run_driver_command(command: &DriverCommand) -> Result<Vec<String>, String> {
+/// Runs the allowlisted command, logging its output, or says why it failed.
+fn run_driver_command(job: &JobProgress, command: &DriverCommand) -> Result<(), String> {
     validate_driver_command(command)?;
 
     let mut process = Command::new(&command.program);
@@ -554,18 +554,33 @@ fn run_driver_command(command: &DriverCommand) -> Result<Vec<String>, String> {
         .output()
         .map_err(|error| format!("Failed to run {}: {error}", command.program))?;
 
+    finish_command(job, command, &output)
+}
+
+/// Logs the command's output, which explains a failure as much as a success, then says whether
+/// it succeeded, ending a failure with the last line it wrote to stderr.
+fn finish_command(
+    job: &JobProgress,
+    command: &DriverCommand,
+    output: &Output,
+) -> Result<(), String> {
+    let errors = output_lines(&output.stderr);
+    let last_error = errors.last().cloned();
     let mut lines = output_lines(&output.stdout);
-    lines.extend(output_lines(&output.stderr));
+    lines.extend(errors);
+    job.log(lines);
 
     if output.status.success() {
-        Ok(lines)
-    } else {
-        Err(format!(
-            "{} exited with status {}",
-            command.display(),
-            output.status
-        ))
+        return Ok(());
     }
+    let ending = match output.status.code() {
+        Some(code) => format!("exited with status {code}"),
+        None => format!("was stopped ({})", output.status),
+    };
+    Err(match last_error {
+        Some(line) => format!("{} {ending}: {line}", command.display()),
+        None => format!("{} {ending}", command.display()),
+    })
 }
 
 fn installed_deb_nvidia_packages() -> Result<Vec<String>, String> {
@@ -692,11 +707,13 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        DriverCommand, DriverJobStore, JobCompletion, JobProgress, is_deb_nvidia_package,
-        validate_driver_command,
+        DriverCommand, DriverJobStore, JobCompletion, JobProgress, LOG_TAIL_LIMIT, apt_update,
+        finish_command, is_deb_nvidia_package, validate_driver_command,
     };
     use crate::{DriverAction, DriverHost, DriverJob, DriverJobStatus, DriverStatusResponse};
     use prism_gpu::GpuCommandError;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
 
     #[test]
     fn command_allowlist_accepts_known_driver_commands() {
@@ -766,6 +783,97 @@ mod tests {
         fn reboot(&self) -> Result<(), GpuCommandError> {
             unreachable!("the store doesn't reboot")
         }
+    }
+
+    /// A host whose driver action is `apt-get update`, finishing with this output.
+    struct CommandHost(Output);
+
+    impl DriverHost for CommandHost {
+        fn status(&self) -> DriverStatusResponse {
+            unreachable!("the store doesn't read the host's status")
+        }
+
+        fn run(&self, _: DriverAction, job: &JobProgress) -> Result<JobCompletion, String> {
+            finish_command(job, &apt_update(), &self.0).map(|()| JobCompletion::reboot_required())
+        }
+
+        fn reboot(&self) -> Result<(), GpuCommandError> {
+            unreachable!("the store doesn't reboot")
+        }
+    }
+
+    /// The job, once it ended, of a driver action whose command finished with this output.
+    fn job_whose_command_finished_with(output: Output) -> DriverJob {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = DriverJobStore::load(
+            dir.path().join("jobs.json"),
+            "boot-1".into(),
+            Arc::new(CommandHost(output)),
+        );
+        let (changed, changes) = mpsc::channel();
+        store.on_job_changed(move |job| {
+            let _ = changed.send(job);
+        });
+        store
+            .start(DriverAction::InstallRecommended)
+            .expect("start");
+        until_ended(&changes).pop().unwrap()
+    }
+
+    #[test]
+    fn a_failed_command_logs_what_it_said_and_ends_the_job_with_why() {
+        let job = job_whose_command_finished_with(Output {
+            status: ExitStatus::from_raw(100 << 8),
+            stdout: b"Reading package lists...\n".to_vec(),
+            stderr: b"E: Failed to fetch https://example.invalid/dists/noble/InRelease\nE: Some index files failed to download.\n".to_vec(),
+        });
+
+        assert_eq!(job.status, DriverJobStatus::Failed);
+        assert_eq!(
+            job.error.as_deref(),
+            Some("apt-get update exited with status 100: E: Some index files failed to download.")
+        );
+        assert!(
+            job.log_tail
+                .iter()
+                .any(|line| line.contains("E: Failed to fetch")),
+            "{:?}",
+            job.log_tail
+        );
+        assert_eq!(job.log_tail.last(), job.error.as_ref());
+    }
+
+    #[test]
+    fn a_command_stopped_by_a_signal_says_so() {
+        let job = job_whose_command_finished_with(Output {
+            status: ExitStatus::from_raw(9),
+            stdout: vec![],
+            stderr: vec![],
+        });
+
+        assert_eq!(
+            job.error.as_deref(),
+            Some("apt-get update was stopped (signal: 9 (SIGKILL))")
+        );
+    }
+
+    #[test]
+    fn a_failed_commands_long_output_keeps_the_log_bounded_and_ends_with_why() {
+        let stderr: String = (1..=200).map(|line| format!("line {line}\n")).collect();
+        let job = job_whose_command_finished_with(Output {
+            status: ExitStatus::from_raw(1 << 8),
+            stdout: vec![],
+            stderr: stderr.into_bytes(),
+        });
+
+        assert_eq!(job.log_tail.len(), LOG_TAIL_LIMIT);
+        assert_eq!(
+            job.log_tail[LOG_TAIL_LIMIT - 2..],
+            [
+                "line 200".to_string(),
+                "apt-get update exited with status 1: line 200".to_string()
+            ]
+        );
     }
 
     /// A store on a gated host in boot "boot-1", with every job change it announces.
