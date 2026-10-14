@@ -973,10 +973,19 @@ impl Core {
                 }
             })
             .collect();
+        let selected_gpu_left = matches!(
+            &self.selection,
+            Some(Selection::Gpu(id)) if !gpus.iter().any(|gpu| &gpu.id == id)
+        );
         match gpus.first() {
-            Some(gpu) if self.selection.is_none() || self.opened_into_drivers => {
+            // A selected GPU that left gives way to one still here; with none left, its place
+            // explains the empty inventory.
+            Some(gpu)
+                if self.selection.is_none() || self.opened_into_drivers || selected_gpu_left =>
+            {
                 self.selection = Some(Selection::Gpu(gpu.id.clone()));
                 self.opened_into_drivers = false;
+                self.picked_fan = None;
             }
             // Without a GPU to show, Drivers is where to start fixing that.
             None if self.selection.is_none() => {
