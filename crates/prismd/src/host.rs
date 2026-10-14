@@ -49,6 +49,41 @@ impl UserDirectory for SystemUserDirectory {
     }
 }
 
+/// The ids of every group the user belongs to, including `gid`, or `None` if the host can't say.
+/// This replaces `users::get_user_groups`, which pads its answer with group 0 (RUSTSEC-2025-0040),
+/// so everyone looked like a member of `root`.
+pub fn user_group_ids(username: &OsStr, gid: libc::gid_t) -> Option<Vec<libc::gid_t>> {
+    group_ids_growing_from(username, gid, 64)
+}
+
+fn group_ids_growing_from(
+    username: &OsStr,
+    gid: libc::gid_t,
+    capacity: usize,
+) -> Option<Vec<libc::gid_t>> {
+    let name = std::ffi::CString::new(username.as_bytes()).ok()?;
+    let mut groups: Vec<libc::gid_t> = vec![0; capacity];
+    loop {
+        let mut count = libc::c_int::try_from(groups.len()).ok()?;
+        // SAFETY: `count` is the buffer's length, and getgrouplist writes at most that many ids.
+        let found =
+            unsafe { libc::getgrouplist(name.as_ptr(), gid, groups.as_mut_ptr(), &mut count) };
+        // When the buffer is too small, getgrouplist returns -1 and sets `count` to the size it
+        // needs, so only a -1 that didn't ask for more room is a failure.
+        let needed = usize::try_from(count).ok()?;
+        if found >= 0 {
+            groups.truncate(needed);
+            groups.sort_unstable();
+            groups.dedup();
+            return Some(groups);
+        }
+        if needed <= groups.len() {
+            return None;
+        }
+        groups.resize(needed, 0);
+    }
+}
+
 /// Whether the host is shutting down, which is the only time a daemon stop counts as clean.
 pub trait HostShutdownSignal: Send + Sync {
     fn host_shutting_down(&self) -> bool;
@@ -114,6 +149,33 @@ fn notify_to(path: &OsStr, message: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The groups `id -G` reports for the user running the tests.
+    fn id_groups() -> Vec<libc::gid_t> {
+        let output = Command::new("id").arg("-G").output().unwrap();
+        let mut groups: Vec<libc::gid_t> = String::from_utf8(output.stdout)
+            .unwrap()
+            .split_whitespace()
+            .map(|gid| gid.parse().unwrap())
+            .collect();
+        groups.sort_unstable();
+        groups.dedup();
+        groups
+    }
+
+    #[test]
+    fn a_users_groups_are_exactly_their_memberships() {
+        let user = users::get_user_by_uid(users::get_current_uid()).unwrap();
+        let groups = user_group_ids(user.name(), user.primary_group_id()).unwrap();
+        assert_eq!(groups, id_groups());
+    }
+
+    #[test]
+    fn group_lookup_grows_its_buffer_when_a_user_has_more_groups_than_it_holds() {
+        let user = users::get_user_by_uid(users::get_current_uid()).unwrap();
+        let groups = group_ids_growing_from(user.name(), user.primary_group_id(), 0).unwrap();
+        assert_eq!(groups, id_groups());
+    }
 
     #[test]
     fn systemd_readiness_supports_filesystem_and_abstract_notification_sockets() {

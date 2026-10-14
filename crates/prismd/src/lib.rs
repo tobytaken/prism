@@ -78,7 +78,7 @@ use std::thread;
 
 use serde::{Deserialize, Serialize};
 use users::os::unix::UserExt;
-use users::{get_group_by_gid, get_group_by_name, get_user_by_uid, get_user_groups};
+use users::{get_group_by_gid, get_group_by_name, get_user_by_uid};
 
 use prism_drivers::{DriverService, SystemDriverHost};
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
@@ -491,7 +491,7 @@ fn resolve_peer(
     let groups = if credentials.uid == 0 || config.admin_user.as_deref() == Some(&username) {
         vec![]
     } else {
-        get_user_groups(user.name(), credentials.gid)
+        host::user_group_ids(user.name(), credentials.gid)
             .ok_or_else(|| {
                 GpuCommandError::new(
                     GpuCommandErrorCode::NoPermission,
@@ -501,7 +501,8 @@ fn resolve_peer(
                     ),
                 )
             })?
-            .iter()
+            .into_iter()
+            .filter_map(get_group_by_gid)
             .map(|group| group.name().to_string_lossy().into_owned())
             .collect()
     };
