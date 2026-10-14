@@ -364,6 +364,43 @@ fn a_gpu_that_leaves_an_inventory_now_empty_is_explained_in_its_place() {
 }
 
 #[test]
+fn when_the_selected_gpu_leaves_another_one_still_present_opens() {
+    let mut core = Core::default();
+    core.handle(Input::Launched {
+        settings: GuiSettings::default(),
+        started_unix_ms: 0,
+    });
+    let mut state = snapshot();
+    state.inventory = simulated(SimulatedFixture::TwoIdenticalGpus).inventory();
+    let mut remaining = state.inventory.clone();
+    let left = remaining.gpus.remove(0);
+    connect(&mut core, state);
+    assert_eq!(workspace(&core).id, left.id);
+
+    core.handle(Input::PrismdEvent {
+        event: DaemonEvent::InventoryChanged(remaining.clone()),
+        received_at: Duration::from_secs(1),
+    });
+
+    assert_eq!(workspace(&core).id, remaining.gpus[0].id);
+    assert!(core.sidebar().gpus[0].selected);
+}
+
+#[test]
+fn a_gpu_found_after_the_last_one_left_opens_in_its_place() {
+    let mut core = launched(SimulatedFixture::TunableGpu);
+    core.handle(Input::InventoryRead(
+        simulated(SimulatedFixture::EmptyInventory).inventory(),
+    ));
+    let mut arrived = simulated(SimulatedFixture::TwoIdenticalGpus).inventory();
+    arrived.gpus.remove(0);
+
+    core.handle(Input::InventoryRead(arrived.clone()));
+
+    assert_eq!(workspace(&core).id, arrived.gpus[0].id);
+}
+
+#[test]
 fn prism_shows_that_it_is_looking_for_gpus_until_the_inventory_is_read() {
     let mut core = Core::default();
     core.handle(Input::Launched {
