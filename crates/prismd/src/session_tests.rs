@@ -168,6 +168,55 @@ fn a_gpu_arriving_or_departing_changes_the_inventory_before_its_telemetry() {
 }
 
 #[test]
+fn a_session_opened_after_a_gpu_arrived_leaves_the_change_to_reach_open_sessions() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    alice.send_json(json!({ "type": "subscribe_telemetry" }));
+    daemon.tick_telemetry();
+    alice.pushed_events();
+
+    daemon.gpus.arrive(tunable_gpu_with_id("GPU-456"));
+    let bob = daemon.user(1001, "bob");
+    assert_eq!(bob.snapshot().inventory.gpus.len(), 2);
+    daemon.tick_telemetry();
+
+    let events = alice.pushed_events();
+    assert_eq!(events[0]["type"], "inventory_changed", "{events:?}");
+    assert_eq!(events[0]["payload"]["gpus"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn a_session_opened_after_a_gpu_departed_leaves_the_change_to_reach_open_sessions() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![
+        tunable_gpu(),
+        tunable_gpu_with_id("GPU-456"),
+    ]));
+    let alice = daemon.user(1000, "alice");
+    alice.send_json(json!({ "type": "subscribe_telemetry" }));
+    daemon.tick_telemetry();
+    alice.pushed_events();
+
+    daemon.gpus.depart("GPU-123");
+    let bob = daemon.user(1001, "bob");
+    assert_eq!(bob.snapshot().inventory.gpus.len(), 1);
+    daemon.tick_telemetry();
+
+    let events = alice.pushed_events();
+    assert_eq!(events[0]["type"], "inventory_changed", "{events:?}");
+    assert_eq!(events[0]["payload"]["gpus"][0]["id"], "GPU-456");
+    assert_eq!(events[0]["payload"]["gpus"].as_array().unwrap().len(), 1);
+
+    // Once pushed, the change isn't pushed again.
+    daemon.tick_telemetry();
+    let kinds: Vec<_> = alice
+        .pushed_events()
+        .into_iter()
+        .map(|event| event["type"].clone())
+        .collect();
+    assert_eq!(kinds, ["telemetry_sampled"]);
+}
+
+#[test]
 fn a_user_outside_the_admin_group_is_welcomed_read_only_with_the_group_they_lack() {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
 

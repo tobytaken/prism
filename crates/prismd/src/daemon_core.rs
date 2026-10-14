@@ -68,8 +68,9 @@ pub struct DaemonCore {
     pub(super) stopping: Arc<AtomicBool>,
     pub(super) startup_operations: Mutex<Vec<PendingOperation<()>>>,
     pub(super) cooling: Arc<CoolingController>,
-    /// The GPUs, by id, in the latest inventory sessions were given.
-    inventory_ids: Mutex<Vec<String>>,
+    /// The GPUs, by id, in the latest inventory pushed to sessions, or else in the first
+    /// snapshot's. Later snapshots leave it be: sessions already open may not know their GPUs.
+    inventory_ids: Mutex<Option<Vec<String>>>,
     /// The games last pushed to, or read by, each user's sessions, by uid and username.
     pub(super) pushed_games: Mutex<std::collections::HashMap<(u32, String), GamesState>>,
 }
@@ -138,7 +139,11 @@ impl DaemonCore {
     /// The daemon state a caller's session starts from.
     fn snapshot(&self, peer: &SessionPeer) -> DaemonSnapshot {
         let inventory = self.dependencies.backend.inventory();
-        *self.inventory_ids.lock().unwrap() = gpu_ids(&inventory.gpus, |gpu| &gpu.id);
+        // A change this snapshot shows first still reaches the other sessions on the next tick.
+        self.inventory_ids
+            .lock()
+            .unwrap()
+            .get_or_insert_with(|| gpu_ids(&inventory.gpus, |gpu| &gpu.id));
         // Each read on its own, so no lock is held into the next: switching reads recognition.
         let running_games = self.recognition.lock().unwrap().for_uid(peer.uid);
         let automatic_switching = self.switching.status_for(peer);
@@ -219,14 +224,15 @@ impl DaemonCore {
     /// Pushes the inventory when GPUs arrived or departed. The readings only hint at a change; the
     /// inventory itself decides, so a reading that briefly misses a GPU pushes nothing.
     fn publish_inventory_change(&self, performance: &GpuPerformanceResponse) {
-        if *self.inventory_ids.lock().unwrap() == gpu_ids(&performance.gpus, |gpu| &gpu.id) {
+        let readings = gpu_ids(&performance.gpus, |gpu| &gpu.id);
+        if self.inventory_ids.lock().unwrap().as_ref() == Some(&readings) {
             return;
         }
         let inventory = self.dependencies.backend.inventory();
         let ids = gpu_ids(&inventory.gpus, |gpu| &gpu.id);
         let mut known = self.inventory_ids.lock().unwrap();
-        if *known != ids {
-            *known = ids;
+        if known.as_ref() != Some(&ids) {
+            *known = Some(ids);
             drop(known);
             self.tuning_store
                 .publish(DaemonEvent::InventoryChanged(inventory));
