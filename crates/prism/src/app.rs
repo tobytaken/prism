@@ -1021,9 +1021,13 @@ impl Inner {
 
     /// Turns the sampler on, starting its thread the first time.
     fn start_sampler(&self) {
+        let resumed = !self.sampler_switch.is_on();
         self.sampler_switch.set(true);
         let Sampling::Every(interval) = self.sampling else {
             // On demand, the sampler stays here for `App::sample_gpus`.
+            if let Some(sampler) = self.sampler.borrow_mut().as_mut().filter(|_| resumed) {
+                sampler.resumed();
+            }
             return;
         };
         let Some(sampler) = self.sampler.borrow_mut().take() else {
