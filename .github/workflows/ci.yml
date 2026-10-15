@@ -2,6 +2,8 @@ name: CI
 
 on:
   workflow_dispatch:
+  # The release workflow runs CI on the tag and publishes what it builds.
+  workflow_call:
 
 jobs:
   fmt:
@@ -70,19 +72,41 @@ jobs:
           bash scripts/generate-third-party-licenses.sh
           git diff --exit-code -- THIRD-PARTY-LICENSES
 
-  host-install-script:
+  scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck scripts/install-prismd-host.sh scripts/check-prismd-host-install.sh
+      - run: shellcheck scripts/*.sh contrib/debian/prismd/postinst
+      # The rpm scriptlets have no shebang; rpm runs them with /bin/sh.
+      - run: shellcheck --shell=sh contrib/rpm/prismd/*
       - run: bash scripts/check-prismd-host-install.sh
 
-  package-smoke:
+  build-release:
+    runs-on: ubuntu-latest
+    # The old-glibc baseline (2.28): the deb, rpm and AppImage all repackage these two binaries.
+    # Keep BASELINE_GLIBC in scripts/check-prism-package.sh in step with this image.
+    container: almalinux:8
+    steps:
+      - name: Install Slint's build dependencies
+        run: dnf install -y gcc git pkgconf-pkg-config fontconfig-devel
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p prism -p prismd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: |
+            target/release/prism
+            target/release/prismd
+          if-no-files-found: error
+
+  package-prismd:
+    needs: build-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deb@3.6.3,cargo-generate-rpm@0.20.0
@@ -92,6 +116,12 @@ jobs:
             echo "A release build enables prism-gpu's simulated feature." >&2
             exit 1
           fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          path: target/release
+      # Artifacts don't keep the executable bit.
+      - run: chmod +x target/release/prismd
       - run: bash scripts/package-prismd-deb.sh
       - run: bash scripts/package-prismd-rpm.sh
       - uses: actions/upload-artifact@v4
@@ -103,46 +133,39 @@ jobs:
           if-no-files-found: error
 
   install-prismd-packages:
-    needs: package-smoke
+    needs: [package-prismd, package-aur]
     strategy:
       fail-fast: false
       matrix:
         include:
-          # The deb's glibc dependency comes from the ubuntu-latest build host.
           - image: ubuntu:24.04
             package: debian/prismd_*.deb
+          - image: debian:12
+            package: debian/prismd_*.deb
+          # systemd 239, older than the update helper the scriptlets prefer.
+          - image: almalinux:8
+            package: generate-rpm/prismd-*.rpm
           - image: fedora:latest
             package: generate-rpm/prismd-*.rpm
+          - image: archlinux:latest
+            package: aur/prismd-[0-9]*.pkg.tar.zst
+    # Each check boots systemd in a container, so the deb's start, the rpm's presets and the Arch
+    # package's leaving prismd alone show as they would on a host.
     runs-on: ubuntu-latest
-    container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: prismd-packages
           path: packages
-      - run: bash scripts/check-prismd-install.sh packages/${{ matrix.package }}
-
-  build-prism-release:
-    runs-on: ubuntu-latest
-    # The old-glibc baseline (2.28): the GUI's deb, rpm and AppImage all repackage this one binary.
-    # Keep BASELINE_GLIBC in scripts/check-prism-package.sh in step with this image.
-    container: almalinux:8
-    steps:
-      - name: Install Slint's build dependencies
-        run: dnf install -y gcc git pkgconf-pkg-config fontconfig-devel
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --release -p prism
-      - uses: actions/upload-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: prism-release-binary
-          path: target/release/prism
-          if-no-files-found: error
+          name: aur
+          path: packages/aur
+      - run: bash scripts/run-in-systemd-container.sh ${{ matrix.image }} bash scripts/check-prismd-install.sh packages/${{ matrix.package }}
 
   package-prism:
-    needs: build-prism-release
+    needs: build-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -151,14 +174,16 @@ jobs:
         with:
           tool: cargo-deb@3.6.3,cargo-generate-rpm@0.20.0
       - name: Install the package checks' tools
-        run: sudo apt-get update && sudo apt-get install -y cpio desktop-file-utils rpm
+        run: sudo apt-get update && sudo apt-get install -y appstream cpio desktop-file-utils rpm
       - uses: actions/download-artifact@v4
         with:
-          name: prism-release-binary
+          name: release-binaries
           path: target/release
       # Artifacts don't keep the executable bit.
       - run: chmod +x target/release/prism
       - run: desktop-file-validate contrib/io.github.tobytaken.Prism.desktop
+      # Offline: the URLs it lists resolve only once the repo and its release are public.
+      - run: appstreamcli validate --no-net contrib/io.github.tobytaken.Prism.metainfo.xml
       - run: bash scripts/package-prism-deb.sh
       - run: bash scripts/package-prism-rpm.sh
       - run: bash scripts/package-prism-appimage.sh
@@ -175,7 +200,7 @@ jobs:
           if-no-files-found: error
 
   install-prism-packages:
-    needs: package-prism
+    needs: [package-prism, package-aur]
     strategy:
       fail-fast: false
       matrix:
@@ -188,6 +213,8 @@ jobs:
             package: generate-rpm/prism-gpu-*.rpm
           - image: fedora:latest
             package: generate-rpm/prism-gpu-*.rpm
+          - image: archlinux:latest
+            package: aur/prism-gpu-[0-9]*.pkg.tar.zst
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
     steps:
@@ -196,7 +223,36 @@ jobs:
         with:
           name: prism-packages
           path: packages
+      - uses: actions/download-artifact@v4
+        with:
+          name: aur
+          path: packages/aur
       - run: bash scripts/check-prism-install.sh packages/${{ matrix.package }}
+
+  # The AUR's split PKGBUILD, built from the checkout's source tarball in a clean Arch container.
+  package-aur:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      # git archive makes the source tarball, so the checkout needs git.
+      - run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+      # The container's root doesn't own the runner's checkout, which git refuses otherwise.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: bash scripts/render-aur-pkgbuild.sh
+      - run: bash scripts/build-aur-package.sh
+      - run: bash scripts/check-prism-package.sh aur target/aur/prism-gpu-[0-9]*.pkg.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aur
+          path: |
+            target/aur/PKGBUILD
+            target/aur/prismd.install
+            target/aur/.SRCINFO
+            target/aur/prism-*.tar.gz
+            target/aur/*.pkg.tar.zst
+          include-hidden-files: true
+          if-no-files-found: error
 
   package-prism-flatpak:
     runs-on: ubuntu-latest
@@ -208,8 +264,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash scripts/package-prism-flatpak.sh
       - run: bash scripts/check-prism-package.sh flatpak target/flatpak/build
+      # The manifest and cargo-sources.json to submit to Flathub, building from this commit's tag.
+      # The container's root doesn't own the runner's checkout, which git refuses otherwise.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: bash scripts/render-flathub-manifest.sh
       - uses: actions/upload-artifact@v4
         with:
           name: prism-flatpak
           path: target/flatpak/prism.flatpak
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flathub
+          path: target/flathub/
           if-no-files-found: error
