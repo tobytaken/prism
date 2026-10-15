@@ -440,6 +440,51 @@ impl Gate {
     }
 }
 
+/// Holds the cooling controller's saves of its record between taking their snapshot and writing
+/// it, and lets a test see when a save waits for another to finish.
+#[derive(Default)]
+pub struct RecordSaves {
+    pause: Mutex<Option<Gate>>,
+    waiting: (Mutex<bool>, Condvar),
+}
+
+impl RecordSaves {
+    /// Makes the next save wait, once it has its snapshot, until the returned gate is released.
+    pub fn pause_next(&self) -> Gate {
+        let gate = Gate::default();
+        *self.pause.lock().unwrap() = Some(gate.clone());
+        gate
+    }
+
+    pub fn wait_until_one_waits(&self) {
+        let (waiting, changed) = &self.waiting;
+        let (_waiting, timeout) = changed
+            .wait_timeout_while(waiting.lock().unwrap(), RESPONSE_DEADLINE, |waiting| {
+                !*waiting
+            })
+            .unwrap();
+        assert!(
+            !timeout.timed_out(),
+            "no save waited for the paused one to finish"
+        );
+    }
+
+    /// Called by a save once it has its snapshot, before it writes it.
+    pub fn snapshot_taken(&self) {
+        let gate = self.pause.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.pass();
+        }
+    }
+
+    /// Called by a save that must wait for another to finish.
+    pub fn waits(&self) {
+        let (waiting, changed) = &self.waiting;
+        *waiting.lock().unwrap() = true;
+        changed.notify_all();
+    }
+}
+
 /// The host's driver management as the test drives it: its driver status from the shared
 /// contract, and each driver action running until the test ends it.
 pub struct FakeDriverHost(Mutex<FakeDrivers>, Condvar);

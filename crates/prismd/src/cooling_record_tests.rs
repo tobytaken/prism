@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::harness::{FakeGpuBackend, FakeSession, Harness, Setter, cooled_gpu};
 use prism_gpu::FanControlMode;
+use prism_protocol::DaemonResponse;
 
 const STARTER: [(i64, i64); 4] = [(45, 20), (65, 60), (75, 80), (85, 100)];
 const UNRECORDED: &str = "Prism couldn't save the record it needs to return these fans to automatic cooling if the daemon stops.";
@@ -237,4 +238,84 @@ fn a_stall_never_recorded_isnt_resumed_while_the_record_stays_unwritable() {
 
     assert_eq!(modes(&daemon), AUTOMATIC);
     assert_eq!(control(&daemon)["requested"], json!([]));
+}
+
+fn fixed(speed_percent: i64) -> Value {
+    shared(json!({ "mode": "fixed", "speed_percent": speed_percent }))
+}
+
+fn record(daemon: &Harness) -> Value {
+    serde_json::from_slice(&std::fs::read(daemon.boot_path("cooling-control.json")).unwrap())
+        .unwrap()
+}
+
+fn applied(response: DaemonResponse) -> Value {
+    let response = serde_json::to_value(response).unwrap();
+    assert_eq!(
+        response["payload"]["cooling"]["outcome"]["status"], "succeeded",
+        "{response}"
+    );
+    response
+}
+
+#[test]
+fn cooling_changed_on_two_gpus_at_once_is_recorded_for_both() {
+    let mut second = cooled_gpu();
+    second.id = "GPU-456".into();
+    second.stable_id = Some("GPU-456".into());
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu(), second]));
+    daemon.core().wait_for_startup();
+    let saves = &daemon.core().cooling.record_saves;
+    let paused = saves.pause_next();
+    let first =
+        daemon.send_in_background(daemon.apply_request("GPU-123", json!({ "cooling": fixed(40) })));
+    paused.wait_until_entered();
+
+    // GPU-456 has its own queue, so its change goes ahead, but its save can't take a snapshot or
+    // stage its record over the paused one until that one is written.
+    let second =
+        daemon.send_in_background(daemon.apply_request("GPU-456", json!({ "cooling": fixed(60) })));
+    saves.wait_until_one_waits();
+    paused.release();
+    applied(first.response());
+    applied(second.response());
+
+    let record = record(&daemon);
+    assert_eq!(
+        record["gpus"]["GPU-123"]["configuration"],
+        fixed(40),
+        "{record}"
+    );
+    assert_eq!(
+        record["gpus"]["GPU-456"]["configuration"],
+        fixed(60),
+        "{record}"
+    );
+    assert!(!daemon.boot_path("cooling-control.json.tmp").exists());
+}
+
+#[test]
+fn a_stall_recorded_while_cooling_changes_is_recorded_with_that_change() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
+    daemon.core().wait_for_startup();
+    let saves = &daemon.core().cooling.record_saves;
+    let paused = saves.pause_next();
+    let change =
+        daemon.send_in_background(daemon.apply_request("GPU-123", json!({ "cooling": fixed(40) })));
+    paused.wait_until_entered();
+
+    let core = daemon.core();
+    let stall = std::thread::spawn(move || core.record_cooling_stall(true));
+    saves.wait_until_one_waits();
+    paused.release();
+    applied(change.response());
+    stall.join().unwrap();
+
+    let record = record(&daemon);
+    assert_eq!(record["stalled"], true, "{record}");
+    assert_eq!(
+        record["gpus"]["GPU-123"]["configuration"],
+        fixed(40),
+        "{record}"
+    );
 }

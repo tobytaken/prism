@@ -53,6 +53,11 @@ pub(super) struct CoolingController {
     /// Whether curve control has stopped making progress, so curves it leaves behind are faults
     /// that the next daemon must not resume.
     stalled: AtomicBool,
+    /// One save of the record at a time, from its snapshot to its write: GPUs' queues, the curve
+    /// loop and the stall supervisor all save it, and each save must neither stage over another's
+    /// file nor replace a newer record with an older snapshot. Separate from `gpus`, so readers
+    /// don't wait for the write.
+    record_turn: Mutex<()>,
     /// Whether the last save of the record failed, leaving an older record in place.
     record_unsaved: AtomicBool,
     /// Whether the daemon stopped curves itself for a stall it couldn't record. Their fans stay
@@ -62,6 +67,9 @@ pub(super) struct CoolingController {
     /// When each GPU's current fan operation started, so a hung driver call counts as a stall
     /// wherever it happens.
     operations: Mutex<HashMap<String, u64>>,
+    /// Lets tests overlap saves of the record.
+    #[cfg(test)]
+    pub(super) record_saves: super::harness::RecordSaves,
 }
 
 /// All controller callers declare why they apply a configuration. Only an identified manual
@@ -289,9 +297,12 @@ impl CoolingController {
             clock,
             stopping: AtomicBool::new(false),
             stalled: AtomicBool::new(false),
+            record_turn: Mutex::default(),
             record_unsaved: AtomicBool::new(false),
             stopped_for_stall: AtomicBool::new(false),
             operations: Mutex::default(),
+            #[cfg(test)]
+            record_saves: Default::default(),
         }
     }
 
@@ -1109,6 +1120,7 @@ impl CoolingController {
     }
 
     fn save_record(&self) -> Result<(), String> {
+        let _turn = self.take_record_turn();
         let gpus = self
             .lock()
             .iter()
@@ -1127,14 +1139,23 @@ impl CoolingController {
                 )
             })
             .collect();
-        let saved = write_record(
-            &self.record_path,
-            &self.boot_id,
-            gpus,
-            self.stalled.load(Ordering::SeqCst),
-        );
+        let stalled = self.stalled.load(Ordering::SeqCst);
+        #[cfg(test)]
+        self.record_saves.snapshot_taken();
+        let saved = write_record(&self.record_path, &self.boot_id, gpus, stalled);
         self.record_unsaved.store(saved.is_err(), Ordering::SeqCst);
         saved
+    }
+
+    /// Waits until no other save of the record is in progress.
+    fn take_record_turn(&self) -> MutexGuard<'_, ()> {
+        #[cfg(test)]
+        if self.record_turn.try_lock().is_err() {
+            self.record_saves.waits();
+        }
+        self.record_turn
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 }
 
