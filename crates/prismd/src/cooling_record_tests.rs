@@ -88,8 +88,8 @@ fn a_curve_without_a_recovery_record_must_not_leave_manual_fans_after_a_crash() 
 
     assert_unrecorded(&application);
     let error = application["outcome"]["error"].as_str().unwrap();
-    let boot_dir = daemon.boot_path("cooling-control.json");
-    let boot_dir = boot_dir.parent().unwrap().display().to_string();
+    let record = daemon.boot_path("cooling-control.json");
+    let boot_dir = record.parent().unwrap().display().to_string();
     assert!(
         error.contains(&boot_dir),
         "the error doesn't point to the boot-state directory: {error}"
@@ -209,11 +209,17 @@ fn an_unrecorded_stall_returns_the_curve_fans_to_automatic_cooling_as_a_fault() 
     daemon.run_curves_for(1_000);
     assert_eq!(modes(&daemon), AUTOMATIC);
 
-    // Once the record can be saved again, the supervisor records the stall, so the next daemon
-    // of this boot doesn't resume the curve.
+    // With no curve left running, the supervisor sees progress again. Once the record can be
+    // saved, it still records the stall, so the next daemon of this boot doesn't resume the
+    // curve whose fans it lists.
+    daemon.core().record_cooling_stall(false);
     unblock_record(&daemon);
-    daemon.core().record_cooling_stall(true);
-    daemon.crash_daemon();
+    daemon.core().record_cooling_stall(false);
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(daemon.boot_path("cooling-control.json")).unwrap())
+            .unwrap();
+    assert_eq!(record["stalled"], true, "{record}");
+    daemon.restart();
 
     assert_eq!(modes(&daemon), AUTOMATIC);
     assert_eq!(control(&daemon)["requested"], json!([]));
@@ -221,7 +227,7 @@ fn an_unrecorded_stall_returns_the_curve_fans_to_automatic_cooling_as_a_fault() 
 }
 
 #[test]
-fn a_stall_that_is_never_recorded_still_isnt_resumed() {
+fn a_stall_never_recorded_isnt_resumed_while_the_record_stays_unwritable() {
     let mut daemon = Harness::start(FakeGpuBackend::with_gpus(vec![cooled_gpu()]));
     apply(&daemon, shared_curve());
     block_record(&daemon);

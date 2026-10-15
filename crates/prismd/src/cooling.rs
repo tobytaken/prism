@@ -55,6 +55,10 @@ pub(super) struct CoolingController {
     stalled: AtomicBool,
     /// Whether the last save of the record failed, leaving an older record in place.
     record_unsaved: AtomicBool,
+    /// Whether the daemon stopped curves itself for a stall it couldn't record. Their fans stay
+    /// recorded as owned, so curve control stays stalled until the daemon exits: whoever recovers
+    /// those fans must not resume their curves.
+    stopped_for_stall: AtomicBool,
     /// When each GPU's current fan operation started, so a hung driver call counts as a stall
     /// wherever it happens.
     operations: Mutex<HashMap<String, u64>>,
@@ -286,6 +290,7 @@ impl CoolingController {
             stopping: AtomicBool::new(false),
             stalled: AtomicBool::new(false),
             record_unsaved: AtomicBool::new(false),
+            stopped_for_stall: AtomicBool::new(false),
             operations: Mutex::default(),
         }
     }
@@ -425,7 +430,7 @@ impl CoolingController {
             .map(|(index, _)| *index)
             .collect();
         if let Err(error) = self.record_unreleased(&request.gpu_id, &curve_fans, shared, now) {
-            let reason = format!("{UNRECORDED_REASON} {error}");
+            let reason = unrecorded(&error);
             return CoolingApplication {
                 outcome: TuningOutcome {
                     status: TuningOutcomeStatus::Failed,
@@ -513,7 +518,7 @@ impl CoolingController {
             // A partly applied fixed/automatic configuration needs the same fallback as curves.
             self.suspend_fans(backend, &request.gpu_id, &reason, &indexes);
         }
-        self.update_record();
+        self.save_record_or_log();
         CoolingApplication {
             revision: 0,
             outcome: TuningOutcome {
@@ -666,7 +671,7 @@ impl CoolingController {
                 restoration: vec![],
             });
         }
-        self.update_record();
+        self.save_record_or_log();
     }
 
     /// Keeps the speeds an evaluation requested, for fans whose curve still runs: a stop may have
@@ -739,7 +744,7 @@ impl CoolingController {
                 restoration,
             });
         }
-        self.update_record();
+        self.save_record_or_log();
     }
 
     /// Stops following the GPU's running curves because the daemon stops, and returns their fans
@@ -763,7 +768,7 @@ impl CoolingController {
                 .get_or_insert_with(InterruptedCurves::default)
                 .add(restoration);
         }
-        self.update_record();
+        self.save_record_or_log();
     }
 
     /// The GPUs with curves an earlier daemon of this boot was following when it stopped.
@@ -809,13 +814,9 @@ impl CoolingController {
         let temperature = gpu.telemetry.temperature_c.map(i64::from).unwrap_or(0);
         // Recorded before they are written, so whoever runs after a crash mid-resumption returns
         // them to automatic cooling.
+        // The GPU's entry exists, so no new one needs a start time.
         if let Err(error) = self.record_unreleased(uuid, &fans, cooling.shared, 0) {
-            return self.not_resumed(
-                backend,
-                uuid,
-                &fans,
-                &format!("{UNRECORDED_REASON} {error}"),
-            );
+            return self.not_resumed(backend, uuid, &fans, &unrecorded(&error));
         }
         let mut outcomes = Vec::new();
         let mut outputs = Vec::new();
@@ -871,7 +872,7 @@ impl CoolingController {
         }
         match failure {
             Some(reason) => self.fail_resumption(backend, uuid, &fans, &reason, outcomes),
-            None => self.update_record(),
+            None => self.save_record_or_log(),
         }
     }
 
@@ -908,7 +909,7 @@ impl CoolingController {
                 fans: outcomes,
             });
         }
-        self.update_record();
+        self.save_record_or_log();
     }
 
     /// Leaves fans another tool took over while no daemon ran to that tool, writing nothing.
@@ -926,7 +927,7 @@ impl CoolingController {
                 fans: unattempted(fans, reason).fans,
             });
         }
-        self.update_record();
+        self.save_record_or_log();
     }
 
     /// The GPUs with a running curve that isn't already being followed, now marked as being
@@ -1000,7 +1001,7 @@ impl CoolingController {
         if let Some(cooling) = self.lock().get_mut(uuid) {
             cooling.unreleased.extend(fans);
         }
-        self.update_record();
+        self.save_record_or_log();
     }
 
     pub fn begin_stopping(&self) {
@@ -1011,10 +1012,11 @@ impl CoolingController {
     /// loop. While it has, curves the daemon leaves behind, however it stops, are faults that the
     /// next daemon doesn't resume.
     ///
-    /// Until the stall is saved, the supervisor's next check tries again; if it can't be saved,
+    /// Until the stall is saved, the supervisor's next check tries again. If it can't be saved,
     /// nothing after the daemon could tell the curves were faults, so the daemon stops them
-    /// itself.
+    /// itself and keeps reporting the stall from then on.
     pub fn record_stall(&self, backend: &dyn DaemonBackend, stalled: bool) {
+        let stalled = stalled || self.stopped_for_stall.load(Ordering::SeqCst);
         let changed = self.stalled.swap(stalled, Ordering::SeqCst) != stalled;
         if !changed && !(stalled && self.record_unsaved.load(Ordering::SeqCst)) {
             return;
@@ -1031,6 +1033,7 @@ impl CoolingController {
     /// directly rather than on their GPUs' queues, which may be stuck. A hung curve write may
     /// still land after this restoration, so the fans stay recorded for recovery.
     fn stop_stalled_curves(&self, backend: &dyn DaemonBackend) {
+        self.stopped_for_stall.store(true, Ordering::SeqCst);
         let stopped: Vec<(String, Vec<u32>)> = self
             .lock()
             .iter_mut()
@@ -1055,7 +1058,7 @@ impl CoolingController {
             }
             self.publish(&uuid);
         }
-        self.update_record();
+        self.save_record_or_log();
     }
 
     /// Records fans as owned before a curve writes them, so whoever runs after a crash returns
@@ -1099,7 +1102,7 @@ impl CoolingController {
 
     /// Saves the record once the fans it must list are already recorded as owned. A failure keeps
     /// the last saved record, which still lists them, so recovery fails toward automatic cooling.
-    fn update_record(&self) {
+    fn save_record_or_log(&self) {
         if let Err(error) = self.save_record() {
             eprintln!("failed to record Prism's fan curve control: {error}");
         }
@@ -1149,6 +1152,11 @@ impl Drop for Operation<'_> {
             .unwrap_or_else(|error| error.into_inner())
             .remove(&self.uuid);
     }
+}
+
+/// Why fans weren't taken for a curve: the record that lets recovery return them couldn't be saved.
+fn unrecorded(error: &str) -> String {
+    format!("{UNRECORDED_REASON} {error}")
 }
 
 fn has_suspended_curve(cooling: &GpuCooling) -> bool {
