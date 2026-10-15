@@ -133,6 +133,30 @@ fn typing_filters_the_commands_and_enter_runs_the_highlighted_one() {
 }
 
 #[test]
+fn the_placeholder_gives_way_to_text_being_composed() {
+    let harness = harness();
+    harness.ctrl("k");
+    let placeholder_is_shown = || {
+        harness
+            .find(Groupbox, "Command palette")
+            .query_descendants()
+            .match_id("TextField::placeholder")
+            .find_first()
+            .is_some()
+    };
+    assert!(placeholder_is_shown());
+
+    harness.compose("にほn");
+
+    assert!(!placeholder_is_shown());
+
+    // The composition is cancelled.
+    harness.compose("");
+
+    assert!(placeholder_is_shown());
+}
+
+#[test]
 fn up_and_down_move_the_highlight() {
     let harness = harness();
     harness.ctrl("k");
