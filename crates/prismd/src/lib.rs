@@ -46,6 +46,8 @@ mod harness;
 #[cfg(test)]
 mod manage_profile_tests;
 #[cfg(test)]
+mod manual_precedence_tests;
+#[cfg(test)]
 mod overlapping_games_tests;
 #[cfg(test)]
 mod profile_tests;
@@ -281,10 +283,25 @@ fn serve(listener: UnixListener, core: Arc<DaemonCore>, config: Arc<PrismDaemonC
     }
 }
 
+/// What's left of a session request once its connection reads on, run on its own thread.
+type Work = Box<dyn FnOnce() + Send>;
+
 fn handle_connection(
     core: &Arc<DaemonCore>,
     config: &PrismDaemonConfig,
     stream: &mut UnixStream,
+) -> Result<(), String> {
+    handle_connection_starting(core, config, stream, &|work| {
+        thread::spawn(work);
+    })
+}
+
+/// Serves a connection, handing each session request's remaining work to `start`.
+fn handle_connection_starting(
+    core: &Arc<DaemonCore>,
+    config: &PrismDaemonConfig,
+    stream: &mut UnixStream,
+    start: &dyn Fn(Work),
 ) -> Result<(), String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
     // Bounded frames start with zero; legacy requests are unframed JSON.
@@ -294,7 +311,7 @@ fn handle_connection(
         .first()
         == Some(&0)
     {
-        return handle_session_connection(core, config, stream, reader);
+        return handle_session_connection(core, config, stream, reader, start);
     }
     let mut request = Vec::new();
     reader
@@ -332,6 +349,7 @@ fn handle_session_connection(
     config: &SessionPolicy,
     stream: &mut UnixStream,
     mut reader: BufReader<UnixStream>,
+    start: &dyn Fn(Work),
 ) -> Result<(), String> {
     let opening: SessionRequest = read_frame(&mut reader)
         .map_err(|error| error.to_string())?
@@ -437,15 +455,16 @@ fn handle_session_connection(
                     .map_err(|error| error.to_string())?;
                     continue;
                 }
+                // The caller remains attached to this connection, and each request is checked
+                // against the policy. A manual change reserves its GPU's precedence here, in
+                // order, so a hold released after it can't let automatic switching write first.
+                let admitted = core.admit(session.peer(), session.policy(), request.request);
                 let core = Arc::clone(core);
                 let writer = Arc::clone(&writer);
-                // The caller remains attached to this connection, and each request is checked
-                // against the policy. Requests can finish independently, so a slow GPU cannot
-                // delay EOF detection or other requests.
-                let peer = session.peer().clone();
-                let policy = session.policy().clone();
-                thread::spawn(move || {
-                    let response = core.handle_authorized(&peer, &policy, request.request);
+                // Requests can finish independently, so a slow GPU cannot delay EOF detection or
+                // other requests.
+                start(Box::new(move || {
+                    let response = core.run(admitted);
                     let mut stream = writer.lock().unwrap();
                     if write_frame(
                         &mut *stream,
@@ -458,7 +477,7 @@ fn handle_session_connection(
                     {
                         let _ = stream.shutdown(std::net::Shutdown::Both);
                     }
-                });
+                }));
             }
             Ok(None) => break Ok(()),
             Err(error) => break Err(error.to_string()),
