@@ -11,7 +11,8 @@ stubs="$(mktemp -d)"
 trap 'rm -rf "$stubs"' EXIT
 
 # Each stand-in appends its command line to $FAKE_LOG. FAKE_FAIL names the step that fails:
-# build, install, enable or restart. FAKE_ACTIVE=1 makes prismd.service already active.
+# build, install, daemon-reload, enable or restart. FAKE_RUNNING=1 gives prismd.service a main
+# process already.
 cat >"$stubs/sudo" <<'EOF'
 #!/usr/bin/env bash
 exec "$@"
@@ -34,8 +35,8 @@ cat >"$stubs/systemctl" <<'EOF'
 #!/usr/bin/env bash
 echo "systemctl $*" >>"$FAKE_LOG"
 case "$1" in
-  is-active) [[ "${FAKE_ACTIVE:-}" == 1 ]] ;;
-  enable | restart) [[ "${FAKE_FAIL:-}" != "$1" ]] ;;
+  show) if [[ "${FAKE_RUNNING:-}" == 1 ]]; then echo 4242; else echo 0; fi ;;
+  daemon-reload | enable | restart) [[ "${FAKE_FAIL:-}" != "$1" ]] ;;
 esac
 EOF
 chmod +x "$stubs"/*
@@ -53,7 +54,7 @@ run_installer() {
   : >"$log"
   status=0
   output="$(env PATH="$stubs:$PATH" FAKE_LOG="$log" "$@" bash "$installer" 2>&1)" || status=$?
-  systemd_steps="$(grep '^systemctl ' "$log" | grep -v '^systemctl is-active ' || true)"
+  systemd_steps="$(grep '^systemctl ' "$log" | grep -v '^systemctl show ' || true)"
 }
 
 expect_status() {
@@ -81,52 +82,60 @@ expect_systemd_steps() {
 
 all_steps=$'systemctl daemon-reload\nsystemctl enable prismd\nsystemctl restart prismd'
 
+# The success line, which no failure may print.
+installed="prismd is installed"
+
 scenario="first install"
-run_installer FAKE_ACTIVE=0
+run_installer FAKE_RUNNING=0
 expect_status 0
 expect_systemd_steps "$all_steps"
-expect_output "prismd is installed and started"
-expect_no_output "restarted"
+expect_output "$installed and started"
+expect_no_output "restart"
 
 scenario="reinstall over a running prismd"
-run_installer FAKE_ACTIVE=1
+run_installer FAKE_RUNNING=1
 expect_status 0
 expect_systemd_steps "$all_steps"
-expect_output "prismd is installed and restarted"
+expect_output "$installed and restarted"
 
-scenario="restart fails"
-run_installer FAKE_ACTIVE=1 FAKE_FAIL=restart
-expect_status 1
-expect_output "prismd didn't restart"
-expect_output "systemctl status prismd"
-expect_output "journalctl -u prismd"
-expect_no_output "prismd is installed"
-
-scenario="start fails"
-run_installer FAKE_ACTIVE=0 FAKE_FAIL=restart
-expect_status 1
-expect_output "prismd didn't start"
-expect_output "journalctl -u prismd"
-expect_no_output "prismd is installed"
+# The installer starts a stopped prismd with `systemctl restart` too.
+for running in 0 1; do
+  scenario="start fails (FAKE_RUNNING=$running)"
+  run_installer FAKE_RUNNING=$running FAKE_FAIL=restart
+  expect_status 1
+  expect_output "prismd failed to start"
+  expect_output "systemctl status prismd"
+  expect_output "journalctl -u prismd"
+  expect_no_output "$installed"
+done
 
 scenario="enable fails"
-run_installer FAKE_ACTIVE=1 FAKE_FAIL=enable
+run_installer FAKE_RUNNING=1 FAKE_FAIL=enable
 expect_status 1
 expect_systemd_steps $'systemctl daemon-reload\nsystemctl enable prismd'
 expect_output "couldn't enable prismd.service"
 expect_output "systemctl status prismd"
 expect_output "journalctl -u prismd"
-expect_no_output "prismd is installed"
+expect_no_output "$installed"
+
+scenario="daemon-reload fails"
+run_installer FAKE_RUNNING=1 FAKE_FAIL=daemon-reload
+expect_status 1
+expect_systemd_steps "systemctl daemon-reload"
+expect_output "systemd couldn't reload its units"
+expect_no_output "$installed"
 
 scenario="build fails"
-run_installer FAKE_ACTIVE=1 FAKE_FAIL=build
+run_installer FAKE_RUNNING=1 FAKE_FAIL=build
 expect_status 1
 expect_systemd_steps ""
+expect_no_output "$installed"
 
 scenario="file install fails"
-run_installer FAKE_ACTIVE=1 FAKE_FAIL=install
+run_installer FAKE_RUNNING=1 FAKE_FAIL=install
 expect_status 1
 expect_systemd_steps ""
+expect_no_output "$installed"
 
 if ((failures > 0)); then
   exit 1

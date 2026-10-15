@@ -74,8 +74,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck scripts/install-prismd-host.sh scripts/check-install-prismd-host.sh
-      - run: bash scripts/check-install-prismd-host.sh
+      - run: shellcheck scripts/install-prismd-host.sh scripts/check-prismd-host-install.sh
+      - run: bash scripts/check-prismd-host-install.sh
 
   package-smoke:
     runs-on: ubuntu-latest

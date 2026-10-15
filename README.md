@@ -80,7 +80,7 @@ Install the daemon on the host for local testing:
 bash scripts/install-prismd-host.sh
 ```
 
-It enables `prismd.service` and starts it, or restarts it if it's already running, so rerunning the script after a rebuild puts the new daemon to work. If enabling or starting fails, it says so and exits non-zero; `systemctl status prismd` and `journalctl -u prismd` show why.
+It enables `prismd.service` and starts it, or restarts it if it's already running, so rerunning the script after a rebuild runs the new daemon. If reloading systemd, enabling or starting fails, it says so and exits non-zero; `systemctl status prismd` and `journalctl -u prismd` show why.
 
 The daemon listens on `/run/prism/prismd.sock`. Its versioned tuning store lives in `/var/lib/prism/tuning-state.json` and holds each user's GPU tuning profiles, which only that user sees, and each GPU's current profile, which every user sees by name. If the tuning store can't be read, or was written by a newer version of Prism, the daemon leaves it untouched, reports the problem, and manual tuning keeps working.
 

@@ -33,30 +33,26 @@ fi
 
 # `enable --now` leaves a running prismd alone, so a reinstall would keep serving the old build.
 # Restarting starts a stopped prismd too, and with Type=notify only returns once the new one is up.
-if systemctl is-active --quiet prismd; then
-  action=restart
-  done_action=restarted
-  progress="Restarting prismd so the new build takes effect..."
+if [[ "$(systemctl show -p MainPID --value prismd 2>/dev/null || true)" =~ ^[1-9] ]]; then
+  outcome=restarted
+  echo "Reloading systemd and restarting prismd so the new build takes effect..."
 else
-  action=start
-  done_action=started
-  progress="Starting prismd..."
+  outcome=started
+  echo "Reloading systemd and starting prismd..."
 fi
-diagnose="See: systemctl status prismd, and journalctl -u prismd"
+check_why="Check why with: systemctl status prismd, and journalctl -u prismd"
 
-echo "Reloading systemd..."
-sudo systemctl daemon-reload
-
-echo "Enabling prismd for future boots..."
+if ! sudo systemctl daemon-reload; then
+  echo "Installed prismd's files, but systemd couldn't reload its units. $check_why" >&2
+  exit 1
+fi
 if ! sudo systemctl enable prismd; then
-  echo "Installed prismd's files, but couldn't enable prismd.service. $diagnose" >&2
+  echo "Installed prismd's files, but couldn't enable prismd.service. $check_why" >&2
   exit 1
 fi
-
-echo "$progress"
 if ! sudo systemctl restart prismd; then
-  echo "prismd didn't $action. $diagnose" >&2
+  echo "Installed prismd's files, but prismd failed to start. $check_why" >&2
   exit 1
 fi
 
-echo "prismd is installed and $done_action. Check status with: systemctl status prismd"
+echo "prismd is installed and $outcome. Check status with: systemctl status prismd"
