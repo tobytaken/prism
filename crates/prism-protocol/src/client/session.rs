@@ -249,10 +249,10 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn a_failed_send_ends_the_session() {
-        let (stream, _prismd) = UnixStream::pair().unwrap();
-        // Bounded, so a session left open fails the test instead of hanging it.
+    /// A session on one end of a socket pair, and a sender for it. Reads are bounded, so a
+    /// session left open fails the test instead of hanging it.
+    fn session_pair() -> (Session, SessionSender, UnixStream) {
+        let (stream, prismd) = UnixStream::pair().unwrap();
         stream
             .set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
@@ -262,15 +262,44 @@ mod tests {
                 last_id: 0,
             })),
         };
-        let mut session = Session {
+        let session = Session {
             reader: stream,
             sender: sender.clone(),
         };
+        (session, sender, prismd)
+    }
 
-        let sent = sender.send(DaemonRequest::RenameProfile(crate::RenameProfileRequest {
+    fn rename_to(name: String) -> DaemonRequest {
+        DaemonRequest::RenameProfile(crate::RenameProfileRequest {
             profile_id: "profile-1".into(),
-            name: "x".repeat(crate::framing::MAX_FRAME_BYTES),
-        }));
+            name,
+        })
+    }
+
+    #[test]
+    fn a_send_too_large_for_a_frame_ends_the_session() {
+        let (mut session, sender, _prismd) = session_pair();
+
+        let sent = sender.send(rename_to("x".repeat(crate::framing::MAX_FRAME_BYTES)));
+
+        assert!(sent.is_err());
+        let received = session.next_message();
+        assert!(
+            matches!(received, Ok(None)),
+            "the session is still open: {received:?}"
+        );
+    }
+
+    #[test]
+    fn a_partly_written_frame_ends_the_session() {
+        let (mut session, sender, _prismd) = session_pair();
+        // prismd reads nothing, so a frame larger than the socket's buffer times out partway.
+        session
+            .reader
+            .set_write_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+
+        let sent = sender.send(rename_to("x".repeat(crate::framing::MAX_FRAME_BYTES / 2)));
 
         assert!(sent.is_err());
         let received = session.next_message();

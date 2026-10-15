@@ -6,9 +6,9 @@
 
 use prism_gpu::ControlSupport;
 use prism_protocol::{
-    DaemonCommandResponse, DaemonRequest, DaemonResponse, GpuTuningProfile, PROFILE_NAME_LIMIT,
-    ProfileIdRequest, ProfileSetting, ProfileSettingKey, RenameProfileRequest,
-    SaveProfileAsNewRequest, SaveToCurrentProfileRequest, SetStartupProfileRequest,
+    DaemonCommandResponse, DaemonRequest, DaemonResponse, GpuTuningProfile, ProfileIdRequest,
+    ProfileSetting, ProfileSettingKey, RenameProfileRequest, SaveProfileAsNewRequest,
+    SaveToCurrentProfileRequest, SetStartupProfileRequest, profile_name_too_long,
 };
 
 use crate::core::{CommandId, Core, Effect, Latest};
@@ -543,7 +543,7 @@ impl Core {
     }
 
     /// What's wrong with `name` for a profile of the GPU, other than the profile `renaming`: it's
-    /// empty, or it has a [`Self::name_error`].
+    /// empty, or the dialog shows a [`Self::name_error`] for it.
     fn name_problem(&self, gpu_id: &str, name: &str, renaming: Option<&str>) -> Option<String> {
         let name = name.trim();
         if name.is_empty() {
@@ -553,16 +553,13 @@ impl Core {
     }
 
     /// What the naming dialog says is wrong with `name`, not counting surrounding whitespace: it's
-    /// longer than [`PROFILE_NAME_LIMIT`], or another of the caller's profiles of the GPU than
-    /// `renaming` has it, whatever its letter case.
+    /// longer than [`prism_protocol::PROFILE_NAME_LIMIT`], or another of the caller's profiles of
+    /// the GPU than `renaming` has it, whatever its letter case.
     fn name_error(&self, gpu_id: &str, name: &str, renaming: Option<&str>) -> Option<String> {
-        let name = name.trim();
-        if name.chars().count() > PROFILE_NAME_LIMIT {
-            return Some(format!(
-                "Profile names can be at most {PROFILE_NAME_LIMIT} characters."
-            ));
+        if let Some(problem) = profile_name_too_long(name) {
+            return Some(problem);
         }
-        let name = name.to_lowercase();
+        let name = name.trim().to_lowercase();
         self.profiles_of(gpu_id)
             .find(|profile| {
                 Some(profile.id.as_str()) != renaming && profile.name.to_lowercase() == name
