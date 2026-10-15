@@ -451,10 +451,10 @@ fn per_fan_settings_stage_and_apply_with_every_reviewed_fan() {
         Some(true)
     );
 
-    segment_in(&harness, "Fan arrangement", "Fan 1").invoke_accessible_default_action();
+    segment_in(&harness, "Fan arrangement", "Fan 2").invoke_accessible_default_action();
     segment(&harness, "Fixed speed").invoke_accessible_default_action();
     harness
-        .find(Spinbox, "Fan 1 fixed speed")
+        .find(Spinbox, "Fan 2 fixed speed")
         .set_accessible_value("60");
 
     assert_eq!(
@@ -465,8 +465,8 @@ fn per_fan_settings_stage_and_apply_with_every_reviewed_fan() {
         Some("→ per fan")
     );
     assert_eq!(changes(&harness), "1 unapplied change");
-    // Fan 0 keeps the automatic cooling they shared.
-    segment_in(&harness, "Fan arrangement", "Fan 0").invoke_accessible_default_action();
+    // Fan 1 keeps the automatic cooling they shared.
+    segment_in(&harness, "Fan arrangement", "Fan 1").invoke_accessible_default_action();
     assert_eq!(
         segment(&harness, "Automatic").accessible_checked(),
         Some(true)

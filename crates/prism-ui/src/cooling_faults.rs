@@ -8,7 +8,9 @@
 use std::collections::BTreeMap;
 
 use prism_gpu::TuningOutcomeStatus;
-use prism_gpu::cooling::{CurveSuspension, FanRestoration, RestorationStatus, SuspensionKind};
+use prism_gpu::cooling::{
+    CurveSuspension, FanNumber, FanRestoration, RestorationStatus, SuspensionKind,
+};
 use prism_protocol::{DaemonRequest, DaemonResponse, GpuCoolingControl, RetryCoolingRequest};
 
 use crate::activity::{ActivityAction, sentence};
@@ -71,7 +73,8 @@ fn explained(suspension: &CurveSuspension) -> Vec<String> {
         .collect()
 }
 
-/// A fan's return to automatic cooling, such as "Fan 1: automatic cooling not restored: …".
+/// A fan's return to automatic cooling, such as "Fan 1: automatic cooling not restored: …",
+/// matching how prismd's reason for the fault numbers it.
 fn fallback(fan: &FanRestoration) -> String {
     let what = match fan.status {
         RestorationStatus::Restored => "restored",
@@ -79,7 +82,7 @@ fn fallback(fan: &FanRestoration) -> String {
         RestorationStatus::Failed => "not restored",
     };
     sentence(&not_applied(
-        &format!("Fan {}: automatic cooling {what}", fan.fan_index),
+        &format!("Fan {}: automatic cooling {what}", FanNumber(fan.fan_index)),
         fan.detail.as_deref(),
     ))
 }

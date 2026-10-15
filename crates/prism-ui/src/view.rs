@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use prism_gpu::cooling::FanNumber;
 use prism_gpu::fan_curve::FanCurveSupport;
 use prism_gpu::{ComputeApi, GpuDevice, GpuPerformanceDevice};
 use prism_protocol::{ProfileSetting, ProfileSettingKey};
@@ -1450,8 +1451,8 @@ impl Core {
                 let details = fixed_speed
                     .into_iter()
                     .chain(fans.iter().map(|fan| Detail {
-                        label: format!("fan {}", fan.index),
-                        name: format!("Fan {} speed", fan.index),
+                        label: format!("fan {}", FanNumber(fan.index)),
+                        name: format!("Fan {} speed", FanNumber(fan.index)),
                         readout: Readout::percent(fan.current_speed_percent),
                         unknown_reason: value_reason(
                             gpu,
@@ -1678,8 +1679,8 @@ impl Core {
         };
         let each = fans.iter().map(|fan| FanChoice {
             fan: Some(fan.index),
-            text: fan.index.to_string(),
-            name: format!("Fan {}", fan.index),
+            text: FanNumber(fan.index).to_string(),
+            name: format!("Fan {}", FanNumber(fan.index)),
             selected: controlled == Fans::One(fan.index),
             unavailable: None,
         });
@@ -1720,7 +1721,7 @@ impl Core {
             setting: Tunable::FixedFanSpeed,
             name: match fans {
                 Fans::Every => "Fixed fan speed".into(),
-                Fans::One(index) => format!("Fan {index} fixed speed"),
+                Fans::One(index) => format!("Fan {} fixed speed", FanNumber(index)),
             },
             value,
             value_text: Readout::percent(value.try_into().ok()).spoken(),

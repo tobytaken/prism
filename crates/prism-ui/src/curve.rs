@@ -3,7 +3,7 @@
 //! where the GPU's temperature and fan speed are now. While each fan has its own settings, it
 //! edits the picked fan's curve.
 
-use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
+use prism_gpu::cooling::{CoolingConfiguration, FanNumber, FanSetting};
 use prism_gpu::fan_curve::{self, FanCurvePoint, FanCurveProblem, FanCurveSupport};
 
 use crate::cooling::{Fans, cooling_read, setting_of, speed_now};
@@ -179,7 +179,9 @@ impl Core {
                     .into_iter()
                     .map(move |problem| match fans {
                         Fans::Every => problem.message,
-                        Fans::One(index) => format!("Fan {index}: {}", problem.message),
+                        Fans::One(index) => {
+                            format!("Fan {}: {}", FanNumber(index), problem.message)
+                        }
                     })
             })
             .collect()
@@ -241,7 +243,7 @@ impl Core {
             .map(|(temperature, speed)| {
                 let fans = match fans {
                     Fans::Every => "fans".to_owned(),
-                    Fans::One(index) => format!("fan {index}"),
+                    Fans::One(index) => format!("fan {}", FanNumber(index)),
                 };
                 CurveMarker {
                     at: axis.drawn_at(temperature, speed),

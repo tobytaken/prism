@@ -120,7 +120,7 @@ fn a_cooling_fault_shows_across_the_fans_track_in_the_sidebar_and_in_activity() 
     let detail = problem.accessible_description().unwrap();
     assert!(detail.starts_with(REASON), "{detail}");
     assert!(
-        detail.contains("Fan 0: automatic cooling restored."),
+        detail.contains("Fan 1: automatic cooling restored."),
         "{detail}"
     );
     assert!(paused(&harness));

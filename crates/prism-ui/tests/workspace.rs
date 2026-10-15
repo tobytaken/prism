@@ -231,11 +231,11 @@ fn the_fans_track_shows_each_fan_s_current_speed() {
     assert_eq!(
         details(&fans),
         [
-            ("fan 0".to_owned(), "44%".to_owned()),
-            ("fan 1".to_owned(), "46%".to_owned()),
+            ("fan 1".to_owned(), "44%".to_owned()),
+            ("fan 2".to_owned(), "46%".to_owned()),
         ]
     );
-    assert_eq!(fans.details[1].name, "Fan 1 speed");
+    assert_eq!(fans.details[1].name, "Fan 2 speed");
 }
 
 #[test]

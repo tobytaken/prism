@@ -20,7 +20,7 @@ use super::{
     GpuSupportedFeatures, GpuTargetRequest, GpuTelemetryInfo, GpuTelemetryProvider, GpuVendor,
     MemoryInfo, OffsetControl, PcieInfo, PowerControlInfo, PowerInfo, PowerLimitControl,
     SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
-    SetGpuPowerLimitRequest,
+    SetGpuPowerLimitRequest, cooling::FanNumber,
 };
 
 const OFFSET_POWER_STATE: PerformanceState = PerformanceState::Zero;
@@ -566,7 +566,8 @@ fn query_fan_control(
         Err(NvmlError::NotSupported) => None,
         Err(error) => {
             warnings.push(format!(
-                "{device_name}: unable to query fan {fan_index} speed: {error}"
+                "{device_name}: unable to query fan {} speed: {error}",
+                FanNumber(fan_index)
             ));
             None
         }
@@ -578,7 +579,8 @@ fn query_fan_control(
         Err(NvmlError::NotSupported) => None,
         Err(error) => {
             warnings.push(format!(
-                "{device_name}: unable to query fan {fan_index} control mode: {error}"
+                "{device_name}: unable to query fan {} control mode: {error}",
+                FanNumber(fan_index)
             ));
             None
         }

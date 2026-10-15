@@ -1,7 +1,7 @@
 //! Profile validation uses the same cooling rules as live application. Corrections are proposals,
 //! never application-time clamping, and must still form a valid complete configuration.
 use prism_gpu::GpuPerformanceDevice;
-use prism_gpu::cooling::{CoolingConfiguration, FanSetting};
+use prism_gpu::cooling::{CoolingConfiguration, FanNumber, FanSetting};
 use prism_protocol::{CoolingSettingKey, ProfileRangeCorrection};
 
 pub(super) fn problems(
@@ -37,7 +37,7 @@ pub(super) fn problems(
     }
     for (index, setting) in &targets {
         if matches!(setting, FanSetting::Fixed { .. }) && gpu.cooling.fans.iter().find(|f| f.index == *index).is_some_and(|f| !matches!((f.min_speed_percent, f.max_speed_percent), (Some(min), Some(max)) if min <= max)) {
-            problems.push(format!("Fan {}: the current allowed speed range is unavailable.", index + 1));
+            problems.push(format!("Fan {}: the current allowed speed range is unavailable.", FanNumber(*index)));
         }
     }
     problems
