@@ -1,0 +1,9 @@
+# %systemd_postun_with_restart: on upgrade, not removal, restarts a running prismd. The update
+# helper marks it, and systemd's file trigger restarts it at the end of the transaction.
+if [ "$1" -ge 1 ]; then
+    if [ -x /usr/lib/systemd/systemd-update-helper ]; then
+        /usr/lib/systemd/systemd-update-helper mark-restart-system-units prismd.service || :
+    else
+        systemctl try-restart prismd.service >/dev/null 2>&1 || :
+    fi
+fi

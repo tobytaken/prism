@@ -6,6 +6,8 @@ authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [[test]]
@@ -34,11 +36,13 @@ license-file = ["../../LICENSE", "0"]
 depends = "$auto"
 section = "utils"
 priority = "optional"
-# The postinst creates /run/prism from the tmpfiles.d entry.
+# The postinst creates /run/prism from the tmpfiles.d entry; cargo-deb adds the systemd fragments.
 maintainer-scripts = "../../contrib/debian/prismd"
+# Installs contrib/systemd/prismd.service under /usr/lib/systemd/system. Debian enables and starts
+# a packaged service (#99), and restarts it after an upgrade.
+systemd-units = { unit-scripts = "../../contrib/systemd", enable = true, start = true }
 assets = [
   ["target/release/prismd", "usr/bin/prismd", "755"],
-  ["../../contrib/systemd/prismd.service", "lib/systemd/system/prismd.service", "644"],
   ["../../contrib/tmpfiles.d/prismd.conf", "usr/lib/tmpfiles.d/prismd.conf", "644"],
   ["../../contrib/prismd.toml", "etc/prism/prismd.toml", "644"],
   ["../../README.md", "usr/share/doc/prismd/README.md", "644"],
@@ -48,14 +52,22 @@ assets = [
 [package.metadata.generate-rpm]
 summary = "Privileged daemon for Prism"
 auto-req = "no"
-# Creates /run/prism from the tmpfiles.d entry, as %tmpfiles_create does.
-post_install_script = "/usr/bin/systemd-tmpfiles --create prismd.conf >/dev/null 2>&1 || :"
+# cargo-generate-rpm has no systemd macros, so these mirror them: presets decide whether prismd is
+# enabled (#99). The unit sits under /usr/lib so systemd's file triggers reload and restart it.
+post_install_script = "../../contrib/rpm/prismd/post"
+pre_uninstall_script = "../../contrib/rpm/prismd/preun"
+post_uninstall_script = "../../contrib/rpm/prismd/postun"
 assets = [
   { source = "target/release/prismd", dest = "/usr/bin/prismd", mode = "755" },
-  { source = "../../contrib/systemd/prismd.service", dest = "/lib/systemd/system/prismd.service", mode = "644" },
+  { source = "../../contrib/systemd/prismd.service", dest = "/usr/lib/systemd/system/prismd.service", mode = "644" },
   { source = "../../contrib/tmpfiles.d/prismd.conf", dest = "/usr/lib/tmpfiles.d/prismd.conf", mode = "644" },
   { source = "../../contrib/prismd.toml", dest = "/etc/prism/prismd.toml", mode = "644", config = "noreplace" },
   { source = "../../README.md", dest = "/usr/share/doc/prismd/README.md", mode = "644", doc = true },
-  { source = "../../LICENSE", dest = "/usr/share/licenses/prismd/LICENSE", mode = "644", doc = true },
-  { source = "../../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/prismd/THIRD-PARTY-LICENSES", mode = "644", doc = true }
+  # Not doc = true, so the licenses install even where docs are skipped, as %license files do.
+  { source = "../../LICENSE", dest = "/usr/share/licenses/prismd/LICENSE", mode = "644" },
+  { source = "../../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/prismd/THIRD-PARTY-LICENSES", mode = "644" }
 ]
+
+# What the scriptlets run, as %systemd_requires asks for.
+[package.metadata.generate-rpm.requires]
+systemd = "*"

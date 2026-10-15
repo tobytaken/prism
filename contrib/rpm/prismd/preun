@@ -1,0 +1,8 @@
+# %systemd_preun: on removal, not upgrade, disables and stops prismd.
+if [ "$1" -eq 0 ]; then
+    if [ -x /usr/lib/systemd/systemd-update-helper ]; then
+        /usr/lib/systemd/systemd-update-helper remove-system-units prismd.service || :
+    else
+        systemctl --no-reload disable --now prismd.service >/dev/null 2>&1 || :
+    fi
+fi
