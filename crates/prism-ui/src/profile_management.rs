@@ -6,9 +6,9 @@
 
 use prism_gpu::ControlSupport;
 use prism_protocol::{
-    DaemonCommandResponse, DaemonRequest, DaemonResponse, GpuTuningProfile, ProfileIdRequest,
-    ProfileSetting, ProfileSettingKey, RenameProfileRequest, SaveProfileAsNewRequest,
-    SaveToCurrentProfileRequest, SetStartupProfileRequest,
+    DaemonCommandResponse, DaemonRequest, DaemonResponse, GpuTuningProfile, PROFILE_NAME_LIMIT,
+    ProfileIdRequest, ProfileSetting, ProfileSettingKey, RenameProfileRequest,
+    SaveProfileAsNewRequest, SaveToCurrentProfileRequest, SetStartupProfileRequest,
 };
 
 use crate::core::{CommandId, Core, Effect, Latest};
@@ -543,19 +543,26 @@ impl Core {
     }
 
     /// What's wrong with `name` for a profile of the GPU, other than the profile `renaming`: it's
-    /// empty, or another of the caller's profiles of the GPU has it, whatever its letter case.
+    /// empty, or it has a [`Self::name_error`].
     fn name_problem(&self, gpu_id: &str, name: &str, renaming: Option<&str>) -> Option<String> {
         let name = name.trim();
         if name.is_empty() {
             return Some("Enter a name for the profile".into());
         }
-        self.name_clash(gpu_id, name, renaming)
+        self.name_error(gpu_id, name, renaming)
     }
 
-    /// The clash, if another of the caller's profiles of the GPU than `renaming` has `name`,
-    /// whatever its letter case.
-    fn name_clash(&self, gpu_id: &str, name: &str, renaming: Option<&str>) -> Option<String> {
-        let name = name.trim().to_lowercase();
+    /// What the naming dialog says is wrong with `name`, not counting surrounding whitespace: it's
+    /// longer than [`PROFILE_NAME_LIMIT`], or another of the caller's profiles of the GPU than
+    /// `renaming` has it, whatever its letter case.
+    fn name_error(&self, gpu_id: &str, name: &str, renaming: Option<&str>) -> Option<String> {
+        let name = name.trim();
+        if name.chars().count() > PROFILE_NAME_LIMIT {
+            return Some(format!(
+                "Profile names can be at most {PROFILE_NAME_LIMIT} characters."
+            ));
+        }
+        let name = name.to_lowercase();
         self.profiles_of(gpu_id)
             .find(|profile| {
                 Some(profile.id.as_str()) != renaming && profile.name.to_lowercase() == name
@@ -643,7 +650,7 @@ impl Core {
                 error,
                 ..
             } => {
-                let (title, message, confirm_text, clash) = match naming {
+                let (title, message, confirm_text, name_error) = match naming {
                     Naming::SaveAsNew { gpu_id } => (
                         "Save as new profile".to_owned(),
                         format!(
@@ -652,7 +659,7 @@ impl Core {
                             self.gpu_name(gpu_id)
                         ),
                         "Save",
-                        self.name_clash(gpu_id, name, None),
+                        self.name_error(gpu_id, name, None),
                     ),
                     Naming::Rename { profile_id } => {
                         let Some(profile) = self.profile(profile_id) else {
@@ -664,7 +671,7 @@ impl Core {
                              it under its new name."
                                 .to_owned(),
                             "Rename",
-                            self.name_clash(&profile.gpu_id, name, Some(profile_id)),
+                            self.name_error(&profile.gpu_id, name, Some(profile_id)),
                         )
                     }
                 };
@@ -672,7 +679,7 @@ impl Core {
                     title,
                     message,
                     name: name.clone(),
-                    error: error.clone().or(clash),
+                    error: error.clone().or(name_error),
                     confirm_text,
                     confirm_unavailable: self.profile_dialog_unavailable(),
                 }))

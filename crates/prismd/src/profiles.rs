@@ -12,8 +12,9 @@ use prism_gpu::{
     GpuPerformanceResponse,
 };
 use prism_protocol::{
-    CurrentProfile, GpuTuningProfile, GpuTuningState, ProfileRangeCorrection, ProfileSetting,
-    ProfileSettingKey, ProfileSettings, ProfilesState, RangeBound, ReportedTuningValues,
+    CurrentProfile, GpuTuningProfile, GpuTuningState, PROFILE_NAME_LIMIT, ProfileRangeCorrection,
+    ProfileSetting, ProfileSettingKey, ProfileSettings, ProfilesState, RangeBound,
+    ReportedTuningValues,
 };
 
 impl From<TuningStoreWriteError> for GpuCommandError {
@@ -157,13 +158,20 @@ fn follows_default(
         && reading.default == reading.current
 }
 
-/// A name with surrounding whitespace removed, unless nothing is left.
+/// A name with surrounding whitespace removed, unless nothing is left or it's longer than
+/// [`PROFILE_NAME_LIMIT`].
 pub(super) fn profile_name(name: &str) -> Result<String, GpuCommandError> {
     let name = name.trim();
     if name.is_empty() {
         return Err(GpuCommandError::new(
             GpuCommandErrorCode::InvalidArgument,
             "Enter a name for the profile.",
+        ));
+    }
+    if name.chars().count() > PROFILE_NAME_LIMIT {
+        return Err(GpuCommandError::new(
+            GpuCommandErrorCode::InvalidArgument,
+            format!("Profile names can be at most {PROFILE_NAME_LIMIT} characters."),
         ));
     }
     Ok(name.to_string())

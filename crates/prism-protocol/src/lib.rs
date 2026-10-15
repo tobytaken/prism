@@ -693,6 +693,9 @@ pub enum ActivityEvent {
     StartupRan { outcome: StartupOutcome },
 }
 
+/// The most characters a profile name can have, not counting surrounding whitespace.
+pub const PROFILE_NAME_LIMIT: usize = 64;
+
 /// How many Activity entries are kept, apart from startup outcomes.
 pub const ACTIVITY_LIMIT: usize = 200;
 

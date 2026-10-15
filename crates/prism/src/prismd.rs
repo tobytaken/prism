@@ -21,11 +21,13 @@ pub trait PrismdConnector {
     /// with each change from any thread until it returns false.
     fn start(&self, report: Box<dyn Fn(PrismdReport) -> bool + Send + Sync>);
 
-    /// Sends `request` on the current session; with no session it's dropped.
+    /// Sends `request` on the current session; with no session it's dropped. If it can't be sent,
+    /// the session ends and that's reported.
     fn send(&self, request: DaemonRequest);
 
     /// Sends `request` on the current session and reports its answer as `id`; with no session
-    /// it's dropped unanswered.
+    /// it's dropped unanswered. If it can't be sent, the session ends and that's reported, so
+    /// nothing waits for the answer.
     fn command(&self, id: CommandId, request: DaemonRequest);
 }
 
@@ -98,7 +100,7 @@ impl PrismdConnector for SocketConnector {
         let Some(sender) = self.session.lock().unwrap().clone() else {
             return;
         };
-        // A failed write ends the session, which the session thread reports.
+        // A failed send ends the session, which the session thread reports.
         let _ = sender.send(request);
     }
 
@@ -108,6 +110,8 @@ impl PrismdConnector for SocketConnector {
         };
         // Held while sending, so the answer can't be read before it's known to be awaited.
         let mut commands = self.commands.lock().unwrap();
+        // A failed send ends the session, which the session thread reports; the command isn't
+        // awaited.
         if let Ok(request_id) = sender.send(request) {
             commands.insert(request_id, id);
         }

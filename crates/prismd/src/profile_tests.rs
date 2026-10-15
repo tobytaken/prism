@@ -231,6 +231,28 @@ fn names_are_trimmed_and_unique_per_gpu_regardless_of_letter_case() {
 }
 
 #[test]
+fn names_are_at_most_64_characters_not_counting_surrounding_whitespace() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+
+    let too_long = alice.send_json(save_as_new(&alice, "GPU-123", &"x".repeat(65)));
+    assert_eq!(
+        too_long["payload"]["code"], "invalid_argument",
+        "{too_long}"
+    );
+    assert_eq!(
+        error_message(&too_long),
+        "Profile names can be at most 64 characters."
+    );
+    assert_eq!(list(alice.send_json(LIST())), Vec::<Value>::new());
+
+    // Characters, not bytes, and the trimmed name.
+    let longest = format!("  {}  ", "é".repeat(64));
+    let profile = saved(alice.send_json(save_as_new(&alice, "GPU-123", &longest)));
+    assert_eq!(profile["name"], "é".repeat(64));
+}
+
+#[test]
 fn the_300_watt_profile_against_a_280_watt_maximum_proposes_a_correction_and_writes_nothing_until_requested()
  {
     let mut gpu = tunable_gpu();
