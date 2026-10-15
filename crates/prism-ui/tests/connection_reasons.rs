@@ -51,6 +51,7 @@ fn native(unit: UnitState) -> PrismdHost {
     PrismdHost {
         install: PrismdInstall::Native(unit),
         distro: ubuntu(),
+        nvidia_driver: None,
     }
 }
 
@@ -58,6 +59,7 @@ fn flatpak(run_dir_visible: bool) -> PrismdHost {
     PrismdHost {
         install: PrismdInstall::Flatpak { run_dir_visible },
         distro: ubuntu(),
+        nvidia_driver: None,
     }
 }
 

@@ -1,12 +1,16 @@
-//! What the host says about prismd apart from its socket, and reading it from what systemctl and
-//! os-release print. Asking is the caller's: this only parses.
+//! What the host says apart from prismd's socket, and reading it from what systemctl, os-release
+//! and the NVIDIA driver print. Asking is the caller's: this only parses.
 
-/// What the host says about prismd, apart from its socket.
+/// What the host says apart from prismd's socket: about prismd, and about the NVIDIA driver Prism
+/// reads the GPUs through without it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrismdHost {
     pub install: PrismdInstall,
     /// The host's distribution, which decides the commands that install prismd.
     pub distro: Distro,
+    /// The version of the NVIDIA driver the host has loaded, such as "615.78.08", if Prism can
+    /// read it. In Flatpak, NVML comes with the GL.nvidia extension for this version.
+    pub nvidia_driver: Option<String>,
 }
 
 /// How Prism is installed, which decides what it can find out about prismd.
@@ -93,6 +97,23 @@ impl Distro {
                 .unwrap_or_else(|| "Linux".into()),
         }
     }
+}
+
+/// Reads the version of the loaded NVIDIA driver from `/sys/module/nvidia/version`, which holds
+/// just the version, or `/proc/driver/nvidia/version`, whose first line names it among other
+/// words.
+pub fn nvidia_driver_version(contents: &str) -> Option<String> {
+    contents
+        .lines()
+        .next()?
+        .split_whitespace()
+        .find(|word| {
+            let mut parts = word.split('.');
+            parts.clone().count() > 1
+                && parts
+                    .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+        .map(str::to_owned)
 }
 
 /// The value of the property `name` among `properties`, if it's there.

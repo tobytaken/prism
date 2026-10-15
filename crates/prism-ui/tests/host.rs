@@ -1,6 +1,7 @@
-//! Reading what the host says about prismd: `systemctl show prismd.service` and os-release.
+//! Reading what the host says apart from prismd's socket: `systemctl show prismd.service`,
+//! os-release and the NVIDIA driver's version file.
 
-use prism_ui::{Distro, UnitState};
+use prism_ui::{Distro, UnitState, nvidia_driver_version};
 
 fn unit(show: &str) -> UnitState {
     UnitState::from_systemctl_show(show)
@@ -88,4 +89,30 @@ fn os_release_gives_the_distribution() {
             name: "Linux".into(),
         }
     );
+}
+
+#[test]
+fn the_nvidia_driver_version_comes_from_sysfs_or_procfs() {
+    assert_eq!(
+        nvidia_driver_version("615.78.08\n"),
+        Some("615.78.08".into())
+    );
+    // Flatpak leaves /sys/module out of the sandbox, but not /proc/driver/nvidia.
+    assert_eq!(
+        nvidia_driver_version(
+            "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  580.82.07  Release Build  \
+             (dvs-builder@U16-I3-B03-4-3)  Wed Aug 27 21:03:12 UTC 2025\n\
+             GCC version:  gcc version 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04)\n"
+        ),
+        Some("580.82.07".into())
+    );
+    assert_eq!(
+        nvidia_driver_version(
+            "NVRM version: NVIDIA UNIX x86_64 Kernel Module  550.54.14  Thu Feb 22 01:44:30 UTC \
+             2024\n"
+        ),
+        Some("550.54.14".into())
+    );
+    assert_eq!(nvidia_driver_version(""), None);
+    assert_eq!(nvidia_driver_version("not a version\n"), None);
 }

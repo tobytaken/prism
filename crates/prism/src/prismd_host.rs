@@ -1,6 +1,6 @@
 //! What the host says about prismd and what systemd does with it: `systemctl show` natively,
-//! whether `/run/prism` is visible in Flatpak, and `systemctl enable --now` or `restart` under
-//! polkit. Each runs on a thread of its own, since systemctl waits for polkit's prompt.
+//! whether `/run/prism` is visible in Flatpak, the loaded NVIDIA driver's version, and
+//! `systemctl enable --now` or `restart` under polkit. Each runs on a thread of its own, since systemctl waits for polkit's prompt.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +8,10 @@ use std::process::{Command, Output};
 use std::thread;
 
 use prism_protocol::client;
-use prism_ui::{Distro, PrismdHost, PrismdInstall, ServiceAction, ServiceOutcome, UnitState};
+use prism_ui::{
+    Distro, PrismdHost, PrismdInstall, ServiceAction, ServiceOutcome, UnitState,
+    nvidia_driver_version,
+};
 
 /// Asks the host about prismd, and has systemd enable or restart it.
 pub trait PrismdService {
@@ -60,7 +63,15 @@ impl HostPrismdService {
         } else {
             PrismdInstall::Native(unit_state())
         };
-        PrismdHost { install, distro }
+        // Flatpak leaves /sys/module out of the sandbox, but not /proc/driver/nvidia.
+        let nvidia_driver = ["/sys/module/nvidia/version", "/proc/driver/nvidia/version"]
+            .into_iter()
+            .find_map(|path| nvidia_driver_version(&fs::read_to_string(path).ok()?));
+        PrismdHost {
+            install,
+            distro,
+            nvidia_driver,
+        }
     }
 }
 

@@ -38,6 +38,7 @@ fn unavailable(install: PrismdInstall) -> Core {
     core.handle(Input::PrismdHostChecked(PrismdHost {
         install,
         distro: ubuntu(),
+        nvidia_driver: None,
     }));
     core
 }

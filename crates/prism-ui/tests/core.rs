@@ -6,8 +6,8 @@ use prism_protocol::{
     DaemonEvent, DaemonRequest, DaemonSnapshot, ProtocolVersion, SessionMessage, Welcome,
 };
 use prism_ui::{
-    Content, Core, Effect, ExplainedState, GuiSettings, Input, Intent, Section, TelemetrySource,
-    Track, TrackKind,
+    Content, Core, Distro, Effect, ExplainedState, GuiSettings, Input, Intent, PrismdHost,
+    PrismdInstall, Section, SessionFailure, TelemetrySource, Track, TrackKind,
 };
 
 fn snapshot() -> DaemonSnapshot {
@@ -267,6 +267,67 @@ fn a_host_without_the_driver_loaded_opens_into_drivers_and_says_so() {
         "NVIDIA inventory is unavailable on this system: unable to initialize NVML: NVIDIA \
          driver is not loaded"
     );
+    assert_eq!(
+        state.hint,
+        "Prism reads NVIDIA GPUs through NVML, which comes with the NVIDIA driver. Check that the \
+         driver is installed and loaded, then restart Prism."
+    );
+}
+
+/// A core in a Flatpak without prismd, whose NVML can't be loaded, on a host whose NVIDIA driver
+/// Prism reads as `nvidia_driver`.
+fn flatpak_without_nvml(nvidia_driver: Option<&str>) -> Core {
+    let mut core = launched(SimulatedFixture::NvmlMissing);
+    core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
+        message: "No such file or directory (os error 2)".into(),
+    }));
+    core.handle(Input::PrismdHostChecked(PrismdHost {
+        install: PrismdInstall::Flatpak {
+            run_dir_visible: false,
+        },
+        distro: Distro::default(),
+        nvidia_driver: nvidia_driver.map(str::to_owned),
+    }));
+    core
+}
+
+#[test]
+fn a_flatpak_without_nvml_names_the_gl_extension_for_the_host_s_driver() {
+    let core = flatpak_without_nvml(Some("615.78.08"));
+
+    let state = core.sidebar().no_gpus.expect("an explained empty state");
+    assert_eq!(state.title, "No GPU telemetry");
+    assert!(state.reason.contains("libnvidia-ml.so"));
+    assert_eq!(
+        state.hint,
+        "In a Flatpak, NVML comes with the GL.nvidia extension matching the host's NVIDIA \
+         driver, not with the driver, and the one for driver 615.78.08 is missing. Run flatpak \
+         update to install org.freedesktop.Platform.GL.nvidia-615-78-08, then restart Prism."
+    );
+}
+
+#[test]
+fn a_flatpak_without_nvml_or_the_host_s_driver_version_still_blames_the_gl_extension() {
+    let core = flatpak_without_nvml(None);
+
+    let state = core.sidebar().no_gpus.expect("an explained empty state");
+    assert_eq!(
+        state.hint,
+        "In a Flatpak, NVML comes with the GL.nvidia extension matching the host's NVIDIA \
+         driver, not with the driver, and that extension is missing. Check that the driver is \
+         loaded on the host, run flatpak update to install its extension, then restart Prism."
+    );
+}
+
+#[test]
+fn a_flatpak_whose_nvml_finds_no_gpus_keeps_the_empty_inventory_explanation() {
+    let mut core = flatpak_without_nvml(Some("615.78.08"));
+    core.handle(Input::InventoryRead(
+        simulated(SimulatedFixture::EmptyInventory).inventory(),
+    ));
+
+    let state = core.sidebar().no_gpus.expect("an explained empty state");
+    assert_eq!(state.title, "No GPUs found");
 }
 
 #[test]

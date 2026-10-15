@@ -268,6 +268,7 @@ impl PrismdService for FakeHost {
                 id_like: vec!["debian".into()],
                 name: "Ubuntu 24.04 LTS".into(),
             },
+            nvidia_driver: None,
         });
     }
 

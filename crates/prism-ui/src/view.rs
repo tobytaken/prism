@@ -22,6 +22,7 @@ use crate::drafts::{
     staged_text,
 };
 use crate::format::{Readout, UNKNOWN, pending, short_bus_id, short_gpu_name, signed};
+use crate::host::{PrismdHost, PrismdInstall};
 use crate::palette::Command;
 use crate::profiles::correction_change;
 use crate::telemetry::{Chart, ChartPoint, LimitKind, LimitLine, Metric, Readings, TelemetryRange};
@@ -1225,11 +1226,40 @@ impl Core {
             ExplainedState {
                 title: "No GPU telemetry".into(),
                 reason: warnings.join(" "),
-                hint: "Prism reads NVIDIA GPUs through NVML, which comes with the NVIDIA driver. \
-                       Check that the driver is installed and loaded, then restart Prism."
-                    .into(),
+                hint: self.no_nvml_hint(),
             }
         })
+    }
+
+    /// How to get NVML where Prism couldn't read the GPUs through it. The host is known only
+    /// without a session, when Prism reads the GPUs itself; in Flatpak, NVML comes with the
+    /// GL.nvidia extension for the host's driver, which Flatpak leaves out until it's installed.
+    fn no_nvml_hint(&self) -> String {
+        let Some(PrismdHost {
+            install: PrismdInstall::Flatpak { .. },
+            nvidia_driver,
+            ..
+        }) = &self.host
+        else {
+            return "Prism reads NVIDIA GPUs through NVML, which comes with the NVIDIA driver. \
+                    Check that the driver is installed and loaded, then restart Prism."
+                .into();
+        };
+        let flatpak = "In a Flatpak, NVML comes with the GL.nvidia extension matching the host's \
+                       NVIDIA driver, not with the driver";
+        match nvidia_driver {
+            Some(version) => format!(
+                "{flatpak}, and the one for driver {version} is missing. Run flatpak update to \
+                 install org.freedesktop.Platform.GL.nvidia-{}, then restart Prism.",
+                version.replace('.', "-")
+            ),
+            // Flatpak picks the extension by the loaded driver's version, so the driver may not
+            // be loaded at all.
+            None => format!(
+                "{flatpak}, and that extension is missing. Check that the driver is loaded on the \
+                 host, run flatpak update to install its extension, then restart Prism."
+            ),
+        }
     }
 
     fn sidebar_gpu(&self, index: usize, gpu: &Gpu) -> SidebarGpu {
