@@ -25,7 +25,9 @@ export component TextField inherits Rectangle {
     border-width: Theme.stroke.hairline;
     border-color: input.has-focus ? Theme.color.ink : Theme.color.rule;
 
-    if input.text == "": StyledText {
+    // An input method's composition isn't part of the text until it's committed, so the
+    // placeholder gives way to it as well.
+    if input.text == "" && input.preedit-text == "": placeholder := StyledText {
         x: Theme.space.l;
         width: parent.width - 2 * Theme.space.l;
         text: root.placeholder;

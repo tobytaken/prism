@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
+use i_slint_core::input::{InternalKeyEvent, KeyEventType};
 use prism::settings::SettingsStore;
 use prism::{
     App, Clock, Environment, FileChooser, HostServices, Launches, NotificationEvent, Notifier,
@@ -572,6 +573,19 @@ impl Harness {
         for letter in text.chars() {
             self.press(&[], letter.to_string());
         }
+    }
+
+    /// Composes `preedit` with an input method, as it shows before it's committed; an empty
+    /// `preedit` cancels the composition.
+    pub fn compose(&self, preedit: &str) {
+        self.app
+            .window()
+            .window()
+            .dispatch_event(WindowEvent::internal(InternalKeyEvent {
+                event_type: KeyEventType::UpdateComposition,
+                preedit_text: preedit.into(),
+                ..Default::default()
+            }));
     }
 
     /// The one element with `role` labeled `label`.
