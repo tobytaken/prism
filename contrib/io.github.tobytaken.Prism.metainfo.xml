@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Every package installs this as /usr/share/metainfo/io.github.tobytaken.Prism.metainfo.xml (the
+     Flatpak under /app). Add a release entry for each version before tagging it: the release
+     workflow checks the newest one matches the tag. -->
+<component type="desktop-application">
+  <id>io.github.tobytaken.Prism</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Prism</name>
+  <summary>Watch, tune and manage NVIDIA GPUs</summary>
+  <developer id="io.github.tobytaken">
+    <name>Tobias Steinhaeusler</name>
+  </developer>
+
+  <description>
+    <p>
+      Prism is a GPU control center for NVIDIA GPUs on Linux. It shows each GPU's temperature,
+      utilization, power, clocks and fans live and over time, along with its hardware details.
+    </p>
+    <p>With the prismd daemon installed on the host, Prism can also:</p>
+    <ul>
+      <li>Set power limits and graphics and memory clock offsets</li>
+      <li>Run fans at a fixed speed or follow a fan curve</li>
+      <li>Save tuning as profiles and switch them automatically when a game starts</li>
+      <li>Install and update the NVIDIA driver</li>
+    </ul>
+    <p>
+      Monitoring works without prismd. Tuning needs the prismd package from your distribution's
+      Prism packages (deb, rpm or AUR), since the daemon can't run inside a sandbox. Prism explains
+      how to install and enable it under Settings, Daemon.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.tobytaken.Prism.desktop</launchable>
+  <provides>
+    <binary>prism</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/tobytaken/prism-electron</url>
+  <url type="bugtracker">https://github.com/tobytaken/prism-electron/issues</url>
+  <url type="vcs-browser">https://github.com/tobytaken/prism-electron</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>A GPU's live temperature, utilization, power, clocks and fans</caption>
+      <image>https://raw.githubusercontent.com/tobytaken/prism-electron/main/crates/prism/tests/screenshots/workspace-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Fans following a fan curve</caption>
+      <image>https://raw.githubusercontent.com/tobytaken/prism-electron/main/crates/prism/tests/screenshots/workspace-fan-curve-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Games linked to tuning profiles</caption>
+      <image>https://raw.githubusercontent.com/tobytaken/prism-electron/main/crates/prism/tests/screenshots/games-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The light appearance</caption>
+      <image>https://raw.githubusercontent.com/tobytaken/prism-electron/main/crates/prism/tests/screenshots/workspace-light.png</image>
+    </screenshot>
+  </screenshots>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#ff5a1f</color>
+    <color type="primary" scheme_preference="dark">#ff6326</color>
+  </branding>
+
+  <requires>
+    <display_length compare="ge">600</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <categories>
+    <category>System</category>
+    <category>Monitor</category>
+  </categories>
+  <keywords>
+    <keyword>GPU</keyword>
+    <keyword>NVIDIA</keyword>
+    <keyword>fan curve</keyword>
+    <keyword>overclock</keyword>
+    <keyword>temperature</keyword>
+    <keyword>driver</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-10-15">
+      <url type="details">https://github.com/tobytaken/prism-electron/releases/tag/v0.1.0</url>
+      <description>
+        <p>The first release of the native Prism.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -6,6 +6,8 @@ authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [features]
@@ -56,6 +58,7 @@ priority = "optional"
 assets = [
   ["target/release/prism", "usr/bin/prism", "755"],
   ["../../contrib/io.github.tobytaken.Prism.desktop", "usr/share/applications/io.github.tobytaken.Prism.desktop", "644"],
+  ["../../contrib/io.github.tobytaken.Prism.metainfo.xml", "usr/share/metainfo/io.github.tobytaken.Prism.metainfo.xml", "644"],
   ["../../assets/io.github.tobytaken.Prism.svg", "usr/share/icons/hicolor/scalable/apps/io.github.tobytaken.Prism.svg", "644"],
   ["../../README.md", "usr/share/doc/prism-gpu/README.md", "644"],
   ["../../THIRD-PARTY-LICENSES", "usr/share/doc/prism-gpu/THIRD-PARTY-LICENSES", "644"]
@@ -70,10 +73,12 @@ auto-req = "no"
 assets = [
   { source = "target/release/prism", dest = "/usr/bin/prism", mode = "755" },
   { source = "../../contrib/io.github.tobytaken.Prism.desktop", dest = "/usr/share/applications/io.github.tobytaken.Prism.desktop", mode = "644" },
+  { source = "../../contrib/io.github.tobytaken.Prism.metainfo.xml", dest = "/usr/share/metainfo/io.github.tobytaken.Prism.metainfo.xml", mode = "644" },
   { source = "../../assets/io.github.tobytaken.Prism.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.tobytaken.Prism.svg", mode = "644" },
   { source = "../../README.md", dest = "/usr/share/doc/prism-gpu/README.md", mode = "644", doc = true },
-  { source = "../../LICENSE", dest = "/usr/share/licenses/prism-gpu/LICENSE", mode = "644", doc = true },
-  { source = "../../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/prism-gpu/THIRD-PARTY-LICENSES", mode = "644", doc = true }
+  # Not doc = true, so the licenses install even where docs are skipped, as %license files do.
+  { source = "../../LICENSE", dest = "/usr/share/licenses/prism-gpu/LICENSE", mode = "644" },
+  { source = "../../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/prism-gpu/THIRD-PARTY-LICENSES", mode = "644" }
 ]
 
 [package.metadata.generate-rpm.requires]

@@ -32,6 +32,8 @@ chmod +x "$TOOLS_DIR/appimagetool"
 rm -rf "$APPDIR"
 install -Dm755 target/release/prism "$APPDIR/usr/bin/prism"
 install -Dm644 "contrib/$APP_ID.desktop" "$APPDIR/usr/share/applications/$APP_ID.desktop"
+# appimagetool looks for the metainfo under its older name.
+install -Dm644 "contrib/$APP_ID.metainfo.xml" "$APPDIR/usr/share/metainfo/$APP_ID.appdata.xml"
 install -Dm644 "assets/$APP_ID.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/$APP_ID.svg"
 install -Dm644 LICENSE THIRD-PARTY-LICENSES -t "$APPDIR/usr/share/licenses/$APP_ID"
 ln -s "usr/share/applications/$APP_ID.desktop" "$APPDIR/$APP_ID.desktop"
@@ -39,6 +41,7 @@ ln -s "usr/share/icons/hicolor/scalable/apps/$APP_ID.svg" "$APPDIR/$APP_ID.svg"
 ln -s "$APP_ID.svg" "$APPDIR/.DirIcon"
 ln -s usr/bin/prism "$APPDIR/AppRun"
 
-# Extracting itself lets appimagetool run without FUSE, as in CI containers.
-APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$TOOLS_DIR/appimagetool" \
+# Extracting itself lets appimagetool run without FUSE, as in CI containers. CI validates the
+# metainfo offline; appimagetool's own check would fetch its URLs.
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$TOOLS_DIR/appimagetool" --no-appstream \
   --runtime-file "$TOOLS_DIR/runtime" "$APPDIR" "$OUT_DIR/Prism-x86_64.AppImage"
