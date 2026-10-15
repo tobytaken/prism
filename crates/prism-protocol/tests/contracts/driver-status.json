@@ -21,7 +21,8 @@
         "id": "0000:01:00.0",
         "name": "NVIDIA GeForce RTX 5090",
         "architecture": "Blackwell",
-        "bus_id": "0000:01:00.0"
+        "bus_id": "0000:01:00.0",
+        "pci_device_id": 11141
       }
     ],
     "plans": [
