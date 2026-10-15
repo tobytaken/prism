@@ -108,6 +108,7 @@ mod tests {
                 name: "NVIDIA GPU".into(),
                 architecture: Some("Blackwell".into()),
                 bus_id: None,
+                pci_device_id: None,
             }],
             plans: vec![],
             warnings: vec![],

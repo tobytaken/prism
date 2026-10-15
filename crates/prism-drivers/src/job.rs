@@ -10,8 +10,8 @@ use std::thread;
 
 use serde::{Deserialize, Serialize};
 
+use crate::fedora::fedora_module_package;
 use crate::host::{PackageManager, SecureBootState};
-use crate::nvidia::gpu_supports_open_modules;
 use crate::{
     DriverAction, DriverHost, DriverJob, DriverJobStatus, SystemDriverHost, collect_driver_status,
     request_host_reboot,
@@ -356,7 +356,7 @@ fn run_system_action(action: DriverAction, job: &JobProgress) -> Result<JobCompl
         return Err(plan.blockers.join("; "));
     }
 
-    let steps = build_steps(&status.host, &status.nvidia, plan.action);
+    let steps = build_steps(&status.host, &status.nvidia, plan.action)?;
     for step in steps {
         job.stop_if_canceled()?;
 
@@ -447,12 +447,14 @@ impl DriverCommand {
     }
 }
 
+/// The steps that carry out the driver action on this host, or why there are none, such as no
+/// kernel module that suits its GPUs.
 fn build_steps(
     host: &crate::host::DriverHostInfo,
     nvidia: &crate::nvidia::NvidiaDriverStatus,
     action: DriverAction,
-) -> Vec<JobStep> {
-    match (host.package_manager, action) {
+) -> Result<Vec<JobStep>, String> {
+    Ok(match (host.package_manager, action) {
         (PackageManager::Apt, DriverAction::InstallRecommended) => vec![
             JobStep::Command(apt_update()),
             JobStep::Command(DriverCommand {
@@ -469,11 +471,7 @@ fn build_steps(
             ]
         }
         (PackageManager::Dnf, DriverAction::InstallRecommended) => {
-            let module_package = if gpu_supports_open_modules(&nvidia.gpus) {
-                "kmod-nvidia-open-dkms"
-            } else {
-                "kmod-nvidia-latest-dkms"
-            };
+            let module_package = fedora_module_package(&nvidia.gpus)?;
             vec![
                 JobStep::Command(DriverCommand {
                     label: "Installing Fedora kernel build packages".into(),
@@ -528,7 +526,7 @@ fn build_steps(
             })]
         }
         _ => vec![],
-    }
+    })
 }
 
 fn apt_update() -> DriverCommand {
@@ -707,9 +705,12 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        DriverCommand, DriverJobStore, JobCompletion, JobProgress, LOG_TAIL_LIMIT, apt_update,
-        finish_command, is_deb_nvidia_package, validate_driver_command,
+        DriverCommand, DriverJobStore, JobCompletion, JobProgress, JobStep, LOG_TAIL_LIMIT,
+        apt_update, build_steps, finish_command, is_deb_nvidia_package, validate_driver_command,
     };
+    use crate::fedora::fedora_plans;
+    use crate::host::{DriverHostInfo, PackageManager, SecureBootState};
+    use crate::nvidia::{NvidiaDriverStatus, NvidiaGpuInfo};
     use crate::{DriverAction, DriverHost, DriverJob, DriverJobStatus, DriverStatusResponse};
     use prism_gpu::GpuCommandError;
     use std::os::unix::process::ExitStatusExt;
@@ -737,6 +738,99 @@ mod tests {
             env: vec![],
         })
         .expect("dnf install");
+    }
+
+    fn fedora_host() -> DriverHostInfo {
+        DriverHostInfo {
+            distro_id: "fedora".into(),
+            distro_version: "43".into(),
+            kernel_release: "6.17.1".into(),
+            package_manager: PackageManager::Dnf,
+            secure_boot: SecureBootState::Disabled,
+            is_flatpak: false,
+            supported: false,
+            unsupported_reason: None,
+        }
+    }
+
+    /// A host before its NVIDIA driver is installed, with one GPU of each device ID.
+    fn fresh_install(pci_device_ids: &[Option<u16>]) -> NvidiaDriverStatus {
+        NvidiaDriverStatus {
+            detected: true,
+            driver_version: None,
+            nvml_available: false,
+            nouveau_loaded: false,
+            runfile_install_detected: false,
+            rpm_fusion_detected: false,
+            gpus: pci_device_ids
+                .iter()
+                .enumerate()
+                .map(|(index, &pci_device_id)| NvidiaGpuInfo {
+                    id: format!("0000:0{}:00.0", index + 1),
+                    name: format!("NVIDIA GPU 0000:0{}:00.0", index + 1),
+                    architecture: None,
+                    bus_id: Some(format!("0000:0{}:00.0", index + 1)),
+                    pci_device_id,
+                })
+                .collect(),
+            plans: vec![],
+            warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn a_fedora_install_installs_the_module_package_its_plan_names() {
+        for pci_device_id in [0x2B85, 0x2684, 0x1B80] {
+            let nvidia = fresh_install(&[Some(pci_device_id)]);
+            let plan = &fedora_plans(&fedora_host(), &nvidia)[0];
+
+            let steps = build_steps(&fedora_host(), &nvidia, DriverAction::InstallRecommended)
+                .expect("steps");
+
+            let installed = steps
+                .iter()
+                .find_map(|step| match step {
+                    JobStep::Command(command)
+                        if command.args.starts_with(&[
+                            "-y".into(),
+                            "install".into(),
+                            "nvidia-driver".into(),
+                        ]) =>
+                    {
+                        command.args.last().cloned()
+                    }
+                    _ => None,
+                })
+                .expect("the driver install step");
+            let named: Vec<_> = plan
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("kmod-nvidia"))
+                .collect();
+            assert_eq!(named.len(), 1, "{pci_device_id:#06x}: {named:?}");
+            assert!(
+                named[0].starts_with(&format!(
+                    "Fedora automation will install nvidia-driver with {installed}, "
+                )),
+                "{pci_device_id:#06x}: {named:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fedora_install_with_no_module_to_choose_has_no_steps() {
+        for nvidia in [
+            fresh_install(&[None]),
+            fresh_install(&[Some(0x1B80), Some(0x2B85)]),
+        ] {
+            let plan = &fedora_plans(&fedora_host(), &nvidia)[0];
+
+            let reason = build_steps(&fedora_host(), &nvidia, DriverAction::InstallRecommended)
+                .err()
+                .expect("no steps");
+
+            assert_eq!(plan.blockers, [reason]);
+        }
     }
 
     #[test]

@@ -1,23 +1,10 @@
 use crate::host::{DriverHostInfo, SecureBootState};
-use crate::nvidia::{NvidiaDriverStatus, gpu_supports_open_modules};
+use crate::nvidia::{KernelModule, NvidiaDriverStatus, NvidiaGpuInfo, kernel_module_for};
 use crate::{DriverAction, DriverPlan};
 
 pub fn fedora_plans(host: &DriverHostInfo, nvidia: &NvidiaDriverStatus) -> Vec<DriverPlan> {
     let base_blockers = fedora_blockers(host, nvidia);
-    let module_package = if gpu_supports_open_modules(&nvidia.gpus) {
-        "kmod-nvidia-open-dkms"
-    } else {
-        "kmod-nvidia-latest-dkms"
-    };
-    let mut warnings = vec![format!(
-        "Fedora automation will install nvidia-driver with {module_package}."
-    )];
-
-    if nvidia.gpus.iter().any(|gpu| gpu.architecture.is_none()) {
-        warnings.push(
-            "GPU generation is unknown before the NVIDIA driver is loaded; Prism will use the proprietary DKMS module for compatibility.".into(),
-        );
-    }
+    let mut warnings = Vec::new();
     if host.secure_boot == SecureBootState::Enabled {
         warnings.push(
             "Secure Boot is enabled. Fedora may require Machine Owner Key enrollment before the NVIDIA kernel module can load.".into(),
@@ -27,6 +14,18 @@ pub fn fedora_plans(host: &DriverHostInfo, nvidia: &NvidiaDriverStatus) -> Vec<D
         warnings.push("Nouveau is loaded. A reboot is required after installation.".into());
     }
 
+    let mut install_blockers = base_blockers.clone();
+    let mut install_warnings = Vec::new();
+    match fedora_module_package(&nvidia.gpus) {
+        Ok(package) => install_warnings.push(format!(
+            "Fedora automation will install nvidia-driver with {package}, which Prism chose from each GPU's architecture, or its PCI device ID when the NVIDIA driver can't report the architecture."
+        )),
+        // The base blockers may already say why, such as when there's no GPU.
+        Err(reason) if !install_blockers.contains(&reason) => install_blockers.push(reason),
+        Err(_) => {}
+    }
+    install_warnings.extend(warnings.iter().cloned());
+
     vec![
         DriverPlan {
             id: "fedora-install-recommended".into(),
@@ -35,8 +34,8 @@ pub fn fedora_plans(host: &DriverHostInfo, nvidia: &NvidiaDriverStatus) -> Vec<D
             recommended: nvidia.driver_version.is_none(),
             requires_reboot: true,
             manual_steps: fedora_manual_steps(host),
-            blockers: base_blockers.clone(),
-            warnings: warnings.clone(),
+            blockers: install_blockers,
+            warnings: install_warnings,
         },
         DriverPlan {
             id: "fedora-update-installed".into(),
@@ -49,6 +48,15 @@ pub fn fedora_plans(host: &DriverHostInfo, nvidia: &NvidiaDriverStatus) -> Vec<D
             warnings,
         },
     ]
+}
+
+/// The package that builds the kernel module every one of these GPUs runs on, or why Prism can't
+/// choose one.
+pub(crate) fn fedora_module_package(gpus: &[NvidiaGpuInfo]) -> Result<&'static str, String> {
+    kernel_module_for(gpus).map(|module| match module {
+        KernelModule::Open => "kmod-nvidia-open-dkms",
+        KernelModule::Proprietary => "kmod-nvidia-latest-dkms",
+    })
 }
 
 fn fedora_blockers(host: &DriverHostInfo, nvidia: &NvidiaDriverStatus) -> Vec<String> {
@@ -102,6 +110,116 @@ mod tests {
     use crate::host::{DriverHostInfo, PackageManager, SecureBootState};
     use crate::nvidia::{NvidiaDriverStatus, NvidiaGpuInfo};
 
+    fn fresh_install(pci_device_ids: &[u16]) -> NvidiaDriverStatus {
+        let mut status = nvidia();
+        status.gpus = pci_device_ids
+            .iter()
+            .enumerate()
+            .map(|(index, &pci_device_id)| NvidiaGpuInfo {
+                id: format!("0000:0{}:00.0", index + 1),
+                name: format!("NVIDIA GPU 0000:0{}:00.0", index + 1),
+                architecture: None,
+                bus_id: Some(format!("0000:0{}:00.0", index + 1)),
+                pci_device_id: Some(pci_device_id),
+            })
+            .collect();
+        status
+    }
+
+    #[test]
+    fn audit_an_unidentified_gpu_must_not_blindly_offer_the_proprietary_module() {
+        let mut status = nvidia();
+        // Before the driver is installed, sysfs discovery gives every GPU this state,
+        // including Blackwell GPUs that require the open module.
+        status.gpus[0].architecture = None;
+        let plans = fedora_plans(&host(), &status);
+        let install = &plans[0];
+        assert!(
+            !install.blockers.is_empty()
+                || !install
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("kmod-nvidia-latest-dkms")),
+            "unknown hardware gets an unblocked proprietary-module install: {install:?}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_install_on_a_gpu_of_unknown_generation_is_blocked() {
+        let mut status = nvidia();
+        status.gpus[0].architecture = None;
+
+        let install = &fedora_plans(&host(), &status)[0];
+
+        assert!(
+            install
+                .blockers
+                .iter()
+                .any(|blocker| blocker.contains("couldn't identify the generation")),
+            "{install:?}"
+        );
+        assert!(
+            !install
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("kmod-nvidia")),
+            "{install:?}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_install_chooses_the_module_from_the_device_id() {
+        for (pci_device_id, package) in [
+            (0x2B85, "kmod-nvidia-open-dkms"),
+            (0x2684, "kmod-nvidia-open-dkms"),
+            (0x1B80, "kmod-nvidia-latest-dkms"),
+        ] {
+            let install = &fedora_plans(&host(), &fresh_install(&[pci_device_id]))[0];
+
+            assert!(install.blockers.is_empty(), "{install:?}");
+            let modules: Vec<_> = install
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("kmod-nvidia"))
+                .collect();
+            assert_eq!(modules.len(), 1, "{pci_device_id:#06x}: {modules:?}");
+            assert!(
+                modules[0].starts_with(&format!(
+                    "Fedora automation will install nvidia-driver with {package}, "
+                )),
+                "{pci_device_id:#06x}: {modules:?}"
+            );
+            assert!(modules[0].contains("PCI device ID"), "{modules:?}");
+        }
+    }
+
+    #[test]
+    fn a_fresh_install_on_a_pre_turing_and_a_newer_gpu_is_blocked() {
+        let install = &fedora_plans(&host(), &fresh_install(&[0x1B80, 0x2684]))[0];
+
+        assert!(
+            install
+                .blockers
+                .iter()
+                .any(|blocker| blocker.contains("No single NVIDIA kernel module")),
+            "{install:?}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_install_without_a_gpu_names_no_module_and_says_so_once() {
+        let install = &fedora_plans(&host(), &fresh_install(&[]))[0];
+
+        assert_eq!(install.blockers, ["No NVIDIA GPU was detected."]);
+        assert!(
+            !install
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("kmod-nvidia")),
+            "{install:?}"
+        );
+    }
+
     #[test]
     fn fedora_plan_blocks_rpm_fusion_mixing() {
         let mut status = nvidia();
@@ -143,6 +261,7 @@ mod tests {
                 name: "NVIDIA GPU".into(),
                 architecture: Some("Blackwell".into()),
                 bus_id: None,
+                pci_device_id: None,
             }],
             plans: vec![],
             warnings: vec![],
