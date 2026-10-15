@@ -216,9 +216,7 @@ fn an_unrecorded_stall_returns_the_curve_fans_to_automatic_cooling_as_a_fault() 
     daemon.core().record_cooling_stall(false);
     unblock_record(&daemon);
     daemon.core().record_cooling_stall(false);
-    let record: Value =
-        serde_json::from_slice(&std::fs::read(daemon.boot_path("cooling-control.json")).unwrap())
-            .unwrap();
+    let record = record(&daemon);
     assert_eq!(record["stalled"], true, "{record}");
     daemon.restart();
 
@@ -249,17 +247,16 @@ fn record(daemon: &Harness) -> Value {
         .unwrap()
 }
 
-fn applied(response: DaemonResponse) -> Value {
+fn assert_succeeded(response: DaemonResponse) {
     let response = serde_json::to_value(response).unwrap();
     assert_eq!(
         response["payload"]["cooling"]["outcome"]["status"], "succeeded",
         "{response}"
     );
-    response
 }
 
 #[test]
-fn cooling_changed_on_two_gpus_at_once_is_recorded_for_both() {
+fn curves_applied_on_two_gpus_at_once_are_recorded_for_both() {
     let mut second = cooled_gpu();
     second.id = "GPU-456".into();
     second.stable_id = Some("GPU-456".into());
@@ -267,30 +264,29 @@ fn cooling_changed_on_two_gpus_at_once_is_recorded_for_both() {
     daemon.core().wait_for_startup();
     let saves = &daemon.core().cooling.record_saves;
     let paused = saves.pause_next();
-    let first =
-        daemon.send_in_background(daemon.apply_request("GPU-123", json!({ "cooling": fixed(40) })));
+    let first = daemon
+        .send_in_background(daemon.apply_request("GPU-123", json!({ "cooling": shared_curve() })));
     paused.wait_until_entered();
 
-    // GPU-456 has its own queue, so its change goes ahead, but its save can't take a snapshot or
-    // stage its record over the paused one until that one is written.
-    let second =
-        daemon.send_in_background(daemon.apply_request("GPU-456", json!({ "cooling": fixed(60) })));
+    // GPU-456 has its own queue, so its application goes ahead, but the save recording its fans
+    // can't take a snapshot or stage its record over the paused one until that one is written. A
+    // save whose record didn't land would fail its curve's application.
+    let second = daemon
+        .send_in_background(daemon.apply_request("GPU-456", json!({ "cooling": shared_curve() })));
     saves.wait_until_one_waits();
     paused.release();
-    applied(first.response());
-    applied(second.response());
+    assert_succeeded(first.response());
+    assert_succeeded(second.response());
 
     let record = record(&daemon);
-    assert_eq!(
-        record["gpus"]["GPU-123"]["configuration"],
-        fixed(40),
-        "{record}"
-    );
-    assert_eq!(
-        record["gpus"]["GPU-456"]["configuration"],
-        fixed(60),
-        "{record}"
-    );
+    for gpu in ["GPU-123", "GPU-456"] {
+        assert_eq!(
+            record["gpus"][gpu]["configuration"],
+            shared_curve(),
+            "{record}"
+        );
+        assert_eq!(record["gpus"][gpu]["curve_fans"], json!([0, 1]), "{record}");
+    }
     assert!(!daemon.boot_path("cooling-control.json.tmp").exists());
 }
 
@@ -308,7 +304,7 @@ fn a_stall_recorded_while_cooling_changes_is_recorded_with_that_change() {
     let stall = std::thread::spawn(move || core.record_cooling_stall(true));
     saves.wait_until_one_waits();
     paused.release();
-    applied(change.response());
+    assert_succeeded(change.response());
     stall.join().unwrap();
 
     let record = record(&daemon);

@@ -302,7 +302,7 @@ impl CoolingController {
             stopped_for_stall: AtomicBool::new(false),
             operations: Mutex::default(),
             #[cfg(test)]
-            record_saves: Default::default(),
+            record_saves: super::harness::RecordSaves::default(),
         }
     }
 
@@ -1151,7 +1151,7 @@ impl CoolingController {
     fn take_record_turn(&self) -> MutexGuard<'_, ()> {
         #[cfg(test)]
         if self.record_turn.try_lock().is_err() {
-            self.record_saves.waits();
+            self.record_saves.waiting_for_turn();
         }
         self.record_turn
             .lock()

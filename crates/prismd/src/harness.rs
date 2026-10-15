@@ -456,6 +456,7 @@ impl RecordSaves {
         gate
     }
 
+    /// Waits until a save has found another in progress and waits for its turn.
     pub fn wait_until_one_waits(&self) {
         let (waiting, changed) = &self.waiting;
         let (_waiting, timeout) = changed
@@ -469,7 +470,8 @@ impl RecordSaves {
         );
     }
 
-    /// Called by a save once it has its snapshot, before it writes it.
+    /// Called by a save once it has its snapshot, before it writes it. Holds the save there if
+    /// it was paused.
     pub fn snapshot_taken(&self) {
         let gate = self.pause.lock().unwrap().take();
         if let Some(gate) = gate {
@@ -478,7 +480,7 @@ impl RecordSaves {
     }
 
     /// Called by a save that must wait for another to finish.
-    pub fn waits(&self) {
+    pub fn waiting_for_turn(&self) {
         let (waiting, changed) = &self.waiting;
         *waiting.lock().unwrap() = true;
         changed.notify_all();
