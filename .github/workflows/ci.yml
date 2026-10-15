@@ -70,6 +70,13 @@ jobs:
           bash scripts/generate-third-party-licenses.sh
           git diff --exit-code -- THIRD-PARTY-LICENSES
 
+  host-install-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck scripts/install-prismd-host.sh scripts/check-install-prismd-host.sh
+      - run: bash scripts/check-install-prismd-host.sh
+
   package-smoke:
     runs-on: ubuntu-latest
     steps:
