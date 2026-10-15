@@ -28,6 +28,7 @@ use super::possibly_stale::{POSSIBLY_STALE_FILE_NAME, PossiblyStale};
 use super::profiles::{capture_settings, new_profile_id, profile_name, verified_gpu};
 use super::queue::{GpuOperationQueues, PendingOperation};
 use super::startup::StartupStates;
+use super::switching::PendingManual;
 use super::tuning::{TuningOrigin, TuningRequest, apply_profile};
 use super::tuning_store::{TUNING_STORE_FILE_NAME, TuningDocument, TuningStore};
 use super::{DaemonSession, SessionPeer, SessionPolicy};
@@ -92,6 +93,30 @@ impl From<HelloRefused> for DaemonResponse {
             HelloRefused::Unidentified(error) => Self::Error(error),
         }
     }
+}
+
+/// A request from an identified caller that the policy refused, or that it allowed, holding any
+/// precedence over automatic switching it needs.
+pub(super) struct Admitted {
+    peer: SessionPeer,
+    request: Result<Prepared, GpuCommandError>,
+}
+
+/// A request ready to handle.
+enum Prepared {
+    /// A manual override, with its GPU's precedence over automatic switching reserved.
+    Manual(PendingManual, ManualRequest),
+    /// Any other request, which needs no precedence.
+    Other(DaemonRequest),
+}
+
+/// A request that becomes a manual override of its GPU, with its saved profile read if it names
+/// one.
+enum ManualRequest {
+    ApplyStaged(ApplyGpuProfileRequest),
+    ApplySaved(GpuTuningProfile),
+    CorrectAndApply(CorrectAndApplyProfileRequest),
+    RetryCooling(RetryCoolingRequest),
 }
 
 /// A session prismd welcomed, with the state it starts from.
@@ -285,8 +310,31 @@ impl DaemonCore {
         policy: &SessionPolicy,
         request: DaemonRequest,
     ) -> DaemonResponse {
-        match policy.authorize(peer, &request) {
-            Ok(()) => self.handle_for_peer(peer, request),
+        self.run(self.admit(peer, policy, request))
+    }
+
+    /// Admits a request from an identified caller, in the order it arrived, once the policy allows
+    /// it. A manual override reserves its GPU's precedence over automatic switching now, so no
+    /// request that arrives after it can let automatic switching write to the GPU first. The rest,
+    /// which can be slow, is left for `run`.
+    pub(super) fn admit(
+        &self,
+        peer: &SessionPeer,
+        policy: &SessionPolicy,
+        request: DaemonRequest,
+    ) -> Admitted {
+        Admitted {
+            peer: peer.clone(),
+            request: policy
+                .authorize(peer, &request)
+                .and_then(|()| self.prepare(peer, request)),
+        }
+    }
+
+    /// Handles an admitted request, or says why it was refused.
+    pub(super) fn run(&self, admitted: Admitted) -> DaemonResponse {
+        match admitted.request {
+            Ok(request) => self.handle_prepared(&admitted.peer, request),
             Err(refused) => DaemonResponse::Error(refused),
         }
     }
@@ -297,6 +345,83 @@ impl DaemonCore {
         peer: &SessionPeer,
         request: DaemonRequest,
     ) -> DaemonResponse {
+        match self.prepare(peer, request) {
+            Ok(request) => self.handle_prepared(peer, request),
+            Err(error) => DaemonResponse::Error(error),
+        }
+    }
+
+    /// Reserves precedence over automatic switching on the GPU a manual override will write to. A
+    /// saved profile is read for its GPU, so one the caller can't use reserves nothing.
+    fn prepare(
+        &self,
+        peer: &SessionPeer,
+        request: DaemonRequest,
+    ) -> Result<Prepared, GpuCommandError> {
+        let profile_of = |profile_id: &str| {
+            self.tuning_store
+                .read(|document| document.profile_of(peer, profile_id))?
+        };
+        let (gpu_id, manual) = match request {
+            DaemonRequest::ApplyProfile(request) => {
+                (request.gpu_id.clone(), ManualRequest::ApplyStaged(request))
+            }
+            DaemonRequest::ApplyProfileById(request) => {
+                let profile = profile_of(&request.profile_id)?;
+                (profile.gpu_id.clone(), ManualRequest::ApplySaved(profile))
+            }
+            DaemonRequest::CorrectAndApplyProfile(request) => {
+                let gpu_id = profile_of(&request.profile_id)?.gpu_id;
+                (gpu_id, ManualRequest::CorrectAndApply(request))
+            }
+            // Whether it's manual is known only on the queue, so precedence is reserved either way.
+            DaemonRequest::RetryCooling(request) => {
+                (request.gpu_id.clone(), ManualRequest::RetryCooling(request))
+            }
+            request => return Ok(Prepared::Other(request)),
+        };
+        Ok(Prepared::Manual(
+            self.switching.manual_requested(&gpu_id),
+            manual,
+        ))
+    }
+
+    fn handle_prepared(&self, peer: &SessionPeer, request: Prepared) -> DaemonResponse {
+        match request {
+            Prepared::Manual(pending, request) => self.handle_manual(peer, pending, request),
+            Prepared::Other(request) => self.handle_other(peer, request),
+        }
+    }
+
+    /// Handles a manual override, whose GPU's precedence stays reserved until its write starts.
+    fn handle_manual(
+        &self,
+        peer: &SessionPeer,
+        pending: PendingManual,
+        request: ManualRequest,
+    ) -> DaemonResponse {
+        let response = match request {
+            ManualRequest::ApplyStaged(request) => self
+                .apply_staged(request, Some(peer.clone()), pending)
+                .map(DaemonResponse::ProfileApplication),
+            ManualRequest::ApplySaved(profile) => self
+                .apply_saved_profile(peer, profile, pending)
+                .map(DaemonResponse::ProfileApplication),
+            ManualRequest::CorrectAndApply(request) => self
+                .correct_and_apply_profile(peer, request, pending)
+                .map(DaemonResponse::CorrectedProfileApplication),
+            ManualRequest::RetryCooling(request) => {
+                let retried = self.retry_cooling(peer, request, pending);
+                // Its precedence over automation may have held back a game's reconciliation.
+                self.evaluate_switching();
+                retried.map(DaemonResponse::ProfileApplication)
+            }
+        };
+        response.unwrap_or_else(DaemonResponse::Error)
+    }
+
+    /// Handles a request that isn't a manual override.
+    fn handle_other(&self, peer: &SessionPeer, request: DaemonRequest) -> DaemonResponse {
         // These change which game, if any, should drive a GPU, or how its status reads.
         let reevaluate = matches!(
             request,
@@ -306,8 +431,6 @@ impl DaemonCore {
                 | DaemonRequest::SetGpuSwitchingPaused(_)
                 | DaemonRequest::DeleteProfile(_)
                 | DaemonRequest::RenameProfile(_)
-                // Its precedence over automation may have held back a game's reconciliation.
-                | DaemonRequest::RetryCooling(_)
         );
         // These can change the caller's startup state, or the startup profiles' names.
         let changes_startup = matches!(
@@ -332,9 +455,6 @@ impl DaemonCore {
                 | DaemonRequest::DeleteProfile(_)
         );
         let response = match request {
-            DaemonRequest::ApplyProfile(request) => self
-                .apply_staged(request, Some(peer.clone()))
-                .map(DaemonResponse::ProfileApplication),
             DaemonRequest::GetStartupState => self
                 .startup_states
                 .read(peer)
@@ -397,16 +517,6 @@ impl DaemonCore {
                     })
                 })
             }
-            DaemonRequest::ApplyProfileById(request) => self
-                .tuning_store
-                .read(|document| document.profile_of(peer, &request.profile_id))
-                .map_err(GpuCommandError::from)
-                .and_then(|profile| profile)
-                .and_then(|profile| self.apply_saved_profile(peer, profile))
-                .map(DaemonResponse::ProfileApplication),
-            DaemonRequest::CorrectAndApplyProfile(request) => self
-                .correct_and_apply_profile(peer, request)
-                .map(DaemonResponse::CorrectedProfileApplication),
             DaemonRequest::ListSteamApps => self.steam_apps(peer).map(DaemonResponse::SteamApps),
             DaemonRequest::ListRunningPrograms => {
                 super::programs::list(&self.dependencies.host_root, peer)
@@ -439,9 +549,6 @@ impl DaemonCore {
                     self.switching.status_for(peer),
                 ))
             }
-            DaemonRequest::RetryCooling(request) => self
-                .retry_cooling(peer, request)
-                .map(DaemonResponse::ProfileApplication),
             DaemonRequest::GetAutomaticSwitchingStatus => Ok(
                 DaemonResponse::AutomaticSwitchingStatus(self.switching.status_for(peer)),
             ),
@@ -575,13 +682,10 @@ impl DaemonCore {
         &self,
         peer: &SessionPeer,
         request: CorrectAndApplyProfileRequest,
+        pending: PendingManual,
     ) -> Result<CorrectedProfileApplication, GpuCommandError> {
-        let target = self
-            .tuning_store
-            .read(|document| document.profile_of(peer, &request.profile_id))??;
-        // Corrections wait on the same queue before applying. Reserve precedence now, while
-        // recording the override only when apply_saved_profile starts the manual write.
-        let _pending = self.switching.manual_requested(&target.gpu_id);
+        // Corrections wait on the same queue before applying. Precedence stays reserved meanwhile,
+        // and the override is recorded only when apply_saved_profile starts the manual write.
         let peer_owned = peer.clone();
         let corrections = request.corrections;
         let backend = Arc::clone(&self.dependencies.backend);
@@ -600,7 +704,7 @@ impl DaemonCore {
             }
             document.correct_profile(&peer_owned, &profile_id, &corrections)
         })?;
-        let application = self.apply_saved_profile(peer, profile.clone())?;
+        let application = self.apply_saved_profile(peer, profile.clone(), pending)?;
         Ok(CorrectedProfileApplication {
             profile,
             application,
@@ -614,13 +718,14 @@ impl DaemonCore {
         &self,
         peer: &SessionPeer,
         profile: GpuTuningProfile,
+        pending: PendingManual,
     ) -> Result<ProfileApplicationResponse, GpuCommandError> {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
         let cooling = Arc::clone(&self.cooling);
         let activity = Arc::clone(&self.activity);
         let peer = peer.clone();
-        self.manual_write(&profile.gpu_id, move |backend| {
+        self.manual_write(&profile.gpu_id, pending, move |backend| {
             // A profile can be deleted or edited while this application waits on the GPU's queue.
             let profile = store.read(|document| document.profile_of(&peer, &profile.id))??;
             let applied = CurrentProfile {
@@ -650,12 +755,12 @@ impl DaemonCore {
         &self,
         request: ApplyGpuProfileRequest,
         peer: Option<SessionPeer>,
+        pending: PendingManual,
     ) -> Result<ProfileApplicationResponse, GpuCommandError> {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
         let cooling = Arc::clone(&self.cooling);
         let activity = Arc::clone(&self.activity);
-        let pending = self.switching.manual_requested(&request.gpu_id);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
             // A GPU whose state can't be read is refused by the application itself.
             if let Some(state) = tuning_state(backend, &store, &cooling, &request.gpu_id)
@@ -697,6 +802,7 @@ impl DaemonCore {
         &self,
         peer: &SessionPeer,
         request: RetryCoolingRequest,
+        pending: PendingManual,
     ) -> Result<ProfileApplicationResponse, GpuCommandError> {
         let store = Arc::clone(&self.tuning_store);
         let stale = Arc::clone(&self.possibly_stale);
@@ -704,8 +810,6 @@ impl DaemonCore {
         let activity = Arc::clone(&self.activity);
         let switching = self.switching.clone();
         let peer = peer.clone();
-        // Whether it's manual is known only on the queue, so precedence is reserved either way.
-        let pending = self.switching.manual_requested(&request.gpu_id);
         self.tracked_write(&request.gpu_id.clone(), move |backend| {
             let gpu_id = request.gpu_id;
             let performance = backend.performance();
@@ -770,9 +874,9 @@ impl DaemonCore {
     fn manual_write<T: Send + 'static>(
         &self,
         gpu_id: &str,
+        pending: PendingManual,
         operation: impl FnOnce(&dyn DaemonBackend) -> T + Send + 'static,
     ) -> T {
-        let pending = self.switching.manual_requested(gpu_id);
         self.tracked_write(gpu_id, move |backend| {
             pending.started();
             operation(backend)
@@ -931,9 +1035,11 @@ impl DaemonCore {
             DaemonRequest::GetInventory => {
                 DaemonResponse::Inventory(self.dependencies.backend.inventory())
             }
-            DaemonRequest::ApplyProfile(request) => self
-                .apply_staged(request, None)
-                .map_or_else(DaemonResponse::Error, DaemonResponse::ProfileApplication),
+            DaemonRequest::ApplyProfile(request) => {
+                let pending = self.switching.manual_requested(&request.gpu_id);
+                self.apply_staged(request, None, pending)
+                    .map_or_else(DaemonResponse::Error, DaemonResponse::ProfileApplication)
+            }
             DaemonRequest::GetDaemonStatus => {
                 DaemonResponse::DaemonStatus(GpuDaemonStatus::connected(
                     self.dependencies.socket_path.display().to_string(),
