@@ -1077,7 +1077,8 @@ impl DaemonCore {
 
     /// Records whether curve control has stalled, for whoever recovers after the daemon stops.
     pub fn record_cooling_stall(&self, stalled: bool) {
-        self.cooling.record_stall(stalled);
+        self.cooling
+            .record_stall(self.dependencies.backend.as_ref(), stalled);
     }
 
     /// Starts the loop that follows applied curves every 500 ms.

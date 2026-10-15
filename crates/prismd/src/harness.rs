@@ -688,6 +688,13 @@ impl Harness {
         self.start_core();
     }
 
+    /// Simulates the daemon restarting mid-boot on a host whose boot id can't be read.
+    pub fn restart_without_boot_id(&mut self) {
+        self.core = None;
+        self.boot_id = String::new();
+        self.start_daemon();
+    }
+
     fn start_core(&mut self) {
         let persistent_dir = self.persistent_dir.path().to_path_buf();
         self.core = Some(Arc::new(DaemonCore::start(CoreDependencies {
