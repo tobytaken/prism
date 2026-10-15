@@ -1,0 +1,11 @@
+post_install() {
+  echo '==> prismd is installed but not enabled. Start it now and at every boot with:'
+  echo '==>   sudo systemctl enable --now prismd.service'
+  echo '==> Members of the wheel group may change GPU tuning; see /etc/prism/prismd.toml.'
+}
+
+post_upgrade() {
+  if systemctl is-active --quiet prismd.service; then
+    echo '==> Restart prismd to run the new version: sudo systemctl restart prismd.service'
+  fi
+}

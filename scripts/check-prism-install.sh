@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Installs a Prism GUI deb or rpm with the distro's package manager, as root in a throwaway
-# container, and checks that the installed prism finds every library it links or loads at runtime.
+# Installs a Prism GUI deb, rpm or Arch package with the distro's package manager, as root in a
+# throwaway container, and checks that the installed prism finds every library it links or loads
+# at runtime.
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-  echo "usage: $0 <prism-gpu deb or rpm>" >&2
+  echo "usage: $0 <prism-gpu deb, rpm or pkg.tar.zst>" >&2
   exit 2
 fi
 package="$(realpath "$1")"
@@ -15,8 +16,12 @@ case "$package" in
     DEBIAN_FRONTEND=noninteractive apt-get install -y "$package"
     ;;
   *.rpm) dnf install -y "$package" ;;
+  *.pkg.tar.zst)
+    pacman -Syu --noconfirm
+    pacman -U --noconfirm "$package"
+    ;;
   *)
-    echo "not a deb or rpm: $package" >&2
+    echo "not a deb, rpm or pkg.tar.zst: $package" >&2
     exit 2
     ;;
 esac
