@@ -99,12 +99,14 @@ impl From<HelloRefused> for DaemonResponse {
 /// precedence over automatic switching it needs.
 pub(super) struct Admitted {
     peer: SessionPeer,
-    request: Result<Reserved, GpuCommandError>,
+    request: Result<Prepared, GpuCommandError>,
 }
 
-enum Reserved {
-    /// A manual change, with its GPU's precedence over automatic switching reserved.
+/// A request ready to handle.
+enum Prepared {
+    /// A manual override, with its GPU's precedence over automatic switching reserved.
     Manual(PendingManual, ManualRequest),
+    /// Any other request, which needs no precedence.
     Other(DaemonRequest),
 }
 
@@ -312,9 +314,9 @@ impl DaemonCore {
     }
 
     /// Admits a request from an identified caller, in the order it arrived, once the policy allows
-    /// it. A manual change reserves its GPU's precedence over automatic switching now, so no
-    /// request that arrives after it can let automation write to the GPU first. The rest, which
-    /// can be slow, is left for `run`.
+    /// it. A manual override reserves its GPU's precedence over automatic switching now, so no
+    /// request that arrives after it can let automatic switching write to the GPU first. The rest,
+    /// which can be slow, is left for `run`.
     pub(super) fn admit(
         &self,
         peer: &SessionPeer,
@@ -325,14 +327,14 @@ impl DaemonCore {
             peer: peer.clone(),
             request: policy
                 .authorize(peer, &request)
-                .and_then(|()| self.reserve(peer, request)),
+                .and_then(|()| self.prepare(peer, request)),
         }
     }
 
     /// Handles an admitted request, or says why it was refused.
     pub(super) fn run(&self, admitted: Admitted) -> DaemonResponse {
         match admitted.request {
-            Ok(request) => self.handle_reserved(&admitted.peer, request),
+            Ok(request) => self.handle_prepared(&admitted.peer, request),
             Err(refused) => DaemonResponse::Error(refused),
         }
     }
@@ -343,63 +345,61 @@ impl DaemonCore {
         peer: &SessionPeer,
         request: DaemonRequest,
     ) -> DaemonResponse {
-        match self.reserve(peer, request) {
-            Ok(request) => self.handle_reserved(peer, request),
+        match self.prepare(peer, request) {
+            Ok(request) => self.handle_prepared(peer, request),
             Err(error) => DaemonResponse::Error(error),
         }
     }
 
-    /// Reserves precedence over automatic switching on the GPU a manual change will write to. A
+    /// Reserves precedence over automatic switching on the GPU a manual override will write to. A
     /// saved profile is read for its GPU, so one the caller can't use reserves nothing.
-    fn reserve(
+    fn prepare(
         &self,
         peer: &SessionPeer,
         request: DaemonRequest,
-    ) -> Result<Reserved, GpuCommandError> {
+    ) -> Result<Prepared, GpuCommandError> {
+        let profile_of = |profile_id: &str| {
+            self.tuning_store
+                .read(|document| document.profile_of(peer, profile_id))?
+        };
         let (gpu_id, manual) = match request {
             DaemonRequest::ApplyProfile(request) => {
                 (request.gpu_id.clone(), ManualRequest::ApplyStaged(request))
             }
             DaemonRequest::ApplyProfileById(request) => {
-                let profile = self
-                    .tuning_store
-                    .read(|document| document.profile_of(peer, &request.profile_id))??;
+                let profile = profile_of(&request.profile_id)?;
                 (profile.gpu_id.clone(), ManualRequest::ApplySaved(profile))
             }
             DaemonRequest::CorrectAndApplyProfile(request) => {
-                let profile = self
-                    .tuning_store
-                    .read(|document| document.profile_of(peer, &request.profile_id))??;
-                (profile.gpu_id, ManualRequest::CorrectAndApply(request))
+                let gpu_id = profile_of(&request.profile_id)?.gpu_id;
+                (gpu_id, ManualRequest::CorrectAndApply(request))
             }
             // Whether it's manual is known only on the queue, so precedence is reserved either way.
             DaemonRequest::RetryCooling(request) => {
                 (request.gpu_id.clone(), ManualRequest::RetryCooling(request))
             }
-            request => return Ok(Reserved::Other(request)),
+            request => return Ok(Prepared::Other(request)),
         };
-        Ok(Reserved::Manual(
+        Ok(Prepared::Manual(
             self.switching.manual_requested(&gpu_id),
             manual,
         ))
     }
 
-    fn handle_reserved(&self, peer: &SessionPeer, request: Reserved) -> DaemonResponse {
+    fn handle_prepared(&self, peer: &SessionPeer, request: Prepared) -> DaemonResponse {
         match request {
-            Reserved::Manual(pending, request) => self.handle_manual(peer, pending, request),
-            Reserved::Other(request) => self.handle_other(peer, request),
+            Prepared::Manual(pending, request) => self.handle_manual(peer, pending, request),
+            Prepared::Other(request) => self.handle_other(peer, request),
         }
     }
 
-    /// Handles a manual change, whose GPU's precedence stays reserved until its write starts.
+    /// Handles a manual override, whose GPU's precedence stays reserved until its write starts.
     fn handle_manual(
         &self,
         peer: &SessionPeer,
         pending: PendingManual,
         request: ManualRequest,
     ) -> DaemonResponse {
-        // Its precedence over automation may have held back a game's reconciliation.
-        let reevaluate = matches!(request, ManualRequest::RetryCooling(_));
         let response = match request {
             ManualRequest::ApplyStaged(request) => self
                 .apply_staged(request, Some(peer.clone()), pending)
@@ -410,17 +410,17 @@ impl DaemonCore {
             ManualRequest::CorrectAndApply(request) => self
                 .correct_and_apply_profile(peer, request, pending)
                 .map(DaemonResponse::CorrectedProfileApplication),
-            ManualRequest::RetryCooling(request) => self
-                .retry_cooling(peer, request, pending)
-                .map(DaemonResponse::ProfileApplication),
+            ManualRequest::RetryCooling(request) => {
+                let retried = self.retry_cooling(peer, request, pending);
+                // Its precedence over automation may have held back a game's reconciliation.
+                self.evaluate_switching();
+                retried.map(DaemonResponse::ProfileApplication)
+            }
         };
-        if reevaluate {
-            self.evaluate_switching();
-        }
         response.unwrap_or_else(DaemonResponse::Error)
     }
 
-    /// Handles a request that makes no manual change.
+    /// Handles a request that isn't a manual override.
     fn handle_other(&self, peer: &SessionPeer, request: DaemonRequest) -> DaemonResponse {
         // These change which game, if any, should drive a GPU, or how its status reads.
         let reevaluate = matches!(

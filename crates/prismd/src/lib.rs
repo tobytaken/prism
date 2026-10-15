@@ -456,7 +456,7 @@ fn handle_session_connection(
                     continue;
                 }
                 // The caller remains attached to this connection, and each request is checked
-                // against the policy. A manual change reserves its GPU's precedence here, in
+                // against the policy. A manual override reserves its GPU's precedence here, in
                 // order, so a hold released after it can't let automatic switching write first.
                 let admitted = core.admit(session.peer(), session.policy(), request.request);
                 let core = Arc::clone(core);

@@ -1,5 +1,6 @@
 //! A manual override's precedence over automatic switching, reserved in the order its request
-//! arrives on the socket, before a later request on the connection can let automation write.
+//! arrives on the socket, before a later request on the connection can let automatic switching
+//! write.
 
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{self, Receiver};
@@ -168,13 +169,16 @@ impl SocketSession {
         }
     }
 
+    /// The next request's remaining work, once the connection has admitted the request.
+    fn next_work(&self) -> Work {
+        self.work
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a request left work to run")
+    }
+
     /// Runs the next request's remaining work on its own thread, as the daemon does.
     fn run_next_work(&self) {
-        let work = self
-            .work
-            .recv_timeout(Duration::from_secs(5))
-            .expect("a request left work to run");
-        std::thread::spawn(work);
+        std::thread::spawn(self.next_work());
     }
 
     /// Ends the connection as a closing Prism does, and waits until the daemon notices.
@@ -273,13 +277,14 @@ fn a_refused_profile_application_leaves_automatic_switching_as_if_it_never_arriv
             "settings": { "power_limit_watts": value(380) }
         } }),
     )]);
-    // The refusal waits to be answered while the game starts.
+    // The request has been admitted, and its refusal waits to be answered while the game starts.
+    let refusal = socket.next_work();
     daemon.run_steam_game(123, me().0, 420, DOTA);
     daemon.scan();
     assert_eq!(values(&daemon), GAMING);
     assert_eq!(status(&session)["gpus"][0]["state"]["status"], "active");
 
-    socket.run_next_work();
+    std::thread::spawn(refusal);
     let DaemonResponse::Error(refused) = socket.response(1) else {
         panic!("a read-only caller's application was allowed")
     };
