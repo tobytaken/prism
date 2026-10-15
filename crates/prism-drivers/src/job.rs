@@ -802,10 +802,17 @@ mod tests {
                     _ => None,
                 })
                 .expect("the driver install step");
-            assert_eq!(
-                plan.warnings[0],
-                format!("Fedora automation will install nvidia-driver with {installed}."),
-                "{pci_device_id:#06x}"
+            let named: Vec<_> = plan
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("kmod-nvidia"))
+                .collect();
+            assert_eq!(named.len(), 1, "{pci_device_id:#06x}: {named:?}");
+            assert!(
+                named[0].starts_with(&format!(
+                    "Fedora automation will install nvidia-driver with {installed}, "
+                )),
+                "{pci_device_id:#06x}: {named:?}"
             );
         }
     }

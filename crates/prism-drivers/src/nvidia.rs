@@ -109,65 +109,69 @@ pub enum KernelModule {
     Proprietary,
 }
 
-/// The first PCI device ID of a Turing GPU. Every NVIDIA GPU from it on supports the open kernel
-/// module, and every one before it needs the proprietary module, as NVIDIA's list of supported
-/// GPUs for driver 615.78.08 shows.
+/// The first PCI device ID of a Turing GPU. The open kernel module can't run GPUs before Turing,
+/// and every GPU from this ID on supports it, as NVIDIA's list of supported GPUs for driver
+/// 615.78.08 shows.
 const FIRST_TURING_DEVICE_ID: u16 = 0x1E00;
 
-/// Which kernel modules a GPU runs on, as far as Prism can tell.
+/// A GPU's generation as far as it decides the kernel modules it runs on, from what NVML or its
+/// device ID tells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ModuleSupport {
-    /// Turing to Hopper, as NVML reports.
-    Either,
-    /// Turing or newer by its device ID, so it runs on the open module and may be a Blackwell
+enum ModuleGeneration {
+    /// Turing to Hopper, as NVML reports, which run on either module.
+    TuringToHopper,
+    /// Turing or newer by its device ID, which runs on the open module and may be a Blackwell
     /// that needs it.
-    OpenAndMaybeOnlyOpen,
-    /// Blackwell, as NVML reports.
-    OnlyOpen,
-    /// Older than Turing.
-    OnlyProprietary,
+    TuringOrNewer,
+    /// Blackwell, as NVML reports, which needs the open module.
+    Blackwell,
+    /// Older than Turing, which needs the proprietary module.
+    OlderThanTuring,
     /// Neither NVML nor the device ID tells its generation.
     Unknown,
 }
 
-impl ModuleSupport {
+impl ModuleGeneration {
     /// What NVML's architecture says, or failing that the device ID.
     fn of(gpu: &NvidiaGpuInfo) -> Self {
         match gpu.architecture.as_deref() {
-            Some("Turing" | "Ampere" | "Ada" | "Hopper") => Self::Either,
-            Some("Blackwell") => Self::OnlyOpen,
-            Some("Kepler" | "Maxwell" | "Pascal" | "Volta") => Self::OnlyProprietary,
+            Some("Turing" | "Ampere" | "Ada" | "Hopper") => Self::TuringToHopper,
+            Some("Blackwell") => Self::Blackwell,
+            Some("Kepler" | "Maxwell" | "Pascal" | "Volta") => Self::OlderThanTuring,
             _ => match gpu.pci_device_id {
-                Some(id) if id >= FIRST_TURING_DEVICE_ID => Self::OpenAndMaybeOnlyOpen,
-                Some(_) => Self::OnlyProprietary,
+                Some(id) if id >= FIRST_TURING_DEVICE_ID => Self::TuringOrNewer,
+                Some(_) => Self::OlderThanTuring,
                 None => Self::Unknown,
             },
         }
     }
 }
 
-/// The kernel module every one of these GPUs runs on, or why Prism can't choose one: a GPU
-/// whose generation it couldn't identify, or GPUs no single module supports.
+/// The kernel module every one of these GPUs runs on, or why Prism can't choose one: no GPU, a
+/// GPU whose generation it couldn't identify, or GPUs no single module supports.
 pub fn kernel_module_for(gpus: &[NvidiaGpuInfo]) -> Result<KernelModule, String> {
-    let supports: Vec<_> = gpus.iter().map(ModuleSupport::of).collect();
+    if gpus.is_empty() {
+        return Err("No NVIDIA GPU was detected.".into());
+    }
+    let generations: Vec<_> = gpus.iter().map(ModuleGeneration::of).collect();
 
     if let Some(gpu) = gpus
         .iter()
-        .zip(&supports)
-        .find_map(|(gpu, support)| (*support == ModuleSupport::Unknown).then_some(gpu))
+        .zip(&generations)
+        .find_map(|(gpu, generation)| (*generation == ModuleGeneration::Unknown).then_some(gpu))
     {
         return Err(format!(
             "Prism couldn't identify the generation of {}, so it can't choose an NVIDIA kernel module.",
             gpu.name
         ));
     }
-    if !supports.contains(&ModuleSupport::OnlyProprietary) {
+    if !generations.contains(&ModuleGeneration::OlderThanTuring) {
         return Ok(KernelModule::Open);
     }
-    if supports.iter().any(|support| {
+    if generations.iter().any(|generation| {
         matches!(
-            support,
-            ModuleSupport::OnlyOpen | ModuleSupport::OpenAndMaybeOnlyOpen
+            generation,
+            ModuleGeneration::Blackwell | ModuleGeneration::TuringOrNewer
         )
     }) {
         return Err(
@@ -213,7 +217,7 @@ fn enrich_with_nvml(gpus: &mut Vec<NvidiaGpuInfo>, warnings: &mut Vec<String>) -
             .ok()
             .map(|architecture| architecture.to_string());
         let pci_info = device.pci_info().ok();
-        // NVML combines the device ID with the vendor ID, which takes the low 16 bits.
+        // NVML combines the device ID with the vendor ID, which is in the low 16 bits.
         let pci_device_id = pci_info
             .as_ref()
             .map(|info| (info.pci_device_id >> 16) as u16);
@@ -502,6 +506,14 @@ mod tests {
                 "{architecture} {pci_device_id:?}"
             );
         }
+    }
+
+    #[test]
+    fn no_gpu_leaves_no_module_to_choose() {
+        assert_eq!(
+            kernel_module_for(&[]),
+            Err("No NVIDIA GPU was detected.".into())
+        );
     }
 
     #[test]

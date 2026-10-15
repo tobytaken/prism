@@ -18,9 +18,11 @@ pub fn fedora_plans(host: &DriverHostInfo, nvidia: &NvidiaDriverStatus) -> Vec<D
     let mut install_warnings = Vec::new();
     match fedora_module_package(&nvidia.gpus) {
         Ok(package) => install_warnings.push(format!(
-            "Fedora automation will install nvidia-driver with {package}."
+            "Fedora automation will install nvidia-driver with {package}, which Prism chose from each GPU's architecture, or its PCI device ID when the NVIDIA driver can't report the architecture."
         )),
-        Err(reason) => install_blockers.push(reason),
+        // The base blockers may already say why, such as when there's no GPU.
+        Err(reason) if !install_blockers.contains(&reason) => install_blockers.push(reason),
+        Err(_) => {}
     }
     install_warnings.extend(warnings.iter().cloned());
 
@@ -175,17 +177,19 @@ mod tests {
             let install = &fedora_plans(&host(), &fresh_install(&[pci_device_id]))[0];
 
             assert!(install.blockers.is_empty(), "{install:?}");
-            assert_eq!(
-                install
-                    .warnings
-                    .iter()
-                    .filter(|warning| warning.contains("kmod-nvidia"))
-                    .collect::<Vec<_>>(),
-                [&format!(
-                    "Fedora automation will install nvidia-driver with {package}."
-                )],
-                "{pci_device_id:#06x}"
+            let modules: Vec<_> = install
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("kmod-nvidia"))
+                .collect();
+            assert_eq!(modules.len(), 1, "{pci_device_id:#06x}: {modules:?}");
+            assert!(
+                modules[0].starts_with(&format!(
+                    "Fedora automation will install nvidia-driver with {package}, "
+                )),
+                "{pci_device_id:#06x}: {modules:?}"
             );
+            assert!(modules[0].contains("PCI device ID"), "{modules:?}");
         }
     }
 
@@ -198,6 +202,20 @@ mod tests {
                 .blockers
                 .iter()
                 .any(|blocker| blocker.contains("No single NVIDIA kernel module")),
+            "{install:?}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_install_without_a_gpu_names_no_module_and_says_so_once() {
+        let install = &fedora_plans(&host(), &fresh_install(&[]))[0];
+
+        assert_eq!(install.blockers, ["No NVIDIA GPU was detected."]);
+        assert!(
+            !install
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("kmod-nvidia")),
             "{install:?}"
         );
     }
