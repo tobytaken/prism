@@ -1245,18 +1245,19 @@ impl Core {
                     Check that the driver is installed and loaded, then restart Prism."
                 .into();
         };
-        let flatpak = "In a Flatpak, NVML comes with the GL.nvidia extension matching the host's \
+        let source = "In a Flatpak, NVML comes with the GL.nvidia extension matching the host's \
                        NVIDIA driver, not with the driver";
         match nvidia_driver {
             Some(version) => format!(
-                "{flatpak}, and the one for driver {version} is missing. Run flatpak update to \
+                "{source}, and the one for driver {version} is missing. Run flatpak update to \
                  install org.freedesktop.Platform.GL.nvidia-{}, then restart Prism.",
                 version.replace('.', "-")
             ),
             // Flatpak picks the extension by the loaded driver's version, so the driver may not
-            // be loaded at all.
+            // be loaded at all. With it loaded, NVML fails to start in Flatpak only without the
+            // extension or with one for another version, which flatpak update also fixes.
             None => format!(
-                "{flatpak}, and that extension is missing. Check that the driver is loaded on the \
+                "{source}, and that extension is missing. Check that the driver is loaded on the \
                  host, run flatpak update to install its extension, then restart Prism."
             ),
         }

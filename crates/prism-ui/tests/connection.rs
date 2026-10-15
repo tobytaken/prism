@@ -228,7 +228,7 @@ fn an_incompatible_prismd_counts_as_no_connection() {
         },
     )));
 
-    assert_eq!(effects, [Effect::StartSampler]);
+    assert_eq!(effects, [Effect::StartSampler, Effect::CheckPrismdHost]);
     assert_eq!(core.status_bar().connection, "PRISMD · INCOMPATIBLE");
 }
 

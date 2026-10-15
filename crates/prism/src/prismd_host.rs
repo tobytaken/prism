@@ -1,6 +1,7 @@
 //! What the host says about prismd and what systemd does with it: `systemctl show` natively,
 //! whether `/run/prism` is visible in Flatpak, the loaded NVIDIA driver's version, and
-//! `systemctl enable --now` or `restart` under polkit. Each runs on a thread of its own, since systemctl waits for polkit's prompt.
+//! `systemctl enable --now` or `restart` under polkit. Each runs on a thread of its own, since
+//! systemctl waits for polkit's prompt.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,8 @@ use prism_ui::{
 
 /// Asks the host about prismd, and has systemd enable or restart it.
 pub trait PrismdService {
-    /// Asks the host about prismd, calling `checked` with the answer from any thread.
+    /// Asks the host about prismd and the loaded NVIDIA driver, calling `checked` with the answer
+    /// from any thread.
     fn check(&self, checked: Box<dyn FnOnce(PrismdHost) + Send>);
 
     /// Has systemd run `action` on prismd.service under polkit, calling `done` with how it ended

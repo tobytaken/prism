@@ -7,7 +7,7 @@ use prism_protocol::{
 };
 use prism_ui::{
     Content, Core, Distro, Effect, ExplainedState, GuiSettings, Input, Intent, PrismdHost,
-    PrismdInstall, Section, SessionFailure, TelemetrySource, Track, TrackKind,
+    PrismdInstall, Section, SessionFailure, TelemetrySource, Track, TrackKind, UnitState,
 };
 
 fn snapshot() -> DaemonSnapshot {
@@ -274,21 +274,43 @@ fn a_host_without_the_driver_loaded_opens_into_drivers_and_says_so() {
     );
 }
 
-/// A core in a Flatpak without prismd, whose NVML can't be loaded, on a host whose NVIDIA driver
-/// Prism reads as `nvidia_driver`.
-fn flatpak_without_nvml(nvidia_driver: Option<&str>) -> Core {
+/// A core without prismd, whose NVML can't be loaded, on a host installed as `install` whose
+/// NVIDIA driver Prism reads as `nvidia_driver`.
+fn without_nvml(install: PrismdInstall, nvidia_driver: Option<&str>) -> Core {
     let mut core = launched(SimulatedFixture::NvmlMissing);
     core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
         message: "No such file or directory (os error 2)".into(),
     }));
     core.handle(Input::PrismdHostChecked(PrismdHost {
-        install: PrismdInstall::Flatpak {
-            run_dir_visible: false,
-        },
+        install,
         distro: Distro::default(),
         nvidia_driver: nvidia_driver.map(str::to_owned),
     }));
     core
+}
+
+fn flatpak_without_nvml(nvidia_driver: Option<&str>) -> Core {
+    without_nvml(
+        PrismdInstall::Flatpak {
+            run_dir_visible: false,
+        },
+        nvidia_driver,
+    )
+}
+
+#[test]
+fn a_native_host_without_nvml_says_to_check_the_driver() {
+    let core = without_nvml(
+        PrismdInstall::Native(UnitState::NotFound),
+        Some("615.78.08"),
+    );
+
+    let state = core.sidebar().no_gpus.expect("an explained empty state");
+    assert_eq!(
+        state.hint,
+        "Prism reads NVIDIA GPUs through NVML, which comes with the NVIDIA driver. Check that the \
+         driver is installed and loaded, then restart Prism."
+    );
 }
 
 #[test]
