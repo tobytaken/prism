@@ -51,7 +51,11 @@ fn unavailable(install: PrismdInstall, distro: Distro) -> Core {
     core.handle(Input::PrismdNotConnected(SessionFailure::Unavailable {
         message: "No such file or directory (os error 2)".into(),
     }));
-    core.handle(Input::PrismdHostChecked(PrismdHost { install, distro }));
+    core.handle(Input::PrismdHostChecked(PrismdHost {
+        install,
+        distro,
+        nvidia_driver: None,
+    }));
     core
 }
 

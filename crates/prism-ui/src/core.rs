@@ -266,7 +266,8 @@ pub enum Input {
     },
     /// There is no session with prismd: an attempt failed, or the session ended.
     PrismdNotConnected(SessionFailure),
-    /// The host said this about prismd, when asked with [`Effect::CheckPrismdHost`].
+    /// The host said this apart from prismd's socket, when asked with
+    /// [`Effect::CheckPrismdHost`].
     PrismdHostChecked(PrismdHost),
     /// A service action asked for with [`Effect::RunService`] ended.
     PrismdServiceDone {
@@ -474,7 +475,7 @@ pub enum Effect {
     /// Start connecting to prismd, and keep reconnecting whenever there is no session.
     ConnectPrismd,
     /// Ask the host about prismd, for [`Input::PrismdHostChecked`]: systemd natively, or whether
-    /// `/run/prism` is visible in Flatpak, and the distribution.
+    /// `/run/prism` is visible in Flatpak, the distribution, and the loaded NVIDIA driver.
     CheckPrismdHost,
     /// Ask systemd to do this with prismd.service, under polkit, for
     /// [`Input::PrismdServiceDone`].
@@ -548,7 +549,7 @@ pub struct Core {
     /// Commands run lately, the latest first.
     pub(crate) recent: Vec<Command>,
     pub(crate) session: Session,
-    /// What the host last said about prismd, since the last session.
+    /// What the host last said apart from prismd's socket, since the last session.
     pub(crate) host: Option<PrismdHost>,
     /// The service action running, while one is.
     pub(crate) service: Option<ServiceAction>,
@@ -780,10 +781,13 @@ impl Core {
                 effects
             }
             Input::PrismdNotConnected(failure) => {
-                let unavailable = matches!(failure, SessionFailure::Unavailable { .. });
-                let was_unavailable = matches!(
-                    self.session,
-                    Session::Failed(SessionFailure::Unavailable { .. })
+                // The host tells an unavailable prismd's reasons apart, and says which NVIDIA
+                // driver Prism reads the GPUs through without a session, so it's asked again
+                // whenever why there's no session changes.
+                let check_host = !matches!(
+                    &self.session,
+                    Session::Failed(previous)
+                        if std::mem::discriminant(previous) == std::mem::discriminant(&failure)
                 );
                 let lost = self.connected();
                 self.session = Session::Failed(failure);
@@ -801,7 +805,7 @@ impl Core {
                 if !std::mem::replace(&mut self.sampling, true) {
                     effects.push(Effect::StartSampler);
                 }
-                if unavailable && !was_unavailable {
+                if check_host {
                     effects.push(Effect::CheckPrismdHost);
                 }
                 if lost {

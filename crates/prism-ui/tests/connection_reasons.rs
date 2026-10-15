@@ -51,6 +51,7 @@ fn native(unit: UnitState) -> PrismdHost {
     PrismdHost {
         install: PrismdInstall::Native(unit),
         distro: ubuntu(),
+        nvidia_driver: None,
     }
 }
 
@@ -58,6 +59,7 @@ fn flatpak(run_dir_visible: bool) -> PrismdHost {
     PrismdHost {
         install: PrismdInstall::Flatpak { run_dir_visible },
         distro: ubuntu(),
+        nvidia_driver: None,
     }
 }
 
@@ -190,12 +192,13 @@ fn losing_the_session_checks_the_host_but_failed_reconnects_dont() {
 }
 
 #[test]
-fn an_incompatible_prismd_needs_no_host_check() {
+fn an_incompatible_prismd_checks_the_host_once_for_the_gpus_prism_reads_itself() {
     let mut core = launched();
 
     let effects = core.handle(input(Handshake::Incompatible));
+    assert_eq!(effects, [Effect::StartSampler, Effect::CheckPrismdHost]);
 
-    assert_eq!(effects, [Effect::StartSampler]);
+    assert_eq!(core.handle(input(Handshake::Incompatible)), []);
 }
 
 #[test]

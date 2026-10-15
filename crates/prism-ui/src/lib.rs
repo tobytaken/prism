@@ -35,7 +35,7 @@ pub use crate::core::{
 pub use crate::daemon::{DaemonAction, DaemonSettings, Fact, ServiceAction, ServiceOutcome};
 pub use crate::drafts::ReviewChange;
 pub use crate::games::ProgramFile;
-pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState};
+pub use crate::host::{Distro, PrismdHost, PrismdInstall, UnitState, nvidia_driver_version};
 pub use crate::notifications::{Notification, NotificationId};
 pub use crate::palette::{Key, Palette, PaletteEntry, Shortcut};
 pub use crate::settings::{About, GuiSettings, Link, SLINT_WEBSITE};

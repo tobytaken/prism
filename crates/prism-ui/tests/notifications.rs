@@ -69,6 +69,7 @@ fn failed(core: &mut Core) {
             result: "exit-code".into(),
         }),
         distro: Distro::default(),
+        nvidia_driver: None,
     }));
 }
 
