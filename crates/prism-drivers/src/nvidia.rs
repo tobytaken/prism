@@ -305,12 +305,13 @@ fn detect_rpm_fusion_packages() -> bool {
         .ok()
         .filter(|output| output.status.success())
         .and_then(|output| String::from_utf8(output.stdout).ok())
-        .is_some_and(|packages| lists_rpm_fusion_nvidia_packages(&packages))
+        .is_some_and(|packages| includes_rpm_fusion_nvidia_packages(&packages))
 }
 
-/// Reads `rpm -qa --qf '%{NAME}\t%{VENDOR}\n'` output. NVIDIA's own module packages, such as
-/// `kmod-nvidia-open-dkms`, share names with RPM Fusion's, so only the vendor tells them apart.
-fn lists_rpm_fusion_nvidia_packages(packages: &str) -> bool {
+/// Whether any NVIDIA driver package RPM Fusion built appears in `rpm`'s name and vendor
+/// listing. NVIDIA's own module packages, such as `kmod-nvidia-open-dkms`, share names with RPM
+/// Fusion's, so only the vendor tells them apart.
+fn includes_rpm_fusion_nvidia_packages(packages: &str) -> bool {
     packages.lines().any(|line| {
         line.split_once('\t').is_some_and(|(name, vendor)| {
             vendor.starts_with("RPM Fusion")
@@ -331,8 +332,9 @@ fn read_trimmed(path: impl AsRef<Path>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KernelModule, NvidiaGpuInfo, PciAddress, collect_sysfs_gpus, kernel_module_for,
-        lists_rpm_fusion_nvidia_packages, merge_nvml_gpu, read_driver_version,
+        KernelModule, NvidiaGpuInfo, PciAddress, collect_sysfs_gpus,
+        includes_rpm_fusion_nvidia_packages, kernel_module_for, merge_nvml_gpu,
+        read_driver_version,
     };
     use std::collections::BTreeSet;
     use std::fs;
@@ -568,7 +570,7 @@ mod tests {
             let packages =
                 format!("{module}\tNVIDIA\nnvidia-driver\tNVIDIA\nbash\tFedora Project\n");
 
-            assert!(!lists_rpm_fusion_nvidia_packages(&packages), "{module}");
+            assert!(!includes_rpm_fusion_nvidia_packages(&packages), "{module}");
         }
     }
 
@@ -578,9 +580,13 @@ mod tests {
                         kmod-nvidia-6.11.4-301.fc43.x86_64\tRPM Fusion\n\
                         xorg-x11-drv-nvidia\tRPM Fusion\n";
 
-        assert!(lists_rpm_fusion_nvidia_packages(packages));
+        assert!(includes_rpm_fusion_nvidia_packages(packages));
         for package in packages.lines() {
-            assert!(lists_rpm_fusion_nvidia_packages(package), "{package}");
+            let beside_others = format!("ffmpeg\tRPM Fusion\n{package}\nbash\tFedora Project\n");
+            assert!(
+                includes_rpm_fusion_nvidia_packages(&beside_others),
+                "{package}"
+            );
         }
     }
 
@@ -590,15 +596,15 @@ mod tests {
                         nvidia-driver\tNVIDIA\n\
                         xorg-x11-drv-nvidia-470xx\tRPM Fusion\n";
 
-        assert!(lists_rpm_fusion_nvidia_packages(packages));
+        assert!(includes_rpm_fusion_nvidia_packages(packages));
     }
 
     #[test]
-    fn rpm_fusion_packages_that_arent_nvidias_driver_are_not_rpm_fusion_nvidia() {
+    fn rpm_fusions_other_packages_dont_count() {
         let packages = "ffmpeg\tRPM Fusion\nrpmfusion-free-release\tRPM Fusion\n\
                         nvidia-gpu-firmware\tFedora Project\n";
 
-        assert!(!lists_rpm_fusion_nvidia_packages(packages));
+        assert!(!includes_rpm_fusion_nvidia_packages(packages));
     }
 
     #[test]
@@ -609,7 +615,10 @@ mod tests {
             "akmod-nvidia-580.65.06-1.fc43.x86_64\n",
             "garbage",
         ] {
-            assert!(!lists_rpm_fusion_nvidia_packages(packages), "{packages:?}");
+            assert!(
+                !includes_rpm_fusion_nvidia_packages(packages),
+                "{packages:?}"
+            );
         }
     }
 }
