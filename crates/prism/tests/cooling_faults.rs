@@ -136,7 +136,7 @@ fn a_cooling_fault_shows_across_the_fans_track_in_the_sidebar_and_in_activity() 
 }
 
 #[test]
-fn retry_sends_the_apply_and_the_fault_clears_only_with_the_next_event() {
+fn retry_sends_the_retry_and_the_fault_clears_only_with_the_next_event() {
     let harness = connected();
     push(&harness, suspended(SuspensionKind::Fault));
 

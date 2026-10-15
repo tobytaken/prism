@@ -569,7 +569,7 @@ impl Switching {
     /// Whether automation applied `cooling` to the GPU for the game that still drives it: no
     /// manual override replaced the game's settings, and the game still wins the GPU. Retrying
     /// such a curve brings it back as the game's, not as anyone's manual choice.
-    pub fn drives_cooling(&self, gpu_id: &str, cooling: &CoolingConfiguration) -> bool {
+    pub fn applied_for_driving_game(&self, gpu_id: &str, cooling: &CoolingConfiguration) -> bool {
         let Ok(activations) = self.state.activations() else {
             return false;
         };

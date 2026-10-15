@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,7 +20,8 @@ use prism_protocol::{
 use super::activity::{Activity, ActivityUser, attempted};
 use super::backend::DaemonBackend;
 use super::cooling::{
-    CoolingApplicationSource, CoolingController, EVALUATION_INTERVAL_MS, recover_abandoned_curves,
+    CoolingApplicationSource, CoolingController, EVALUATION_INTERVAL_MS, fans_changed,
+    recover_abandoned_curves,
 };
 use super::host::{Clock, HostShutdownSignal, UserDirectory};
 use super::possibly_stale::{POSSIBLY_STALE_FILE_NAME, PossiblyStale};
@@ -306,6 +306,8 @@ impl DaemonCore {
                 | DaemonRequest::SetGpuSwitchingPaused(_)
                 | DaemonRequest::DeleteProfile(_)
                 | DaemonRequest::RenameProfile(_)
+                // Its precedence over automation may have held back a game's reconciliation.
+                | DaemonRequest::RetryCooling(_)
         );
         // These can change the caller's startup state, or the startup profiles' names.
         let changes_startup = matches!(
@@ -704,12 +706,12 @@ impl DaemonCore {
         let peer = peer.clone();
         // Whether it's manual is known only on the queue, so precedence is reserved either way.
         let pending = self.switching.manual_requested(&request.gpu_id);
-        let result = self.tracked_write(&request.gpu_id.clone(), move |backend| {
+        self.tracked_write(&request.gpu_id.clone(), move |backend| {
             let gpu_id = request.gpu_id;
             let performance = backend.performance();
             let gpu = verified_gpu(&performance, &gpu_id)?;
-            if tuning_state(backend, &store, &cooling, &gpu_id)
-                .is_none_or(|state| state.revision != request.expected_revision)
+            if let Some(state) = tuning_state(backend, &store, &cooling, &gpu_id)
+                && state.revision != request.expected_revision
             {
                 return Err(GpuCommandError::new(
                     GpuCommandErrorCode::StaleRevision,
@@ -723,15 +725,13 @@ impl DaemonCore {
                     "Prism isn't holding back a fan curve on this GPU, so there's nothing to retry. No GPU settings were changed.",
                 ));
             };
-            let reported: BTreeSet<u32> = gpu.cooling.fans.iter().map(|fan| fan.index).collect();
-            let reviewed: BTreeSet<u32> = request.fan_indexes.iter().copied().collect();
-            if reported != reviewed || reviewed.len() != request.fan_indexes.len() {
+            if fans_changed(gpu, &request.fan_indexes) {
                 return Err(GpuCommandError::new(
                     GpuCommandErrorCode::InvalidArgument,
                     "The GPU's fans changed. Review the current fans, then retry. No GPU settings were changed.",
                 ));
             }
-            let game = switching.drives_cooling(&gpu_id, &applied);
+            let games_curve = switching.applied_for_driving_game(&gpu_id, &applied);
             let tuning = TuningRequest {
                 gpu_id: gpu_id.clone(),
                 settings: ProfileSettings {
@@ -741,7 +741,7 @@ impl DaemonCore {
                 fan_indexes: Some(request.fan_indexes),
             };
             let user = ActivityUser::of(&peer);
-            let application = if game {
+            let application = if games_curve {
                 apply_profile(
                     backend,
                     &cooling,
@@ -764,10 +764,7 @@ impl DaemonCore {
             };
             record_application(&activity, Some(user), &gpu_id, None, &application);
             Ok(application)
-        });
-        // The reservation may have held back automation queued meanwhile.
-        self.evaluate_switching();
-        result
+        })
     }
 
     fn manual_write<T: Send + 'static>(
