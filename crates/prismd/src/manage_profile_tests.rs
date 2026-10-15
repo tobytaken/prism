@@ -140,6 +140,29 @@ fn only_the_profiles_owner_can_rename_or_delete_it_and_empty_names_are_rejected(
 }
 
 #[test]
+fn renaming_takes_names_of_at_most_64_characters_not_counting_surrounding_whitespace() {
+    let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));
+    let alice = daemon.user(1000, "alice");
+    alice.seed_profiles(json!([profile("quiet", "Quiet", "GPU-123")]));
+    let before = profiles(&alice);
+
+    let too_long = rename(&alice, "quiet", &"x".repeat(65));
+    assert_eq!(
+        too_long["payload"]["code"], "invalid_argument",
+        "{too_long}"
+    );
+    assert_eq!(
+        too_long["payload"]["message"],
+        "Profile names can be at most 64 characters."
+    );
+    assert_eq!(profiles(&alice), before);
+
+    let longest = rename(&alice, "quiet", &format!(" {} ", "x".repeat(64)));
+    assert_eq!(longest["type"], "profile", "{longest}");
+    assert_eq!(profiles(&alice)[0]["name"], "x".repeat(64));
+}
+
+#[test]
 fn deleting_a_non_current_profile_keeps_the_current_profile_and_absent_gpus_profiles_can_be_managed()
  {
     let daemon = Harness::start(FakeGpuBackend::with_gpus(vec![tunable_gpu()]));

@@ -132,12 +132,17 @@ impl Drop for Session {
 }
 
 impl SessionSender {
-    /// Sends `request` and returns the id its response will carry.
+    /// Sends `request` and returns the id its response will carry. A send that fails ends the
+    /// session, so the reader sees it end and nothing waits on an answer that can't come; a
+    /// partly written frame would also leave the framing unusable.
     pub fn send(&self, request: DaemonRequest) -> io::Result<u64> {
         let mut writer = self.writer.lock().unwrap();
         writer.last_id += 1;
         let id = writer.last_id;
-        write_frame(&mut writer.stream, &SessionRequest { id, request })?;
+        if let Err(error) = write_frame(&mut writer.stream, &SessionRequest { id, request }) {
+            let _ = writer.stream.shutdown(Shutdown::Both);
+            return Err(error);
+        }
         Ok(id)
     }
 }
@@ -242,6 +247,66 @@ mod tests {
             Err(ConnectError::Incompatible(Incompatible { protocol, .. }))
                 if protocol == ProtocolVersion::CURRENT
         ));
+    }
+
+    /// A session on one end of a socket pair, and a sender for it. Reads are bounded, so a
+    /// session left open fails the test instead of hanging it.
+    fn session_pair() -> (Session, SessionSender, UnixStream) {
+        let (stream, prismd) = UnixStream::pair().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let sender = SessionSender {
+            writer: Arc::new(Mutex::new(Writer {
+                stream: stream.try_clone().unwrap(),
+                last_id: 0,
+            })),
+        };
+        let session = Session {
+            reader: stream,
+            sender: sender.clone(),
+        };
+        (session, sender, prismd)
+    }
+
+    fn rename_to(name: String) -> DaemonRequest {
+        DaemonRequest::RenameProfile(crate::RenameProfileRequest {
+            profile_id: "profile-1".into(),
+            name,
+        })
+    }
+
+    #[test]
+    fn a_send_too_large_for_a_frame_ends_the_session() {
+        let (mut session, sender, _prismd) = session_pair();
+
+        let sent = sender.send(rename_to("x".repeat(crate::framing::MAX_FRAME_BYTES)));
+
+        assert!(sent.is_err());
+        let received = session.next_message();
+        assert!(
+            matches!(received, Ok(None)),
+            "the session is still open: {received:?}"
+        );
+    }
+
+    #[test]
+    fn a_partly_written_frame_ends_the_session() {
+        let (mut session, sender, _prismd) = session_pair();
+        // prismd reads nothing, so a frame larger than the socket's buffer times out partway.
+        session
+            .reader
+            .set_write_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+
+        let sent = sender.send(rename_to("x".repeat(crate::framing::MAX_FRAME_BYTES / 2)));
+
+        assert!(sent.is_err());
+        let received = session.next_message();
+        assert!(
+            matches!(received, Ok(None)),
+            "the session is still open: {received:?}"
+        );
     }
 
     #[test]

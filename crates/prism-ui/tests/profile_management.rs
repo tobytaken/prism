@@ -464,6 +464,42 @@ fn names_are_unique_per_gpu_regardless_of_letter_case() {
 }
 
 #[test]
+fn names_longer_than_64_characters_are_refused_before_sending() {
+    let too_long = "Profile names can be at most 64 characters.";
+    let mut core = connected();
+    run_menu(&mut core, SAVE_AS);
+
+    intent(&mut core, Intent::EditProfileName("x".repeat(65)));
+    let dialog = name_dialog(&core);
+    assert_eq!(dialog.error.as_deref(), Some(too_long));
+    assert_eq!(dialog.confirm_unavailable.as_deref(), Some(too_long));
+    assert_eq!(requests(&intent(&mut core, Intent::ConfirmProfile)), []);
+
+    // Surrounding whitespace doesn't count, and characters aren't bytes.
+    intent(
+        &mut core,
+        Intent::EditProfileName(format!(" {} ", "é".repeat(64))),
+    );
+    let dialog = name_dialog(&core);
+    assert_eq!(dialog.error, None);
+    assert_eq!(dialog.confirm_unavailable, None);
+    intent(&mut core, Intent::Dismiss);
+
+    run_menu(&mut core, RENAME);
+    intent(&mut core, Intent::EditProfileName("x".repeat(65)));
+    assert_eq!(name_dialog(&core).error.as_deref(), Some(too_long));
+    assert_eq!(requests(&intent(&mut core, Intent::ConfirmProfile)), []);
+    intent(&mut core, Intent::EditProfileName("x".repeat(64)));
+    assert_eq!(
+        requests(&intent(&mut core, Intent::ConfirmProfile)),
+        [DaemonRequest::RenameProfile(RenameProfileRequest {
+            profile_id: "boost".into(),
+            name: "x".repeat(64),
+        })]
+    );
+}
+
+#[test]
 fn renaming_starts_from_the_profiles_name_and_closes_once_prismd_agrees() {
     let mut core = connected();
 

@@ -693,6 +693,16 @@ pub enum ActivityEvent {
     StartupRan { outcome: StartupOutcome },
 }
 
+/// The most characters a profile name can have, not counting surrounding whitespace.
+pub const PROFILE_NAME_LIMIT: usize = 64;
+
+/// Why `name` can't be a profile name, if it's longer than [`PROFILE_NAME_LIMIT`] once
+/// surrounding whitespace is removed.
+pub fn profile_name_too_long(name: &str) -> Option<String> {
+    (name.trim().chars().count() > PROFILE_NAME_LIMIT)
+        .then(|| format!("Profile names can be at most {PROFILE_NAME_LIMIT} characters."))
+}
+
 /// How many Activity entries are kept, apart from startup outcomes.
 pub const ACTIVITY_LIMIT: usize = 200;
 
