@@ -867,7 +867,7 @@ fn a_gpu_with_two_fans_shares_one_configuration_until_a_fan_gets_its_own_setting
             .iter()
             .map(|choice| (choice.text.as_str(), choice.name.as_str()))
             .collect::<Vec<_>>(),
-        [("all", "Shared"), ("0", "Fan 0"), ("1", "Fan 1")]
+        [("all", "Shared"), ("1", "Fan 1"), ("2", "Fan 2")]
     );
     assert_eq!(picked_fan(&core), None);
 
@@ -885,7 +885,7 @@ fn a_gpu_with_two_fans_shares_one_configuration_until_a_fan_gets_its_own_setting
     assert_eq!(fan_mode(&core).pending.as_deref(), Some("→ fixed"));
     assert_eq!(changes(&core), "1 unapplied change");
 
-    // Fan 0 keeps the automatic cooling they shared.
+    // Fan 1 keeps the automatic cooling they shared.
     pick(&mut core, Some(0));
     assert_eq!(picked(&core), Some(FanMode::Automatic));
     assert_eq!(fan_mode(&core).pending, None);
@@ -916,9 +916,9 @@ fn per_fan_settings_stage_each_fans_own_mode_and_apply_with_every_reviewed_fan()
     intent(&mut core, Intent::StageFanSpeed(20));
 
     assert_eq!(picked(&core), Some(FanMode::Fixed));
-    let stepper = fixed_speed(&core).expect("fan 1 has a fixed speed");
-    assert_eq!(stepper.name, "Fan 1 fixed speed");
-    // Fan 1's own range, not the one both fans share.
+    let stepper = fixed_speed(&core).expect("fan 2 has a fixed speed");
+    assert_eq!(stepper.name, "Fan 2 fixed speed");
+    // Fan 2's own range, not the one both fans share.
     assert_eq!((stepper.min, stepper.max), (40, 100));
     assert_eq!(stepper.value, 40);
 
@@ -952,20 +952,44 @@ fn a_fans_own_curve_is_edited_and_checked_against_that_fan_alone() {
 
     intent(&mut core, Intent::StageFanMode(FanMode::Curve));
 
-    // Fan 1's starter curve starts at its own lowest speed.
+    // Fan 2's starter curve starts at its own lowest speed.
     assert_eq!(curve_points(&core)[0], (45, 45));
     move_point(&mut core, 1, 0, 5);
-    let fan_1 = curve_points(&core);
+    let fan_2 = curve_points(&core);
 
     pick(&mut core, Some(0));
-    assert_eq!(fan_curve(&core), None, "fan 0 follows automatic cooling");
+    assert_eq!(fan_curve(&core), None, "fan 1 follows automatic cooling");
     pick(&mut core, Some(1));
-    assert_eq!(curve_points(&core), fan_1);
+    assert_eq!(curve_points(&core), fan_2);
 
-    // A point below fan 1's lowest speed can't be dragged there.
+    // A point below fan 2's lowest speed can't be dragged there.
     move_point(&mut core, 0, 0, -20);
     assert_eq!(curve_points(&core)[0], (45, 45));
     assert_eq!(workspace(&core).changes.apply_unavailable, None);
+}
+
+#[test]
+fn a_fans_own_curve_names_the_fan_counting_from_1() {
+    let mut core = connected();
+    pick(&mut core, Some(1));
+    intent(&mut core, Intent::StageFanMode(FanMode::Curve));
+
+    let mut sample = reading(SimulatedFixture::TunableGpu);
+    sample.gpus[0].telemetry.temperature_c = Some(60);
+    sample.gpus[0].cooling.fans[1].current_speed_percent = Some(46);
+    sample.gpus[0].cooling.fans[1].max_speed_percent = None;
+    core.handle(Input::PrismdEvent {
+        event: DaemonEvent::TelemetrySampled(sample),
+        received_at: Duration::from_secs(2),
+    });
+
+    let marker = fan_curve(&core).unwrap().marker.expect("a live marker");
+    assert_eq!(marker.text, "Now 60 °C, fan 2 at 46%");
+    // The fan's problem names it the same way its prefix does.
+    assert_eq!(
+        workspace(&core).changes.apply_unavailable.as_deref(),
+        Some("Fix the fan curve · Fan 2: Fan 2 doesn't report its supported speed range.")
+    );
 }
 
 #[test]
@@ -987,7 +1011,7 @@ fn a_per_fan_configuration_in_effect_shows_each_fans_setting() {
     pick(&mut core, Some(1));
     assert_eq!(picked(&core), Some(FanMode::Automatic));
 
-    // Every fan shares fan 1's setting.
+    // Every fan shares fan 2's setting.
     pick(&mut core, None);
     assert_eq!(arrangement(&core).pending.as_deref(), Some("→ shared"));
     assert_eq!(
@@ -1204,6 +1228,35 @@ fn a_cooling_change_elsewhere_keeps_the_draft_but_apply_reviews_it_first() {
     assert_eq!(sent[0].1.expected_revision, "elsewhere");
     assert_eq!(sent[0].1.settings.cooling, Some(fixed(55)));
     assert_eq!(review(&core), None);
+}
+
+#[test]
+fn a_review_names_each_fan_counting_from_1() {
+    let mut snapshot = snapshot();
+    snapshot.tuning_states[0].reported.cooling = Some(shared(FanSetting::Automatic {}));
+    let mut core = connected_with(snapshot, reading(SimulatedFixture::TunableGpu), true);
+    pick(&mut core, Some(1));
+    intent(&mut core, Intent::StageFanMode(FanMode::Fixed));
+    intent(&mut core, Intent::StageFanSpeed(55));
+
+    cooling_changed(
+        &mut core,
+        "elsewhere",
+        Some(per_fan(&[
+            (0, FanSetting::Fixed { speed_percent: 70 }),
+            (1, FanSetting::Automatic {}),
+        ])),
+    );
+    intent(&mut core, Intent::ApplyChanges);
+
+    assert_eq!(
+        review(&core).expect("the review opens").changes,
+        [ReviewChange {
+            name: "Cooling".into(),
+            change: "automatic → fan 1 fixed 70% · fan 2 automatic".into(),
+            yours: Some("fan 1 automatic · fan 2 fixed 55%".into()),
+        }]
+    );
 }
 
 #[test]

@@ -13,6 +13,8 @@ use nvml_wrapper::{Device, Nvml, cuda_driver_version_major, cuda_driver_version_
 use once_cell::sync::OnceCell;
 use thiserror::Error;
 
+use super::cooling::FanNumber;
+
 use super::{
     ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo, ComputeApi, ComputeInfo,
     ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuControlInfo, GpuDevice,
@@ -566,7 +568,8 @@ fn query_fan_control(
         Err(NvmlError::NotSupported) => None,
         Err(error) => {
             warnings.push(format!(
-                "{device_name}: unable to query fan {fan_index} speed: {error}"
+                "{device_name}: unable to query fan {} speed: {error}",
+                FanNumber(fan_index)
             ));
             None
         }
@@ -578,7 +581,8 @@ fn query_fan_control(
         Err(NvmlError::NotSupported) => None,
         Err(error) => {
             warnings.push(format!(
-                "{device_name}: unable to query fan {fan_index} control mode: {error}"
+                "{device_name}: unable to query fan {} control mode: {error}",
+                FanNumber(fan_index)
             ));
             None
         }

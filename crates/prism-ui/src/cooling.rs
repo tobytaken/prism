@@ -2,7 +2,7 @@
 //! by all its fans or set for each fan, the remembered fan curve it recalls, and the cooling
 //! configuration in effect they're staged against.
 
-use prism_gpu::cooling::{CoolingConfiguration, FanConfiguration, FanSetting};
+use prism_gpu::cooling::{CoolingConfiguration, FanConfiguration, FanNumber, FanSetting};
 use prism_gpu::fan_curve::{self, FanCurveSupport};
 use prism_gpu::{CoolingInfo, FanControlInfo, FanControlMode};
 
@@ -189,8 +189,8 @@ fn same_for_each_fan(
     each(a) == each(b)
 }
 
-/// A cooling configuration as a review says it, such as "fixed 55%" or "fan 0 automatic · fan 1
-/// curve".
+/// A cooling configuration as a review says it, such as "fixed 55%" or "fan 1 automatic · fan 2
+/// fan curve".
 pub(crate) fn cooling_text(configuration: &CoolingConfiguration) -> String {
     let setting_text = |setting: &FanSetting| match setting {
         FanSetting::Automatic {} => "automatic".to_owned(),
@@ -201,7 +201,13 @@ pub(crate) fn cooling_text(configuration: &CoolingConfiguration) -> String {
         CoolingConfiguration::Shared { setting } => setting_text(setting),
         CoolingConfiguration::PerFan { fans } => fans
             .iter()
-            .map(|fan| format!("fan {} {}", fan.fan_index, setting_text(&fan.setting)))
+            .map(|fan| {
+                format!(
+                    "fan {} {}",
+                    FanNumber(fan.fan_index),
+                    setting_text(&fan.setting)
+                )
+            })
             .collect::<Vec<_>>()
             .join(" · "),
     }

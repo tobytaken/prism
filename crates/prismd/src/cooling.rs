@@ -17,8 +17,8 @@ use super::profiles::verified_gpu;
 use super::tuning_store::{TuningStore, write_atomically};
 use prism_gpu::cooling::{
     ApplyCoolingRequest, CoolingApplication, CoolingConfiguration, CoolingControl, CoolingRecovery,
-    CurveSuspension, FanConfiguration, FanOutcome, FanRequest, FanRestoration, FanSetting,
-    RecoveryStatus, RestorationStatus, SuspensionKind,
+    CurveSuspension, FanConfiguration, FanNumber, FanOutcome, FanRequest, FanRestoration,
+    FanSetting, RecoveryStatus, RestorationStatus, SuspensionKind,
 };
 use prism_gpu::fan_curve::{self, FanCurvePoint};
 use prism_gpu::{
@@ -471,7 +471,7 @@ impl CoolingController {
                     if matches!(state, FanState::Curve { .. }) {
                         states.push((fan_index, state));
                     }
-                    failure = Some(format!("Fan {}: {error}", fan_index + 1));
+                    failure = Some(format!("Fan {}: {error}", FanNumber(fan_index)));
                     fans.push(fan_outcome(
                         fan_index,
                         TuningOutcomeStatus::Failed,
@@ -579,7 +579,7 @@ impl CoolingController {
             if let Err(error) = set_speed(backend, gpu, fan_index, speed) {
                 failure = Some(format!(
                     "Fan {} couldn't be set to {speed}%: {error}",
-                    fan_index + 1
+                    FanNumber(fan_index)
                 ));
                 break;
             }
@@ -826,7 +826,7 @@ impl CoolingController {
                     outcomes.push(fan_outcome(fan_index, TuningOutcomeStatus::Succeeded, None))
                 }
                 Err(error) => {
-                    failure = Some(format!("Fan {}: {error}", fan_index + 1));
+                    failure = Some(format!("Fan {}: {error}", FanNumber(fan_index)));
                     outcomes.push(fan_outcome(
                         fan_index,
                         TuningOutcomeStatus::Failed,
@@ -1088,7 +1088,7 @@ fn resumption(
         let Some(FanState::Curve { points, .. }) = cooling.fans.get(&fan_index) else {
             return Err(NotResumable::Problems(vec![format!(
                 "Prism's record of fan {} has no curve to resume.",
-                fan_index + 1
+                FanNumber(fan_index)
             )]));
         };
         targets.push((fan_index, points.clone()));
@@ -1104,7 +1104,7 @@ fn resumption(
         {
             return Err(NotResumable::ExternalControl(format!(
                 "While the Prism daemon was stopped, fan {} came under manual control from elsewhere. Prism left those controls alone.",
-                restoration.fan_index + 1
+                FanNumber(restoration.fan_index)
             )));
         }
     }
@@ -1151,10 +1151,13 @@ pub(super) fn application_problems(
         if seen.contains(fan_index) {
             problems.push(format!(
                 "Fan {} is configured more than once.",
-                fan_index + 1
+                FanNumber(*fan_index)
             ));
         } else if !cooling.fans.iter().any(|fan| fan.index == *fan_index) {
-            problems.push(format!("Fan {} isn't reported by this GPU.", fan_index + 1));
+            problems.push(format!(
+                "Fan {} isn't reported by this GPU.",
+                FanNumber(*fan_index)
+            ));
         }
         seen.push(*fan_index);
     }
@@ -1183,14 +1186,14 @@ pub(super) fn application_problems(
                 if !(min..=max).contains(speed_percent) {
                     problems.push(format!(
                         "Fan {}: speed must be between {min}% and {max}%.",
-                        fan_index + 1
+                        FanNumber(*fan_index)
                     ));
                 }
             }
             FanSetting::Curve { .. } if shared => {}
             FanSetting::Curve { points } => problems.extend(
                 curve_problems(&[*fan_index], points)
-                    .map(|message| format!("Fan {}: {message}", fan_index + 1)),
+                    .map(|message| format!("Fan {}: {message}", FanNumber(*fan_index))),
             ),
         }
     }

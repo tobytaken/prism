@@ -283,7 +283,7 @@ mod screenshot {
         switching_failure(AppearanceMode::Dark, "workspace-switching-failure-dark");
     }
 
-    /// The workspace with fan 1's own fixed speed pending, after another session changed the
+    /// The workspace with fan 2's own fixed speed pending, after another session changed the
     /// GPU's cooling: the fan picker with per-fan settings pending, and the change strip asking
     /// for a review before Apply.
     fn per_fan_review(appearance: AppearanceMode, name: &str) {
@@ -300,13 +300,13 @@ mod screenshot {
             ));
         harness.app.receive_posted();
         harness
-            .find(AccessibleRole::Button, "Fan 1")
+            .find(AccessibleRole::Button, "Fan 2")
             .invoke_accessible_default_action();
         harness
             .find(AccessibleRole::Button, "Fixed speed")
             .invoke_accessible_default_action();
         harness
-            .find(AccessibleRole::Spinbox, "Fan 1 fixed speed")
+            .find(AccessibleRole::Spinbox, "Fan 2 fixed speed")
             .set_accessible_value("55");
         state.revision = "elsewhere".into();
         state.reported.cooling = Some(prism_gpu::cooling::CoolingConfiguration::Shared {

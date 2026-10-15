@@ -23,7 +23,7 @@ use super::recognition::{GamesByUser, Recognition};
 use super::session::SessionPeer;
 use super::tuning::TuningRequest;
 use super::tuning_store::{TuningDocument, TuningStore, write_atomically};
-use prism_gpu::cooling::{CoolingConfiguration, SuspensionKind};
+use prism_gpu::cooling::{CoolingConfiguration, FanNumber, SuspensionKind};
 use prism_gpu::{GpuPerformanceDevice, TuningOutcomeStatus};
 use prism_protocol::{
     ActivityEvent, AutomaticSwitchingStatus, CurrentProfile, DaemonEvent, GameId,
@@ -1200,7 +1200,7 @@ fn failure_message(outcomes: &ProfileApplicationResponse) -> String {
                 fan.outcome
                     .error
                     .as_ref()
-                    .map(|error| format!("Fan {}: {error}", fan.fan_index + 1))
+                    .map(|error| format!("Fan {}: {error}", FanNumber(fan.fan_index)))
             })
         }))
         .collect::<BTreeSet<_>>()

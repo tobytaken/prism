@@ -3,6 +3,7 @@
 use super::session::SessionPeer;
 use super::tuning::TuningRequest;
 use super::tuning_store::TuningDocument;
+use prism_gpu::cooling::FanNumber;
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode, TuningOutcomeStatus};
 use prism_protocol::{CurrentProfile, SetStartupProfileRequest, StartupProfile, StartupState};
 
@@ -463,7 +464,7 @@ fn apply_target(
     let fan_errors = application.cooling.iter().flat_map(|cooling| {
         cooling.fans.iter().filter_map(|fan| {
             let error = fan.outcome.error.as_ref()?;
-            Some(format!("Fan {}: {error}", fan.fan_index + 1))
+            Some(format!("Fan {}: {error}", FanNumber(fan.fan_index)))
         })
     });
     outcome.reason = (!full).then(|| {

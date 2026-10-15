@@ -235,8 +235,8 @@ fn a_cooling_fault_shows_inline_with_each_fans_fallback_and_retry() {
         problem.detail,
         [
             REASON,
-            "Fan 0: automatic cooling restored.",
-            "Fan 1: automatic cooling not restored: NVML: Not Supported.",
+            "Fan 1: automatic cooling restored.",
+            "Fan 2: automatic cooling not restored: NVML: Not Supported.",
             "Prism kept the curve, but won't follow it again until you retry.",
         ]
     );

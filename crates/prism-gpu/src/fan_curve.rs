@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::CoolingInfo;
+use crate::cooling::FanNumber;
 
 pub const MIN_POINTS: usize = 2;
 pub const MAX_POINTS: usize = 16;
@@ -188,7 +189,7 @@ fn curve_limits_for(cooling: &CoolingInfo, fan_indexes: &[u32]) -> Result<CurveL
     let mut min_speed = 0;
     let mut max_speed = None;
     for &index in fan_indexes {
-        let number = index + 1;
+        let number = FanNumber(index);
         let Some(fan) = cooling.fans.iter().find(|fan| fan.index == index) else {
             return Err(format!("Fan {number} isn't reported by this GPU."));
         };

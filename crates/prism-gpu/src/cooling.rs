@@ -25,6 +25,17 @@ pub struct FanConfiguration {
     pub setting: FanSetting,
 }
 
+/// How text shown to the user numbers the fan at an NVML fan index: counting from 1, so the fan
+/// at index 0 is "Fan 1". Fans are identified by their index everywhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FanNumber(pub u32);
+
+impl std::fmt::Display for FanNumber {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", u64::from(self.0) + 1)
+    }
+}
+
 /// A GPU's cooling configuration: one setting shared by every fan, or a setting per fan. Fans a
 /// per-fan configuration omits are left as they are.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -162,4 +173,16 @@ pub enum SuspensionKind {
     #[default]
     Fault,
     ExternalControl,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FanNumber;
+
+    #[test]
+    fn fans_are_numbered_from_1() {
+        assert_eq!(FanNumber(0).to_string(), "1");
+        assert_eq!(FanNumber(1).to_string(), "2");
+        assert_eq!(FanNumber(u32::MAX).to_string(), "4294967296");
+    }
 }

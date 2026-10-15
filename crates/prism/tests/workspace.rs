@@ -99,8 +99,8 @@ fn the_five_tracks_fill_from_in_process_telemetry() {
     assert_eq!(stepper(&harness, "Graphics clock offset"), "0 MHz");
     assert_eq!(stepper(&harness, "Memory clock offset"), "0 MHz");
     assert_eq!(value(&harness, "Fan speed reading"), "31%");
-    assert_eq!(value(&harness, "Fan 0 speed"), "31%");
     assert_eq!(value(&harness, "Fan 1 speed"), "31%");
+    assert_eq!(value(&harness, "Fan 2 speed"), "31%");
     assert_eq!(value(&harness, "Maximum power draw"), "43 W");
     assert_eq!(value(&harness, "Minimum power draw"), "38 W");
 }
@@ -224,8 +224,8 @@ fn every_track_shows_unknown_readings_as_unknown() {
     for detail in [
         "Enforced power limit",
         "Memory clock",
-        "Fan 0 speed",
         "Fan 1 speed",
+        "Fan 2 speed",
     ] {
         assert_eq!(value(&harness, detail), "unknown", "{detail}");
         assert_eq!(
@@ -260,7 +260,7 @@ fn a_narrow_window_drops_max_avg_min_and_keeps_the_fan_speed_history_without_a_c
         // The fans follow no curve, so there's none to show in the fan speed history's place.
         assert_eq!(harness.count(Groupbox, "Fan curve"), 0, "at {size:?}");
         assert_eq!(chart_parts(&harness, "Series"), 6, "at {size:?}");
-        assert_eq!(value(&harness, "Fan 0 speed"), "31%");
+        assert_eq!(value(&harness, "Fan 1 speed"), "31%");
     }
 
     harness.resize(DEFAULT_SIZE);
