@@ -17,8 +17,7 @@ use prism_gpu::fan_curve::FanCurvePoint;
 use prism_gpu::simulated::{SimulatedFixture, SimulatedGpus};
 use prism_gpu::{GpuCommandError, GpuCommandErrorCode};
 use prism_protocol::{
-    ApplyGpuProfileRequest, DaemonEvent, DaemonRequest, DaemonResponse, GpuCoolingControl,
-    ProfileSettings,
+    DaemonEvent, DaemonRequest, DaemonResponse, GpuCoolingControl, RetryCoolingRequest,
 };
 use slint::ComponentHandle;
 
@@ -78,27 +77,23 @@ fn push(harness: &Harness, control: GpuCoolingControl) {
     harness.app.receive_posted();
 }
 
-fn applies(harness: &Harness) -> Vec<ApplyGpuProfileRequest> {
+fn retries(harness: &Harness) -> Vec<RetryCoolingRequest> {
     harness
         .prismd
         .requests()
         .into_iter()
         .filter_map(|request| match request {
-            DaemonRequest::ApplyProfile(request) => Some(request),
+            DaemonRequest::RetryCooling(request) => Some(request),
             _ => None,
         })
         .collect()
 }
 
-fn retry_request() -> ApplyGpuProfileRequest {
-    ApplyGpuProfileRequest {
+fn retry_request() -> RetryCoolingRequest {
+    RetryCoolingRequest {
         gpu_id: GPU.into(),
-        settings: ProfileSettings {
-            cooling: Some(curve()),
-            ..ProfileSettings::default()
-        },
         expected_revision: REVISION.into(),
-        fan_indexes: Some(vec![0, 1]),
+        fan_indexes: vec![0, 1],
     }
 }
 
@@ -141,7 +136,7 @@ fn a_cooling_fault_shows_across_the_fans_track_in_the_sidebar_and_in_activity() 
 }
 
 #[test]
-fn retry_sends_the_apply_and_the_fault_clears_only_with_the_next_event() {
+fn retry_sends_the_retry_and_the_fault_clears_only_with_the_next_event() {
     let harness = connected();
     push(&harness, suspended(SuspensionKind::Fault));
 
@@ -149,7 +144,7 @@ fn retry_sends_the_apply_and_the_fault_clears_only_with_the_next_event() {
         .find(Button, "Retry · Fan curve paused")
         .invoke_accessible_default_action();
 
-    assert_eq!(applies(&harness), [retry_request()]);
+    assert_eq!(retries(&harness), [retry_request()]);
     let retry = harness.find(Button, "Retry · Fan curve paused");
     assert_eq!(retry.accessible_enabled(), Some(false));
     assert_eq!(retry.accessible_description().as_deref(), Some("Retrying…"));
@@ -204,7 +199,7 @@ fn an_external_control_change_shows_curve_control_suspended_with_resume() {
         .find(Button, "Resume · Fan curve suspended")
         .invoke_accessible_default_action();
 
-    assert_eq!(applies(&harness), [retry_request()]);
+    assert_eq!(retries(&harness), [retry_request()]);
 }
 
 #[test]

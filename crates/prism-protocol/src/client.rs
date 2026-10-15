@@ -10,9 +10,9 @@ use crate::{
 use crate::{
     ApplyGpuProfileRequest, CorrectAndApplyProfileRequest, CorrectedProfileApplication,
     DaemonCommandResponse, DaemonRequest, DaemonResponse, GpuTuningProfile, GpuTuningState,
-    ProfileApplicationResponse, ProfileIdRequest, RenameProfileRequest, SaveProfileAsNewRequest,
-    SaveToCurrentProfileRequest, SetStartupBehaviorRequest, SetStartupProfileRequest,
-    StartupGpuRequest, StartupState,
+    ProfileApplicationResponse, ProfileIdRequest, RenameProfileRequest, RetryCoolingRequest,
+    SaveProfileAsNewRequest, SaveToCurrentProfileRequest, SetStartupBehaviorRequest,
+    SetStartupProfileRequest, StartupGpuRequest, StartupState,
 };
 use crate::{DEFAULT_SOCKET_PATH, GpuDaemonStatus};
 use prism_drivers::{DriverJob, DriverJobRequest, DriverStatusResponse, StartDriverActionRequest};
@@ -65,6 +65,16 @@ pub fn apply_gpu_profile(
         DaemonResponse::ProfileApplication(response) => Ok(response),
         DaemonResponse::Error(error) => Err(error.into()),
         _ => Err(unexpected_response_error("profile application")),
+    }
+}
+
+pub fn retry_cooling(
+    request: RetryCoolingRequest,
+) -> Result<ProfileApplicationResponse, RequestError> {
+    match send_request(DaemonRequest::RetryCooling(request))? {
+        DaemonResponse::ProfileApplication(response) => Ok(response),
+        DaemonResponse::Error(error) => Err(error.into()),
+        _ => Err(unexpected_response_error("cooling retry")),
     }
 }
 

@@ -13,14 +13,15 @@ use prism_protocol::{
     CorrectedProfileApplication, CurrentProfile, DaemonCommandResponse, DaemonEvent, DaemonRequest,
     DaemonResponse, DaemonSnapshot, GamesState, GpuCoolingControl, GpuDaemonStatus,
     GpuTuningProfile, GpuTuningState, HelloRequest, Incompatible, ProfileApplicationResponse,
-    ProfileSetting, ProfileSettingKey, ProfileSettings, ProtocolVersion, SaveProfileAsNewRequest,
-    SaveToCurrentProfileRequest, Welcome,
+    ProfileSetting, ProfileSettingKey, ProfileSettings, ProtocolVersion, RetryCoolingRequest,
+    SaveProfileAsNewRequest, SaveToCurrentProfileRequest, Welcome,
 };
 
 use super::activity::{Activity, ActivityUser, attempted};
 use super::backend::DaemonBackend;
 use super::cooling::{
-    CoolingApplicationSource, CoolingController, EVALUATION_INTERVAL_MS, recover_abandoned_curves,
+    CoolingApplicationSource, CoolingController, EVALUATION_INTERVAL_MS, fans_changed,
+    recover_abandoned_curves,
 };
 use super::host::{Clock, HostShutdownSignal, UserDirectory};
 use super::possibly_stale::{POSSIBLY_STALE_FILE_NAME, PossiblyStale};
@@ -305,6 +306,8 @@ impl DaemonCore {
                 | DaemonRequest::SetGpuSwitchingPaused(_)
                 | DaemonRequest::DeleteProfile(_)
                 | DaemonRequest::RenameProfile(_)
+                // Its precedence over automation may have held back a game's reconciliation.
+                | DaemonRequest::RetryCooling(_)
         );
         // These can change the caller's startup state, or the startup profiles' names.
         let changes_startup = matches!(
@@ -436,6 +439,9 @@ impl DaemonCore {
                     self.switching.status_for(peer),
                 ))
             }
+            DaemonRequest::RetryCooling(request) => self
+                .retry_cooling(peer, request)
+                .map(DaemonResponse::ProfileApplication),
             DaemonRequest::GetAutomaticSwitchingStatus => Ok(
                 DaemonResponse::AutomaticSwitchingStatus(self.switching.status_for(peer)),
             ),
@@ -682,6 +688,85 @@ impl DaemonCore {
         })
     }
 
+    /// Retries, or resumes, the GPU's suspended fan curve with the cooling configuration the
+    /// controller kept, unless the GPU's tuning state or fans changed since the caller reviewed
+    /// them: then nothing is written. A curve automatic switching applied for the game still
+    /// driving the GPU comes back as the game's (ADR 0006); any other is the caller's manual
+    /// application.
+    fn retry_cooling(
+        &self,
+        peer: &SessionPeer,
+        request: RetryCoolingRequest,
+    ) -> Result<ProfileApplicationResponse, GpuCommandError> {
+        let store = Arc::clone(&self.tuning_store);
+        let stale = Arc::clone(&self.possibly_stale);
+        let cooling = Arc::clone(&self.cooling);
+        let activity = Arc::clone(&self.activity);
+        let switching = self.switching.clone();
+        let peer = peer.clone();
+        // Whether it's manual is known only on the queue, so precedence is reserved either way.
+        let pending = self.switching.manual_requested(&request.gpu_id);
+        self.tracked_write(&request.gpu_id.clone(), move |backend| {
+            let gpu_id = request.gpu_id;
+            let performance = backend.performance();
+            let gpu = verified_gpu(&performance, &gpu_id)?;
+            if let Some(state) = tuning_state(backend, &store, &cooling, &gpu_id)
+                && state.revision != request.expected_revision
+            {
+                return Err(GpuCommandError::new(
+                    GpuCommandErrorCode::StaleRevision,
+                    "The GPU's tuning values changed since you reviewed them. Review them, then retry. No GPU settings were changed.",
+                ));
+            }
+            let control = cooling.control(&gpu_id);
+            let (Some(_), Some(applied)) = (control.suspension, control.applied) else {
+                return Err(GpuCommandError::new(
+                    GpuCommandErrorCode::InvalidArgument,
+                    "Prism isn't holding back a fan curve on this GPU, so there's nothing to retry. No GPU settings were changed.",
+                ));
+            };
+            if fans_changed(gpu, &request.fan_indexes) {
+                return Err(GpuCommandError::new(
+                    GpuCommandErrorCode::InvalidArgument,
+                    "The GPU's fans changed. Review the current fans, then retry. No GPU settings were changed.",
+                ));
+            }
+            let games_curve = switching.applied_for_driving_game(&gpu_id, &applied);
+            let tuning = TuningRequest {
+                gpu_id: gpu_id.clone(),
+                settings: ProfileSettings {
+                    cooling: Some(applied),
+                    ..ProfileSettings::default()
+                },
+                fan_indexes: Some(request.fan_indexes),
+            };
+            let user = ActivityUser::of(&peer);
+            let application = if games_curve {
+                apply_profile(
+                    backend,
+                    &cooling,
+                    tuning,
+                    TuningOrigin::TemporaryAutomatic,
+                    CoolingApplicationSource::NonManual,
+                )
+            } else {
+                pending.started();
+                apply_recorded_profile(
+                    backend,
+                    &cooling,
+                    &store,
+                    &stale,
+                    tuning,
+                    None,
+                    TuningOrigin::Manual,
+                    Some(peer),
+                )
+            };
+            record_application(&activity, Some(user), &gpu_id, None, &application);
+            Ok(application)
+        })
+    }
+
     fn manual_write<T: Send + 'static>(
         &self,
         gpu_id: &str,
@@ -873,6 +958,10 @@ impl DaemonCore {
                     "GPU tuning profiles need a connection that identifies the caller.",
                 ))
             }
+            DaemonRequest::RetryCooling(_) => DaemonResponse::Error(GpuCommandError::new(
+                GpuCommandErrorCode::NoPermission,
+                "Retrying a fan curve needs a connection that identifies the caller.",
+            )),
             DaemonRequest::ListSteamApps
             | DaemonRequest::ListRunningPrograms
             | DaemonRequest::AddProgram(_)

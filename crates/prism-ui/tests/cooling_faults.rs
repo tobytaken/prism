@@ -15,9 +15,8 @@ use prism_gpu::{
     GpuCommandError, GpuCommandErrorCode, GpuTelemetryProvider, TuningOutcome, TuningOutcomeStatus,
 };
 use prism_protocol::{
-    ApplyGpuProfileRequest, DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot,
-    GpuCoolingControl, ProfileApplicationResponse, ProfileSettings, ProtocolVersion,
-    SessionMessage, Welcome,
+    DaemonEvent, DaemonRequest, DaemonResponse, DaemonSnapshot, GpuCoolingControl,
+    ProfileApplicationResponse, ProtocolVersion, RetryCoolingRequest, SessionMessage, Welcome,
 };
 use prism_ui::{
     ActivityAction, ActivityItem, CommandId, Content, CoolingProblem, Core, Effect, GuiSettings,
@@ -162,30 +161,26 @@ fn problems(core: &mut Core) -> Vec<ActivityItem> {
     core.activity().expect("Activity is open").problems
 }
 
-/// The Applies among `effects`.
-fn applies(effects: &[Effect]) -> Vec<(CommandId, ApplyGpuProfileRequest)> {
+/// The Retries and Resumes among `effects`.
+fn retries(effects: &[Effect]) -> Vec<(CommandId, RetryCoolingRequest)> {
     effects
         .iter()
         .filter_map(|effect| match effect {
             Effect::CommandPrismd {
                 id,
-                request: DaemonRequest::ApplyProfile(request),
+                request: DaemonRequest::RetryCooling(request),
             } => Some((*id, request.clone())),
             _ => None,
         })
         .collect()
 }
 
-/// The Apply that brings the suspended curve back.
-fn retry_request() -> ApplyGpuProfileRequest {
-    ApplyGpuProfileRequest {
+/// The Retry that brings the suspended curve back.
+fn retry_request() -> RetryCoolingRequest {
+    RetryCoolingRequest {
         gpu_id: GPU.into(),
-        settings: ProfileSettings {
-            cooling: Some(curve()),
-            ..ProfileSettings::default()
-        },
         expected_revision: REVISION.into(),
-        fan_indexes: Some(vec![0, 1]),
+        fan_indexes: vec![0, 1],
     }
 }
 
@@ -291,7 +286,7 @@ fn a_cooling_fault_is_a_problem_in_activity_with_retry() {
     let effects = intent(&mut core, Intent::RunActivityAction(button.action));
 
     assert_eq!(
-        applies(&effects)
+        retries(&effects)
             .into_iter()
             .map(|(_, request)| request)
             .collect::<Vec<_>>(),
@@ -306,7 +301,7 @@ fn retry_applies_the_kept_curve_again_and_the_fault_clears_only_with_the_next_ev
 
     let effects = retry(&mut core);
 
-    let [(command, request)] = applies(&effects).try_into().expect("one Apply");
+    let [(command, request)] = retries(&effects).try_into().expect("one Retry");
     assert_eq!(request, retry_request());
     // Nothing changes until prismd says so, and Retry waits for its answer.
     assert!(paused(&core));
@@ -354,7 +349,7 @@ fn retry_applies_the_kept_curve_again_and_the_fault_clears_only_with_the_next_ev
 fn a_refused_retry_says_why_until_the_next_one() {
     let mut core = connected();
     push(&mut core, fault());
-    let [(command, _)] = applies(&retry(&mut core)).try_into().unwrap();
+    let [(command, _)] = retries(&retry(&mut core)).try_into().unwrap();
 
     core.handle(Input::PrismdAnswered {
         id: command,
@@ -394,7 +389,7 @@ fn the_palette_offers_retry_for_a_gpu_with_a_cooling_fault() {
     let effects = intent(&mut core, Intent::RunHighlighted);
 
     assert_eq!(
-        applies(&effects)
+        retries(&effects)
             .into_iter()
             .map(|(_, request)| request)
             .collect::<Vec<_>>(),
@@ -472,7 +467,7 @@ fn an_external_control_change_shows_curve_control_suspended_with_resume() {
     let effects = retry(&mut core);
 
     assert_eq!(
-        applies(&effects)
+        retries(&effects)
             .into_iter()
             .map(|(_, request)| request)
             .collect::<Vec<_>>(),

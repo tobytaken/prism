@@ -385,15 +385,13 @@ impl CoolingController {
                 "The GPU is absent or its stable identity could not be verified. Refresh the GPU readings and try again.",
             );
         };
-        if let Some(expected) = &request.fan_indexes {
-            let actual: BTreeSet<_> = gpu.cooling.fans.iter().map(|fan| fan.index).collect();
-            let reviewed: BTreeSet<_> = expected.iter().copied().collect();
-            if actual != reviewed || reviewed.len() != expected.len() {
-                return unattempted(
-                    expected,
-                    "The targeted fans changed. Review the current fan inventory before applying.",
-                );
-            }
+        if let Some(expected) = &request.fan_indexes
+            && fans_changed(gpu, expected)
+        {
+            return unattempted(
+                expected,
+                "The targeted fans changed. Review the current fan inventory before applying.",
+            );
         }
         let shared = matches!(request.configuration, CoolingConfiguration::Shared { .. });
         let targets: Vec<(u32, FanSetting)> = match request.configuration {
@@ -1206,6 +1204,13 @@ pub(super) fn application_problems(
         );
     }
     problems
+}
+
+/// Whether the GPU's fans differ from the fans a caller reviewed, each listed once.
+pub(super) fn fans_changed(gpu: &GpuPerformanceDevice, reviewed: &[u32]) -> bool {
+    let actual: BTreeSet<_> = gpu.cooling.fans.iter().map(|fan| fan.index).collect();
+    let unique: BTreeSet<_> = reviewed.iter().copied().collect();
+    actual != unique || unique.len() != reviewed.len()
 }
 
 fn set_speed(
