@@ -13,8 +13,6 @@ use nvml_wrapper::{Device, Nvml, cuda_driver_version_major, cuda_driver_version_
 use once_cell::sync::OnceCell;
 use thiserror::Error;
 
-use super::cooling::FanNumber;
-
 use super::{
     ClockInfo, ClockLockControl, ClockOffsetInfo, ClockOffsetsInfo, ComputeApi, ComputeInfo,
     ControlSupport, CoolingInfo, FanControlInfo, FanControlMode, GpuControlInfo, GpuDevice,
@@ -22,7 +20,7 @@ use super::{
     GpuSupportedFeatures, GpuTargetRequest, GpuTelemetryInfo, GpuTelemetryProvider, GpuVendor,
     MemoryInfo, OffsetControl, PcieInfo, PowerControlInfo, PowerInfo, PowerLimitControl,
     SetGpuClockOffsetsRequest, SetGpuFanModeAutoRequest, SetGpuFanSpeedRequest,
-    SetGpuPowerLimitRequest,
+    SetGpuPowerLimitRequest, cooling::FanNumber,
 };
 
 const OFFSET_POWER_STATE: PerformanceState = PerformanceState::Zero;

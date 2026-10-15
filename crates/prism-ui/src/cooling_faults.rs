@@ -74,7 +74,7 @@ fn explained(suspension: &CurveSuspension) -> Vec<String> {
 }
 
 /// A fan's return to automatic cooling, such as "Fan 1: automatic cooling not restored: …",
-/// numbering the fan as prismd's reason for the fault does.
+/// matching how prismd's reason for the fault numbers it.
 fn fallback(fan: &FanRestoration) -> String {
     let what = match fan.status {
         RestorationStatus::Restored => "restored",
