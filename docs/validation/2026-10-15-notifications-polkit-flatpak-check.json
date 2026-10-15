@@ -3,7 +3,6 @@
   "date": "2026-10-15",
   "timeZone": "CEST",
   "issue": 134,
-  "followUps": { "notTested": 230, "doNotDisturbHistory": 231 },
   "host": {
     "os": "CachyOS",
     "kernel": "7.2.10-1-cachyos",
@@ -13,8 +12,14 @@
     "polkit": "127",
     "polkitAgent": "polkit-kde-agent 6.7.5",
     "polkitAdminRule": "unix-group:wheel",
-    "user": { "name": "toby", "inWheel": true },
-    "gpus": ["NVIDIA GeForce RTX 5090", "AMD Radeon 610M (iGPU)"],
+    "user": {
+      "name": "toby",
+      "inWheel": true
+    },
+    "gpus": [
+      "NVIDIA GeForce RTX 5090",
+      "AMD Radeon 610M (iGPU)"
+    ],
     "driver": "615.78.08",
     "rustc": "1.97.1",
     "flatpak": "1.18.4",
@@ -24,26 +29,55 @@
     "build": "cargo build --locked --release -p prism -p prismd",
     "prismdInstall": "binary, unit (/etc/systemd/system), tmpfiles entry and prismd.toml as scripts/install-prismd-host.sh installs them, left disabled and stopped",
     "flatpak": "release binary repackaged with flatpak build-finish and the manifest's finish-args, installed from a local repository",
-    "flatpakPermissions": ["--socket=wayland", "--socket=fallback-x11", "--share=ipc", "--device=dri", "--filesystem=/run/prism", "--talk-name=org.freedesktop.Notifications"],
+    "flatpakPermissions": [
+      "--socket=wayland",
+      "--socket=fallback-x11",
+      "--share=ipc",
+      "--device=dri",
+      "--filesystem=/run/prism",
+      "--talk-name=org.freedesktop.Notifications"
+    ],
     "driving": "ydotool into Prism's command palette, only while KWin reported Prism's window active; KWin scripts minimized the window and read its state; dbus-monitor recorded org.freedesktop.Notifications"
   },
   "notifications": {
-    "summary": "Prism lost its connection to prismd",
+    "notificationSummary": "Prism lost its connection to prismd",
     "native": {
       "result": "pass",
       "pageBeforeMinimize": "Games",
       "prismdStopped": "20:22:28.531",
       "notifySent": "20:22:38.514",
-      "actions": ["default", "Open Prism"],
-      "hints": { "desktop-entry": "io.github.tobytaken.Prism" },
+      "actions": [
+        "default",
+        "Open Prism"
+      ],
+      "hints": {
+        "desktop-entry": "io.github.tobytaken.Prism"
+      },
       "expireTimeout": -1,
       "clicked": "20:22:41.188",
       "signals": [
-        { "member": "ActivationToken", "id": 3, "token": "kwin-45" },
-        { "member": "ActionInvoked", "id": 3, "action": "default" },
-        { "member": "NotificationClosed", "id": 3, "reason": 3 }
+        {
+          "member": "ActivationToken",
+          "id": 3,
+          "token": "kwin-45"
+        },
+        {
+          "member": "ActionInvoked",
+          "id": 3,
+          "action": "default"
+        },
+        {
+          "member": "NotificationClosed",
+          "id": 3,
+          "reason": 3
+        }
       ],
-      "windowAfter": { "at": "20:22:41.812", "minimized": false, "active": true, "page": "Settings → Daemon" }
+      "windowAfter": {
+        "at": "20:22:41.812",
+        "minimized": false,
+        "active": true,
+        "page": "Settings → Daemon"
+      }
     },
     "flatpak": {
       "result": "pass",
@@ -52,11 +86,28 @@
       "notifySent": "20:23:41.737",
       "clicked": "20:23:48.261",
       "signals": [
-        { "member": "ActivationToken", "id": 4, "token": "kwin-46" },
-        { "member": "ActionInvoked", "id": 4, "action": "default" },
-        { "member": "NotificationClosed", "id": 4, "reason": 3 }
+        {
+          "member": "ActivationToken",
+          "id": 4,
+          "token": "kwin-46"
+        },
+        {
+          "member": "ActionInvoked",
+          "id": 4,
+          "action": "default"
+        },
+        {
+          "member": "NotificationClosed",
+          "id": 4,
+          "reason": 3
+        }
       ],
-      "windowAfter": { "at": "20:23:49.133", "minimized": false, "active": true, "page": "Settings → Daemon" }
+      "windowAfter": {
+        "at": "20:23:49.133",
+        "minimized": false,
+        "active": true,
+        "page": "Settings → Daemon"
+      }
     },
     "doNotDisturb": {
       "issue": 231,
@@ -64,18 +115,28 @@
       "popupShown": false,
       "clickableFromHistory": false,
       "signalsAfterHistoryClick": []
-    },
-    "gnomeWayland": { "result": "not tested", "issue": 230 }
+    }
   },
   "enablePrismd": {
     "command": "systemctl enable --now prismd.service",
     "polkitAction": "org.freedesktop.systemd1.manage-unit-files",
-    "before": { "LoadState": "loaded", "ActiveState": "inactive", "UnitFileState": "disabled" },
+    "before": {
+      "LoadState": "loaded",
+      "ActiveState": "inactive",
+      "UnitFileState": "disabled"
+    },
     "settingsBefore": "prismd isn't running · prismd is installed, but isn't enabled · Enable prismd",
     "authenticated": {
       "result": "pass",
-      "runs": ["20:11:15", "20:12:19", "20:13:59"],
-      "after": { "ActiveState": "active", "UnitFileState": "enabled" },
+      "runs": [
+        "20:11:15",
+        "20:12:19",
+        "20:13:59"
+      ],
+      "after": {
+        "ActiveState": "active",
+        "UnitFileState": "enabled"
+      },
       "settingsAfter": "Connected to prismd · Tuning access Yes · as toby, a member of group wheel",
       "guiRestartNeeded": false
     },
@@ -84,54 +145,85 @@
       "started": "20:13:11.998",
       "dismissedWithEsc": "20:13:15.165",
       "polkitd": "Operator of unix-session:3 FAILED to authenticate to gain authorization for action org.freedesktop.systemd1.manage-unit-files",
-      "after": { "ActiveState": "inactive", "UnitFileState": "disabled" },
+      "after": {
+        "ActiveState": "inactive",
+        "UnitFileState": "disabled"
+      },
       "errorShown": false,
       "settingsAfter": "prismd isn't running · prismd is installed, but isn't enabled · Enable prismd"
-    },
-    "fedora": { "result": "not tested", "issue": 230 },
-    "ubuntu": { "result": "not tested", "issue": 230 }
+    }
   },
   "flatpakDaemonAccess": {
     "notInstalled": {
       "result": "pass",
-      "runPrismVisible": false,
-      "statusBar": ["PRISMD · NOT INSTALLED", "MONITORING IN-PROCESS"],
+      "runPrismVisibleInSandbox": false,
+      "statusBar": [
+        "PRISMD · NOT INSTALLED",
+        "MONITORING IN-PROCESS"
+      ],
       "settings": "prismd isn't installed · yay -S prismd · sudo systemctl enable --now prismd · Just installed it? Restart Prism."
     },
     "notRunning": {
       "result": "pass",
-      "runPrismVisible": true,
-      "statusBar": ["PRISMD · NOT RUNNING", "MONITORING IN-PROCESS"],
+      "runPrismVisibleInSandbox": true,
+      "statusBar": [
+        "PRISMD · NOT RUNNING",
+        "MONITORING IN-PROCESS"
+      ],
       "settings": "prismd isn't running · prismd is installed, but isn't enabled or has stopped. Start it on the host: · sudo systemctl enable --now prismd"
     },
     "adminUser": {
       "result": "pass",
       "adminGroup": "wheel",
-      "statusBar": ["PRISMD · CONNECTED", "MONITORING THROUGH PRISMD"],
+      "statusBar": [
+        "PRISMD · CONNECTED",
+        "MONITORING THROUGH PRISMD"
+      ],
       "settings": "Connected to prismd · Tuning access Yes · as toby, a member of group wheel · prismd 0.1.0 · protocol 0.1 · /run/prism/prismd.sock",
       "tuningWritten": false
     },
     "userOutsideAdminGroup": {
-      "result": "pass",
+      "result": "pass (simulated)",
       "adminGroup": "adm",
       "simulatedBy": "admin_group pointed at a group toby isn't in, not a second user",
       "guiRestartNeeded": false,
-      "statusBar": ["PRISMD · NOT ALLOWED", "MONITORING THROUGH PRISMD"],
+      "statusBar": [
+        "PRISMD · NOT ALLOWED",
+        "MONITORING THROUGH PRISMD"
+      ],
       "settings": "No tuning access · User toby isn't in group adm, so prismd lets this Prism monitor GPUs but not tune them. · sudo usermod -aG adm toby · read-only: toby isn't in group adm",
       "gpuPage": "Tuning needs prismd · toby isn't in group adm · Set up",
       "palettePause": "Needs tuning access · toby isn't in group adm"
-    },
-    "nativePackage": { "result": "not tested", "issue": 230 }
+    }
   },
   "unhealthyTuningStore": {
     "path": "/var/lib/prism/tuning-state.json",
     "written": "2026-10-09",
-    "prismd": "Prism's tuning store /var/lib/prism/tuning-state.json is preserved untouched and won't be written: the document has no schema version",
+    "prismdLog": "Prism's tuning store /var/lib/prism/tuning-state.json is preserved untouched and won't be written: the document has no schema version",
     "affectsChecks": false
   },
+  "notTested": {
+    "checks": [
+      "notification click raises the minimized window on GNOME Wayland",
+      "Enable prismd on Fedora",
+      "Enable prismd on Ubuntu",
+      "Flatpak against a host prismd from the native deb or rpm",
+      "read-only session as a real second user",
+      "a tuning write from the Flatpak"
+    ],
+    "issue": 230
+  },
   "cleanup": {
-    "prismdRemoved": ["/usr/bin/prismd", "/etc/systemd/system/prismd.service", "/etc/tmpfiles.d/prismd.conf", "/etc/prism", "/run/prism"],
-    "keptUntouched": ["/var/lib/prism"],
+    "prismdRemoved": [
+      "/usr/bin/prismd",
+      "/etc/systemd/system/prismd.service",
+      "/etc/tmpfiles.d/prismd.conf",
+      "/etc/prism",
+      "/run/prism"
+    ],
+    "keptUntouched": [
+      "/var/lib/prism"
+    ],
     "flatpakRemoved": true
   }
 }
