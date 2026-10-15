@@ -321,6 +321,20 @@ pub struct ApplyGpuProfileRequest {
     pub fan_indexes: Option<Vec<u32>>,
 }
 
+/// A Retry, or a Resume after external control, of a GPU's suspended fan curve: prismd applies
+/// the cooling configuration it kept again. A game's curve comes back as the game's, never as the
+/// caller's manual choice.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RetryCoolingRequest {
+    pub gpu_id: String,
+    /// The GPU's tuning-state revision the caller reviewed. When the GPU's tuning state has
+    /// changed since, the retry is refused and nothing is written.
+    pub expected_revision: String,
+    /// The fans the caller reviewed; when the GPU's fans differ, the retry is refused.
+    pub fan_indexes: Vec<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProfileApplicationResponse {
     /// Automatic operations only. Manual applications never roll back.
@@ -919,6 +933,8 @@ pub enum DaemonRequest {
     SetGpuSwitchingPaused(SetGpuSwitchingPausedRequest),
     GetAutomaticSwitchingStatus,
     RetryAutomaticSwitching(StartupGpuRequest),
+    /// Retries, or resumes, a GPU's suspended fan curve.
+    RetryCooling(RetryCoolingRequest),
     GetDriverStatus,
     StartDriverAction(StartDriverActionRequest),
     GetDriverJob(DriverJobRequest),
@@ -1603,6 +1619,30 @@ mod session_tests {
             .unwrap()
             .remove("expected_revision");
         assert!(serde_json::from_value::<DaemonRequest>(unreviewed).is_err());
+    }
+
+    #[test]
+    fn a_cooling_retry_carries_the_revision_and_fans_it_was_reviewed_against() {
+        let request = serde_json::json!({ "type": "retry_cooling", "payload": {
+            "gpu_id": "GPU-123",
+            "expected_revision": "4f1c2b9d0e8a7c35",
+            "fan_indexes": [0, 1]
+        } });
+        let typed: DaemonRequest = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(
+            typed,
+            DaemonRequest::RetryCooling(RetryCoolingRequest {
+                gpu_id: "GPU-123".into(),
+                expected_revision: "4f1c2b9d0e8a7c35".into(),
+                fan_indexes: vec![0, 1],
+            })
+        );
+        assert_eq!(serde_json::to_value(typed).unwrap(), request);
+        for field in ["expected_revision", "fan_indexes"] {
+            let mut unreviewed = request.clone();
+            unreviewed["payload"].as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<DaemonRequest>(unreviewed).is_err());
+        }
     }
 
     #[test]

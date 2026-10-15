@@ -26,6 +26,8 @@ mod apply_tests;
 #[cfg(test)]
 mod cooling_control_tests;
 #[cfg(test)]
+mod cooling_retry_tests;
+#[cfg(test)]
 mod cooling_tests;
 #[cfg(test)]
 mod current_profile_tests;

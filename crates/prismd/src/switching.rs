@@ -566,6 +566,44 @@ impl Switching {
         }
     }
 
+    /// Whether automation applied `cooling` to the GPU for the game that still drives it: no
+    /// manual override replaced the game's settings, and the game still wins the GPU. Retrying
+    /// such a curve brings it back as the game's, not as anyone's manual choice.
+    pub fn drives_cooling(&self, gpu_id: &str, cooling: &CoolingConfiguration) -> bool {
+        let Ok(activations) = self.state.activations() else {
+            return false;
+        };
+        let Some(activation) = activations
+            .get(gpu_id)
+            .filter(|a| a.manual_override.is_none() && a.cooling_baseline.is_some())
+        else {
+            return false;
+        };
+        let Some(driving) = &activation.driving else {
+            return false;
+        };
+        let Ok(running) = self.running() else {
+            return false;
+        };
+        self.store
+            .read(|document| {
+                let wins = winning_games(document, &running, self.users.as_ref(), true).get(gpu_id)
+                    == Some(driving);
+                // A failed application keeps no applied settings, but its curve is the profile's.
+                let applied = activation
+                    .applied_settings
+                    .as_ref()
+                    .and_then(|settings| settings.cooling.as_ref())
+                    == Some(cooling)
+                    || document
+                        .any_profile(&driving.profile_id)
+                        .and_then(|profile| profile.settings.cooling.as_ref())
+                        == Some(cooling);
+                wins && applied
+            })
+            .unwrap_or(false)
+    }
+
     /// Reserve precedence at request arrival; the running automatic operation may finish.
     pub fn manual_requested(&self, gpu_id: &str) -> PendingManual {
         *self

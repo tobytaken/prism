@@ -112,6 +112,7 @@ fn writes(request: &DaemonRequest) -> bool {
         | DaemonRequest::SetAutomaticSwitching(_)
         | DaemonRequest::SetGpuSwitchingPaused(_)
         | DaemonRequest::RetryAutomaticSwitching(_)
+        | DaemonRequest::RetryCooling(_)
         | DaemonRequest::StartDriverAction(_)
         | DaemonRequest::CancelDriverJob(_)
         | DaemonRequest::RequestHostReboot => true,

@@ -2,16 +2,14 @@
 //! after a sensor or fan-command failure or because another tool changed fan control, the curve is
 //! kept and only an explicit application brings it back. Prism shows the suspension inline in the
 //! Fans track, as a problem in Activity and, after a fault, which is a failure pause, as PAUSED in
-//! the sidebar and in a desktop notification. Retry, or Resume after external control, applies
-//! the kept configuration again; what's shown changes only with prismd's next push.
+//! the sidebar and in a desktop notification. Retry, or Resume after external control, asks prismd
+//! to apply the kept configuration again; what's shown changes only with prismd's next push.
 
 use std::collections::BTreeMap;
 
 use prism_gpu::TuningOutcomeStatus;
 use prism_gpu::cooling::{CurveSuspension, FanRestoration, RestorationStatus, SuspensionKind};
-use prism_protocol::{
-    ApplyGpuProfileRequest, DaemonRequest, DaemonResponse, GpuCoolingControl, ProfileSettings,
-};
+use prism_protocol::{DaemonRequest, DaemonResponse, GpuCoolingControl, RetryCoolingRequest};
 
 use crate::activity::{ActivityAction, sentence};
 use crate::cooling::cooling_read;
@@ -183,31 +181,24 @@ impl Core {
         None
     }
 
-    /// Applies the GPU's kept cooling configuration again, for its fans as they are now, which
-    /// brings the suspended curve back once prismd follows it.
+    /// Asks prismd to apply the GPU's kept cooling configuration again, for its fans as they are
+    /// now, which brings the suspended curve back once prismd follows it. prismd decides whether
+    /// that's a manual application or the curve of the game driving the GPU.
     pub(crate) fn retry_cooling(&mut self, gpu_id: String) -> Vec<Effect> {
         if self.retry_unavailable(&gpu_id).is_some() {
             return Vec::new();
         }
-        let Some(applied) = self
-            .cooling
-            .get(&gpu_id)
-            .and_then(|control| control.applied.clone())
-        else {
-            return Vec::new();
-        };
-        let fan_indexes = self
+        let Some(fan_indexes) = self
             .gpus()
             .iter()
             .find(|gpu| gpu.id == gpu_id)
             .and_then(cooling_read)
-            .map(|cooling| cooling.fans.iter().map(|fan| fan.index).collect());
-        let request = DaemonRequest::ApplyProfile(ApplyGpuProfileRequest {
+            .map(|cooling| cooling.fans.iter().map(|fan| fan.index).collect())
+        else {
+            return Vec::new();
+        };
+        let request = DaemonRequest::RetryCooling(RetryCoolingRequest {
             gpu_id: gpu_id.clone(),
-            settings: ProfileSettings {
-                cooling: Some(applied),
-                ..ProfileSettings::default()
-            },
             expected_revision: self.revision_of(&gpu_id),
             fan_indexes,
         });
