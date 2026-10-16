@@ -1,7 +1,10 @@
 #!/bin/sh
 set -e
 
-# Creates prismd's runtime directory now, not only at the next boot.
+# Creates prismd's runtime directory now, not only at the next boot. The systemd fragments below do
+# this too, but only while systemd is running.
 if [ "$1" = "configure" ] && command -v systemd-tmpfiles >/dev/null 2>&1; then
     systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create prismd.conf || true
 fi
+
+#DEBHELPER#

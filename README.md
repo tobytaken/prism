@@ -29,7 +29,7 @@ cargo deny check licenses
 
 CI runs the screenshot tests in their own job, in a pinned container image (see [GUI](#gui)). The commands above run them on this host, where they usually match too.
 
-CI runs only when started manually. In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check and the package smoke builds: the `prismd` deb and rpm, and the GUI's `prism-gpu` deb and rpm, AppImage and Flatpak bundle, which the run keeps as artifacts. The smoke builds also check that no release build enables the `simulated` feature, [`scripts/check-prism-package.sh`](./scripts/check-prism-package.sh) checks what each GUI package installs, and [`scripts/check-prism-install.sh`](./scripts/check-prism-install.sh) installs the deb and rpm on Ubuntu 22.04, Debian 12, AlmaLinux 8 and Fedora and checks every library `prism` links or loads is there.
+CI runs only when started manually, or on a release tag (see [Releases](#releases)). In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check, shellcheck and the package builds in all five formats, which the run keeps as artifacts: the `prismd` and `prism-gpu` debs and rpms, the AUR packages, the AppImage and the Flatpak bundle. The package jobs also check that no release build enables the `simulated` feature and that the metainfo and desktop file validate. [`scripts/check-prism-package.sh`](./scripts/check-prism-package.sh) checks what each GUI package installs and its license field. [`scripts/check-prism-install.sh`](./scripts/check-prism-install.sh) installs the GUI's deb, rpm and Arch package on Ubuntu 22.04, Debian 12, AlmaLinux 8, Fedora and Arch, and checks every library `prism` links or loads is there. [`scripts/check-prismd-install.sh`](./scripts/check-prismd-install.sh) installs and removes the `prismd` packages on Ubuntu 24.04, Debian 12, AlmaLinux 8, Fedora and Arch, each booted with systemd by [`scripts/run-in-systemd-container.sh`](./scripts/run-in-systemd-container.sh), and checks the service is left as [Packaging](#packaging) describes. That script never uses `--privileged`: a privileged container's systemd-logind can suspend the host.
 
 `cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`deny.toml`](./deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency and embedded font; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
 
@@ -105,25 +105,39 @@ sudo systemctl restart prismd
 
 Release builds use the [toolkit spike](https://github.com/tobytaken/prism-electron/issues/102)'s size profile: fat LTO, one codegen unit and stripped symbols. Unlike the spike's, panics unwind instead of aborting, because `prismd` catches a panicking GPU operation so it fails only its own request and the daemon keeps serving. Cargo's per-package overrides can't set `panic`, and aborting only in the GUI would take a second profile that every build and packaging script would have to name, for 2.9 MiB.
 
+Prism ships in five formats. The GUI is `prism-gpu` and the daemon `prismd`, as separate deb, rpm and AUR packages; the AppImage and the Flatpak hold only the GUI, which needs a host `prismd` from one of those packages to tune. Every package installs the desktop file [`contrib/io.github.tobytaken.Prism.desktop`](./contrib/io.github.tobytaken.Prism.desktop), the AppStream metainfo [`contrib/io.github.tobytaken.Prism.metainfo.xml`](./contrib/io.github.tobytaken.Prism.metainfo.xml) and the icon [`assets/io.github.tobytaken.Prism.svg`](./assets/io.github.tobytaken.Prism.svg), all named after the app ID `io.github.tobytaken.Prism`, along with `LICENSE` and `THIRD-PARTY-LICENSES`. Each gives `GPL-3.0-or-later` in its license field; the deb in its copyright file, and the AppImage and Flatpak in the metainfo.
+
+| Format | GUI | Daemon | `prismd.service` after install |
+| --- | --- | --- | --- |
+| deb | `prism-gpu`, recommends `prismd` | `prismd`; `/etc/prism/prismd.toml` is a conffile | enabled and started |
+| rpm | `prism-gpu`, recommends `prismd` | `prismd`; the config is `noreplace` | as the presets say: disabled on Fedora |
+| AUR | `prism-gpu`, optionally depends on `prismd` | `prismd`; the config is a backup file | not enabled; the install says how |
+| AppImage | yes | no | |
+| Flatpak | yes | no | |
+
+The `prismd` packages also create `/run/prism` through `tmpfiles.d`. The rpm's scriptlets in [`contrib/rpm/prismd`](./contrib/rpm/prismd) mirror systemd's `%systemd_post`, `%systemd_preun` and `%systemd_postun_with_restart`, since cargo-generate-rpm has none.
+
 Install the packaging tools:
 
 ```bash
 cargo install cargo-deb cargo-generate-rpm
 ```
 
-Build the `prismd` packages:
+The deb, rpm and AppImage repackage two release binaries, which CI builds in an AlmaLinux 8 container so they run on glibc 2.28 and newer. Build them there, or with `cargo build --locked --release -p prism -p prismd` for this host only, then package them:
 
 ```bash
 bash scripts/package-prismd-deb.sh
 bash scripts/package-prismd-rpm.sh
-```
-
-The GUI ships as `prism-gpu` (deb and rpm, both recommending `prismd`), an AppImage and a GUI-only Flatpak, all named after the app ID `io.github.tobytaken.Prism`: the desktop file [`contrib/io.github.tobytaken.Prism.desktop`](./contrib/io.github.tobytaken.Prism.desktop), the icon [`assets/io.github.tobytaken.Prism.svg`](./assets/io.github.tobytaken.Prism.svg) and the Flatpak manifest [`contrib/flatpak/io.github.tobytaken.Prism.yml`](./contrib/flatpak/io.github.tobytaken.Prism.yml). The deb, rpm and AppImage repackage one release binary, which CI builds in an AlmaLinux 8 container so it runs on glibc 2.28 and newer. Build it there, or with `cargo build --locked --release -p prism` for this host only, then package it:
-
-```bash
 bash scripts/package-prism-deb.sh
 bash scripts/package-prism-rpm.sh
 bash scripts/package-prism-appimage.sh
+```
+
+The AUR's split PKGBUILD, [`contrib/aur/PKGBUILD`](./contrib/aur/PKGBUILD), builds both packages from source per the Arch Rust guidelines. [`scripts/render-aur-pkgbuild.sh`](./scripts/render-aur-pkgbuild.sh) writes it to `target/aur` with the version and the checksum of a source tarball it makes from a git ref with `git archive`, which includes `Cargo.lock`. [`scripts/build-aur-package.sh`](./scripts/build-aur-package.sh) builds it with `makepkg`, as root in a clean Arch container, and writes `.SRCINFO`:
+
+```bash
+bash scripts/render-aur-pkgbuild.sh
+docker run --rm -v "$PWD:/src" -w /src archlinux:latest bash scripts/build-aur-package.sh
 ```
 
 The AppImage bundles no libraries, so GL, Vulkan, the NVIDIA libraries and glibc come from the host. The Flatpak builds from source per its manifest; its script needs `flatpak-builder` and Python with `aiohttp` and `tomlkit`, as in the `ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08` image CI uses:
@@ -131,6 +145,14 @@ The AppImage bundles no libraries, so GL, Vulkan, the NVIDIA libraries and glibc
 ```bash
 bash scripts/package-prism-flatpak.sh
 ```
+
+The manifest builds this checkout. [`scripts/render-flathub-manifest.sh`](./scripts/render-flathub-manifest.sh) writes the one to submit to Flathub to `target/flathub`, building the release tag's commit, beside the generated `cargo-sources.json`.
+
+### Releases
+
+Pushing a tag `vX.Y.Z` runs the release workflow. It checks that the tag names the workspace version and that the metainfo's newest `<release>` is that version, so add the release entry first. Then it runs CI on the tag and publishes a GitHub release with every package, the source tarball the AUR PKGBUILD downloads, the AUR and Flathub files, and their checksums. The release notes name the commit it was built from.
+
+The metainfo's URLs, its screenshots and the AUR's source only resolve once the repository is public.
 
 ## Daemon behavior
 

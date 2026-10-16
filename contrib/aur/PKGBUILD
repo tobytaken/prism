@@ -1,0 +1,61 @@
+# Maintainer: Tobias Steinhaeusler
+#
+# Builds from the source tarball each release attaches. scripts/render-aur-pkgbuild.sh fills in pkgver and
+# the tarball's checksum, and the release attaches the result.
+
+pkgbase=prism-gpu
+pkgname=(prism-gpu prismd)
+pkgver=0.0.0
+pkgrel=1
+pkgdesc='A Linux GPU control center for NVIDIA GPUs'
+arch=('x86_64')
+url='https://github.com/tobytaken/prism-electron'
+license=('GPL-3.0-or-later')
+makedepends=('cargo' 'fontconfig')
+source=("prism-$pkgver.tar.gz::$url/releases/download/v$pkgver/prism-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "prism-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "prism-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p prism -p prismd
+}
+
+package_prism-gpu() {
+  # Slint loads the windowing and GL libraries at runtime.
+  depends=('gcc-libs' 'glibc' 'fontconfig' 'hicolor-icon-theme' 'libglvnd' 'libx11' 'libxcb'
+           'libxcursor' 'libxi' 'libxkbcommon' 'libxkbcommon-x11' 'libxrender' 'wayland')
+  optdepends=('prismd: tuning, fan curves, game switching'
+              'nvidia-utils: monitoring through NVML')
+
+  cd "prism-$pkgver"
+  local app_id=io.github.tobytaken.Prism
+  install -Dm755 target/release/prism -t "$pkgdir/usr/bin"
+  install -Dm644 "contrib/$app_id.desktop" -t "$pkgdir/usr/share/applications"
+  install -Dm644 "contrib/$app_id.metainfo.xml" -t "$pkgdir/usr/share/metainfo"
+  install -Dm644 "assets/$app_id.svg" -t "$pkgdir/usr/share/icons/hicolor/scalable/apps"
+  install -Dm644 LICENSE THIRD-PARTY-LICENSES -t "$pkgdir/usr/share/licenses/$pkgname"
+}
+
+package_prismd() {
+  pkgdesc='Privileged daemon for Prism'
+  depends=('gcc-libs' 'glibc')
+  optdepends=('nvidia-utils: NVML, which prismd reads and tunes GPUs through')
+  backup=('etc/prism/prismd.toml')
+  # Arch doesn't enable packaged services; this says how to.
+  install=prismd.install
+
+  cd "prism-$pkgver"
+  install -Dm755 target/release/prismd -t "$pkgdir/usr/bin"
+  install -Dm644 contrib/systemd/prismd.service -t "$pkgdir/usr/lib/systemd/system"
+  install -Dm644 contrib/tmpfiles.d/prismd.conf -t "$pkgdir/usr/lib/tmpfiles.d"
+  install -Dm644 contrib/prismd.toml -t "$pkgdir/etc/prism"
+  install -Dm644 LICENSE THIRD-PARTY-LICENSES -t "$pkgdir/usr/share/licenses/$pkgname"
+}

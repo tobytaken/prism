@@ -9,6 +9,8 @@ edition = "2024"
 # Slint 1.x's MSRV.
 rust-version = "1.92"
 license = "GPL-3.0-or-later"
+homepage = "https://github.com/tobytaken/prism-electron"
+repository = "https://github.com/tobytaken/prism-electron"
 publish = false
 
 [workspace.dependencies]

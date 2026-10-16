@@ -1,0 +1,11 @@
+# %tmpfiles_create: creates /run/prism now, not only at the next boot.
+/usr/bin/systemd-tmpfiles --create prismd.conf >/dev/null 2>&1 || :
+# %systemd_post: on first install, enables prismd only if the presets say so. Fedora's leave it
+# disabled, so Prism offers Enable. systemd before 249, as on EL 8, has no update helper.
+if [ "$1" -eq 1 ]; then
+    if [ -x /usr/lib/systemd/systemd-update-helper ]; then
+        /usr/lib/systemd/systemd-update-helper install-system-units prismd.service || :
+    else
+        systemctl --no-reload preset prismd.service >/dev/null 2>&1 || :
+    fi
+fi
