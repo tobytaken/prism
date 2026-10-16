@@ -13,11 +13,11 @@ Any local user can connect to the socket, which is always `0666`, and read GPU s
 The default daemon config, `/etc/prism/prismd.toml`, is:
 
 ```toml
-admin_group = "wheel"
+# admin_group = "wheel"
 # admin_user = "your-username"
 ```
 
-Without `admin_group`, the daemon uses `wheel`, then `sudo`, then `root`, whichever exists first. To let one more user tune without joining the group, set `admin_user` and restart the daemon:
+Without `admin_group`, the daemon uses `wheel`, then `sudo`, then `root`, whichever exists first, so a distribution's usual administrators can tune: `wheel` on Fedora and Arch, `sudo` on Debian and Ubuntu. To pick another group, set `admin_group`. To let one more user tune without joining the group, set `admin_user`. Restart the daemon after either change:
 
 ```bash
 sudo systemctl restart prismd

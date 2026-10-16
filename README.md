@@ -200,17 +200,17 @@ Prism's status bar always shows whether it can tune. When it can't, for example 
   <img alt="Settings, Daemon: explaining that the user lacks tuning access and how to get it" src="crates/prism/tests/screenshots/daemon-not-allowed-light.png">
 </picture>
 
-Anyone on the computer can open Prism and monitor GPUs. **Changing** tuning, profiles, games, startup behavior or drivers is limited to root, members of the admin group set in `/etc/prism/prismd.toml`, and one optional extra user:
+Anyone on the computer can open Prism and monitor GPUs. **Changing** tuning, profiles, games, startup behavior or drivers is limited to root, members of the admin group, and one optional extra user, both of which `/etc/prism/prismd.toml` can set:
 
 ```toml
-admin_group = "wheel"
+# admin_group = "wheel"
 # admin_user = "your-username"
 ```
 
-To let yourself tune, either join that group, then log out and back in:
+Without `admin_group`, prismd uses `wheel`, then `sudo`, then `root`, whichever exists first: `wheel` on Fedora and Arch, `sudo` on Debian and Ubuntu. To let yourself tune, either join that group, then log out and back in:
 
 ```bash
-sudo usermod -aG wheel "$USER"
+sudo usermod -aG wheel "$USER"   # sudo on Debian and Ubuntu
 ```
 
 Or set `admin_user` to your username and restart the daemon:

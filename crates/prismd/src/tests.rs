@@ -1292,10 +1292,14 @@ fn a_store_write_interrupted_by_a_crash_leaves_the_previous_document_in_use() {
 }
 
 #[test]
-fn the_shipped_daemon_config_names_its_admin_group() {
-    let config: super::PrismDaemonConfigFile =
-        toml::from_str(include_str!("../../../contrib/prismd.toml")).unwrap();
+fn the_shipped_daemon_config_leaves_the_admin_group_to_the_host() {
+    let paths = super::DaemonPaths {
+        config_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../contrib/prismd.toml").into(),
+        ..super::DaemonPaths::from_environment()
+    };
 
-    assert_eq!(config.admin_group.as_deref(), Some("wheel"));
+    let config = super::load_config(&paths).unwrap();
+
+    assert_eq!(config.admin_group, super::default_admin_group());
     assert_eq!(config.admin_user, None);
 }
