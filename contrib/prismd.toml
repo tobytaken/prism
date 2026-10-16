@@ -5,7 +5,7 @@
 
 # The group whose members may change GPU tuning. Without this line it defaults to wheel, then
 # sudo, then root, whichever exists first.
-admin_group = "wheel"
+# admin_group = "wheel"
 
 # One more user who may change GPU tuning without being in admin_group.
 # admin_user = "your-username"
