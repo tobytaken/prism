@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_ID="io.github.tobytaken.Prism"
-REPO_URL="https://github.com/tobytaken/prism-electron.git"
+REPO_URL="https://github.com/tobytaken/prism.git"
 OUT_DIR="$ROOT_DIR/target/flathub"
 ref="${1:-HEAD}"
 

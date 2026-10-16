@@ -1,17 +1,17 @@
 # Walking skeleton hardware validation
 
-The 10 October 2026 pass for [issue #129](https://github.com/tobytaken/prism-electron/issues/129) checked the walking skeleton and its palette on real hardware, covering what the toolkit spike ([#102](https://github.com/tobytaken/prism-electron/issues/102)) and CI can't. Minimizing, screen off, suspend/resume, Flatpak with a matching `GL.nvidia`, and raising the window on a second launch **pass** on this KDE Plasma Wayland desktop. Two checks **fail**:
+The 10 October 2026 pass for [issue #129](https://github.com/tobytaken/prism/issues/129) checked the walking skeleton and its palette on real hardware, covering what the toolkit spike ([#102](https://github.com/tobytaken/prism/issues/102)) and CI can't. Minimizing, screen off, suspend/resume, Flatpak with a matching `GL.nvidia`, and raising the window on a second launch **pass** on this KDE Plasma Wayland desktop. Two checks **fail**:
 
-- IME composition draws the placeholder under the composing text ([#163](https://github.com/tobytaken/prism-electron/issues/163)).
-- A Flatpak whose `GL.nvidia` doesn't match the driver gives the wrong advice ([#165](https://github.com/tobytaken/prism-electron/issues/165)), or with no GL at all keeps running with no window ([#166](https://github.com/tobytaken/prism-electron/issues/166)).
+- IME composition draws the placeholder under the composing text ([#163](https://github.com/tobytaken/prism/issues/163)).
+- A Flatpak whose `GL.nvidia` doesn't match the driver gives the wrong advice ([#165](https://github.com/tobytaken/prism/issues/165)), or with no GL at all keeps running with no window ([#166](https://github.com/tobytaken/prism/issues/166)).
 
 Three more findings outside the checks have their own issues:
 
-- Charts hide suspended time ([#164](https://github.com/tobytaken/prism-electron/issues/164)).
-- Release builds lack the spike's size profile ([#167](https://github.com/tobytaken/prism-electron/issues/167)).
-- The first launch after an update keeps about 40 MiB of shader compiler heap ([#169](https://github.com/tobytaken/prism-electron/issues/169)).
+- Charts hide suspended time ([#164](https://github.com/tobytaken/prism/issues/164)).
+- Release builds lack the spike's size profile ([#167](https://github.com/tobytaken/prism/issues/167)).
+- The first launch after an update keeps about 40 MiB of shader compiler heap ([#169](https://github.com/tobytaken/prism/issues/169)).
 
-GNOME Wayland and a PRIME on-demand laptop **weren't tested**, because this host has neither. [#168](https://github.com/tobytaken/prism-electron/issues/168) carries them.
+GNOME Wayland and a PRIME on-demand laptop **weren't tested**, because this host has neither. [#168](https://github.com/tobytaken/prism/issues/168) carries them.
 
 Tested revision: `e2f0bbf95ab7cd9d8a004b203cc4a70ef1b59dff`. No production code was changed during validation. [Machine-readable evidence](2026-10-10-skeleton-hardware-check.json) preserves the observations below. Full local logs, CSVs, screenshots and a `measurements.txt` of figures read during the pass are in the ignored `artifacts/issue-129/` directory. Times are CEST.
 
@@ -33,7 +33,7 @@ Tested revision: `e2f0bbf95ab7cd9d8a004b203cc4a70ef1b59dff`. No production code 
 | --- | --- | --- |
 | IME composition in the palette | **Fail** (#163) | fcitx5 5.1.23 with Mozc. Composition itself works: typing `nihon` showed the preedit `にほn` inline, Space converted it to `日本`, and Enter committed it without running the highlighted “Go to Games”. Filtering waited for the commit, after which the palette showed “No matching commands”. But the “Type a command” placeholder stayed drawn under the preedit until the commit. |
 | 30+ minutes minimized on NVIDIA | **Pass** | Minimized for 36 min 50 s (2210 s), sampled every 30 s for the first 35 min. RSS / PSS / USS stayed at 194.3 / 122.4 / 114.6 MiB (PSS varied by 0.2 MiB) and VRAM at 37 MiB. 2202 of the 2210 seconds drew no frames. The other 8 were the minimize transition and a 7 s burst about 3 min in, whose cause wasn't identified (probably a compositor or taskbar thumbnail request). |
-| Telemetry history without gaps after restore | **Pass** | In a separate 6 min minimized run, both the sampler thread and the UI thread woke in each of the 359 measured seconds, so every reading was taken in and stamped as it arrived. After the 36 min run, the 5 m Temperature chart filled its whole width. Readings held back until restore would all have been stamped at the restore and piled up at the right edge. The chart joins across missing time (#164) and the skeleton has no range picker yet ([#135](https://github.com/tobytaken/prism-electron/issues/135)), so the chart alone can't show gaps. |
+| Telemetry history without gaps after restore | **Pass** | In a separate 6 min minimized run, both the sampler thread and the UI thread woke in each of the 359 measured seconds, so every reading was taken in and stamped as it arrived. After the 36 min run, the 5 m Temperature chart filled its whole width. Readings held back until restore would all have been stamped at the restore and piled up at the right edge. The chart joins across missing time (#164) and the skeleton has no range picker yet ([#135](https://github.com/tobytaken/prism/issues/135)), so the chart alone can't show gaps. |
 | Screen off (DPMS) | **Pass** | `kscreen-doctor --dpms off` for 30 s with the window visible: 28 s drew no frames. After the screen came back on, frames resumed at 1 fps, and the chart and readouts updated again. |
 | Suspend/resume | **Pass** | `systemctl suspend` (deep) for 66 s. Afterwards Prism was alive, drew at 1 fps and read NVML again (34 °C, 56 W), with PSS 122.8 MiB and VRAM 37 MiB. Separately, the chart joined the samples on either side of the suspend with no gap. The history's monotonic clock stops during suspend and the chart breaks only at unknown readings (#164). |
 | GNOME Wayland | **Not tested** (#168) | GNOME isn't installed on this host. |
@@ -58,12 +58,12 @@ The issue quotes the spike's ~81 MiB PSS, which was measured on simulated data. 
 
 **The release profile isn't the spike's.** The workspace has no `[profile.release]`, so the binary is unstripped and built with Cargo's default LTO and codegen units. Building with the spike's settings (fat LTO, `codegen-units=1`, `strip`, `panic=abort`) gives 16.9 MiB, close to the spike's 15.8 MiB.
 
-**Follow-up, 13 October 2026 ([#167](https://github.com/tobytaken/prism-electron/issues/167)):** the workspace now has the spike's release profile, except that panics unwind, as the README explains. The packaged binary, built with `cargo build --locked --release -p prism` in AlmaLinux 8 as CI builds it, is **24.9 MiB** against the spike's 15.8 MiB. Most of the gap is the GUI's growth since this pass. At `e2f0bbf`, the spike's full settings, `panic=abort` included, give 16.8 MiB with rustc 1.99.0 (16.9 MiB above was rustc 1.97.1). At `715b2bd`, Cargo's default profile gives 47.4 MiB, or 30.3 MiB stripped. Adding `panic = "abort"` to the workspace profile gives 22.0 MiB, so unwinding accounts for 2.9 MiB of the gap. The [evidence](2026-10-10-skeleton-hardware-check.json) keeps these under `releaseProfileFollowUp`.
+**Follow-up, 13 October 2026 ([#167](https://github.com/tobytaken/prism/issues/167)):** the workspace now has the spike's release profile, except that panics unwind, as the README explains. The packaged binary, built with `cargo build --locked --release -p prism` in AlmaLinux 8 as CI builds it, is **24.9 MiB** against the spike's 15.8 MiB. Most of the gap is the GUI's growth since this pass. At `e2f0bbf`, the spike's full settings, `panic=abort` included, give 16.8 MiB with rustc 1.99.0 (16.9 MiB above was rustc 1.97.1). At `715b2bd`, Cargo's default profile gives 47.4 MiB, or 30.3 MiB stripped. Adding `panic = "abort"` to the workspace profile gives 22.0 MiB, so unwinding accounts for 2.9 MiB of the gap. The [evidence](2026-10-10-skeleton-hardware-check.json) keeps these under `releaseProfileFollowUp`.
 
 ## Not covered by this pass
 
 - GNOME Wayland, second-launch focus on GNOME, and a PRIME on-demand laptop (#168).
-- The Flatpak was the release binary repackaged with `flatpak build-init`/`build-finish` and the manifest's `finish-args`, not built by `flatpak-builder` from the manifest. The host's glibc 2.44 matches the 26.08 runtime's. This checks the sandbox, `GL.nvidia` and NVML, not the manifest's build. The CI Flatpak bundle should be rechecked when [#154](https://github.com/tobytaken/prism-electron/issues/154) ships it.
+- The Flatpak was the release binary repackaged with `flatpak build-init`/`build-finish` and the manifest's `finish-args`, not built by `flatpak-builder` from the manifest. The host's glibc 2.44 matches the 26.08 runtime's. This checks the sandbox, `GL.nvidia` and NVML, not the manifest's build. The CI Flatpak bundle should be rechecked when [#154](https://github.com/tobytaken/prism/issues/154) ships it.
 - A `GL.nvidia` that really doesn't match the driver was simulated with `FLATPAK_GL_DRIVERS`, not reproduced with a driver update.
 - IME was driven by injected keys through fcitx5 and Mozc, not typed by hand. ibus wasn't tested.
 - The sampling cadence was measured over 6 minimized minutes, not the full 36.

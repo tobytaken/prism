@@ -1,6 +1,6 @@
 # NVIDIA live game recognition validation
 
-The 9 October 2026 live pass for [issue #49](https://github.com/tobytaken/prism-electron/issues/49) **fails the release gate for automatic switching**. Both distribution-package Steam forms were exercised: native Oxygen Not Included and Balatro through Proton. Both games reached their main menus, but Prism reported recognition unavailable throughout. Profile management and startup behavior are not cleared or blocked by this result; their hardware behavior was outside this pass.
+The 9 October 2026 live pass for [issue #49](https://github.com/tobytaken/prism/issues/49) **fails the release gate for automatic switching**. Both distribution-package Steam forms were exercised: native Oxygen Not Included and Balatro through Proton. Both games reached their main menus, but Prism reported recognition unavailable throughout. Profile management and startup behavior are not cleared or blocked by this result; their hardware behavior was outside this pass.
 
 Tested revision: `57f4037ccc68815c852003c256ff880c2c79bfe8`. No production implementation was changed during validation. [Selected machine-readable evidence](2026-10-09-nvidia-game-recognition.json) preserves the observations below. Full local logs and screenshots are in the ignored `artifacts/issue-49/` directory.
 
@@ -28,15 +28,15 @@ The native and Proton failures already block release under #49. The untested Fla
 
 | Checklist item | Result and scope |
 | --- | --- |
-| Flatpak Steam sub-sandbox ancestry and `SteamAppId` | **Not tested.** Native Steam pressure-vessel observations do not establish Flatpak portal ancestry. See [#23](https://github.com/tobytaken/prism-electron/issues/23). |
+| Flatpak Steam sub-sandbox ancestry and `SteamAppId` | **Not tested.** Native Steam pressure-vessel observations do not establish Flatpak portal ancestry. See [#23](https://github.com/tobytaken/prism/issues/23). |
 | Overlay environment | **Pass for the observed native Steam overlay exclusion signal.** Opening Balatro's overlay with Shift+Tab created `gameoverlayui` as a child of the Steam client, with neither `SteamAppId` nor `STEAM_COMPAT_APP_ID`. Overall recognition remained blocked. See #23. |
 | `fossilize_replay` parentage and launch duration | **Partial.** An already-running shader replay master was a direct child of Steam; its workers were children of that master. None carried either app-ID environment variable. This background replay concerned another app, not the approved launches. Launch-phase duration and the transition into a running game were not established. See #23. |
-| Wine and Proton mapped-image matching | **Fail for the installed Proton on btrfs.** Balatro's PE image was mapped and named correctly, but the picker returned no host path. Plain Wine was not tested. See [#25](https://github.com/tobytaken/prism-electron/issues/25). |
+| Wine and Proton mapped-image matching | **Fail for the installed Proton on btrfs.** Balatro's PE image was mapped and named correctly, but the picker returned no host path. Plain Wine was not tested. See [#25](https://github.com/tobytaken/prism/issues/25). |
 | umu, Heroic and Lutris mapped-image matching | **Not tested.** No games were launched through these paths. Native Steam Proton evidence does not validate them. See #25. |
 | pressure-vessel shared host paths | **Pass for Balatro's observed shared game path.** Its mapped path retained the host path under `~/.local/share/Steam/steamapps/common/Balatro/`; stat through the process root and `map_files` identified the same file as the host. This does not establish all sandbox paths. See #25. |
 | btrfs device numbers in mapped images | **Fail for the implementation's equality assumption.** Maps reported `00:1e`, while host stat and stat through `map_files` both reported `00:35`, with inode `17251934` in all cases. See #25. |
 | Document-portal host-path recovery | **Not tested.** This pass ran the native packaged Prism app, not a Flatpak Prism file chooser. See #25. |
-| Snap Steam | **Not tested; unclaimed.** Snap was not available. See #23 and [#24](https://github.com/tobytaken/prism-electron/issues/24). |
+| Snap Steam | **Not tested; unclaimed.** Snap was not available. See #23 and [#24](https://github.com/tobytaken/prism/issues/24). |
 | gamescope | **Not tested; unclaimed.** The executable was installed, but no approved game was launched through it. See #23 and #24. |
 | Native Steam library listing | **Pass for the local library sample.** The daemon listed 59 installed entries, including both tested games, and excluded installed Steam Linux Runtime and Proton tools from the result. Existing Balatro links were preserved. This is not exhaustive validation of app-type filtering or alternate libraries. See #24. |
 | Manual program caveat | **Pass.** The Games page and running-program dialog retain the “depends on how it runs” caveat. |

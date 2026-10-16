@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Track issues and specs in GitHub Issues for `tobytaken/prism-electron`. Before issue operations, read `docs/agents/issue-tracker.md`.
+Track issues and specs in GitHub Issues for `tobytaken/prism`. Before issue operations, read `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

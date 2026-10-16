@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs for this repo live in GitHub Issues for `tobytaken/prism-electron`. Use the `gh` CLI for all operations.
+Issues and specs for this repo live in GitHub Issues for `tobytaken/prism`. Use the `gh` CLI for all operations.
 
 ## Conventions
 

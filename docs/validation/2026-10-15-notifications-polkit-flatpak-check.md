@@ -1,14 +1,14 @@
 # Notifications, polkit Enable and Flatpak daemon access
 
-The 15 October 2026 pass for [issue #134](https://github.com/tobytaken/prism-electron/issues/134) checked, on a real desktop, what CI can't: clicking a notification to raise Prism, **Enable prismd** under polkit, and a Flatpak GUI talking to a host `prismd`. Every check this KDE Plasma Wayland host could run **passes**:
+The 15 October 2026 pass for [issue #134](https://github.com/tobytaken/prism/issues/134) checked, on a real desktop, what CI can't: clicking a notification to raise Prism, **Enable prismd** under polkit, and a Flatpak GUI talking to a host `prismd`. Every check this KDE Plasma Wayland host could run **passes**:
 
 - Clicking a notification raises and focuses the minimized window, natively and in the Flatpak.
 - **Enable prismd** enables, starts and connects to a disabled `prismd`, and cancelling polkit's prompt changes nothing.
 - The Flatpak gets tuning access as a member of the admin group and a read-only session that names the missing group otherwise. It tells *not installed* from *not running* through `/run/prism`.
 
-One finding outside the checks has its own issue. A notification Plasma files during Do Not Disturb can't be clicked from its history ([#231](https://github.com/tobytaken/prism-electron/issues/231)).
+One finding outside the checks has its own issue. A notification Plasma files during Do Not Disturb can't be clicked from its history ([#231](https://github.com/tobytaken/prism/issues/231)).
 
-GNOME Wayland, Fedora, Ubuntu and a host `prismd` from the native deb or rpm **weren't tested**, because this host has none of them. [#230](https://github.com/tobytaken/prism-electron/issues/230) carries them.
+GNOME Wayland, Fedora, Ubuntu and a host `prismd` from the native deb or rpm **weren't tested**, because this host has none of them. [#230](https://github.com/tobytaken/prism/issues/230) carries them.
 
 Tested revision: `f748fac7bfe8393f1346783ebfe6757649fe9026`. No production code was changed during validation. [Machine-readable evidence](2026-10-15-notifications-polkit-flatpak-check.json) preserves the observations below. Full local logs, D-Bus captures, screenshots and the helper scripts are in the ignored `artifacts/issue-134/` directory. Times are CEST.
 
@@ -18,7 +18,7 @@ Tested revision: `f748fac7bfe8393f1346783ebfe6757649fe9026`. No production code 
 - polkit 127 with `polkit-kde-agent` 6.7.5. Its stock rule authenticates administrators as members of `wheel`, and the user `toby` is in `wheel`.
 - NVIDIA GeForce RTX 5090, driver `615.78.08`, plus an AMD Radeon 610M iGPU.
 - `prism` and `prismd` were built with `cargo build --locked --release -p prism -p prismd` (rustc 1.97.1).
-- prismd was installed as [`scripts/install-prismd-host.sh`](../../scripts/install-prismd-host.sh) does, with the binary, unit, tmpfiles entry and `prismd.toml`, but left **disabled and stopped**, as Fedora's presets leave a new package. There's no native package for this distribution yet: the AUR package that Settings → Daemon suggests doesn't exist until [#154](https://github.com/tobytaken/prism-electron/issues/154) publishes it.
+- prismd was installed as [`scripts/install-prismd-host.sh`](../../scripts/install-prismd-host.sh) does, with the binary, unit, tmpfiles entry and `prismd.toml`, but left **disabled and stopped**, as Fedora's presets leave a new package. There's no native package for this distribution yet: the AUR package that Settings → Daemon suggests doesn't exist until [#154](https://github.com/tobytaken/prism/issues/154) publishes it.
 - The Flatpak was the release binary repackaged with `flatpak build-finish` and the manifest's `finish-args`, then installed from a local repository, as in the [#129 pass](2026-10-10-skeleton-hardware-check.md).
 - Driving and observing:
   - `ydotool` typed into Prism's command palette, only while a KWin script reported Prism's window active. This reached Settings → Daemon and ran **Enable prismd**, which runs the same action as its button.
