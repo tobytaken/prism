@@ -81,8 +81,14 @@ case "$kind" in
     expect_equal "Name" "$(rpm -qp --queryformat '%{NAME}' "$package")" "prism-gpu"
     expect_equal "License" "$(rpm -qp --queryformat '%{LICENSE}' "$package")" "$LICENSE"
     expect_equal "Recommends" "$(rpm -qp --recommends "$package")" "prismd"
-    (cd "$extracted" && rpm2cpio "$package" | cpio -idm --quiet ./usr/bin/prism)
-    check_binary "$extracted/usr/bin/prism"
+    # Ubuntu 24.04's rpm2cpio (rpm 4.18) exits 1 after writing the whole archive, so what cpio
+    # extracts says whether it worked; a cut-off archive still fails cpio.
+    (cd "$extracted" && { rpm2cpio "$package" || true; } | cpio -idm --quiet ./usr/bin/prism)
+    if [[ -f "$extracted/usr/bin/prism" ]]; then
+      check_binary "$extracted/usr/bin/prism"
+    else
+      fail "doesn't extract /usr/bin/prism"
+    fi
     rpm -qlp "$package" | expect_files \
       /usr/bin/prism \
       "/usr/share/applications/$APP_ID.desktop" \
