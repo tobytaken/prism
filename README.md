@@ -1,210 +1,284 @@
-# Prism
+<p align="center">
+  <img src="assets/io.github.tobytaken.Prism.svg" width="112" alt="">
+</p>
 
-Prism is a Linux GPU control center for watching, tuning and managing NVIDIA GPUs and their drivers. It is being rewritten as a native Rust GUI built with Slint ([ADR 0007](docs/adr/0007-native-rust-gui.md), [ADR 0008](docs/adr/0008-slint-gui-toolkit.md), [#120](https://github.com/tobytaken/prism-electron/issues/120)). The Electron app has been removed. The native GUI monitors so far: live GPU vitals in the sidebar, and a GPU workspace with five tracks (Temperature, Utilization, Power, Clocks and Fans), a range picker and hardware details. Tuning comes next.
+<h1 align="center">Prism</h1>
 
-Prism is licensed under the GNU General Public License, version 3 or later (`GPL-3.0-or-later`); see [`LICENSE`](./LICENSE).
+<p align="center">
+  <strong>Watch, tune and manage NVIDIA GPUs on Linux.</strong><br>
+  A fast, native GPU control center for live telemetry, fan curves, tuning profiles, per-game switching and driver installs.
+</p>
 
-## Architecture
+<p align="center">
+  <a href="https://github.com/tobytaken/prism/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/tobytaken/prism?color=ff6326&label=release"></a>
+  <a href="./LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-ff6326"></a>
+  <img alt="Platform: Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-555">
+  <img alt="Built with Rust and Slint" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Slint-555">
+</p>
 
-- `prismd` is a privileged host daemon that owns all tuning writes and tuning state.
-- `prism` is the GUI. It reads GPU telemetry in-process through NVML and, later, from `prismd`, but never writes tuning itself.
-- The Cargo workspace keeps its crates under [`crates`](./crates). The dependency graph runs one way: `prism-gpu ← prism-drivers ← prism-protocol ← prismd`, and `prism-gpu ← prism-ui ← prism`.
-  - [`prism-gpu`](./crates/prism-gpu) reads and tunes GPUs through NVML. It holds fan curves and cooling, and knows nothing of `prismd`. Callers choose the providers GPUs are read from; its `simulated` feature adds simulated GPUs with named fixtures for development and tests, which release builds leave out.
-  - [`prism-drivers`](./crates/prism-drivers) detects the host and its NVIDIA driver, plans driver installs, and runs driver jobs.
-  - [`prism-protocol`](./crates/prism-protocol) holds the `prismd` socket's wire types, framing and client, and the shared contract fixtures.
-  - [`prismd`](./crates/prismd) is the daemon, along with its tests and its deb/rpm packaging metadata.
-  - [`prism-ui`](./crates/prism-ui) is the GUI's logic as a pure state machine, with no Slint, threads or I/O. It takes inputs (telemetry samples, the GPU inventory, user intents) and returns the effects to perform. It also keeps the telemetry history and formats what the view shows.
-  - [`prism`](./crates/prism) is the GUI binary. It has the Slint view (`ui/`, with every visual token in `ui/theme.slint`), the 1 Hz sampler thread, the composition root, which takes an `Environment` of GPU providers, settings store and clock so tests and the simulator can swap them, and the GUI's deb/rpm packaging metadata.
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#set-up-tuning">Set up tuning</a> ·
+  <a href="#tips">Tips</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="./CONTRIBUTING.md">Contributing</a>
+</p>
 
-## Development
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/workspace-fan-curve-dark.png">
+  <img alt="Prism's GPU workspace: live temperature, utilization, power, clocks and fans, with a fan curve being edited" src="crates/prism/tests/screenshots/workspace-fan-curve-light.png">
+</picture>
 
-Run the checks CI runs:
+## What is Prism?
+
+Prism shows what your NVIDIA GPUs are doing and lets you change how they behave. You can watch each GPU's temperature, utilization, power, clocks and fans live and over time, set power limits and clock offsets, draw fan curves, save it all as profiles, and have the right profile applied when a game starts.
+
+Prism is two programs:
+
+- **`prism`**, the app. It reads your GPUs directly, so **monitoring works on its own**, with nothing else installed.
+- **`prismd`**, a small system service. It makes every change to your GPUs, checks that you're allowed to make it, and keeps your fan curves and startup profiles running when the app is closed. **Tuning needs `prismd`.**
+
+## Features
+
+### Live telemetry
+
+Each GPU gets a workspace with five tracks: **temperature, utilization, power, clocks and fans**. Each track shows the current value, a chart over the last 1, 5 or 15 minutes or 1 hour, and that window's min, max and average. The sidebar keeps every GPU's vitals in view. **Hardware details** lists the GPU's model, architecture, driver, VBIOS, memory and PCIe link, and the range each tuning control supports.
+
+### Tuning and fan curves
+
+Set the **power limit** and **graphics and memory clock offsets**, and run fans on **Auto**, at a **fixed speed** or along a **curve** you drag into shape. Fans can share one setting or each have their own. Edits stay unapplied until you press **Apply**. Each value is checked against the GPU's own limits, and Prism never clamps a value silently.
+
+### Profiles and startup
+
+<table>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/profile-menu-dark.png">
+        <img alt="A GPU's profile menu with Quiet and Boost profiles" src="crates/prism/tests/screenshots/profile-menu-light.png">
+      </picture>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/settings-startup-dark.png">
+        <img alt="Settings, Startup: choosing what Prism applies when the host starts" src="crates/prism/tests/screenshots/settings-startup-light.png">
+      </picture>
+    </td>
+  </tr>
+</table>
+
+Save tuning as named profiles such as *Quiet* or *Boost*, one set per GPU, and switch between them in one click. Under **Settings → Startup**, choose what happens at boot: nothing (the default), each GPU's **startup profile**, or the **last applied tuning values**. `prismd` applies them before anyone logs in, without the app running. In case an unstable value crashes the host, a boot that follows an unclean shutdown after a restore skips the restore once.
+
+### Games
+
+<table>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/add-steam-game-dark.png">
+        <img alt="Adding a Steam game from the installed libraries" src="crates/prism/tests/screenshots/add-steam-game-light.png">
+      </picture>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/activity-dark.png">
+        <img alt="Activity: profile applications, game switches and startup results" src="crates/prism/tests/screenshots/activity-light.png">
+      </picture>
+    </td>
+  </tr>
+</table>
+
+Link your Steam games, or any other program, to a profile on each GPU. With **automatic switching** on, `prismd` applies the linked profile while the game runs and restores your previous values when it exits. **Activity** keeps a log of what was applied, switched and restored, and of anything that failed.
+
+> [!WARNING]
+> **Automatic switching is experimental.** Linking games works, but recognizing running games hasn't passed validation on every kind of Steam install yet, Flatpak Steam in particular. Follow [#49](https://github.com/tobytaken/prism/issues/49) for progress.
+
+### Drivers
+
+<table>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/drivers-reboot-required-dark.png">
+        <img alt="Drivers: installing the recommended NVIDIA driver" src="crates/prism/tests/screenshots/drivers-reboot-required-light.png">
+      </picture>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/command-palette-dark.png">
+        <img alt="The command palette" src="crates/prism/tests/screenshots/command-palette-light.png">
+      </picture>
+    </td>
+  </tr>
+</table>
+
+On **Ubuntu** and **Fedora**, the Drivers page detects your host and its NVIDIA driver, then installs or updates it with your distribution's own packages. Before it starts, it warns you about Secure Boot, Nouveau and any reboot the install needs.
+
+### Built for the keyboard, and for small windows
+
+Press <kbd>Ctrl</kbd>+<kbd>K</kbd> for a **command palette** that reaches every page, setting and action. **Compact mode** shrinks Prism to a small window of live GPU vitals for a corner of your screen. Prism follows your desktop's **light or dark** appearance, and shows a desktop notification when something needs your attention.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/compact-mode-two-gpus-dark.png">
+    <img alt="Compact mode with two GPUs" width="300" src="crates/prism/tests/screenshots/compact-mode-two-gpus-light.png">
+  </picture>
+</p>
+
+## Requirements
+
+- An **NVIDIA GPU** with NVIDIA's proprietary driver. Prism reads and tunes GPUs through NVML (`libnvidia-ml.so.1`), which ships with the driver. If you don't have the driver yet, Prism's Drivers page can install it on Ubuntu and Fedora.
+- **Linux on x86_64**, with glibc 2.28 or newer: Ubuntu 22.04+, Debian 12+, Fedora, RHEL/AlmaLinux/Rocky 8+, Arch and their derivatives.
+- **systemd**, to run `prismd` for tuning.
+
+## Install
+
+Download the packages for your distribution from the [**latest release**](https://github.com/tobytaken/prism/releases/latest). The app is `prism-gpu` and the daemon is `prismd`. Install both if you want to tune.
+
+| Your system | App | Daemon (for tuning) |
+| --- | --- | --- |
+| Ubuntu, Debian | `prism-gpu_…_amd64.deb` | `prismd_…_amd64.deb` |
+| Fedora, RHEL, AlmaLinux, Rocky | `prism-gpu-….x86_64.rpm` | `prismd-….x86_64.rpm` |
+| Arch | `prism-gpu-aur-….tar.gz` (builds both) | |
+| Any distribution | `io.github.tobytaken.Prism.flatpak` or `Prism-x86_64.AppImage` | the deb, rpm or Arch `prismd` |
+
+### Ubuntu and Debian
+
+From the folder you downloaded the packages to:
 
 ```bash
-cargo fmt --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo deny check licenses
+sudo apt install ./prism-gpu_*_amd64.deb ./prismd_*_amd64.deb
 ```
 
-CI runs the screenshot tests in their own job, in a pinned container image (see [GUI](#gui)). The commands above run them on this host, where they usually match too.
+The deb starts `prismd` straight away and at every boot.
 
-CI runs only when started manually, or on a release tag (see [Releases](#releases)). In GitHub, open **Actions → CI → Run workflow**, select a branch, and start the workflow to run formatting, Clippy, tests, the license check, shellcheck and the package builds in all five formats, which the run keeps as artifacts: the `prismd` and `prism-gpu` debs and rpms, the AUR packages, the AppImage and the Flatpak bundle. The package jobs also check that no release build enables the `simulated` feature and that the metainfo and desktop file validate. [`scripts/check-prism-package.sh`](./scripts/check-prism-package.sh) checks what each GUI package installs and its license field. [`scripts/check-prism-install.sh`](./scripts/check-prism-install.sh) installs the GUI's deb, rpm and Arch package on Ubuntu 22.04, Debian 12, AlmaLinux 8, Fedora and Arch, and checks every library `prism` links or loads is there. [`scripts/check-prismd-install.sh`](./scripts/check-prismd-install.sh) installs and removes the `prismd` packages on Ubuntu 24.04, Debian 12, AlmaLinux 8, Fedora and Arch, each booted with systemd by [`scripts/run-in-systemd-container.sh`](./scripts/run-in-systemd-container.sh), and checks the service is left as [Packaging](#packaging) describes. That script never uses `--privileged`: a privileged container's systemd-logind can suspend the host.
-
-`cargo deny` fails when a dependency's license isn't on the GPLv3-compatible allow-list in [`deny.toml`](./deny.toml). [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) lists the licenses of every dependency and embedded font; after changing `Cargo.lock`, regenerate it with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and commit the result:
+### Fedora, RHEL, AlmaLinux and Rocky
 
 ```bash
-bash scripts/generate-third-party-licenses.sh
+sudo dnf install ./prism-gpu-*.x86_64.rpm ./prismd-*.x86_64.rpm
+sudo systemctl enable --now prismd.service
 ```
 
-Building the GUI needs `pkg-config` and the fontconfig development headers (`libfontconfig-dev` on Debian and Ubuntu, `fontconfig-devel` on Fedora).
+The rpm follows your distribution's service presets, which on Fedora leave `prismd` off until you enable it.
 
-## GUI
+### Arch
 
-Run the GUI on this host's NVIDIA GPUs:
+The release includes a split `PKGBUILD` that builds both packages from source:
 
 ```bash
-cargo run -p prism
+tar -xzf prism-gpu-aur-*.tar.gz
+makepkg -si
+sudo systemctl enable --now prismd.service
 ```
 
-Run it on simulated GPUs instead, with one of the fixtures `tunable`, `two-identical`, `no-fan-control`, `edge-ranges`, `nvml-missing`, `empty-inventory` or `driver-not-loaded`:
+### Flatpak
 
 ```bash
-PRISM_SIMULATE=tunable cargo run -p prism --features simulated
+flatpak install --user ./io.github.tobytaken.Prism.flatpak
 ```
 
-Light and dark follow the desktop. To pin one, set `appearance = "light"` or `appearance = "dark"` in `~/.config/prism/settings.toml` (`$XDG_CONFIG_HOME/prism/settings.toml`). Settings → Appearance will set this later.
+The bundle fetches its runtime from Flathub. It holds only the app, so for tuning, install `prismd` on the host from the deb, rpm or Arch package above. The Flatpak also needs Flathub's `org.freedesktop.Platform.GL.nvidia` extension for your exact driver version, which `flatpak update` installs.
 
-The view tests in `crates/prism/tests` drive the real window headless with Slint's testing backend, so they need no display. They find elements through Slint's debug info, which `prism`'s build script compiles in outside release builds.
-
-The accessibility audit in `crates/prism/tests/accessibility.rs` walks the window in every simulated fixture state. It fails when an interactive element has no label, a spinbox or slider has no value or range, a switch or checkbox has no checked state, or a tuning control stays editable without tuning access. Each accessible action a widget declares needs a test that invokes it.
-
-The screenshot tests in `crates/prism/tests/screenshots.rs` draw the window with Slint's software renderer in light and dark and compare it against the reference PNGs in `crates/prism/tests/screenshots/`. CI runs them in one pinned container image. A mismatch saves the new screenshot under `target/tmp/screenshots/`. After an intended visual change, or a Slint bump, regenerate the references in that image with Docker and commit them:
+### AppImage
 
 ```bash
-bash scripts/update-screenshots.sh          # regenerate the references
-bash scripts/update-screenshots.sh --check  # or only run the screenshot tests there
+chmod +x Prism-x86_64.AppImage
+./Prism-x86_64.AppImage
 ```
 
-## Daemon
+The AppImage bundles no libraries, so GL, Vulkan and the NVIDIA libraries come from your system. Like the Flatpak, it needs a host `prismd` to tune.
 
-Build the daemon:
+Every release lists the SHA-256 checksums of its files in `SHA256SUMS`. Check your downloads with `sha256sum --check --ignore-missing SHA256SUMS`.
 
-```bash
-cargo build --release -p prismd
-```
+## Set up tuning
 
-Install the daemon on the host for local testing:
+Prism's status bar always shows whether it can tune. When it can't, for example **`PRISMD · NOT RUNNING`** or **`PRISMD · NOT ALLOWED`**, click it to open **Settings → Daemon**. That page explains what's wrong and gives you the exact fix, with a **Copy** button for each command. It shows the install command for your distribution, **Enable prismd** when the daemon isn't running, **Restart prismd** and the `journalctl` command when it failed, and the command that adds you to the right group.
 
-```bash
-bash scripts/install-prismd-host.sh
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="crates/prism/tests/screenshots/daemon-not-allowed-dark.png">
+  <img alt="Settings, Daemon: explaining that the user lacks tuning access and how to get it" src="crates/prism/tests/screenshots/daemon-not-allowed-light.png">
+</picture>
 
-It enables `prismd.service` and starts it, or restarts it if it's already running, so rerunning the script after a rebuild runs the new daemon. If reloading systemd, enabling or starting fails, it says so and exits non-zero; `systemctl status prismd` and `journalctl -u prismd` show why.
-
-The daemon listens on `/run/prism/prismd.sock`. Its versioned tuning store lives in `/var/lib/prism/tuning-state.json` and holds each user's GPU tuning profiles, which only that user sees, and each GPU's current profile, which every user sees by name. If the tuning store can't be read, or was written by a newer version of Prism, the daemon leaves it untouched, reports the problem, and manual tuning keeps working.
-
-Without a `prismd` connection, or without tuning access, Prism's status bar says why (`PRISMD · NOT RUNNING`, for example) and opens Settings → Daemon, which explains how to fix it: the install commands for the host's distribution, **Enable prismd** (`systemctl enable --now prismd.service`, under polkit) when it isn't running, systemd's result with **Restart prismd** and the `journalctl` command when it failed, the `usermod` command when the user isn't allowed to tune, and both versions when they're incompatible. The Flatpak can't talk to systemd, so it offers the commands to copy instead.
-
-Any local user can connect to the socket, which is always `0666`, and read GPU state, telemetry and Activity. prismd checks each request: changing GPU tuning, profiles, games, startup behavior or driver jobs needs root, membership of `admin_group`, or being `admin_user`. Anyone else gets a read-only session, and Prism names the group they lack. The packages create `/run/prism` at install and at boot through `/usr/lib/tmpfiles.d/prismd.conf`, so it exists even while the daemon isn't running.
-
-The default daemon config, `/etc/prism/prismd.toml`, is:
+Anyone on the computer can open Prism and monitor GPUs. **Changing** tuning, profiles, games, startup behavior or drivers is limited to root, members of the admin group set in `/etc/prism/prismd.toml`, and one optional extra user:
 
 ```toml
 admin_group = "wheel"
 # admin_user = "your-username"
 ```
 
-Without `admin_group`, the daemon uses `wheel`, then `sudo`, then `root`, whichever exists first. To let one more user tune without joining the group, set `admin_user` and restart the daemon:
+To let yourself tune, either join that group, then log out and back in:
+
+```bash
+sudo usermod -aG wheel "$USER"
+```
+
+Or set `admin_user` to your username and restart the daemon:
 
 ```bash
 sudo systemctl restart prismd
 ```
 
-## Packaging
+[docs/prismd.md](./docs/prismd.md) describes everything the daemon does, and where it keeps its state.
 
-Release builds use the [toolkit spike](https://github.com/tobytaken/prism-electron/issues/102)'s size profile: fat LTO, one codegen unit and stripped symbols. Unlike the spike's, panics unwind instead of aborting, because `prismd` catches a panicking GPU operation so it fails only its own request and the daemon keeps serving. Cargo's per-package overrides can't set `panic`, and aborting only in the GUI would take a second profile that every build and packaging script would have to name, for 2.9 MiB.
+## Tips
 
-Prism ships in five formats. The GUI is `prism-gpu` and the daemon `prismd`, as separate deb, rpm and AUR packages; the AppImage and the Flatpak hold only the GUI, which needs a host `prismd` from one of those packages to tune. Every package installs the desktop file [`contrib/io.github.tobytaken.Prism.desktop`](./contrib/io.github.tobytaken.Prism.desktop), the AppStream metainfo [`contrib/io.github.tobytaken.Prism.metainfo.xml`](./contrib/io.github.tobytaken.Prism.metainfo.xml) and the icon [`assets/io.github.tobytaken.Prism.svg`](./assets/io.github.tobytaken.Prism.svg), all named after the app ID `io.github.tobytaken.Prism`, along with `LICENSE` and `THIRD-PARTY-LICENSES`. Each gives `GPL-3.0-or-later` in its license field; the deb in its copyright file, and the AppImage and Flatpak in the metainfo.
+| Shortcut | Action |
+| --- | --- |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> | Command palette |
+| <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>9</kbd> | Go to GPU 0 to 8 |
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Apply unapplied changes |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> | Discard unapplied changes |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> | Toggle compact mode |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> | Open Activity |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> / <kbd>D</kbd> | Go to Games / Drivers |
+| <kbd>Ctrl</kbd>+<kbd>,</kbd> | Go to Settings |
+| <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit |
 
-| Format | GUI | Daemon | `prismd.service` after install |
-| --- | --- | --- | --- |
-| deb | `prism-gpu`, recommends `prismd` | `prismd`; `/etc/prism/prismd.toml` is a conffile | enabled and started |
-| rpm | `prism-gpu`, recommends `prismd` | `prismd`; the config is `noreplace` | as the presets say: disabled on Fedora |
-| AUR | `prism-gpu`, optionally depends on `prismd` | `prismd`; the config is a backup file | not enabled; the install says how |
-| AppImage | yes | no | |
-| Flatpak | yes | no | |
+- **Closing the window quits Prism.** Your fan curves, startup profiles and game switching keep running in `prismd`. To open Prism when you log in, add it to your desktop's autostart settings.
+- **Light or dark** follows your desktop. To pin one, choose it under **Settings → Appearance**.
 
-The `prismd` packages also create `/run/prism` through `tmpfiles.d`. The rpm's scriptlets in [`contrib/rpm/prismd`](./contrib/rpm/prismd) mirror systemd's `%systemd_post`, `%systemd_preun` and `%systemd_postun_with_restart`, since cargo-generate-rpm has none.
+## Troubleshooting
 
-Install the packaging tools:
+<details>
+<summary><strong>Prism shows no GPUs, or says NVML couldn't be loaded</strong></summary>
+
+Prism needs NVIDIA's proprietary driver, loaded. Check with `nvidia-smi`. If the driver isn't installed, use the **Drivers** page on Ubuntu or Fedora, or your distribution's instructions, then reboot. The open-source Nouveau driver isn't supported.
+
+</details>
+
+<details>
+<summary><strong>The Flatpak can't see the GPU, or has no graphics acceleration</strong></summary>
+
+The Flatpak needs the `org.freedesktop.Platform.GL.nvidia-…` extension for your exact host driver version. Run `flatpak update` after every driver update, and check it's there with `flatpak list --runtime | grep nvidia`.
+
+</details>
+
+<details>
+<summary><strong>prismd won't start</strong></summary>
+
+**Settings → Daemon** shows systemd's result. For the full log, run:
 
 ```bash
-cargo install cargo-deb cargo-generate-rpm
+systemctl status prismd
+journalctl -u prismd
 ```
 
-The deb, rpm and AppImage repackage two release binaries, which CI builds in an AlmaLinux 8 container so they run on glibc 2.28 and newer. Build them there, or with `cargo build --locked --release -p prism -p prismd` for this host only, then package them:
+</details>
 
-```bash
-bash scripts/package-prismd-deb.sh
-bash scripts/package-prismd-rpm.sh
-bash scripts/package-prism-deb.sh
-bash scripts/package-prism-rpm.sh
-bash scripts/package-prism-appimage.sh
-```
+<details>
+<summary><strong>A tuning change was rejected</strong></summary>
 
-The AUR's split PKGBUILD, [`contrib/aur/PKGBUILD`](./contrib/aur/PKGBUILD), builds both packages from source per the Arch Rust guidelines. [`scripts/render-aur-pkgbuild.sh`](./scripts/render-aur-pkgbuild.sh) writes it to `target/aur` with the version and the checksum of a source tarball it makes from a git ref with `git archive`, which includes `Cargo.lock`. [`scripts/build-aur-package.sh`](./scripts/build-aur-package.sh) builds it with `makepkg`, as root in a clean Arch container, and writes `.SRCINFO`:
+Prism never clamps values. If the driver rejects a value, Prism says which setting failed and what happened to the rest. **Activity** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>) lists every failure, including those from startup and game switching.
 
-```bash
-bash scripts/render-aur-pkgbuild.sh
-docker run --rm -v "$PWD:/src" -w /src archlinux:latest bash scripts/build-aur-package.sh
-```
+</details>
 
-The AppImage bundles no libraries, so GL, Vulkan, the NVIDIA libraries and glibc come from the host. The Flatpak builds from source per its manifest; its script needs `flatpak-builder` and Python with `aiohttp` and `tomlkit`, as in the `ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08` image CI uses:
+Found a bug? [Open an issue](https://github.com/tobytaken/prism/issues), with your distribution, GPU, driver version (`nvidia-smi`) and how you installed Prism.
 
-```bash
-bash scripts/package-prism-flatpak.sh
-```
+## Contributing
 
-The manifest builds this checkout. [`scripts/render-flathub-manifest.sh`](./scripts/render-flathub-manifest.sh) writes the one to submit to Flathub to `target/flathub`, building the release tag's commit, beside the generated `cargo-sources.json`.
+Prism is written in Rust, with a [Slint](https://slint.dev) GUI. [CONTRIBUTING.md](./CONTRIBUTING.md) covers the architecture, building and testing, running Prism on simulated GPUs, packaging and releases. The design decisions are recorded in [`docs/adr`](./docs/adr), and the project's vocabulary in [`CONTEXT.md`](./CONTEXT.md).
 
-### Releases
+## License
 
-Pushing a tag `vX.Y.Z` runs the release workflow. It checks that the tag names the workspace version and that the metainfo's newest `<release>` is that version, so add the release entry first. Then it runs CI on the tag and publishes a GitHub release with every package, the source tarball the AUR PKGBUILD downloads, the AUR and Flathub files, and their checksums. The release notes name the commit it was built from.
-
-The metainfo's URLs, its screenshots and the AUR's source only resolve once the repository is public.
-
-## Daemon behavior
-
-The sections below describe what the daemon does. Their references to pages and controls describe the removed Electron app; the native GUI will expose the same behavior.
-
-### Startup behavior
-
-Settings → Startup offers the host-wide **Off** (default), **Startup profiles** and **Restore last applied** choices. Use **Manage profiles…** in each GPU's Performance selector to choose its startup profile, or **No startup profile**. Anyone authorized to tune GPUs can change these choices; the latest change wins, and other users see the startup profile by name. A designation follows the profile's latest saved values and name, and deleting the profile clears the designation.
-
-The host daemon applies startup profiles once per kernel boot id without the app running. It reserves each designated GPU's operation queue, waits about 30 seconds for an absent GPU, and validates the entire profile before writing anything. The systemd service signals readiness after startup completes, before the display manager and user sessions become available. Unsupported or out-of-range settings skip the whole GPU; values are never clamped. Performance shows dismissible per-GPU startup outcomes, including per-setting partial failures. Dismissals belong to the user and last for that boot.
-
-**Restore last applied** restores, per GPU, each setting's most recent successful manual value from a profile application or live tuning change, including explicit **Use default** requests, with the same validation and waiting. A GPU keeps its previous current profile only when its values are restored in full. Before writing restored values, the daemon persists and syncs a record of the attempt in the tuning store; stopping the daemon while the host shuts down (systemd reports `stopping`) marks the boot clean, while a daemon restart mid-boot records nothing. If the previous boot attempted a restore and wasn't clean, the next boot skips the restore once and says so in the startup outcome. Startup profiles skip this guard. When a manual write reaches the GPU but its last applied values can't be recorded, the write still reports success with "This change was not recorded for startup.", and Settings marks Restore last applied as possibly stale (kept in `/var/lib/prism/last-applied-possibly-stale.json`) until that setting's next successful record.
-
-The once-per-boot marker and outcomes live in `/run/prism/startup-state.json`. The service preserves this directory across stops and restarts. Unreadable tuning or boot state suspends startup behavior. **Off** performs no boot-time tuning.
-
-### Remembered fan curves
-
-After you successfully apply a custom fan curve, Prism remembers the curve and shared or separate fan arrangement for your account and that individual GPU. Switching to Automatic or Fixed, closing Prism, reconnecting, and restarting the host retain this choice. Selecting Curve from shared control recalls the arrangement as an unapplied draft; review it and Apply to activate it. In separate controls, selecting Curve recalls that fan's curve when available and preserves other fan edits. Recalled curves must still meet the GPU's current limits. Discarded edits, failed applications, temporary automatic applications and their restorations, and normal curve output changes do not replace the remembered choice.
-
-The daemon stores remembered curves and optional profile cooling configurations in tuning-store schema version 9, using the existing uid-and-username ownership safeguards and GPU UUIDs. Earlier stores upgrade without creating remembered choices or adding cooling to existing profiles; version 8 remembered curves are preserved.
-
-### Games
-
-**Automatic switching is experimental and not yet validated for release.** The
-[9 October live validation](docs/validation/2026-10-09-nvidia-game-recognition.md)
-found recognition failures in distribution-package Steam, both native and Proton.
-The [repair replay](docs/validation/2026-10-09-nvidia-game-recognition-repair.md)
-subsequently passed recognition for native Oxygen Not Included and Proton Balatro
-on the tested host, including their manually identified program forms. This does
-not validate automatic GPU tuning. Required native and Proton forms of Flatpak
-Steam remain unvalidated.
-[Issue #49](https://github.com/tobytaken/prism-electron/issues/49) stays open until
-all required forms pass, including actual automatic application and restoration.
-The paths and matching mechanisms below describe the implementation, not verified
-support. Snap Steam, gamescope, plain Wine, umu, Heroic, Lutris and document-portal
-host-path recovery remain unclaimed without their own live evidence. This gate
-does not establish or invalidate profile management or startup behavior.
-
-The **Games** page links your games to your GPU tuning profiles, one profile per GPU; GPUs left at **Leave unchanged** aren't touched, and many games can share a profile. **Add Steam game…** lists fully installed apps from every library folder of your own Steam installs: Valve's package (`~/.local/share/Steam`, or the legacy `~/Steam`), Debian's `~/.steam/debian-installation`, Flatpak (`~/.var/app/com.valvesoftware.Steam`) and Snap (`~/snap/steam/common`). The daemon reads these from the caller's home directory with the caller's own file access, so you only see libraries you can read yourself, and the Flatpak app needs no extra file access. Flatpak Steam's library paths under your home are looked up in its persisted home as well. Compatibility tools (any install folder with a `toolmanifest.vdf`, such as Proton and the Steam Linux Runtime) and known non-game apps such as Steamworks Common Redistributables are left out. A game that is no longer installed keeps its links and is marked **Not installed**.
-
-**Add running program…** lists your own processes for games outside Steam's library, including Heroic, Lutris and non-Steam shortcuts. Entries show the executable (or Wine mapped `.exe`), verified host location, launcher ancestry and relevant environment tags. Known helpers appear last. **Browse for file…** also adds a program that is not running; the Flatpak app recovers the host location from the document portal before sending it to the daemon.
-
-Manual recognition depends on how the program runs. AppImages, scripts, virtual machines, Flatpak-packaged games and emulators are flagged because location may identify a temporary executable or a shared runtime instead of the game. Native recognition compares executable file identity; Wine/Proton recognition compares mapped-image identity. The stored host location is resolved each scan so updates that replace the file keep working. Moving or deleting it shows **Program not found** and keeps its profile links.
-
-Manual program associations use tuning-store schema version 10; existing Steam associations migrate unchanged. An older daemon preserves this newer store and reports it as unavailable, so downgrading requires restoring a compatible store backup.
-
-Associations and the **Switch profiles automatically while my games run** opt-in (off by default) belong to each user and are kept in the tuning store. Deleting a profile removes its links. The daemon applies linked profiles while games run and restores the actual pre-game tuning values when they end, including applied changes never saved to a profile.
-
-Automatic switching uses the shared cooling controller to apply and restore complete cooling configurations: automatic mode, fixed targets, or full curves with their shared or separate fan arrangement. Restored curves calculate their output from the current temperature. A profile omitting cooling leaves it unchanged, unless an earlier profile in that activation wrote cooling; switching to a profile that omits it then restores the pre-game configuration immediately. Temporary automatic applications, restorations and curve output changes do not replace last applied manual tuning values or remembered curves.
-
-Restoration baselines live in `/run/prism/switching-state.json`, stamped with the kernel boot id. Schema version 3 adds expected numeric readings and manual overrides alongside complete cooling baselines. Older versions are preserved untouched and block automatic switching for that boot rather than discard or reinterpret their restoration state; a normal host reboot clears this boot-scoped file. Unreadable or newer switching state likewise blocks automatic switching.
-
-A manual profile application or live tuning attempt (including cooling) while linked games run overrides automation on that GPU, even if the attempt fails. An automatic operation already writing finishes its setters; waiting automatic operations are dropped. The resulting manual values remain after the games end. Saving a profile is not a tuning attempt; a save based on values shown before an automatic switch is rejected for review.
-
-Before an automatic application or restoration, the daemon compares fresh readings with its last observations of the controls it manages. An observed difference keeps the values and reports **Manual override · changed outside Prism** in the Game tuning row and GPU header. Numeric controls are checked at these operations, without continuous monitoring. Cooling uses the shared controller's observable fan policy; physical speed does not reveal an independent manual target, and ordinary curve output changes are not external edits. An observable external cooling change suspends curve control, preserves its definition and leaves external controls alone until explicit manual cooling application.
+Prism is free software, licensed under the GNU General Public License, version 3 or later (`GPL-3.0-or-later`). See [`LICENSE`](./LICENSE), and [`THIRD-PARTY-LICENSES`](./THIRD-PARTY-LICENSES) for its dependencies.

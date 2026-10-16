@@ -3,7 +3,7 @@
 This follow-up to the [failed live pass](2026-10-09-nvidia-game-recognition.md)
 covers the recognition repairs, support wording, regression checks and another
 local native/Proton lifecycle pass. The agreed scope excludes actual GPU tuning
-writes and the wider Flatpak validation matrix. [Issue #49](https://github.com/tobytaken/prism-electron/issues/49)
+writes and the wider Flatpak validation matrix. [Issue #49](https://github.com/tobytaken/prism/issues/49)
 remains open; automatic-switching release still requires those validations.
 
 ## Repair contracts

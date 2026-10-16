@@ -37,26 +37,26 @@
     <binary>prism</binary>
   </provides>
 
-  <url type="homepage">https://github.com/tobytaken/prism-electron</url>
-  <url type="bugtracker">https://github.com/tobytaken/prism-electron/issues</url>
-  <url type="vcs-browser">https://github.com/tobytaken/prism-electron</url>
+  <url type="homepage">https://github.com/tobytaken/prism</url>
+  <url type="bugtracker">https://github.com/tobytaken/prism/issues</url>
+  <url type="vcs-browser">https://github.com/tobytaken/prism</url>
 
   <screenshots>
     <screenshot type="default">
       <caption>A GPU's live temperature, utilization, power, clocks and fans</caption>
-      <image>https://raw.githubusercontent.com/tobytaken/prism-electron/main/crates/prism/tests/screenshots/workspace-dark.png</image>
+      <image>https://raw.githubusercontent.com/tobytaken/prism/main/crates/prism/tests/screenshots/workspace-dark.png</image>
     </screenshot>
     <screenshot>
       <caption>Fans following a fan curve</caption>
-      <image>https://raw.githubusercontent.com/tobytaken/prism-electron/main/crates/prism/tests/screenshots/workspace-fan-curve-dark.png</image>
+      <image>https://raw.githubusercontent.com/tobytaken/prism/main/crates/prism/tests/screenshots/workspace-fan-curve-dark.png</image>
     </screenshot>
     <screenshot>
       <caption>Games linked to tuning profiles</caption>
-      <image>https://raw.githubusercontent.com/tobytaken/prism-electron/main/crates/prism/tests/screenshots/games-dark.png</image>
+      <image>https://raw.githubusercontent.com/tobytaken/prism/main/crates/prism/tests/screenshots/games-dark.png</image>
     </screenshot>
     <screenshot>
       <caption>The light appearance</caption>
-      <image>https://raw.githubusercontent.com/tobytaken/prism-electron/main/crates/prism/tests/screenshots/workspace-light.png</image>
+      <image>https://raw.githubusercontent.com/tobytaken/prism/main/crates/prism/tests/screenshots/workspace-light.png</image>
     </screenshot>
   </screenshots>
 
@@ -90,7 +90,7 @@
 
   <releases>
     <release version="0.1.0" date="2026-10-15">
-      <url type="details">https://github.com/tobytaken/prism-electron/releases/tag/v0.1.0</url>
+      <url type="details">https://github.com/tobytaken/prism/releases/tag/v0.1.0</url>
       <description>
         <p>The first release of the native Prism.</p>
       </description>

@@ -1,6 +1,6 @@
 # The daemon recognizes games and switches profiles
 
-For [issue #5](https://github.com/tobytaken/prism-electron/issues/5), automatic per-game switching is performed by the host daemon, not the app: the daemon recognizes running games and applies their associated GPU tuning profiles without the app running. Closing Prism's window quits the app, a Flatpak build can't see host processes, and ADR-0002 already holds that tuning should hold without opening Prism; the daemon runs on the host with access to every process, so it is the only place that can switch reliably in every supported setup.
+For [issue #5](https://github.com/tobytaken/prism/issues/5), automatic per-game switching is performed by the host daemon, not the app: the daemon recognizes running games and applies their associated GPU tuning profiles without the app running. Closing Prism's window quits the app, a Flatpak build can't see host processes, and ADR-0002 already holds that tuning should hold without opening Prism; the daemon runs on the host with access to every process, so it is the only place that can switch reliably in every supported setup.
 
 Game associations belong to the user who owns the linked profile and fire only for that user's running games, so the daemon needs its own copy of each user's associations and the latest values of the linked profiles, as it does for startup profiles; the mechanism belongs to #8.
 

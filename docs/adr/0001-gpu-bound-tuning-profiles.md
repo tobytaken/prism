@@ -1,6 +1,6 @@
 # GPU-bound tuning profiles
 
-For [issue #3](https://github.com/tobytaken/prism-electron/issues/3), v1 GPU tuning profiles belong to one individual GPU, identified by its stable identity, and each application targets only that GPU. Model names do not establish ownership: profiles remain stored but unavailable to apply while their GPU is absent, and cross-GPU reuse is deferred to avoid introducing compatibility and value-conversion rules in v1.
+For [issue #3](https://github.com/tobytaken/prism/issues/3), v1 GPU tuning profiles belong to one individual GPU, identified by its stable identity, and each application targets only that GPU. Model names do not establish ownership: profiles remain stored but unavailable to apply while their GPU is absent, and cross-GPU reuse is deferred to avoid introducing compatibility and value-conversion rules in v1.
 
 Saving a profile captures all savable settings within its tuning scope, rather than a user-selected subset. Any omitted settings leave current tuning values unchanged, while included settings request either a specific value or the default at application time; an explicit power default follows the GPU's reported default when applied, while the offset default is zero.
 
